@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  service-containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+      NODE_ENV: test
+      INFRA_RESET_TARGET: secure-document-access-system-local-data
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+
+      - name: Enable locked pnpm
+        run: corepack enable && corepack prepare pnpm@12.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for end-to-end tests
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Start isolated service containers
+        run: pnpm infra:up
+
+      - name: Run mandatory quality, integration, infrastructure, and security gates
+        run: pnpm check
+
+      - name: Show container status and logs on failure
+        if: failure()
+        run: docker compose --env-file .local/dev.env -f infra/compose.yaml -p secure-document-access-system-local ps && docker compose --env-file .local/dev.env -f infra/compose.yaml -p secure-document-access-system-local logs --tail 200
+
+      - name: Remove CI-only containers and volumes
+        if: always()
+        run: pnpm infra:reset-safe

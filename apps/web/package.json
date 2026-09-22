@@ -1,0 +1,21 @@
+{
+  "name": "@sda/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --hostname 127.0.0.1",
+    "start": "next start --hostname 127.0.0.1",
+    "lint": "oxlint app next.config.ts",
+    "typecheck": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@sda/config": "workspace:*"
+  }
+}

@@ -22,6 +22,17 @@ export const EnvSchema = z
     STORAGE_USE_SSL: z
       .preprocess((val) => val === 'true' || val === true, z.boolean())
       .default(false),
+    CLAMAV_HOST: z.string().default('127.0.0.1'),
+    CLAMAV_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
+    UPLOAD_MAX_FILE_SIZE_BYTES: z.coerce.number().int().min(1024).default(52_428_800),
+    ZIP_MAX_TOTAL_UNCOMPRESSED_SIZE: z.coerce.number().int().min(1024).default(209_715_200),
+    ZIP_MAX_ENTRIES: z.coerce.number().int().min(1).default(1000),
+    ZIP_MAX_DEPTH: z.coerce.number().int().min(1).default(5),
+    ZIP_MAX_COMPRESSION_RATIO: z.coerce.number().min(1).default(20),
+    DOCUMENT_AUDIT_HMAC_KEY: z
+      .string()
+      .min(32)
+      .default('local-only-document-audit-hmac-key-0000000000000000'),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     APP_ENCRYPTION_MASTER_KEY: z
       .string()

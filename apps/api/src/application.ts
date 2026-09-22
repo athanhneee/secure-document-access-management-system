@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import cookie from '@fastify/cookie';
+import multipart from '@fastify/multipart';
 import { AppModule } from './app.module.js';
 import { AppConfigService } from './config/config.service.js';
 import { registerFastifyHooks } from './common/hooks/fastify-hooks.js';
@@ -16,6 +17,12 @@ export async function createApplication(): Promise<NestFastifyApplication> {
   const fastify = application.getHttpAdapter().getInstance();
   await fastify.register(cookie as unknown as Parameters<typeof fastify.register>[0]);
   const config = application.get(AppConfigService);
+  await fastify.register(multipart as unknown as Parameters<typeof fastify.register>[0], {
+    limits: {
+      fileSize: config.get('UPLOAD_MAX_FILE_SIZE_BYTES'),
+      files: 1,
+    },
+  });
   application.enableCors({
     origin: config.corsOrigins,
     credentials: true,

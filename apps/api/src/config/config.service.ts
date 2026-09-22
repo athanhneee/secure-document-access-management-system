@@ -5,8 +5,8 @@ import { validateEnv, type EnvConfig } from './env.schema.js';
 export class AppConfigService {
   private readonly config: EnvConfig;
 
-  constructor() {
-    this.config = validateEnv(process.env);
+  constructor(rawEnv: Record<string, unknown> = process.env) {
+    this.config = validateEnv(rawEnv);
   }
 
   get<K extends keyof EnvConfig>(key: K): EnvConfig[K] {

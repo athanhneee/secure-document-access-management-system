@@ -9,6 +9,7 @@ import { RbacModule } from './modules/rbac/rbac.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { DepartmentsModule } from './modules/departments/departments.module.js';
 import { AbacModule } from './modules/abac/abac.module.js';
+import { DocumentsModule } from './modules/documents/documents.module.js';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AbacModule } from './modules/abac/abac.module.js';
     AbacModule,
     UsersModule,
     DepartmentsModule,
+    DocumentsModule,
     SystemHealthModule,
   ],
   providers: [

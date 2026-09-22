@@ -25,16 +25,34 @@ export function validatePolicy(
   const issues: PolicyValidationIssue[] = [];
   for (const rule of policy.rules) {
     if (rule.combiningAlgorithm !== 'DENY_OVERRIDES') {
-      issues.push({ code: 'INVALID_COMBINING_ALGORITHM', ruleId: rule.id });
+      issues.push({
+        code: 'INVALID_COMBINING_ALGORITHM',
+        ruleId: rule.id,
+        message: `Rule "${rule.code}" uses combining algorithm "${rule.combiningAlgorithm}" but only "DENY_OVERRIDES" is supported.`,
+      });
     }
     if (!validObligations(rule.obligations)) {
-      issues.push({ code: 'INVALID_OBLIGATION', ruleId: rule.id });
+      issues.push({
+        code: 'INVALID_OBLIGATION',
+        ruleId: rule.id,
+        message: `Rule "${rule.code}" contains invalid obligations. Allowed types: REQUIRE_WATERMARK, REQUIRE_MFA, MAX_SESSION_MINUTES (1-1440), FORBID_DOWNLOAD, NO_CACHE.`,
+      });
     }
     let reachableGroup = false;
-    if (rule.groups.length === 0) issues.push({ code: 'EMPTY_GROUP', ruleId: rule.id });
+    if (rule.groups.length === 0) {
+      issues.push({
+        code: 'EMPTY_GROUP',
+        ruleId: rule.id,
+        message: `Rule "${rule.code}" has no condition groups.`,
+      });
+    }
     for (const group of rule.groups) {
       if (group.conditions.length === 0) {
-        issues.push({ code: 'EMPTY_GROUP', ruleId: rule.id });
+        issues.push({
+          code: 'EMPTY_GROUP',
+          ruleId: rule.id,
+          message: `Rule "${rule.code}" has an empty condition group (group ${group.id}).`,
+        });
         continue;
       }
       let validGroup = true;
@@ -45,6 +63,7 @@ export function validatePolicy(
             code: 'UNKNOWN_ATTRIBUTE',
             ruleId: rule.id,
             conditionId: condition.id,
+            message: `Condition "${condition.id}" references unknown attribute "${condition.attribute}".`,
           });
           validGroup = false;
           continue;
@@ -57,6 +76,7 @@ export function validatePolicy(
             code: 'UNSUPPORTED_OPERATOR',
             ruleId: rule.id,
             conditionId: condition.id,
+            message: `Operator "${condition.operator}" is not compatible with attribute "${condition.attribute}" of type "${attribute.type}".`,
           });
           validGroup = false;
         } else if (!validExpected(condition, attribute.type)) {
@@ -64,13 +84,20 @@ export function validatePolicy(
             code: 'INVALID_EXPECTED_VALUE',
             ruleId: rule.id,
             conditionId: condition.id,
+            message: `Expected value for condition "${condition.id}" is not valid for operator "${condition.operator}" on attribute type "${attribute.type}".`,
           });
           validGroup = false;
         }
       }
       if (validGroup && !hasContradiction(group.conditions)) reachableGroup = true;
     }
-    if (!reachableGroup) issues.push({ code: 'UNREACHABLE_RULE', ruleId: rule.id });
+    if (!reachableGroup) {
+      issues.push({
+        code: 'UNREACHABLE_RULE',
+        ruleId: rule.id,
+        message: `Rule "${rule.code}" is unreachable because all condition groups contain contradictions or validation errors.`,
+      });
+    }
   }
   return issues;
 }

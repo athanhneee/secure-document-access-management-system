@@ -1,5 +1,10 @@
 import { ATTRIBUTE_CODE_TO_KEY, CONTEXT_ATTRIBUTES } from './attribute-registry.js';
-import { POLICY_OPERATORS } from './abac.types.js';
+import {
+  MAX_SESSION_MINUTES_CEILING,
+  MAX_SESSION_MINUTES_FLOOR,
+  POLICY_OPERATORS,
+  VALID_SIMPLE_OBLIGATION_TYPES,
+} from './abac.types.js';
 import type {
   CompiledPolicy,
   CompiledPolicyRule,
@@ -179,22 +184,27 @@ function parseExpected(value: unknown): ExpectedValue {
 function parseObligations(value: unknown): PolicyObligation[] {
   if (!Array.isArray(value)) throw new PolicyCompilationError(['INVALID_OBLIGATION']);
   return value.map((item) => {
-    if (typeof item === 'string' && item !== 'MAX_SESSION_MINUTES') {
+    if (typeof item === 'string') {
+      if (!(VALID_SIMPLE_OBLIGATION_TYPES as readonly string[]).includes(item)) {
+        throw new PolicyCompilationError(['INVALID_OBLIGATION']);
+      }
       return { type: item } as PolicyObligation;
     }
-    if (
-      isRecord(item) &&
-      item['type'] === 'MAX_SESSION_MINUTES' &&
-      typeof item['minutes'] === 'number'
-    ) {
-      return { type: 'MAX_SESSION_MINUTES', minutes: item['minutes'] };
-    }
-    if (
-      isRecord(item) &&
-      typeof item['type'] === 'string' &&
-      item['type'] !== 'MAX_SESSION_MINUTES'
-    ) {
-      return { type: item['type'] } as PolicyObligation;
+    if (isRecord(item) && typeof item['type'] === 'string') {
+      if (item['type'] === 'MAX_SESSION_MINUTES') {
+        if (
+          typeof item['minutes'] !== 'number' ||
+          !Number.isInteger(item['minutes']) ||
+          item['minutes'] < MAX_SESSION_MINUTES_FLOOR ||
+          item['minutes'] > MAX_SESSION_MINUTES_CEILING
+        ) {
+          throw new PolicyCompilationError(['INVALID_OBLIGATION']);
+        }
+        return { type: 'MAX_SESSION_MINUTES', minutes: item['minutes'] };
+      }
+      if ((VALID_SIMPLE_OBLIGATION_TYPES as readonly string[]).includes(item['type'])) {
+        return { type: item['type'] } as PolicyObligation;
+      }
     }
     throw new PolicyCompilationError(['INVALID_OBLIGATION']);
   });

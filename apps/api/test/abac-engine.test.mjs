@@ -468,3 +468,248 @@ test('same input and policy version always produce byte-identical output', () =>
     assert.equal(first, second);
   }
 });
+
+// ── Additional coverage tests ──────────────────────────────────────────────
+
+test('null resource classificationRank denies with MISSING_REQUIRED_ATTRIBUTE', () => {
+  const input = structuredClone(baseInput);
+  input.resource.classificationRank = null;
+  const result = evaluatePolicy(
+    policy([rule(1, [{ attribute: 'environment.mfa', operator: 'EQ', expected: true }])]),
+    input,
+  );
+  assert.equal(result.decision, 'DENY');
+  assert.equal(result.reasonCode, 'MISSING_REQUIRED_ATTRIBUTE');
+});
+
+test('CIDR /0 matches any IPv4 and /32 matches exact IPv4 only', () => {
+  assert.equal(cidrMatch('192.168.1.1', '0.0.0.0/0'), true);
+  assert.equal(cidrMatch('255.255.255.255', '0.0.0.0/0'), true);
+  assert.equal(cidrMatch('10.20.30.40', '10.20.30.40/32'), true);
+  assert.equal(cidrMatch('10.20.30.41', '10.20.30.40/32'), false);
+});
+
+test('CIDR /128 matches exact IPv6 only', () => {
+  assert.equal(cidrMatch('2001:db8::1', '2001:db8::1/128'), true);
+  assert.equal(cidrMatch('2001:db8::2', '2001:db8::1/128'), false);
+  assert.equal(cidrMatch('::1', '::1/128'), true);
+  assert.equal(cidrMatch('::2', '::1/128'), false);
+});
+
+test('CIDR without prefix length matches exact address', () => {
+  assert.equal(cidrMatch('10.20.30.40', '10.20.30.40'), true);
+  assert.equal(cidrMatch('10.20.30.41', '10.20.30.40'), false);
+});
+
+test('TIME_BETWEEN midnight wrap handles 23:00 to 01:00 correctly', () => {
+  const overnight = rule(1, [
+    {
+      attribute: 'environment.currentTime',
+      operator: 'TIME_BETWEEN',
+      expected: { start: '23:00', end: '01:00', timeZone: 'UTC' },
+    },
+  ]);
+  const at2330 = structuredClone(baseInput);
+  at2330.environment.currentTime = '2026-06-15T23:30:00.000Z';
+  assert.equal(evaluatePolicy(policy([overnight]), at2330).decision, 'PERMIT');
+
+  const at0030 = structuredClone(baseInput);
+  at0030.environment.currentTime = '2026-06-15T00:30:00.000Z';
+  assert.equal(evaluatePolicy(policy([overnight]), at0030).decision, 'PERMIT');
+
+  const at0200 = structuredClone(baseInput);
+  at0200.environment.currentTime = '2026-06-15T02:00:00.000Z';
+  assert.equal(evaluatePolicy(policy([overnight]), at0200).decision, 'DENY');
+});
+
+test('TIME_BETWEEN full day range 00:00:00 to 23:59:59 permits at boundaries', () => {
+  const allDay = rule(1, [
+    {
+      attribute: 'environment.currentTime',
+      operator: 'TIME_BETWEEN',
+      expected: { start: '00:00:00', end: '23:59:59', timeZone: 'UTC' },
+    },
+  ]);
+  const atMidnight = structuredClone(baseInput);
+  atMidnight.environment.currentTime = '2026-06-15T00:00:00.000Z';
+  assert.equal(evaluatePolicy(policy([allDay]), atMidnight).decision, 'PERMIT');
+
+  const atEnd = structuredClone(baseInput);
+  atEnd.environment.currentTime = '2026-06-15T23:59:59.000Z';
+  assert.equal(evaluatePolicy(policy([allDay]), atEnd).decision, 'PERMIT');
+});
+
+test('multiple DENY rules matching all appear in matchedRuleIds', () => {
+  const deny1 = rule(5, [{ attribute: 'environment.mfa', operator: 'EQ', expected: true }], {
+    effect: 'DENY',
+    priority: 10,
+  });
+  const deny2 = rule(8, [{ attribute: 'environment.riskScore', operator: 'LTE', expected: 50 }], {
+    effect: 'DENY',
+    priority: 20,
+  });
+  const result = evaluatePolicy(policy([deny1, deny2]), baseInput);
+  assert.equal(result.decision, 'DENY');
+  assert.equal(result.reasonCode, 'EXPLICIT_DENY');
+  assert.ok(result.matchedRuleIds.includes('5'));
+  assert.ok(result.matchedRuleIds.includes('8'));
+});
+
+test('DENY wins over PERMIT at same priority regardless of id order', () => {
+  const permit = rule(1, [{ attribute: 'environment.mfa', operator: 'EQ', expected: true }], {
+    priority: 50,
+  });
+  const deny = rule(999, [{ attribute: 'environment.riskScore', operator: 'GTE', expected: 0 }], {
+    effect: 'DENY',
+    priority: 50,
+  });
+  const result = evaluatePolicy(policy([permit, deny]), baseInput);
+  assert.equal(result.decision, 'DENY');
+  assert.equal(result.reasonCode, 'EXPLICIT_DENY');
+});
+
+test('rule at exact valid_to timestamp is not matched', () => {
+  const expiredRule = rule(1, [{ attribute: 'environment.mfa', operator: 'EQ', expected: true }], {
+    validFrom: '2020-01-01T00:00:00.000Z',
+    validTo: '2026-01-01T02:00:00.000Z',
+  });
+  const input = structuredClone(baseInput);
+  input.environment.currentTime = '2026-01-01T02:00:00.000Z';
+  const result = evaluatePolicy(policy([expiredRule]), input);
+  assert.equal(result.decision, 'DENY');
+  assert.equal(result.reasonCode, 'DEFAULT_DENY');
+  assert.deepEqual(result.matchedRuleIds, []);
+});
+
+test('rule not yet valid (currentTime before validFrom) is not matched', () => {
+  const futureRule = rule(1, [{ attribute: 'environment.mfa', operator: 'EQ', expected: true }], {
+    validFrom: '2030-01-01T00:00:00.000Z',
+    validTo: null,
+  });
+  const result = evaluatePolicy(policy([futureRule]), baseInput);
+  assert.equal(result.decision, 'DENY');
+  assert.equal(result.reasonCode, 'DEFAULT_DENY');
+});
+
+test('empty projects array is treated as missing for EXISTS check', () => {
+  const input = structuredClone(baseInput);
+  input.subject.projects = [];
+  const existsTrue = rule(1, [
+    { attribute: 'subject.projects', operator: 'EXISTS', expected: true },
+  ]);
+  assert.equal(evaluatePolicy(policy([existsTrue]), input).decision, 'DENY');
+  const existsFalse = rule(2, [
+    { attribute: 'subject.projects', operator: 'EXISTS', expected: false },
+  ]);
+  assert.equal(evaluatePolicy(policy([existsFalse]), input).decision, 'PERMIT');
+});
+
+test('compiler rejects unknown obligation type strings', () => {
+  const storedRule = {
+    id: 1n,
+    code: 'INVALID_OBLIGATION_TYPE',
+    effect: 'PERMIT',
+    priority: 1,
+    targetResource: 'DOCUMENT',
+    targetAction: 'VIEW',
+    combiningAlgorithm: 'DENY_OVERRIDES',
+    validFrom: new Date('2025-01-01T00:00:00.000Z'),
+    validTo: null,
+    obligations: ['UNKNOWN_OBLIGATION'],
+    conditions: [
+      {
+        id: 1n,
+        definitionCode: null,
+        contextKey: 'environment.mfa',
+        operator: 'EQ',
+        expectedValue: true,
+        group: 1,
+        sequence: 1,
+      },
+    ],
+  };
+  assert.throws(
+    () => compilePolicy(1n, [], [storedRule]),
+    (error) =>
+      error instanceof PolicyCompilationError && error.issueCodes.includes('INVALID_OBLIGATION'),
+  );
+});
+
+test('compiler rejects MAX_SESSION_MINUTES with minutes out of range', () => {
+  const makeRule = (minutes) => ({
+    id: 1n,
+    code: 'BAD_MINUTES',
+    effect: 'PERMIT',
+    priority: 1,
+    targetResource: 'DOCUMENT',
+    targetAction: 'VIEW',
+    combiningAlgorithm: 'DENY_OVERRIDES',
+    validFrom: new Date('2025-01-01T00:00:00.000Z'),
+    validTo: null,
+    obligations: [{ type: 'MAX_SESSION_MINUTES', minutes }],
+    conditions: [
+      {
+        id: 1n,
+        definitionCode: null,
+        contextKey: 'environment.mfa',
+        operator: 'EQ',
+        expectedValue: true,
+        group: 1,
+        sequence: 1,
+      },
+    ],
+  });
+  for (const minutes of [0, -1, 1441, 99999, 0.5]) {
+    assert.throws(
+      () => compilePolicy(1n, [], [makeRule(minutes)]),
+      (error) =>
+        error instanceof PolicyCompilationError && error.issueCodes.includes('INVALID_OBLIGATION'),
+      `Expected rejection for minutes=${minutes}`,
+    );
+  }
+});
+
+test('compiler accepts MAX_SESSION_MINUTES at boundaries 1 and 1440', () => {
+  const makeRule = (minutes) => ({
+    id: 1n,
+    code: 'BOUNDARY_MINUTES',
+    effect: 'PERMIT',
+    priority: 1,
+    targetResource: 'DOCUMENT',
+    targetAction: 'VIEW',
+    combiningAlgorithm: 'DENY_OVERRIDES',
+    validFrom: new Date('2025-01-01T00:00:00.000Z'),
+    validTo: null,
+    obligations: [{ type: 'MAX_SESSION_MINUTES', minutes }],
+    conditions: [
+      {
+        id: 1n,
+        definitionCode: null,
+        contextKey: 'environment.mfa',
+        operator: 'EQ',
+        expectedValue: true,
+        group: 1,
+        sequence: 1,
+      },
+    ],
+  });
+  for (const minutes of [1, 1440]) {
+    const compiled = compilePolicy(1n, [], [makeRule(minutes)]);
+    assert.ok(
+      compiled.rules[0].obligations.some(
+        (obligation) => obligation.type === 'MAX_SESSION_MINUTES' && obligation.minutes === minutes,
+      ),
+    );
+  }
+});
+
+test('validation issues include descriptive messages', () => {
+  const badPolicy = policy([
+    rule(1, [{ attribute: 'nonexistent.attr', operator: 'EQ', expected: 'value' }]),
+  ]);
+  const issues = validatePolicy(badPolicy, CONTEXT_ATTRIBUTES);
+  assert.ok(issues.length > 0);
+  for (const issue of issues) {
+    assert.ok(typeof issue.message === 'string' && issue.message.length > 0);
+  }
+});

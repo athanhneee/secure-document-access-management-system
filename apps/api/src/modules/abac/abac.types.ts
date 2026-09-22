@@ -118,6 +118,16 @@ export interface AttributeDescriptor {
   required: boolean;
 }
 
+export const VALID_SIMPLE_OBLIGATION_TYPES = [
+  'REQUIRE_WATERMARK',
+  'REQUIRE_MFA',
+  'FORBID_DOWNLOAD',
+  'NO_CACHE',
+] as const;
+
+export const MAX_SESSION_MINUTES_FLOOR = 1;
+export const MAX_SESSION_MINUTES_CEILING = 1440;
+
 export interface PolicyValidationIssue {
   code:
     | 'UNKNOWN_ATTRIBUTE'
@@ -129,4 +139,5 @@ export interface PolicyValidationIssue {
     | 'INVALID_COMBINING_ALGORITHM';
   ruleId: string;
   conditionId?: string;
+  message?: string;
 }

@@ -1,0 +1,305 @@
+name: secure-document-access-system-local
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - backend
+    - local_access
+
+services:
+  postgres:
+    <<: *service-defaults
+    image: postgres:18.6-alpine3.24
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Generate .local/dev.env first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate .local/dev.env first}
+      POSTGRES_DB: ${POSTGRES_DB:?Generate .local/dev.env first}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports:
+      - 127.0.0.1:5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    cpus: 1.0
+    mem_limit: 1g
+    mem_reservation: 256m
+    pids_limit: 256
+
+  redis-data-init:
+    image: redis:8.2.9-alpine
+    user: root
+    restart: 'no'
+    entrypoint: [/bin/sh, -ec]
+    command: ['chown -R 999:1000 /data']
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.25
+    mem_limit: 32m
+    pids_limit: 32
+
+  redis:
+    <<: *service-defaults
+    image: redis:8.2.9-alpine
+    user: redis
+    depends_on:
+      redis-data-init:
+        condition: service_completed_successfully
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$${REDIS_PASSWORD}"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Generate .local/dev.env first}
+    ports:
+      - 127.0.0.1:6379:6379
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [CMD-SHELL, 'redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -qx PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    cpus: 0.5
+    mem_limit: 256m
+    mem_reservation: 64m
+    pids_limit: 128
+
+  minio-data-init:
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    user: root
+    restart: 'no'
+    entrypoint: [/bin/sh, -ec]
+    command: ['chown -R 1000:1000 /data']
+    volumes:
+      - minio_data:/data
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.25
+    mem_limit: 64m
+    pids_limit: 32
+
+  minio:
+    <<: *service-defaults
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    user: '1000:1000'
+    depends_on:
+      minio-data-init:
+        condition: service_completed_successfully
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Generate .local/dev.env first}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Generate .local/dev.env first}
+      MINIO_BROWSER_REDIRECT_URL: http://127.0.0.1:9001
+      MINIO_PROMETHEUS_AUTH_TYPE: public
+    ports:
+      - 127.0.0.1:9000:9000
+      - 127.0.0.1:9001:9001
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:9000/minio/health/ready]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    cpus: 1.0
+    mem_limit: 768m
+    mem_reservation: 128m
+    pids_limit: 256
+
+  minio-bootstrap:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    user: '1000:1000'
+    restart: 'no'
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MC_CONFIG_DIR: /tmp/.mc
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Generate .local/dev.env first}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Generate .local/dev.env first}
+      STORAGE_BUCKET_DOCUMENTS: ${STORAGE_BUCKET_DOCUMENTS:-secure-documents}
+      STORAGE_BUCKET_DERIVATIVES: ${STORAGE_BUCKET_DERIVATIVES:-secure-derivatives}
+      STORAGE_BUCKET_QUARANTINE: ${STORAGE_BUCKET_QUARANTINE:-secure-quarantine}
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        for bucket in "$${STORAGE_BUCKET_DOCUMENTS}" "$${STORAGE_BUCKET_DERIVATIVES}" "$${STORAGE_BUCKET_QUARANTINE}"; do
+          mc mb --ignore-existing "local/$${bucket}"
+          mc anonymous set none "local/$${bucket}"
+          mc version enable "local/$${bucket}"
+        done
+        mc stat "local/$${STORAGE_BUCKET_DOCUMENTS}"
+        mc stat "local/$${STORAGE_BUCKET_DERIVATIVES}"
+        mc stat "local/$${STORAGE_BUCKET_QUARANTINE}"
+    networks:
+      - backend
+    cpus: 0.25
+    mem_limit: 128m
+    pids_limit: 64
+
+  clamav:
+    <<: *service-defaults
+    image: clamav/clamav-debian:1.5.4
+    ports:
+      - 127.0.0.1:3310:3310
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    healthcheck:
+      test: [CMD, clamdscan, --ping=5]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+    networks:
+      - backend
+      - local_access
+      - signature_updates
+    cpus: 1.5
+    mem_limit: 1536m
+    mem_reservation: 512m
+    pids_limit: 256
+
+  mailpit-data-init:
+    image: axllent/mailpit:v1.30.6
+    user: root
+    restart: 'no'
+    entrypoint: [/bin/sh, -ec]
+    command: ['chown -R 1000:1000 /data']
+    volumes:
+      - mailpit_data:/data
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.25
+    mem_limit: 32m
+    pids_limit: 32
+
+  mailpit:
+    <<: *service-defaults
+    image: axllent/mailpit:v1.30.6
+    user: '1000:1000'
+    depends_on:
+      mailpit-data-init:
+        condition: service_completed_successfully
+    environment:
+      MP_MAX_MESSAGES: '500'
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_AUTH_ACCEPT_ANY: '0'
+      MP_SMTP_AUTH_ALLOW_INSECURE: '0'
+    ports:
+      - 127.0.0.1:1025:1025
+      - 127.0.0.1:8025:8025
+    volumes:
+      - mailpit_data:/data
+    healthcheck:
+      test: [CMD, wget, --quiet, --spider, http://localhost:8025/readyz]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    cpus: 0.25
+    mem_limit: 256m
+    mem_reservation: 32m
+    pids_limit: 128
+
+  prometheus:
+    <<: *service-defaults
+    image: prom/prometheus:v3.13.3
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=3d
+      - --storage.tsdb.retention.size=512MB
+    ports:
+      - 127.0.0.1:9090:9090
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: [CMD, wget, --quiet, --spider, http://localhost:9090/-/ready]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cpus: 0.5
+    mem_limit: 512m
+    mem_reservation: 64m
+    pids_limit: 128
+
+  grafana:
+    <<: *service-defaults
+    image: grafana/grafana:13.2.2
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?Generate .local/dev.env first}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Generate .local/dev.env first}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+    ports:
+      - 127.0.0.1:3002:3000
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    healthcheck:
+      test: [CMD, wget, --quiet, --spider, http://localhost:3000/api/health]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    cpus: 0.5
+    mem_limit: 512m
+    mem_reservation: 64m
+    pids_limit: 256
+
+networks:
+  backend:
+    name: sda-local-internal
+    internal: true
+  local_access:
+    name: sda-local-loopback-access
+  signature_updates:
+    name: sda-local-signature-updates
+
+volumes:
+  postgres_data:
+    name: sda-local-postgres-data
+  redis_data:
+    name: sda-local-redis-data
+  minio_data:
+    name: sda-local-minio-data
+  clamav_signatures:
+    name: sda-local-clamav-signatures
+  mailpit_data:
+    name: sda-local-mailpit-data
+  prometheus_data:
+    name: sda-local-prometheus-data
+  grafana_data:
+    name: sda-local-grafana-data

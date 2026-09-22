@@ -1,0 +1,14 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalDependencies": ["packages/config/*.json", ".oxlintrc.json"],
+  "globalEnv": ["NODE_ENV", "CI", "API_HOST", "API_PORT", "PORT", "NEXT_TELEMETRY_DISABLED"],
+  "tasks": {
+    "build": { "dependsOn": ["^build"], "outputs": ["dist/**", ".next/**", "!.next/cache/**"] },
+    "dev": { "cache": false, "persistent": true },
+    "lint": { "outputs": [] },
+    "typecheck": { "dependsOn": ["^build"], "outputs": [] },
+    "test": { "dependsOn": ["build"], "outputs": [] },
+    "test:integration": { "dependsOn": ["build"], "cache": false, "outputs": [] },
+    "test:e2e": { "dependsOn": ["@sda/api#build", "@sda/web#build"], "cache": false, "outputs": [] }
+  }
+}

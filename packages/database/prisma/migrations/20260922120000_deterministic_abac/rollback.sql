@@ -1,0 +1,11 @@
+DROP TRIGGER IF EXISTS trg_policy_rule_conditions_version ON policy_rule_conditions;
+DROP TRIGGER IF EXISTS trg_attribute_options_version ON attribute_options;
+DROP FUNCTION IF EXISTS bump_abac_parent_version();
+DROP TRIGGER IF EXISTS trg_policy_rules_version ON policy_rules;
+DROP TRIGGER IF EXISTS trg_attribute_definitions_version ON attribute_definitions;
+DROP FUNCTION IF EXISTS bump_abac_row_version();
+ALTER TABLE policy_rules DROP CONSTRAINT IF EXISTS ck_policy_rule_obligations_array;
+ALTER TABLE policy_rules DROP COLUMN IF EXISTS version;
+ALTER TABLE policy_rules DROP COLUMN IF EXISTS obligations;
+ALTER TABLE attribute_definitions DROP COLUMN IF EXISTS version;
+DROP SEQUENCE IF EXISTS abac_policy_version_seq;

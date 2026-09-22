@@ -1,0 +1,110 @@
+@startuml
+title Hệ thống quản lý truy cập tài liệu mật - Use Case tổng quát
+left to right direction
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+
+actor "Quản trị viên\nhệ thống" as Admin
+actor "Nhân viên\nbảo mật" as Security
+actor "Kiểm toán viên" as Auditor
+actor "Chủ sở hữu\ntài liệu" as Owner
+actor "Người đọc\ntài liệu" as Reader
+
+rectangle "Hệ thống quản lý truy cập tài liệu mật" {
+  package "Quản trị và chính sách" {
+    usecase "Quản lý tài khoản" as UC01
+    usecase "Cấu hình RBAC" as UC02
+    usecase "Quản lý danh mục ABAC" as UC03
+    usecase "Định nghĩa Policy Rule" as UC04
+    usecase "Cấu hình watermark" as UC05
+    usecase "Theo dõi vận hành" as UC06
+  }
+
+  package "Vòng đời tài liệu" {
+    usecase "Tải lên tài liệu" as UC07
+    usecase "Phân loại tài liệu" as UC08
+    usecase "Cập nhật phiên bản" as UC09
+    usecase "Lưu trữ tài liệu" as UC10
+    usecase "Điều chỉnh phân loại" as UC11
+  }
+
+  package "Yêu cầu và cấp quyền" {
+    usecase "Cấp quyền trực tiếp" as UC12
+    usecase "Gửi yêu cầu truy cập" as UC13
+    usecase "Theo dõi yêu cầu" as UC14
+    usecase "Hủy yêu cầu" as UC15
+    usecase "Duyệt yêu cầu" as UC16
+    usecase "Thu hồi quyền" as UC17
+    usecase "Xem quyền đang cấp" as UC18
+  }
+
+  package "Truy cập có kiểm soát" {
+    usecase "Tìm kiếm tài liệu" as UC19
+    usecase "Xem tài liệu trực tuyến" as UC20
+    usecase "Tải xuống tài liệu" as UC21
+    usecase "Đánh giá quyền RBAC ABAC" as UC22
+    usecase "Chèn watermark định danh" as UC23
+    usecase "Ghi Audit Log" as UC24
+  }
+
+  package "Giám sát và điều tra" {
+    usecase "Tra cứu Audit Log" as UC25
+    usecase "Xuất báo cáo kiểm toán" as UC26
+    usecase "Nhận và xem cảnh báo" as UC27
+    usecase "Đối chiếu watermark" as UC28
+    usecase "Lập báo cáo sự cố" as UC29
+    usecase "Gửi báo cáo và đề xuất" as UC30
+  }
+}
+
+Admin --> UC01
+Admin --> UC02
+Admin --> UC03
+Admin --> UC04
+Admin --> UC05
+Admin --> UC06
+
+Owner --> UC07
+Owner --> UC09
+Owner --> UC10
+Owner --> UC11
+Owner --> UC12
+Owner --> UC16
+Owner --> UC17
+Owner --> UC18
+Owner --> UC25
+
+Reader --> UC13
+Reader --> UC14
+Reader --> UC15
+Reader --> UC19
+Reader --> UC20
+Reader --> UC21
+
+Security --> UC25
+Security --> UC27
+Security --> UC28
+Security --> UC29
+Security --> UC30
+Auditor --> UC25
+Auditor --> UC26
+Auditor --> UC27
+Auditor --> UC28
+
+UC07 .> UC08 : <<include>>
+UC12 .> UC22 : <<include>>
+UC16 .> UC22 : <<include>>
+UC20 .> UC22 : <<include>>
+UC20 .> UC23 : <<include>>
+UC20 .> UC24 : <<include>>
+UC21 .> UC22 : <<include>>
+UC21 .> UC23 : <<include>>
+UC21 .> UC24 : <<include>>
+UC07 .> UC24 : <<include>>
+UC16 .> UC24 : <<include>>
+UC17 .> UC24 : <<include>>
+UC13 .> UC24 : <<include>>
+UC26 .> UC25 : <<include>>
+UC29 .> UC27 : <<extend>>
+@enduml

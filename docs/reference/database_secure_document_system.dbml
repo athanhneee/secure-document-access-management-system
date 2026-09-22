@@ -1,0 +1,589 @@
+// Hệ thống quản lý truy cập tài liệu mật
+// Import file này tại https://dbdiagram.io
+
+Project SecureDocumentAccess {
+  database_type: 'PostgreSQL'
+  Note: 'RBAC, ABAC, watermark, audit log và quản lý vòng đời quyền truy cập'
+}
+
+Enum user_status {
+  PENDING
+  ACTIVE
+  LOCKED
+  DISABLED
+}
+
+Enum data_type {
+  STRING
+  NUMBER
+  BOOLEAN
+  DATE
+  ENUM
+}
+
+Enum attribute_scope {
+  USER
+  RESOURCE
+  ENVIRONMENT
+}
+
+Enum policy_effect {
+  PERMIT
+  DENY
+}
+
+Enum document_status {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+  DELETED
+}
+
+Enum scan_status {
+  PENDING
+  CLEAN
+  INFECTED
+  FAILED
+}
+
+Enum request_status {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+Enum permission_code {
+  DISCOVER
+  VIEW
+  DOWNLOAD
+  SHARE
+  MANAGE
+}
+
+Enum principal_type {
+  USER
+  ROLE
+}
+
+Enum grant_source {
+  DIRECT
+  ACCESS_REQUEST
+  SYSTEM
+}
+
+Enum grant_status {
+  ACTIVE
+  REVOKED
+  EXPIRED
+  SUSPENDED
+}
+
+Enum session_status {
+  ACTIVE
+  ENDED
+  TERMINATED
+}
+
+Enum alert_status {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  FALSE_POSITIVE
+}
+
+Enum severity_level {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+Enum incident_status {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  CLOSED
+}
+
+Enum notification_status {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
+Table departments {
+  id bigint [pk]
+  code varchar(30) [not null, unique]
+  name varchar(150) [not null]
+  parent_id bigint
+  is_active boolean [not null, default: `TRUE`]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table users {
+  id bigint [pk]
+  username varchar(80) [not null, unique]
+  email varchar(255) [not null, unique]
+  password_hash varchar(255) [not null]
+  full_name varchar(150) [not null]
+  employee_code varchar(50) [unique]
+  department_id bigint
+  status user_status [not null, default: `'PENDING'`]
+  failed_login_count integer [not null, default: `0`]
+  locked_until timestamp
+  last_login_at timestamp
+  created_by bigint
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+  disabled_at timestamp
+}
+
+Table roles {
+  id bigint [pk]
+  code varchar(50) [not null, unique]
+  name varchar(120) [not null]
+  description text
+  is_system_role boolean [not null, default: `FALSE`]
+  is_active boolean [not null, default: `TRUE`]
+  created_by bigint
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table permissions {
+  id bigint [pk]
+  code varchar(80) [not null, unique]
+  name varchar(150) [not null]
+  resource_type varchar(80) [not null]
+  action varchar(80) [not null]
+  description text
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table user_roles {
+  id bigint [pk]
+  user_id bigint [not null]
+  role_id bigint [not null]
+  scope_department_id bigint
+  valid_from timestamp [not null, default: `now()`]
+  valid_to timestamp
+  assigned_by bigint [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table role_permissions {
+  role_id bigint [not null]
+  permission_id bigint [not null]
+  granted_by bigint [not null]
+  created_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (role_id, permission_id) [pk]
+  }
+}
+
+Table attribute_definitions {
+  id bigint [pk]
+  code varchar(80) [not null, unique]
+  name varchar(150) [not null]
+  scope attribute_scope [not null]
+  value_type data_type [not null]
+  description text
+  is_required boolean [not null, default: `FALSE`]
+  is_multi_value boolean [not null, default: `FALSE`]
+  is_active boolean [not null, default: `TRUE`]
+  created_by bigint
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table attribute_options {
+  id bigint [pk]
+  attribute_definition_id bigint [not null]
+  value_code varchar(120) [not null]
+  display_name varchar(150) [not null]
+  numeric_rank integer
+  is_active boolean [not null, default: `TRUE`]
+  sort_order integer [not null, default: `0`]
+}
+
+Table user_attribute_assignments {
+  id bigint [pk]
+  user_id bigint [not null]
+  attribute_definition_id bigint [not null]
+  option_id bigint
+  value_text text
+  value_number numeric(18,4)
+  value_boolean boolean
+  value_date date
+  valid_from timestamp [not null, default: `now()`]
+  valid_to timestamp
+  assigned_by bigint [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table policy_rules {
+  id bigint [pk]
+  code varchar(80) [not null, unique]
+  name varchar(180) [not null]
+  description text
+  effect policy_effect [not null]
+  priority integer [not null, default: `100`]
+  target_resource varchar(80) [not null, default: `'DOCUMENT'`]
+  target_action permission_code
+  combining_algorithm varchar(40) [not null, default: `'DENY_OVERRIDES'`]
+  is_active boolean [not null, default: `TRUE`]
+  valid_from timestamp [not null, default: `now()`]
+  valid_to timestamp
+  created_by bigint [not null]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table policy_rule_conditions {
+  id bigint [pk]
+  policy_rule_id bigint [not null]
+  attribute_definition_id bigint
+  context_key varchar(100)
+  operator varchar(30) [not null]
+  expected_value json [not null]
+  condition_group integer [not null, default: `1`]
+  sequence_no integer [not null, default: `1`]
+}
+
+Table classification_levels {
+  id bigint [pk]
+  code varchar(40) [not null, unique]
+  name varchar(100) [not null]
+  rank integer [not null, unique]
+  description text
+  default_view_days integer
+  allow_download boolean [not null, default: `FALSE`]
+  require_watermark boolean [not null, default: `TRUE`]
+  is_active boolean [not null, default: `TRUE`]
+}
+
+Table business_categories {
+  id bigint [pk]
+  code varchar(50) [not null, unique]
+  name varchar(150) [not null]
+  department_id bigint
+  description text
+  is_active boolean [not null, default: `TRUE`]
+}
+
+Table documents {
+  id uuid [pk]
+  document_code varchar(60) [not null, unique]
+  title varchar(255) [not null]
+  description text
+  owner_id bigint [not null]
+  department_id bigint [not null]
+  current_version_id bigint
+  status document_status [not null, default: `'DRAFT'`]
+  discoverable boolean [not null, default: `TRUE`]
+  retention_until date
+  archived_at timestamp
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table document_versions {
+  id bigint [pk]
+  document_id uuid [not null]
+  version_no integer [not null]
+  original_filename varchar(255) [not null]
+  storage_key varchar(500) [not null, unique]
+  mime_type varchar(150) [not null]
+  file_size_bytes bigint [not null]
+  sha256_hash char(64) [not null]
+  encryption_key_ref varchar(255) [not null]
+  scan_status scan_status [not null, default: `'PENDING'`]
+  change_note text
+  uploaded_by bigint [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table document_classification_history {
+  id bigint [pk]
+  document_id uuid [not null]
+  classification_level_id bigint [not null]
+  business_category_id bigint [not null]
+  reason text
+  classified_by bigint [not null]
+  effective_from timestamp [not null, default: `now()`]
+  effective_to timestamp
+}
+
+Table access_requests {
+  id uuid [pk]
+  document_id uuid [not null]
+  requester_id bigint [not null]
+  reason text [not null]
+  requested_from timestamp [not null]
+  requested_until timestamp [not null]
+  status request_status [not null, default: `'PENDING'`]
+  submitted_at timestamp [not null, default: `now()`]
+  cancelled_at timestamp
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table access_request_permissions {
+  access_request_id uuid [not null]
+  permission permission_code [not null]
+
+  indexes {
+    (access_request_id, permission) [pk]
+  }
+}
+
+Table access_request_decisions {
+  id bigint [pk]
+  access_request_id uuid [not null, unique]
+  decision request_status [not null]
+  decided_by bigint [not null]
+  decision_note text
+  approved_from timestamp
+  approved_until timestamp
+  decided_at timestamp [not null, default: `now()`]
+}
+
+Table access_grants {
+  id uuid [pk]
+  document_id uuid [not null]
+  principal_type principal_type [not null]
+  principal_user_id bigint
+  principal_role_id bigint
+  source grant_source [not null]
+  access_request_id uuid
+  valid_from timestamp [not null]
+  valid_until timestamp [not null]
+  status grant_status [not null, default: `'ACTIVE'`]
+  granted_by bigint [not null]
+  granted_at timestamp [not null, default: `now()`]
+  revoked_by bigint
+  revoked_at timestamp
+  revoke_reason text
+}
+
+Table access_grant_permissions {
+  access_grant_id uuid [not null]
+  permission permission_code [not null]
+
+  indexes {
+    (access_grant_id, permission) [pk]
+  }
+}
+
+Table access_sessions {
+  id uuid [pk]
+  access_grant_id uuid [not null]
+  document_version_id bigint [not null]
+  user_id bigint [not null]
+  ip_address varchar [not null]
+  user_agent text
+  device_fingerprint varchar(255)
+  status session_status [not null, default: `'ACTIVE'`]
+  started_at timestamp [not null, default: `now()`]
+  last_activity_at timestamp [not null, default: `now()`]
+  ended_at timestamp
+  terminated_reason text
+}
+
+Table watermark_configs {
+  id bigint [pk]
+  name varchar(120) [not null]
+  classification_level_id bigint
+  is_default boolean [not null, default: `FALSE`]
+  is_visible boolean [not null, default: `TRUE`]
+  template_text varchar(500) [not null]
+  opacity_percent smallint [not null, default: `25`]
+  rotation_degrees smallint [not null, default: `-30`]
+  font_size smallint [not null, default: `12`]
+  color_hex char(7) [not null, default: `'#808080'`]
+  include_qr_code boolean [not null, default: `TRUE`]
+  is_active boolean [not null, default: `TRUE`]
+  created_by bigint [not null]
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table watermark_instances {
+  id uuid [pk]
+  watermark_config_id bigint [not null]
+  access_session_id uuid [not null]
+  document_version_id bigint [not null]
+  user_id bigint [not null]
+  watermark_token varchar(128) [not null, unique]
+  rendered_text varchar(1000) [not null]
+  output_sha256_hash char(64)
+  generated_at timestamp [not null, default: `now()`]
+}
+
+Table audit_logs {
+  id bigint [pk]
+  occurred_at timestamp [not null, default: `now()`]
+  actor_user_id bigint
+  actor_username varchar(80)
+  action varchar(100) [not null]
+  object_type varchar(80) [not null]
+  object_id varchar(100)
+  document_id uuid
+  access_session_id uuid
+  outcome varchar(20) [not null]
+  reason_code varchar(80)
+  ip_address varchar
+  user_agent text
+  correlation_id uuid [not null]
+  details json [not null, default: `'{}'::jsonb`]
+  previous_hash char(64)
+  entry_hash char(64) [not null]
+}
+
+Table security_alerts {
+  id uuid [pk]
+  alert_type varchar(80) [not null]
+  severity severity_level [not null]
+  status alert_status [not null, default: `'OPEN'`]
+  title varchar(255) [not null]
+  description text [not null]
+  detected_user_id bigint
+  document_id uuid
+  detected_at timestamp [not null, default: `now()`]
+  assigned_to bigint
+  resolved_at timestamp
+  resolution_note text
+}
+
+Table alert_audit_links {
+  alert_id uuid [not null]
+  audit_log_id bigint [not null]
+
+  indexes {
+    (alert_id, audit_log_id) [pk]
+  }
+}
+
+Table incident_reports {
+  id uuid [pk]
+  incident_code varchar(50) [not null, unique]
+  alert_id uuid
+  title varchar(255) [not null]
+  summary text [not null]
+  findings text
+  impact_assessment text
+  status incident_status [not null, default: `'DRAFT'`]
+  prepared_by bigint [not null]
+  submitted_to_owner bigint
+  submitted_to_admin bigint
+  created_at timestamp [not null, default: `now()`]
+  submitted_at timestamp
+  closed_at timestamp
+}
+
+Table incident_actions {
+  id bigint [pk]
+  incident_report_id uuid [not null]
+  action_type varchar(80) [not null]
+  recommendation text [not null]
+  assigned_to bigint
+  due_at timestamp
+  completed_at timestamp
+  completion_note text
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table notifications {
+  id uuid [pk]
+  recipient_id bigint [not null]
+  notification_type varchar(80) [not null]
+  title varchar(255) [not null]
+  body text [not null]
+  related_object_type varchar(80)
+  related_object_id varchar(100)
+  status notification_status [not null, default: `'UNREAD'`]
+  created_at timestamp [not null, default: `now()`]
+  read_at timestamp
+}
+
+Table system_health_snapshots {
+  id bigint [pk]
+  captured_at timestamp [not null, default: `now()`]
+  service_name varchar(100) [not null]
+  status varchar(20) [not null]
+  response_time_ms integer
+  storage_used_bytes bigint
+  storage_total_bytes bigint
+  error_count integer [not null, default: `0`]
+  details json [not null, default: `'{}'::jsonb`]
+}
+
+Ref: departments.parent_id > departments.id
+Ref: users.department_id > departments.id
+Ref: users.created_by > users.id
+Ref: roles.created_by > users.id
+Ref: user_roles.user_id > users.id
+Ref: user_roles.role_id > roles.id
+Ref: user_roles.scope_department_id > departments.id
+Ref: user_roles.assigned_by > users.id
+Ref: role_permissions.role_id > roles.id
+Ref: role_permissions.permission_id > permissions.id
+Ref: role_permissions.granted_by > users.id
+Ref: attribute_definitions.created_by > users.id
+Ref: attribute_options.attribute_definition_id > attribute_definitions.id
+Ref: user_attribute_assignments.user_id > users.id
+Ref: user_attribute_assignments.attribute_definition_id > attribute_definitions.id
+Ref: user_attribute_assignments.option_id > attribute_options.id
+Ref: user_attribute_assignments.assigned_by > users.id
+Ref: policy_rules.created_by > users.id
+Ref: policy_rule_conditions.policy_rule_id > policy_rules.id
+Ref: policy_rule_conditions.attribute_definition_id > attribute_definitions.id
+Ref: business_categories.department_id > departments.id
+Ref: documents.owner_id > users.id
+Ref: documents.department_id > departments.id
+Ref: document_versions.document_id > documents.id
+Ref: document_versions.uploaded_by > users.id
+Ref: document_classification_history.document_id > documents.id
+Ref: document_classification_history.classification_level_id > classification_levels.id
+Ref: document_classification_history.business_category_id > business_categories.id
+Ref: document_classification_history.classified_by > users.id
+Ref: access_requests.document_id > documents.id
+Ref: access_requests.requester_id > users.id
+Ref: access_request_permissions.access_request_id > access_requests.id
+Ref: access_request_decisions.access_request_id > access_requests.id
+Ref: access_request_decisions.decided_by > users.id
+Ref: access_grants.document_id > documents.id
+Ref: access_grants.principal_user_id > users.id
+Ref: access_grants.principal_role_id > roles.id
+Ref: access_grants.access_request_id > access_requests.id
+Ref: access_grants.granted_by > users.id
+Ref: access_grants.revoked_by > users.id
+Ref: access_grant_permissions.access_grant_id > access_grants.id
+Ref: access_sessions.access_grant_id > access_grants.id
+Ref: access_sessions.document_version_id > document_versions.id
+Ref: access_sessions.user_id > users.id
+Ref: watermark_configs.classification_level_id > classification_levels.id
+Ref: watermark_configs.created_by > users.id
+Ref: watermark_instances.watermark_config_id > watermark_configs.id
+Ref: watermark_instances.access_session_id > access_sessions.id
+Ref: watermark_instances.document_version_id > document_versions.id
+Ref: watermark_instances.user_id > users.id
+Ref: audit_logs.actor_user_id > users.id
+Ref: audit_logs.document_id > documents.id
+Ref: audit_logs.access_session_id > access_sessions.id
+Ref: security_alerts.detected_user_id > users.id
+Ref: security_alerts.document_id > documents.id
+Ref: security_alerts.assigned_to > users.id
+Ref: alert_audit_links.alert_id > security_alerts.id
+Ref: alert_audit_links.audit_log_id > audit_logs.id
+Ref: incident_reports.alert_id > security_alerts.id
+Ref: incident_reports.prepared_by > users.id
+Ref: incident_reports.submitted_to_owner > users.id
+Ref: incident_reports.submitted_to_admin > users.id
+Ref: incident_actions.incident_report_id > incident_reports.id
+Ref: incident_actions.assigned_to > users.id
+Ref: notifications.recipient_id > users.id
+Ref: documents.current_version_id > document_versions.id

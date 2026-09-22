@@ -1,0 +1,35 @@
+{
+  "name": "@sda/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "pnpm prisma:generate && tsc -p tsconfig.json",
+    "lint": "oxlint src test",
+    "typecheck": "pnpm prisma:generate && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.prisma.json --noEmit",
+    "test": "node --test test/unit/*.test.mjs",
+    "test:integration": "pnpm prisma:validate && pnpm prisma:generate && node --test test/*.integration.test.mjs",
+    "prisma:validate": "prisma validate --config prisma.config.ts",
+    "prisma:generate": "prisma generate --config prisma.config.ts",
+    "prisma:migrate": "prisma migrate deploy --config prisma.config.ts",
+    "prisma:seed": "prisma db seed --config prisma.config.ts"
+  },
+  "devDependencies": {
+    "@sda/config": "workspace:*",
+    "@types/pg": "8.23.1",
+    "prisma": "7.10.0",
+    "tsx": "4.23.13"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "dotenv": "17.4.2",
+    "pg": "8.23.0"
+  }
+}

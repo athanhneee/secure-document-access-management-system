@@ -1,0 +1,7 @@
+{
+  "extends": "@sda/config/node.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["prisma.config.ts", "prisma/seed.ts"]
+}

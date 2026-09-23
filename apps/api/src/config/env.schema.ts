@@ -56,6 +56,12 @@ export const EnvSchema = z
     GRANT_EXPIRY_INTERVAL_MS: z.coerce.number().int().min(10_000).max(300_000).default(60_000),
     DOWNLOAD_TICKET_TTL_SECONDS: z.coerce.number().int().min(10).max(300).default(60),
     DERIVATIVE_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
+    AUDIT_INTEGRITY_KEY: z
+      .string()
+      .min(32)
+      .default('local-only-audit-integrity-hmac-key-0000000000000000'),
+    AUDIT_KEY_ROTATION_JSON: z.string().optional(),
+    AUDIT_VERIFY_INTERVAL_MS: z.coerce.number().int().min(10_000).max(3_600_000).default(300_000),
   })
   .superRefine((value, context) => {
     if (

@@ -204,7 +204,24 @@ model AuditLog {
   @@index([actor_user_id, occurred_at(sort: Desc)], map: "idx_audit_actor_time")
   @@index([details], map: "idx_audit_details_gin", type: Gin)
   @@index([document_id, occurred_at(sort: Desc)], map: "idx_audit_document_time")
+  @@index([outcome, occurred_at(sort: Desc)], map: "idx_audit_outcome_time")
+  @@index([chain_partition, occurred_at(sort: Desc)], map: "idx_audit_partition_time")
+  @@index([occurred_at(sort: Desc)], map: "idx_audit_occurred_at")
   @@map("audit_logs")
+}
+
+model AuditAnchor {
+  id               BigInt   @id @default(autoincrement())
+  chain_partition  String   @db.VarChar(80)
+  anchor_sequence  BigInt
+  entry_hash       String   @db.Char(64)
+  anchored_at      DateTime @default(now()) @db.Timestamptz(6)
+  signature        String   @db.VarChar(512)
+  signer_key_id    String   @db.VarChar(80)
+  status           String   @default("VALID") @db.VarChar(20)
+
+  @@index([chain_partition, anchor_sequence(sort: Desc)], map: "idx_audit_anchor_partition")
+  @@map("audit_anchors")
 }
 
 model BusinessCategory {

@@ -13,6 +13,7 @@ import { DocumentsModule } from './modules/documents/documents.module.js';
 import { AccessGrantsModule } from './modules/access-grants/access-grants.module.js';
 import { AccessSessionsModule } from './modules/access-sessions/access-sessions.module.js';
 import { WatermarksModule } from './modules/watermarks/watermarks.module.js';
+import { AuditModule } from './modules/audit/audit.module.js';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { WatermarksModule } from './modules/watermarks/watermarks.module.js';
     AccessGrantsModule,
     AccessSessionsModule,
     WatermarksModule,
+    AuditModule,
     SystemHealthModule,
   ],
   providers: [

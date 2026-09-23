@@ -54,6 +54,8 @@ export const EnvSchema = z
     PASSWORD_RESET_BASE_URL: z.string().url().default('http://localhost:3000/reset-password'),
     GRANT_MAX_DURATION_DAYS: z.coerce.number().int().min(1).max(90).default(30),
     GRANT_EXPIRY_INTERVAL_MS: z.coerce.number().int().min(10_000).max(300_000).default(60_000),
+    DOWNLOAD_TICKET_TTL_SECONDS: z.coerce.number().int().min(10).max(300).default(60),
+    DERIVATIVE_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   })
   .superRefine((value, context) => {
     if (

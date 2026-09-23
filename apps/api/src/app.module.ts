@@ -12,6 +12,7 @@ import { AbacModule } from './modules/abac/abac.module.js';
 import { DocumentsModule } from './modules/documents/documents.module.js';
 import { AccessGrantsModule } from './modules/access-grants/access-grants.module.js';
 import { AccessSessionsModule } from './modules/access-sessions/access-sessions.module.js';
+import { WatermarksModule } from './modules/watermarks/watermarks.module.js';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { AccessSessionsModule } from './modules/access-sessions/access-sessions.
     DocumentsModule,
     AccessGrantsModule,
     AccessSessionsModule,
+    WatermarksModule,
     SystemHealthModule,
   ],
   providers: [

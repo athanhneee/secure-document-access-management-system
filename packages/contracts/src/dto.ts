@@ -202,3 +202,39 @@ export const ListAccessGrantsSchema = z
   .strict();
 
 export type ListAccessGrantsInput = z.infer<typeof ListAccessGrantsSchema>;
+
+// --- Controlled Document Delivery & Access Session Schemas (Prompt 13) ---
+
+export const CreateAccessSessionSchema = z
+  .object({
+    action: z.enum(['VIEW', 'DOWNLOAD']),
+    grantId: z.string().uuid().optional(),
+    deviceFingerprint: z.string().max(255).optional(),
+  })
+  .strict();
+
+export type CreateAccessSessionInput = z.infer<typeof CreateAccessSessionSchema>;
+
+export const PreviewPageParamSchema = z
+  .object({
+    pageNumber: z.coerce.number().int().min(1),
+  })
+  .strict();
+
+export type PreviewPageParamInput = z.infer<typeof PreviewPageParamSchema>;
+
+export const DownloadTicketParamSchema = z
+  .object({
+    ticket: z.string().regex(/^DT-[0-9a-f]{64}$/i, 'Invalid download ticket format'),
+  })
+  .strict();
+
+export type DownloadTicketParamInput = z.infer<typeof DownloadTicketParamSchema>;
+
+export const WatermarkTokenParamSchema = z
+  .object({
+    token: z.string().regex(/^WM-[0-9a-f]{16,64}$/i, 'Invalid watermark token format'),
+  })
+  .strict();
+
+export type WatermarkTokenParamInput = z.infer<typeof WatermarkTokenParamSchema>;

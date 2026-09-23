@@ -79,7 +79,32 @@ export const EnvSchema = z
 export type EnvConfig = z.infer<typeof EnvSchema>;
 
 export function validateEnv(rawEnv: Record<string, unknown> = process.env): EnvConfig {
-  const result = EnvSchema.safeParse(rawEnv);
+  const normalizedEnv: Record<string, unknown> = { ...rawEnv };
+  if (!normalizedEnv['AUTH_SIGNING_PRIVATE_KEY_PEM'] && normalizedEnv['JWT_PRIVATE_KEY']) {
+    normalizedEnv['AUTH_SIGNING_PRIVATE_KEY_PEM'] = normalizedEnv['JWT_PRIVATE_KEY'];
+  }
+  if (!normalizedEnv['AUTH_SIGNING_PUBLIC_KEYS_JSON'] && normalizedEnv['JWT_PUBLIC_KEY']) {
+    normalizedEnv['AUTH_SIGNING_PUBLIC_KEYS_JSON'] = JSON.stringify([
+      {
+        kid: String(normalizedEnv['AUTH_ACTIVE_KID'] ?? 'production-default'),
+        publicKeyPem: String(normalizedEnv['JWT_PUBLIC_KEY']),
+      },
+    ]);
+  }
+  if (!normalizedEnv['APP_ENCRYPTION_MASTER_KEY'] && normalizedEnv['KMS_MASTER_KEY']) {
+    normalizedEnv['APP_ENCRYPTION_MASTER_KEY'] = normalizedEnv['KMS_MASTER_KEY'];
+  }
+  if (!normalizedEnv['DOCUMENT_AUDIT_HMAC_KEY'] && normalizedEnv['AUDIT_HMAC_KEY']) {
+    normalizedEnv['DOCUMENT_AUDIT_HMAC_KEY'] = normalizedEnv['AUDIT_HMAC_KEY'];
+  }
+  if (!normalizedEnv['AUTH_AUDIT_HMAC_KEY'] && normalizedEnv['AUDIT_HMAC_KEY']) {
+    normalizedEnv['AUTH_AUDIT_HMAC_KEY'] = normalizedEnv['AUDIT_HMAC_KEY'];
+  }
+  if (!normalizedEnv['AUDIT_INTEGRITY_KEY'] && normalizedEnv['AUDIT_HMAC_KEY']) {
+    normalizedEnv['AUDIT_INTEGRITY_KEY'] = normalizedEnv['AUDIT_HMAC_KEY'];
+  }
+
+  const result = EnvSchema.safeParse(normalizedEnv);
   if (!result.success) {
     const formatted = result.error.issues
       .map((issue) => ` - ${issue.path.join('.')}: ${issue.message}`)

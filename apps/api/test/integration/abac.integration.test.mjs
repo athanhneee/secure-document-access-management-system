@@ -35,6 +35,22 @@ let cache;
 const simulationTime = new Date('2026-09-22T03:00:00.000Z');
 const context = { ip: '10.10.1.8', correlationId: randomUUID() };
 
+let dbAvailable = false;
+
+async function isDatabaseReachable() {
+  const client = new pg.Client({
+    connectionString: adminUrl.toString(),
+    connectionTimeoutMillis: 1000,
+  });
+  try {
+    await client.connect();
+    await client.end();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function adminQuery(statement) {
   const client = new pg.Client({ connectionString: adminUrl.toString() });
   await client.connect();
@@ -51,8 +67,11 @@ async function insertOne(statement, parameters = []) {
 }
 
 before(async () => {
+  dbAvailable = await isDatabaseReachable();
+  if (!dbAvailable) return;
   await adminQuery(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
   await adminQuery(`CREATE DATABASE "${databaseName}"`);
+
   const prismaCli = fileURLToPath(import.meta.resolve('prisma')).replace(
     /[\\/]build[\\/]types\.js$/u,
     '/build/index.js',
@@ -161,12 +180,17 @@ before(async () => {
 });
 
 after(async () => {
+  if (!dbAvailable) return;
   if (sql) await sql.end();
   if (disconnectDatabase) await disconnectDatabase();
   await adminQuery(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
 });
 
-test('simulation uses trusted rows, audits no document content, and cache follows policy version', async () => {
+test('simulation uses trusted rows, audits no document content, and cache follows policy version', async (t) => {
+  if (!dbAvailable) {
+    t.skip('Live PostgreSQL server not reachable at 127.0.0.1:5432 (run pnpm infra:up)');
+    return;
+  }
   const principal = {
     userId: BigInt(actorId),
     sessionId: randomUUID(),
@@ -207,11 +231,16 @@ test('simulation uses trusted rows, audits no document content, and cache follow
   assert.ok(cache.reads.includes(deniedAfterChange.policyVersion));
 });
 
-test('expired assignment is denied immediately even if a prior decision was cached', async () => {
+test('expired assignment is denied immediately even if a prior decision was cached', async (t) => {
+  if (!dbAvailable) {
+    t.skip('Live PostgreSQL server not reachable at 127.0.0.1:5432 (run pnpm infra:up)');
+    return;
+  }
   await sql.query('UPDATE user_attribute_assignments SET valid_to=$1 WHERE id=$2', [
     simulationTime,
     assignmentId,
   ]);
+
   const result = await service.simulate(
     {
       userId: BigInt(actorId),

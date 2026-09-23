@@ -16,7 +16,9 @@ const GRANT_EXPIRY_INTERVAL_MS = Number(process.env['GRANT_EXPIRY_INTERVAL_MS'] 
 const GRANT_AUDIT_HMAC_KEY =
   process.env['AUDIT_INTEGRITY_KEY'] ??
   process.env['DOCUMENT_AUDIT_HMAC_KEY'] ??
+  process.env['AUDIT_HMAC_KEY'] ??
   'local-only-document-audit-hmac-key-0000000000000000';
+
 const DERIVATIVE_CLEANUP_INTERVAL_MS = Number(
   process.env['DERIVATIVE_CLEANUP_INTERVAL_MS'] ?? '300000',
 );

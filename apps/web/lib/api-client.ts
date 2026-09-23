@@ -1,4 +1,9 @@
-const API_BASE_URL = process.env['NEXT_PUBLIC_API_BASE_URL'] ?? 'http://127.0.0.1:3001/api/v1';
+const rawApiUrl = process.env['NEXT_PUBLIC_API_BASE_URL'] ?? process.env['NEXT_PUBLIC_API_URL'];
+const API_BASE_URL = rawApiUrl
+  ? rawApiUrl.endsWith('/api/v1')
+    ? rawApiUrl
+    : `${rawApiUrl.replace(/\/+$/u, '')}/api/v1`
+  : 'http://127.0.0.1:3001/api/v1';
 
 export function getCsrfToken(): string {
   if (typeof document === 'undefined') return '';

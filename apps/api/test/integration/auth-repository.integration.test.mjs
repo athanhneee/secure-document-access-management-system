@@ -24,6 +24,21 @@ targetUrl.pathname = `/${databaseName}`;
 let database;
 let repository;
 let disconnectDatabase;
+let dbAvailable = false;
+
+async function isDatabaseReachable() {
+  const client = new pg.Client({
+    connectionString: adminUrl.toString(),
+    connectionTimeoutMillis: 1000,
+  });
+  try {
+    await client.connect();
+    await client.end();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function adminQuery(sql) {
   const client = new pg.Client({ connectionString: adminUrl.toString() });
@@ -36,6 +51,9 @@ async function adminQuery(sql) {
 }
 
 before(async () => {
+  dbAvailable = await isDatabaseReachable();
+  if (!dbAvailable) return;
+
   assert.match(databaseName, /^sda_auth_[a-f0-9]{32}$/u);
   await adminQuery(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
   await adminQuery(`CREATE DATABASE "${databaseName}"`);
@@ -63,12 +81,17 @@ before(async () => {
 });
 
 after(async () => {
+  if (!dbAvailable) return;
   await database?.end();
   await disconnectDatabase?.();
   await adminQuery(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
 });
 
-test('refresh rotation rejects reuse, revokes the family and creates an alert', async () => {
+test('refresh rotation rejects reuse, revokes the family and creates an alert', async (t) => {
+  if (!dbAvailable) {
+    t.skip('Live PostgreSQL server not reachable at 127.0.0.1:5432 (run pnpm infra:up)');
+    return;
+  }
   const user = await database.query(
     `INSERT INTO users(username,email,password_hash,full_name,status)
      VALUES ('active.auth','active.auth@example.invalid','argon2-fixture','Active auth','ACTIVE') RETURNING id`,
@@ -117,7 +140,11 @@ test('refresh rotation rejects reuse, revokes the family and creates an alert', 
   assert.deepEqual(state.rows[0], { session_status: 'REVOKED', live_tokens: 0, alerts: 1 });
 });
 
-test('DISABLED account cannot refresh and its family is revoked', async () => {
+test('DISABLED account cannot refresh and its family is revoked', async (t) => {
+  if (!dbAvailable) {
+    t.skip('Live PostgreSQL server not reachable at 127.0.0.1:5432 (run pnpm infra:up)');
+    return;
+  }
   const user = await database.query(
     `INSERT INTO users(username,email,password_hash,full_name,status,disabled_at)
      VALUES ('disabled.auth','disabled.auth@example.invalid','argon2-fixture','Disabled auth','DISABLED',now()) RETURNING id`,

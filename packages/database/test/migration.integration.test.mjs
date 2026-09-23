@@ -107,6 +107,20 @@ async function adminQuery(sql) {
   }
 }
 
+async function isDatabaseReachable() {
+  const client = new pg.Client({
+    connectionString: adminUrl.toString(),
+    connectionTimeoutMillis: 1000,
+  });
+  try {
+    await client.connect();
+    await client.end();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function recreateDatabase(name) {
   assert.match(name, /^sda_(?:migration|rollback)_[a-f0-9]{32}$/u);
   await adminQuery(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
@@ -152,7 +166,12 @@ async function businessTableNames(client) {
 }
 
 test('Prisma migration, idempotent seed, constraints, and initial rollback are valid', async (t) => {
+  if (!(await isDatabaseReachable())) {
+    t.skip('Live PostgreSQL server not reachable at 127.0.0.1:5432 (run pnpm infra:up)');
+    return;
+  }
   for (const name of databaseNames) await recreateDatabase(name);
+
   let database;
   t.after(async () => {
     if (database) await database.end();

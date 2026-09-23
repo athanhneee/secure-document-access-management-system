@@ -1,12 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { validateEnv, type EnvConfig } from './env.schema.js';
 
 @Injectable()
 export class AppConfigService {
   private readonly config: EnvConfig;
 
-  constructor(rawEnv: Record<string, unknown> = process.env) {
-    this.config = validateEnv(rawEnv);
+  constructor(@Optional() rawEnv?: Record<string, unknown>) {
+    this.config = validateEnv(rawEnv ?? process.env);
   }
 
   get<K extends keyof EnvConfig>(key: K): EnvConfig[K] {

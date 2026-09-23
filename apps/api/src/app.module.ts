@@ -10,6 +10,8 @@ import { UsersModule } from './modules/users/users.module.js';
 import { DepartmentsModule } from './modules/departments/departments.module.js';
 import { AbacModule } from './modules/abac/abac.module.js';
 import { DocumentsModule } from './modules/documents/documents.module.js';
+import { AccessGrantsModule } from './modules/access-grants/access-grants.module.js';
+import { AccessSessionsModule } from './modules/access-sessions/access-sessions.module.js';
 
 @Module({
   imports: [
@@ -20,6 +22,8 @@ import { DocumentsModule } from './modules/documents/documents.module.js';
     UsersModule,
     DepartmentsModule,
     DocumentsModule,
+    AccessGrantsModule,
+    AccessSessionsModule,
     SystemHealthModule,
   ],
   providers: [

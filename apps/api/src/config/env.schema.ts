@@ -52,6 +52,8 @@ export const EnvSchema = z
     SMTP_SECURE: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(false),
     SMTP_FROM: z.string().email().default('no-reply@secure-docs.internal'),
     PASSWORD_RESET_BASE_URL: z.string().url().default('http://localhost:3000/reset-password'),
+    GRANT_MAX_DURATION_DAYS: z.coerce.number().int().min(1).max(90).default(30),
+    GRANT_EXPIRY_INTERVAL_MS: z.coerce.number().int().min(10_000).max(300_000).default(60_000),
   })
   .superRefine((value, context) => {
     if (

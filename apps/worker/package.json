@@ -10,5 +10,8 @@
     "lint": "oxlint src test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@sda/database": "workspace:*"
   }
 }

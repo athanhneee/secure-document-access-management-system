@@ -1,4 +1,24 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { createApplication } from './application.js';
+
+if (!process.env['DATABASE_URL']) {
+  const candidatePaths = [
+    path.resolve(process.cwd(), '.local/dev.env'),
+    path.resolve(process.cwd(), '../../.local/dev.env'),
+    path.resolve(import.meta.dirname, '../../../../.local/dev.env'),
+  ];
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      try {
+        process.loadEnvFile(candidate);
+        break;
+      } catch {
+        // Continue checking next candidate
+      }
+    }
+  }
+}
 
 async function main(): Promise<void> {
   const rawPort = process.env['PORT'] ?? '3001';
@@ -14,7 +34,7 @@ async function main(): Promise<void> {
   );
 }
 
-await main().catch(() => {
-  console.error('API failed to start. Check local configuration and port availability.');
+await main().catch((error) => {
+  console.error('API failed to start. Check local configuration and port availability:', error);
   process.exitCode = 1;
 });

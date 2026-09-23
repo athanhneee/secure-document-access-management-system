@@ -11,7 +11,13 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter.js';
 export async function createApplication(): Promise<NestFastifyApplication> {
   const application = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ logger: false, bodyLimit: 1_048_576, requestTimeout: 15_000 }),
+    new FastifyAdapter({
+      logger: false,
+      bodyLimit: 1_048_576, // 1MB payload limit
+      requestTimeout: 15_000, // 15s request timeout
+      connectionTimeout: 15_000, // Slowloris defense
+      keepAliveTimeout: 10_000,
+    }),
     { logger: false, abortOnError: false },
   );
   const fastify = application.getHttpAdapter().getInstance();

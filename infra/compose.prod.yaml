@@ -1,0 +1,81 @@
+name: secure-document-access-system-prod
+
+x-prod-defaults: &prod-defaults
+  restart: always
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  networks:
+    - backend_isolated
+
+services:
+  api:
+    <<: *prod-defaults
+    build:
+      context: ../
+      dockerfile: apps/api/Dockerfile
+    image: secure-document-access-api:latest
+    user: '10001:10001'
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    ports:
+      - '127.0.0.1:3001:3001'
+    environment:
+      NODE_ENV: production
+      PORT: '3001'
+      HOST: '0.0.0.0'
+      DATABASE_URL: ${DATABASE_URL:?Database connection required}
+      REDIS_URL: ${REDIS_URL:?Redis connection required}
+      APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:?Master key required}
+    cpus: 2.0
+    mem_limit: 1g
+    mem_reservation: 256m
+    pids_limit: 256
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--no-verbose',
+          '--tries=1',
+          '--spider',
+          'http://127.0.0.1:3001/api/v1/health/live',
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web:
+    <<: *prod-defaults
+    build:
+      context: ../
+      dockerfile: apps/web/Dockerfile
+    image: secure-document-access-web:latest
+    user: '1000:1000'
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    ports:
+      - '127.0.0.1:3000:3000'
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      HOSTNAME: '0.0.0.0'
+    cpus: 1.0
+    mem_limit: 512m
+    mem_reservation: 128m
+    pids_limit: 128
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://127.0.0.1:3000/']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  backend_isolated:
+    name: sda-prod-isolated-network
+    internal: true

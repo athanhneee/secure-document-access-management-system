@@ -67,6 +67,28 @@ export class OfficeConverterService {
       }
     }
 
+    // 2b. Security Check: Detect and block prohibited external relationships (SSRF / NTLM leak protection)
+    for (const entry of entries) {
+      if (entry.fileName.toLowerCase().endsWith('.rels')) {
+        const content = await this.extractEntryContent(officeBuffer, entry.fileName);
+        if (content) {
+          const lowerContent = content.toLowerCase();
+          if (
+            lowerContent.includes('targetmode="external"') ||
+            lowerContent.includes("targetmode='external'") ||
+            /target\s*=\s*["'](?:https?|ftp|file|gopher|ldap):/i.test(content) ||
+            /target\s*=\s*["']\\\\[^"']+/i.test(content)
+          ) {
+            throw new BadRequestException({
+              errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
+              message:
+                'Office document contains prohibited external relationships or SSRF attack vectors.',
+            });
+          }
+        }
+      }
+    }
+
     // 3. Extract text content based on file type
     const ext = filename.split('.').pop()?.toLowerCase();
     let extractedText = '';

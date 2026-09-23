@@ -314,8 +314,8 @@ export class DocumentIngestionService {
       throw err;
     }
 
-    // 10. Store encrypted file in documents bucket
-    const documentStorageKey = `documents/${targetDocId}/v1/${randomUUID()}.enc`;
+    // 10. Store encrypted file in documents bucket (never overwrites old objects)
+    const documentStorageKey = `documents/${targetDocId}/${randomUUID()}.enc`;
     try {
       await this.storage.putObject(
         this.storage.documentsBucket,
@@ -340,11 +340,35 @@ export class DocumentIngestionService {
       const docCode = input.documentCode ?? `DOC-${randomUUID().substring(0, 8).toUpperCase()}`;
 
       await this.database.$transaction(async (tx) => {
+        // Concurrency control: Lock document row FOR UPDATE in PostgreSQL
+        if (
+          typeof (tx as unknown as { $executeRawUnsafe?: unknown }).$executeRawUnsafe === 'function'
+        ) {
+          await (
+            tx as unknown as {
+              $executeRawUnsafe: (sql: string, ...args: unknown[]) => Promise<unknown>;
+            }
+          ).$executeRawUnsafe(
+            'SELECT id FROM documents WHERE id = $1::uuid FOR UPDATE',
+            targetDocId,
+          );
+        }
+
         // Check if document already exists
         const existingDoc = await tx.document.findUnique({
           where: { id: targetDocId },
           include: { versions: { select: { version_no: true } } },
         });
+
+        if (
+          existingDoc &&
+          (existingDoc.status === 'ARCHIVED' || existingDoc.status === 'DELETED')
+        ) {
+          throw new BadRequestException({
+            errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
+            message: 'Cannot upload new version to an archived or deleted document.',
+          });
+        }
 
         if (!existingDoc) {
           // New document created in DRAFT status (Prompt 09 will handle ACTIVE transition)

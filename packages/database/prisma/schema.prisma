@@ -409,6 +409,30 @@ model Notification {
   @@map("notifications")
 }
 
+model NotificationOutbox {
+  id                String    @id @db.Uuid
+  recipient_id      BigInt
+  channel           String    @db.VarChar(20)
+  notification_type String    @db.VarChar(80)
+  title             String    @db.VarChar(255)
+  body              String
+  payload           Json      @default("{}")
+  deduplication_key String    @unique @db.VarChar(255)
+  status            String    @default("PENDING") @db.VarChar(20)
+  attempt_count     Int       @default(0)
+  max_attempts      Int       @default(5)
+  next_retry_at     DateTime  @default(now()) @db.Timestamptz(6)
+  last_error        String?
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  processed_at      DateTime? @db.Timestamptz(6)
+  users             User      @relation(fields: [recipient_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([status, next_retry_at], map: "idx_outbox_pending")
+  @@index([deduplication_key], map: "idx_outbox_dedup")
+  @@map("notification_outbox")
+}
+
+
 model Permission {
   id               BigInt           @id @default(autoincrement())
   code             String           @unique @db.VarChar(80)
@@ -521,6 +545,25 @@ model SecurityAlert {
   @@map("security_alerts")
 }
 
+model DetectionRuleConfig {
+  id               BigInt         @id @default(autoincrement())
+  rule_code        String         @unique @db.VarChar(80)
+  name             String         @db.VarChar(180)
+  description      String?
+  is_enabled       Boolean        @default(true)
+  severity         severity_level @default(HIGH)
+  threshold        Int            @default(5)
+  window_minutes   Int            @default(10)
+  cooldown_minutes Int            @default(30)
+  parameters       Json           @default("{}")
+  updated_at       DateTime       @default(now()) @db.Timestamptz(6)
+  updated_by       BigInt?
+  users            User?          @relation(fields: [updated_by], references: [id], onUpdate: NoAction)
+
+  @@map("detection_rule_configs")
+}
+
+
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model SystemHealthSnapshot {
   id                  BigInt   @id @default(autoincrement())
@@ -535,6 +578,30 @@ model SystemHealthSnapshot {
 
   @@map("system_health_snapshots")
 }
+
+model AsyncExportJob {
+  id                String    @id @db.Uuid
+  requester_user_id BigInt
+  export_type       String    @db.VarChar(80)
+  format            String    @db.VarChar(20)
+  status            String    @default("PENDING") @db.VarChar(20)
+  filter_params     Json      @default("{}")
+  file_path         String?   @db.VarChar(500)
+  file_size_bytes   BigInt?
+  sha256_hash       String?   @db.Char(64)
+  mime_type         String?   @db.VarChar(150)
+  row_count         Int       @default(0)
+  error_message     String?
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  completed_at      DateTime? @db.Timestamptz(6)
+  expires_at        DateTime  @db.Timestamptz(6)
+  users             User      @relation(fields: [requester_user_id], references: [id], onUpdate: NoAction)
+
+  @@index([requester_user_id, status], map: "idx_export_jobs_user_status")
+  @@index([expires_at], map: "idx_export_jobs_expires")
+  @@map("async_export_jobs")
+}
+
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model UserAttributeAssignment {
@@ -630,6 +697,9 @@ model User {
   auth_sessions                                                            AuthSession[]
   mfa_methods                                                              MfaMethod[]
   password_reset_tokens                                                    PasswordResetToken[]
+  notification_outbox                                                      NotificationOutbox[]
+  async_export_jobs                                                        AsyncExportJob[]
+  detection_rule_configs                                                   DetectionRuleConfig[]
 
   @@index([department_id, status], map: "idx_users_department_status")
   @@map("users")

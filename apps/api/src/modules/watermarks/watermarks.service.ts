@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException, Logger, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
+import { AuditWriterService } from '../audit/audit-writer.service.js';
+import type { AuthPrincipal } from '../auth/auth.types.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -42,7 +44,10 @@ export class WatermarksService {
   private readonly logger = new Logger(WatermarksService.name);
   private readonly database: PrismaClient;
 
-  constructor(@Optional() databaseClient?: PrismaClient) {
+  constructor(
+    @Optional() databaseClient?: PrismaClient,
+    @Optional() private readonly auditWriter?: AuditWriterService,
+  ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
     } catch {
@@ -87,7 +92,10 @@ export class WatermarksService {
    * UC28: Trace a watermark token to verify the user, session, document, version, and generation time.
    * Essential for forensic investigation of document leaks.
    */
-  async verifyWatermarkToken(token: string): Promise<WatermarkVerificationResult> {
+  async verifyWatermarkToken(
+    token: string,
+    actor?: AuthPrincipal,
+  ): Promise<WatermarkVerificationResult> {
     this.logger.log(`Verifying watermark token: ${token}`);
     const instance = await this.database.watermarkInstance.findUnique({
       where: { watermark_token: token },
@@ -137,6 +145,25 @@ export class WatermarksService {
       throw new NotFoundException({
         errorCode: AppErrorCode.WATERMARK_TOKEN_NOT_FOUND,
         message: 'Watermark token was not found in the reconciliation registry.',
+      });
+    }
+
+    if (this.auditWriter && actor) {
+      await this.auditWriter.writeLog({
+        actorUserId: actor.userId,
+        actorUsername: actor.username,
+        action: 'WATERMARK_TRACE_PERFORMED',
+        objectType: 'WATERMARK_INSTANCE',
+        objectId: instance.id,
+        documentId: instance.document_versions.document.id,
+        accessSessionId: instance.access_sessions.id,
+        outcome: 'SUCCESS',
+        chainPartition: 'ACCESS_SESSION',
+        details: {
+          watermarkToken: token,
+          tracedUserId: instance.users.id.toString(),
+          tracedUsername: instance.users.username,
+        },
       });
     }
 

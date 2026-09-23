@@ -234,6 +234,40 @@ Mọi quyết định làm thay đổi nghiệp vụ hoặc database cần đư�
   - `DOCUMENT_OWNER` bị giới hạn phạm vi nghiêm ngặt, chỉ được xem nhật ký của chính tài liệu thuộc quyền sở hữu của họ. Truy vấn tài liệu khác bị chặn với 403 `Forbidden`.
   - `SYSTEM_ADMIN` bị từ chối truy cập theo nguyên tắc Separation of Duties (SoD).
   - Header bảo mật `Cache-Control: no-store, no-cache, must-revalidate, private` được áp dụng trên mọi luồng xuất kiểm toán.
-- Kiểm chứng: unit test table-driven, test RFC 8785 canonicalization, test concurrency phân vùng, test tampering detection (HMAC mismatch), test sequence gap do xóa bản ghi, test append-only trigger, test IDOR và scoped permissions.
+## FEAT-015 — Giám sát an ninh, xử lý sự cố, phân tách quyền kiểm toán và xuất báo cáo an toàn
+
+- Ngày: 2026-09-23.
+- Trạng thái: áp dụng cho Prompt 15.
+- Bối cảnh: Giám sát an ninh, phát hiện bất thường từ nhật ký kiểm toán, quản lý cảnh báo và sự cố (Security Alerts & Incident Management), phân tách quyền hạn kiểm toán viên (Auditor SoD), xuất báo cáo bất đồng bộ chống injection và hệ thống thông báo đa kênh có khả năng chịu lỗi.
+- Quyết định Rule-based Detection & Chống Alert Storm:
+  - 6 quy tắc phát hiện bất thường: `MASS_DOWNLOAD`, `REPEATED_DENIED`, `OFF_HOURS_ACCESS`, `UNTRUSTED_CONTEXT`, `REFRESH_TOKEN_REUSE`, `AUDIT_INTEGRITY_COMPROMISED`.
+  - Cấu hình động qua bảng `detection_rule_configs`: `threshold`, `window_minutes`, `cooldown_minutes`, `severity`, `parameters`.
+  - Cơ chế suppression trong thời gian cooldown: khi đã có cảnh báo hoạt động trong cooldown window, không tạo cảnh báo trùng lặp mà chỉ cập nhật liên kết log vi phạm mới vào `alert_audit_links`.
+- Quyết định State Machine cho Security Alerts & Incidents:
+  - `security_alerts`: OPEN -> INVESTIGATING -> RESOLVED / FALSE_POSITIVE.
+  - Chuyển sang `RESOLVED` hoặc `FALSE_POSITIVE` bắt buộc phải có `resolution_note` (tối thiểu 5 ký tự).
+  - Check constraint cơ sở dữ liệu: `CHECK ((status IN ('RESOLVED','FALSE_POSITIVE')) = (resolved_at IS NOT NULL))`.
+- Quyết định Separation of Duties (Auditor SoD):
+  - Kiểm toán viên (`AUDITOR`) có quyền xem toàn hệ thống, tra cứu đối chiếu watermark token (`WATERMARK_INSTANCE/TRACE`), và xuất báo cáo (`SYSTEM_REPORT/EXPORT`).
+  - Kiểm toán viên bị chặn tuyệt đối không được sửa/đóng incident report, không được cập nhật trạng thái cảnh báo, không được cấp quyền tài liệu (trả về 403 `AUDITOR_CANNOT_MUTATE_INCIDENTS`).
+- Quyết định Quản lý Sự cố (Incident Management):
+  - Tạo `incident_reports` và `incident_actions` với due date, assignee, evidence references, lịch sử trạng thái.
+  - Check constraints: `CHECK ((status = 'DRAFT') OR submitted_at IS NOT NULL)` và `CHECK ((status = 'CLOSED') = (closed_at IS NOT NULL))`.
+  - Hoàn thành hành động khắc phục (`incident_actions`) bắt buộc có `completion_note`.
+- Quyết định Async Export & Chống CSV Formula Injection (CWE-1236):
+  - Xuất báo cáo PDF/Excel/CSV qua background job (`async_export_jobs`) với TTL 24 giờ.
+  - Phân quyền tải: chỉ người yêu cầu hoặc người có quyền xuất báo cáo được tải; hết hạn TTL trả về 400 `EXPORT_JOB_EXPIRED`.
+  - Chống CSV Formula Injection: `sanitizeCsvCell` tự động thêm tiền tố nháy đơn (`'`) vào bất kỳ ô nào bắt đầu bằng `=`, `+`, `-`, `@`, `\t`, `\r` để vô hiệu hóa thực thi mã/công thức trong Excel và LibreOffice.
+- Quyết định Transactional Outbox Notifications:
+  - Bảng `notification_outbox` bảo đảm tính nhất quán giao dịch (transactional outbox pattern).
+  - Khóa khử trùng `deduplication_key` ngăn chặn gửi trùng thông báo.
+  - Cơ chế thử lại lũy thừa (exponential backoff: base * 2^attempt) và hàng đợi thư chết (Dead-Letter Queue - DLQ) khi vượt quá `max_attempts`.
+- Quyết định Giám sát System Health:
+  - Dashboard đọc trực tiếp runtime operational metrics (uptime, heap/rss memory, active sessions, open alerts, dependency pings).
+  - Không thay thế time-series monitoring bằng bảng snapshot. Bảng `system_health_snapshots` chỉ lưu lịch sử kiểm toán nghiệp vụ.
+- Quyết định Audit Trail:
+  - Ghi nhận đầy đủ audit log cho mọi hành vi điều tra (`INVESTIGATION_NOTE_ADDED`, `SECURITY_ALERT_STATUS_UPDATED`), đối chiếu watermark (`WATERMARK_TRACE_PERFORMED`), cấu hình quy tắc (`DETECTION_RULE_CONFIGURED`), xuất báo cáo (`REPORT_EXPORT_DOWNLOADED`, `INCIDENT_REPORT_CREATED`).
+- Kiểm chứng: 191/191 tests API và 17/17 tests Worker pass; bảo đảm tính toàn vẹn phát hiện vi phạm, khử trùng outbox, CSV sanitization, SoD Auditor, và state transitions.
+
 
 

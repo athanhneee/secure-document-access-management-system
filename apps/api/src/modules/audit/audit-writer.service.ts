@@ -95,6 +95,27 @@ export class AuditWriterService {
   }
 
   /**
+   * Convenience wrapper to record an audit log with optional default context.
+   */
+  async writeLog(
+    event: AuditWriteEvent,
+    context?: Partial<RequestContext>,
+    externalTx?: Prisma.TransactionClient,
+  ): Promise<{
+    id: bigint;
+    entry_hash: string;
+    chain_partition: string;
+    chain_sequence: bigint;
+  }> {
+    const ctx: RequestContext = {
+      ip: context?.ip ?? '127.0.0.1',
+      userAgent: context?.userAgent,
+      correlationId: context?.correlationId ?? randomUUID(),
+    };
+    return this.record(event, ctx, externalTx);
+  }
+
+  /**
    * Records a tamper-evident audit event.
    *
    * May be executed within an existing Prisma transaction client or standalone.

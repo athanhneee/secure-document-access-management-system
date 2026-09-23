@@ -45,6 +45,6 @@ export class WatermarksController {
     if (!parsed.success) {
       throw new BadRequestException(parsed.error.flatten());
     }
-    return this.watermarksService.verifyWatermarkToken(parsed.data.token);
+    return this.watermarksService.verifyWatermarkToken(parsed.data.token, request.auth);
   }
 }

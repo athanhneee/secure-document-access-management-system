@@ -14,6 +14,9 @@ import { AccessGrantsModule } from './modules/access-grants/access-grants.module
 import { AccessSessionsModule } from './modules/access-sessions/access-sessions.module.js';
 import { WatermarksModule } from './modules/watermarks/watermarks.module.js';
 import { AuditModule } from './modules/audit/audit.module.js';
+import { SecurityOperationsModule } from './modules/security-operations/security-operations.module.js';
+import { ReportsModule } from './modules/reports/reports.module.js';
+import { NotificationsModule } from './modules/notifications/notifications.module.js';
 
 @Module({
   imports: [
@@ -28,6 +31,9 @@ import { AuditModule } from './modules/audit/audit.module.js';
     AccessSessionsModule,
     WatermarksModule,
     AuditModule,
+    SecurityOperationsModule,
+    ReportsModule,
+    NotificationsModule,
     SystemHealthModule,
   ],
   providers: [

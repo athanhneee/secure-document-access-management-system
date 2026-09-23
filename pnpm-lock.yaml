@@ -331,6 +331,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@sda/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@sda/database':
         specifier: workspace:*
         version: link:../../packages/database

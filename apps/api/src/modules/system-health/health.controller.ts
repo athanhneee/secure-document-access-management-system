@@ -1,7 +1,8 @@
-import { Controller, Get, Header, HttpStatus, Res } from '@nestjs/common';
+import { Controller, Get, Post, Body, Header, HttpStatus, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { PublicEndpoint } from '../../public-endpoint.js';
+import { RequirePermission } from '../rbac/require-permission.js';
 import { HealthService } from './health.service.js';
 import type { LivenessResponse, ReadinessResponse } from '@sda/contracts';
 
@@ -36,5 +37,37 @@ export class HealthController {
       reply.status(HttpStatus.SERVICE_UNAVAILABLE);
     }
     return response;
+  }
+
+  @Get('dashboard')
+  @RequirePermission('SYSTEM_HEALTH', 'VIEW')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Operational metrics dashboard reading live runtime metrics' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Live operational metrics' })
+  async getDashboard() {
+    return this.healthService.getLiveMetrics();
+  }
+
+  @Get('snapshots')
+  @RequirePermission('SYSTEM_HEALTH', 'VIEW')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Historical business health snapshots' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'List of business snapshots' })
+  async getSnapshots() {
+    return this.healthService.listBusinessSnapshots();
+  }
+
+  @Post('snapshots')
+  @RequirePermission('SYSTEM_HEALTH', 'VIEW')
+  @ApiOperation({ summary: 'Capture an operational business snapshot for audit history' })
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Captured business snapshot' })
+  async captureSnapshot(
+    @Body() body: { serviceName: string; status: string; details?: Record<string, unknown> },
+  ) {
+    return this.healthService.captureBusinessSnapshot(
+      body.serviceName,
+      body.status,
+      body.details ?? {},
+    );
   }
 }

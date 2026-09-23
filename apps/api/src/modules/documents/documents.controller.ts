@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
@@ -20,6 +21,8 @@ import {
   SetCurrentVersionSchema,
   TransferDocumentOwnerSchema,
   ArchiveDocumentSchema,
+  SearchDocumentsSchema,
+  MyGrantedDocumentsSchema,
   UuidParamSchema,
   type CreateDocumentDraftInput,
   type UpdateDocumentMetadataInput,
@@ -27,22 +30,57 @@ import {
   type SetCurrentVersionInput,
   type TransferDocumentOwnerInput,
   type ArchiveDocumentInput,
+  type SearchDocumentsInput,
+  type MyGrantedDocumentsInput,
 } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { RequirePermission } from '../rbac/require-permission.js';
 import { DocumentsService, type DocumentDetail } from './documents.service.js';
+import {
+  DocumentSearchService,
+  type SearchResult,
+  type GrantedDocumentsResult,
+} from './document-search.service.js';
 
 @Controller('documents')
 export class DocumentsController {
   constructor(
     private readonly documentsService: DocumentsService,
+    private readonly searchService: DocumentSearchService,
     private readonly csrf: CsrfService,
   ) {}
 
   @Get()
-  async listDocuments(): Promise<{ data: unknown[] }> {
-    return this.documentsService.listDocuments();
+  @RequirePermission('DOCUMENT', 'DISCOVER')
+  async searchDocuments(
+    @Query() query: unknown,
+    @Req() request: FastifyRequest,
+  ): Promise<SearchResult> {
+    const parsed = SearchDocumentsSchema.safeParse(query);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+    return this.searchService.searchDocuments(
+      parsed.data as SearchDocumentsInput,
+      this.principal(request),
+      this.context(request),
+    );
+  }
+
+  @Get('my-grants')
+  async getMyGrantedDocuments(
+    @Query() query: unknown,
+    @Req() request: FastifyRequest,
+  ): Promise<GrantedDocumentsResult> {
+    const parsed = MyGrantedDocumentsSchema.safeParse(query);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+    return this.searchService.getMyGrantedDocuments(
+      parsed.data as MyGrantedDocumentsInput,
+      this.principal(request),
+    );
   }
 
   @Post()

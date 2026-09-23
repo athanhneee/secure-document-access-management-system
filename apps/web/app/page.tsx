@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { BallpitBackground } from './components/ballpit-background';
+import { CinematicCapabilities } from './components/cinematic-capabilities';
 
 function ShieldMark({ large = false }: Readonly<{ large?: boolean }>) {
   return (
@@ -61,6 +63,7 @@ export default function HomePage() {
         </Link>
         <nav aria-label="Điều hướng chính">
           <a href="#nguyen-tac">Nguyên tắc</a>
+          <a href="#kha-nang">Khả năng</a>
           <a href="#lo-trinh">Lộ trình</a>
         </nav>
         <span className="workspace-label">
@@ -95,24 +98,18 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="hero-visual" aria-hidden="true">
-            <div className="orbit orbit-outer" />
-            <div className="orbit orbit-inner" />
-            <div className="document-sheet sheet-back" />
-            <div className="document-sheet sheet-front">
-              <div className="sheet-label">TÀI LIỆU NỘI BỘ</div>
-              <div className="sheet-rule long" />
-              <div className="sheet-rule" />
-              <div className="sheet-rule short" />
-              <div className="sheet-rule long lower" />
-              <div className="sheet-rule short" />
-              <span className="sheet-footer">QUYỀN TRUY CẬP CÓ KIỂM SOÁT</span>
-            </div>
-            <div className="shield-tile">
-              <ShieldMark large />
-            </div>
-            <span className="visual-cross cross-one">+</span>
-            <span className="visual-cross cross-two">+</span>
-            <span className="visual-caption">Thiết kế với bảo mật làm nền tảng</span>
+            <BallpitBackground
+              config={{
+                count: 120,
+                gravity: 0.35,
+                friction: 0.995,
+                minSize: 0.25,
+                maxSize: 0.65,
+                lightIntensity: 3.5,
+                ambientIntensity: 1.8,
+                colors: ['#3a7a5c', '#286f58', '#4a9a72', '#1d5a44', '#5eb88a', '#d9e2d9'],
+              }}
+            />
           </div>
         </section>
 
@@ -131,6 +128,8 @@ export default function HomePage() {
             ))}
           </div>
         </section>
+
+        <CinematicCapabilities />
 
         <section className="roadmap" id="lo-trinh" aria-labelledby="roadmap-title">
           <div>

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { getDatabaseClient } from '@sda/database';
@@ -69,7 +70,7 @@ export class DocumentsService {
     private readonly audit: DocumentAuditService,
     private readonly authorization: AuthorizationService,
     private readonly cache: AuthorizationCache,
-    databaseClient?: ReturnType<typeof getDatabaseClient>,
+    @Optional() databaseClient?: ReturnType<typeof getDatabaseClient>,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();

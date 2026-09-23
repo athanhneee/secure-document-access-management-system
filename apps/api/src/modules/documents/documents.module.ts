@@ -14,6 +14,7 @@ import { DocumentEncryptionService } from './document-encryption.service.js';
 import { DocumentAuditService } from './document-audit.service.js';
 import { OrphanCompensationService } from './orphan-compensation.service.js';
 import { DocumentsService } from './documents.service.js';
+import { DocumentSearchService } from './document-search.service.js';
 
 @Module({
   imports: [AppConfigModule, AuthModule, RbacModule],
@@ -29,6 +30,7 @@ import { DocumentsService } from './documents.service.js';
     OrphanCompensationService,
     DocumentIngestionService,
     DocumentsService,
+    DocumentSearchService,
   ],
   exports: [
     DocumentIngestionService,
@@ -41,6 +43,7 @@ import { DocumentsService } from './documents.service.js';
     DocumentAuditService,
     OrphanCompensationService,
     DocumentsService,
+    DocumentSearchService,
   ],
 })
 export class DocumentsModule {}

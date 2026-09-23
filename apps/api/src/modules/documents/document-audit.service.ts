@@ -18,7 +18,8 @@ export interface DocumentAuditEvent {
     | 'DOCUMENT_ARCHIVED'
     | 'DOCUMENT_OWNER_TRANSFERRED'
     | 'DOCUMENT_CURRENT_VERSION_SET'
-    | 'DOCUMENT_RETENTION_WARNING';
+    | 'DOCUMENT_RETENTION_WARNING'
+    | 'DOCUMENT_SEARCHED';
   outcome: 'SUCCESS' | 'DENIED' | 'FAILED';
   actorUserId?: bigint | null;
   actorUsername?: string | null;

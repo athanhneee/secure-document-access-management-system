@@ -13,9 +13,11 @@
   "dependencies": {
     "next": "16.3.5",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "three": "^0.186.0"
   },
   "devDependencies": {
-    "@sda/config": "workspace:*"
+    "@sda/config": "workspace:*",
+    "@types/three": "^0.186.0"
   }
 }

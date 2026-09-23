@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, PayloadTooLargeException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  Optional,
+  PayloadTooLargeException,
+} from '@nestjs/common';
 import crypto, { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -56,7 +62,7 @@ export class DocumentIngestionService {
     private readonly encryption: DocumentEncryptionService,
     private readonly audit: DocumentAuditService,
     private readonly compensation: OrphanCompensationService,
-    databaseClient?: ReturnType<typeof getDatabaseClient> | undefined,
+    @Optional() databaseClient?: ReturnType<typeof getDatabaseClient> | undefined,
   ) {
     this.maxFileSize = config.get('UPLOAD_MAX_FILE_SIZE_BYTES');
     try {

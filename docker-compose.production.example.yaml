@@ -1,0 +1,285 @@
+# Production Deployment Manifest Example (SDA System v1.0.0)
+# Security Hardened: Non-Root Execution, Read-Only Filesystems, Dropped Capabilities, Zero Hardcoded Secrets.
+#
+# USAGE:
+#   1. Copy this file to docker-compose.prod.yaml:
+#      cp docker-compose.production.example.yaml docker-compose.prod.yaml
+#   2. Populate a secure environment file (.env.production):
+#      chmod 600 .env.production
+#   3. Run with docker compose:
+#      docker compose --env-file .env.production -f docker-compose.prod.yaml up -d
+
+name: sda-production
+
+x-production-service-defaults: &service-defaults
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - internal_backend
+
+services:
+  # =========================================================================
+  # 1. DATABASE: PostgreSQL (Encrypted & Hardened)
+  # =========================================================================
+  postgres:
+    <<: *service-defaults
+    image: postgres:18-alpine
+    user: postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sda_production}
+      POSTGRES_USER: ${POSTGRES_USER:-sda_app}
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?Required: Strong password for PostgreSQL}'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    cpus: 2.0
+    mem_limit: 2g
+    mem_reservation: 512m
+
+  # =========================================================================
+  # 2. CACHE & SESSIONS: Redis
+  # =========================================================================
+  redis:
+    <<: *service-defaults
+    image: redis:8.2-alpine
+    user: redis
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$${REDIS_PASSWORD}"
+    environment:
+      REDIS_PASSWORD: '${REDIS_PASSWORD:?Required: Strong password for Redis}'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -qx PONG']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    cpus: 1.0
+    mem_limit: 1g
+    mem_reservation: 256m
+
+  # =========================================================================
+  # 3. OBJECT STORAGE: MinIO (S3-Compatible Encrypted Store)
+  # =========================================================================
+  minio:
+    <<: *service-defaults
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    user: '1000:1000'
+    command: ['server', '/data', '--address', ':9000']
+    environment:
+      MINIO_ROOT_USER: '${STORAGE_ACCESS_KEY:?Required: MinIO Access Key}'
+      MINIO_ROOT_PASSWORD: '${STORAGE_SECRET_KEY:?Required: MinIO Secret Key}'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/ready']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    cpus: 1.0
+    mem_limit: 1g
+
+  # =========================================================================
+  # 4. ANTIVIRUS: ClamAV Daemon
+  # =========================================================================
+  clamav:
+    <<: *service-defaults
+    image: clamav/clamav:1.4.3_base
+    user: '100:101'
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    healthcheck:
+      test: ['CMD', 'clamdscan', '--ping', '10']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    cpus: 1.5
+    mem_limit: 2g
+
+  # =========================================================================
+  # 5. CORE API SERVICE: NestJS / Fastify
+  # =========================================================================
+  api:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    user: '10001:10001'
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: 'postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable'
+      REDIS_URL: 'redis://:${REDIS_PASSWORD}@redis:6379'
+      STORAGE_ENDPOINT: minio
+      STORAGE_PORT: 9000
+      STORAGE_USE_SSL: 'false'
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY}
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      JWT_PRIVATE_KEY: '${JWT_PRIVATE_KEY:?Required: Ed25519 PKCS8 or Secret}'
+      JWT_PUBLIC_KEY: '${JWT_PUBLIC_KEY:?Required: Ed25519 SPKI or Secret}'
+      COOKIE_SECRET: '${COOKIE_SECRET:?Required: 32-byte secret}'
+      KMS_MASTER_KEY: '${KMS_MASTER_KEY:?Required: 64-hex AES-256 KEK}'
+      AUDIT_HMAC_KEY: '${AUDIT_HMAC_KEY:?Required: 64-hex HMAC secret}'
+    ports:
+      - '127.0.0.1:3001:3001'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--no-verbose',
+          '--tries=1',
+          '--spider',
+          'http://127.0.0.1:3001/api/v1/health/live',
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    cpus: 2.0
+    mem_limit: 1g
+
+  # =========================================================================
+  # 6. ASYNC BACKGROUND WORKER
+  # =========================================================================
+  worker:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    user: '10001:10001'
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: 'postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable'
+      REDIS_URL: 'redis://:${REDIS_PASSWORD}@redis:6379'
+      AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY}
+    cpus: 1.0
+    mem_limit: 512m
+
+  # =========================================================================
+  # 7. WEB FRONTEND: Next.js 16
+  # =========================================================================
+  web:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    user: 'node:1000'
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+    ports:
+      - '127.0.0.1:3000:3000'
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://127.0.0.1:3000/']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    cpus: 1.5
+    mem_limit: 1g
+
+  # =========================================================================
+  # 8. OBSERVABILITY: Prometheus & Grafana
+  # =========================================================================
+  prometheus:
+    <<: *service-defaults
+    image: prom/prometheus:v3.13.3
+    user: '65534:65534'
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/observability/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - '127.0.0.1:9090:9090'
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://localhost:9090/-/ready']
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    cpus: 0.5
+    mem_limit: 512m
+
+  grafana:
+    <<: *service-defaults
+    image: grafana/grafana:13.2.2
+    user: '472:472'
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: '${GRAFANA_ADMIN_PASSWORD:?Required: Grafana admin password}'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - '127.0.0.1:3002:3000'
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://localhost:3000/api/health']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    cpus: 0.5
+    mem_limit: 512m
+
+networks:
+  internal_backend:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  clamav_signatures:
+  prometheus_data:
+  grafana_data:

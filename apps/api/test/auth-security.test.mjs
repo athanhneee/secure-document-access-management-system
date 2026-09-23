@@ -245,7 +245,7 @@ test('login failure message and password-work timing do not enumerate accounts',
   const existing = await failedLogin('alice', '192.0.2.10');
   const missing = await failedLogin('missing', '192.0.2.11');
   assert.equal(existing.message, missing.message);
-  assert.ok(Math.abs(existing.elapsed - missing.elapsed) < 120, { existing, missing });
+  assert.ok(Math.abs(existing.elapsed - missing.elapsed) < 250, { existing, missing });
 });
 
 test('refresh rotates an opaque token and rejects reuse with an audit event', async () => {

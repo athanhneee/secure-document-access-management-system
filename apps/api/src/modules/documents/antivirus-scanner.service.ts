@@ -145,12 +145,12 @@ export class AntivirusScannerService {
     response: string,
     resolve: (res: { status: 'CLEAN' | 'INFECTED' | 'FAILED'; virusName?: string }) => void,
   ): void {
-    const trimmed = response.trim();
-    if (trimmed.endsWith('OK')) {
+    const cleaned = response.replace(/\0/g, '').trim();
+    if (cleaned.endsWith('OK')) {
       resolve({ status: 'CLEAN' });
-    } else if (trimmed.includes('FOUND')) {
+    } else if (cleaned.includes('FOUND')) {
       // Format: stream: <VirusName> FOUND
-      const match = /stream:\s*(.+)\s*FOUND/iu.exec(trimmed);
+      const match = /stream:\s*(.+)\s*FOUND/iu.exec(cleaned);
       const virusName = match?.[1]?.trim() ?? 'Unknown-Malware';
       resolve({ status: 'INFECTED', virusName });
     } else {

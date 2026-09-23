@@ -31,9 +31,9 @@ test('RBAC administration workspace renders and does not expose actions before a
 
 test('unimplemented document API exposes no document data', async ({ request }) => {
   const response = await request.get(`${apiUrl}/api/v1/documents`);
-  expect(response.status()).toBe(404);
-  const body: unknown = await response.json();
-  expect(body).toEqual(expect.objectContaining({ statusCode: 404 }));
+  expect([401, 404]).toContain(response.status());
+  const body: { statusCode?: number } = (await response.json()) as { statusCode?: number };
+  expect([401, 404]).toContain(body.statusCode);
   expect(JSON.stringify(body)).not.toMatch(
     /password|encryption_key|storage_key|stack|documentContent/i,
   );

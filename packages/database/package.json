@@ -14,7 +14,7 @@
     "lint": "oxlint src test",
     "typecheck": "pnpm prisma:generate && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.prisma.json --noEmit",
     "test": "node --test test/unit/*.test.mjs",
-    "test:integration": "pnpm prisma:validate && pnpm prisma:generate && node --test test/*.integration.test.mjs",
+    "test:integration": "pnpm prisma:validate && pnpm prisma:generate && node --test --test-concurrency=1 test/*.integration.test.mjs",
     "prisma:validate": "prisma validate --config prisma.config.ts",
     "prisma:generate": "prisma generate --config prisma.config.ts",
     "prisma:migrate": "prisma migrate deploy --config prisma.config.ts",

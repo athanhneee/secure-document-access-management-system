@@ -1,6 +1,12 @@
 {
   "extends": "../../packages/config/tsconfig.web.json",
-  "compilerOptions": { "plugins": [{ "name": "next" }], "incremental": true },
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./*"]
+    },
+    "plugins": [{ "name": "next" }],
+    "incremental": true
+  },
   "include": [
     "next-env.d.ts",
     "**/*.ts",

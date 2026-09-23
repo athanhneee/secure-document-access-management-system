@@ -54,6 +54,7 @@ export class UsersService {
     const grants = await this.authorization.effectiveGrants(principal.userId);
     return {
       ...this.present(user),
+      roles: [...new Set(grants.map((grant) => grant.roleCode))].sort(),
       permissions: [...new Set(grants.map((grant) => `${grant.resource}:${grant.action}`))].sort(),
     };
   }

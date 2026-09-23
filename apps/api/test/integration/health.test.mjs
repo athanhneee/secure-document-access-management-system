@@ -51,9 +51,9 @@ test('readiness is public, degraded when required local dependencies are absent,
   assert.equal(response.headers['cache-control'], 'no-store');
 });
 
-test('business endpoints remain unavailable', async () => {
+test('business endpoints require authentication or are not exposed', async () => {
   const response = await application.inject({ method: 'GET', url: '/api/v1/documents' });
-  assert.equal(response.statusCode, 404);
+  assert.ok([401, 404].includes(response.statusCode));
   assert.equal(response.json().stack, undefined);
 });
 

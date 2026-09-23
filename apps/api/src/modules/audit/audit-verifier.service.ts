@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from 'node:crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import { AuditWriterService } from './audit-writer.service.js';
@@ -33,7 +33,7 @@ export class AuditVerifierService {
 
   constructor(
     private readonly writerService: AuditWriterService,
-    databaseClient?: PrismaClient,
+    @Optional() databaseClient?: PrismaClient,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();

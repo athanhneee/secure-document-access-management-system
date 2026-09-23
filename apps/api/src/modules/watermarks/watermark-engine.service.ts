@@ -1,4 +1,10 @@
-import { Injectable, Logger, ForbiddenException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ForbiddenException,
+  BadRequestException,
+  Optional,
+} from '@nestjs/common';
 import crypto, { randomUUID } from 'node:crypto';
 import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
 import QRCode from 'qrcode';
@@ -46,7 +52,7 @@ export class WatermarkEngineService {
   private readonly logger = new Logger(WatermarkEngineService.name);
   private readonly database: PrismaClient;
 
-  constructor(databaseClient?: PrismaClient) {
+  constructor(@Optional() databaseClient?: PrismaClient) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
     } catch {

@@ -57,19 +57,23 @@ const expectedTables = [
   'access_requests',
   'access_sessions',
   'alert_audit_links',
+  'async_export_jobs',
   'attribute_definitions',
   'attribute_options',
+  'audit_anchors',
   'audit_logs',
   'auth_sessions',
   'business_categories',
   'classification_levels',
   'departments',
+  'detection_rule_configs',
   'document_classification_history',
   'document_versions',
   'documents',
   'incident_actions',
   'incident_reports',
   'mfa_methods',
+  'notification_outbox',
   'notifications',
   'password_reset_tokens',
   'permissions',
@@ -174,7 +178,7 @@ test('Prisma migration, idempotent seed, constraints, and initial rollback are v
   const migrationCount = await database.query(
     'SELECT count(*)::int AS count FROM _prisma_migrations WHERE finished_at IS NOT NULL',
   );
-  assert.equal(migrationCount.rows[0].count, 4);
+  assert.equal(migrationCount.rows[0].count, 8);
 
   const abacEvolution = await database.query(
     `SELECT table_name,column_name FROM information_schema.columns

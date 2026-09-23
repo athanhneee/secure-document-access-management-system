@@ -1,0 +1,72 @@
+groups:
+  - name: sda_sre_alerts
+    rules:
+      # 1. Dependency Readiness Alert
+      - alert: ReadinessDegraded
+        expr: http_requests_total{route="/api/v1/health/ready",status_code="503"} > 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Core dependency (Postgres, Redis, or MinIO) is unreachable'
+          description: 'Readiness probe returned 503 Service Unavailable for more than 30s.'
+
+      # 2. HTTP Error Rate Alert (> 1% 5xx errors)
+      - alert: HighHttpErrorRate
+        expr: (sum(rate(http_requests_total{status_code=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))) > 0.01
+        for: 2m
+        labels:
+          severity: high
+        annotations:
+          summary: 'HTTP 5xx server error rate exceeds 1%'
+          description: 'API is experiencing elevated server errors (current rate: {{ $value | humanizePercentage }}).'
+
+      # 3. Audit Trail Integrity Alert (Tampering detected!)
+      - alert: AuditIntegrityCompromised
+        expr: increase(audit_verify_failures_total[5m]) > 0
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: 'CRITICAL: Audit log cryptographic verification failed'
+          description: 'A hash mismatch or sequence anomaly was detected in partition {{ $labels.partition }}. Immediate security investigation required.'
+
+      # 4. Watermark Engine Failure Spike
+      - alert: WatermarkFailureSpike
+        expr: increase(watermark_failures_total[5m]) > 3
+        for: 1m
+        labels:
+          severity: high
+        annotations:
+          summary: 'Watermark rendering failure spike detected'
+          description: 'Watermark generation failed {{ $value }} times in 5 minutes with reason {{ $labels.reason }}.'
+
+      # 5. Worker Queue Backlog
+      - alert: ExportQueueBacklogHigh
+        expr: worker_queue_depth{queue="export"} > 50
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: 'Export job queue backlog exceeds 50 items'
+          description: 'Async export jobs are accumulating faster than workers can process.'
+
+      # 6. PDP Policy Evaluation Latency (> 50ms p95)
+      - alert: HighPdpLatency
+        expr: histogram_quantile(0.95, sum(rate(pdp_evaluation_duration_seconds_bucket[5m])) by (le)) > 0.05
+        for: 3m
+        labels:
+          severity: medium
+        annotations:
+          summary: 'PDP access decision latency p95 > 50ms'
+          description: 'ABAC engine evaluation latency is degrading (current p95: {{ $value | humanizeDuration }}).'
+
+      # 7. ClamAV Malware Quarantine Spike
+      - alert: InfectedUploadSpike
+        expr: sum(rate(antivirus_scan_duration_seconds_count{result="INFECTED"}[10m])) > 0
+        for: 0s
+        labels:
+          severity: high
+        annotations:
+          summary: 'Malicious file upload detected by ClamAV'
+          description: 'One or more uploaded files tested positive for malware and were quarantined.'

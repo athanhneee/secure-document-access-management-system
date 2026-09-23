@@ -101,3 +101,8 @@ temp/
 # Markdown and documentation files
 *.md
 **/*.md
+!docs/THREAT_MODEL.md
+!docs/TRACEABILITY_MATRIX.md
+!docs/PERFORMANCE_REPORT.md
+!docs/BUG_FIX_REPORT.md
+!SECURITY.md

@@ -31,7 +31,7 @@ export class ReportsController {
     if (!req.auth) throw new ForbiddenException('Authentication required.');
     const parsed = CreateExportJobSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.exportJobService.createExportJob(parsed.data, req.auth);
+    return this.exportJobService.createExportJob(parsed.data, req.auth, req.correlationId);
   }
 
   @Get('export/:jobId')

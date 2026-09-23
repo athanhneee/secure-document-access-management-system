@@ -49,8 +49,6 @@ const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // 'PK\x03\x04'
 // Bidi control characters and zero-width characters (Unicode spoofing)
 const BIDI_REGEX = /[\u202A-\u202E\u2066-\u2069\u200E\u200F]/u;
 const ZERO_WIDTH_REGEX = /[\u200B-\u200D\uFEFF]/gu;
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARS_REGEX = /[\x00-\x1F\x7F-\x9F]/gu;
 
 @Injectable()
 export class FileValidationService {
@@ -91,7 +89,13 @@ export class FileValidationService {
     let cleaned = rawFilename.normalize('NFKC').replace(ZERO_WIDTH_REGEX, '');
 
     // 4. Strip control characters
-    cleaned = cleaned.replace(CONTROL_CHARS_REGEX, '');
+    cleaned = cleaned
+      .split('')
+      .filter((c) => {
+        const code = c.charCodeAt(0);
+        return !(code <= 31 || (code >= 127 && code <= 159));
+      })
+      .join('');
 
     // 5. Defend against path traversal: extract basename and strip directory separators
     cleaned = path.basename(cleaned).replace(/[/\\?%*:|"<>]/gu, '_');

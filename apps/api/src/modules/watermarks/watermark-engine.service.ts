@@ -144,6 +144,7 @@ export class WatermarkEngineService {
     existingToken?: string,
     now: Date = new Date(),
   ): Promise<WatermarkResult> {
+    const start = performance.now();
     try {
       const watermarkToken = existingToken || this.generateWatermarkToken();
       const renderedText = this.formatWatermarkText(
@@ -245,6 +246,14 @@ export class WatermarkEngineService {
       const watermarkedBuffer = Buffer.from(watermarkedBytes);
       const outputSha256Hash = crypto.createHash('sha256').update(watermarkedBuffer).digest('hex');
 
+      const durationSeconds = (performance.now() - start) / 1000;
+      try {
+        const { MetricsService } = await import('../system-health/metrics.service.js');
+        MetricsService.getInstance().recordWatermarkRender(durationSeconds, true);
+      } catch {
+        // Fallback if metrics service is unavailable in isolated runner
+      }
+
       return {
         watermarkedBuffer,
         watermarkToken,
@@ -253,6 +262,18 @@ export class WatermarkEngineService {
         pageCount,
       };
     } catch (err: unknown) {
+      const durationSeconds = (performance.now() - start) / 1000;
+      try {
+        const { MetricsService } = await import('../system-health/metrics.service.js');
+        MetricsService.getInstance().recordWatermarkRender(
+          durationSeconds,
+          false,
+          'pdf_render_error',
+        );
+      } catch {
+        // Fallback
+      }
+
       this.logger.error(`Watermark generation failed: ${err}`);
       if (document.requireWatermark) {
         // Fail-closed: Never deliver unwatermarked document

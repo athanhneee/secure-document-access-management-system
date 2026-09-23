@@ -4,12 +4,33 @@ import type { FastifyReply } from 'fastify';
 import { PublicEndpoint } from '../../public-endpoint.js';
 import { RequirePermission } from '../rbac/require-permission.js';
 import { HealthService } from './health.service.js';
+import { MetricsService } from './metrics.service.js';
 import type { LivenessResponse, ReadinessResponse } from '@sda/contracts';
 
 @ApiTags('system-health')
 @Controller('health')
 export class HealthController {
-  constructor(private readonly healthService: HealthService) {}
+  constructor(
+    private readonly healthService: HealthService,
+    private readonly metricsService: MetricsService,
+  ) {}
+
+  @Get('metrics')
+  @PublicEndpoint()
+  @Header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Prometheus metrics scrape endpoint' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Prometheus text format metrics' })
+  async getMetrics(): Promise<string> {
+    try {
+      const live = await this.healthService.getLiveMetrics();
+      this.metricsService.setActiveSessions(live.operational.activeSessionsCount);
+      this.metricsService.setQueueDepth('export', live.operational.pendingExportsCount);
+    } catch {
+      // In degraded state, export available in-memory metrics
+    }
+    return this.metricsService.exportPrometheusText();
+  }
 
   @Get('live')
   @PublicEndpoint()

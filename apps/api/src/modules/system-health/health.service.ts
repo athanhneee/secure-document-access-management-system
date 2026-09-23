@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as net from 'node:net';
 import { getDatabaseClient } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
+import { tracer } from '../../common/telemetry/tracer.js';
 import type { DependencyHealth, LivenessResponse, ReadinessResponse } from '@sda/contracts';
 
 @Injectable()
@@ -38,65 +39,71 @@ export class HealthService {
   }
 
   private async probeDatabase(timeoutMs: number): Promise<DependencyHealth> {
-    const start = Date.now();
-    try {
-      const dbUrl = this.configService.get('DATABASE_URL');
-      const url = new URL(dbUrl);
-      const host = url.hostname;
-      const port = Number(url.port || 5432);
+    return tracer.withSpan('db.probe', { 'db.system': 'postgresql' }, async () => {
+      const start = Date.now();
+      try {
+        const dbUrl = this.configService.get('DATABASE_URL');
+        const url = new URL(dbUrl);
+        const host = url.hostname;
+        const port = Number(url.port || 5432);
 
-      await this.tcpPing(host, port, timeoutMs);
-      return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
-    } catch {
-      // NEVER leak connection credentials or stack traces
-      return {
-        status: 'down',
-        latencyMs: Date.now() - start,
-        message: 'Database service is unreachable or timed out',
-      };
-    }
+        await this.tcpPing(host, port, timeoutMs);
+        return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
+      } catch {
+        // NEVER leak connection credentials or stack traces
+        return {
+          status: 'down',
+          latencyMs: Date.now() - start,
+          message: 'Database service is unreachable or timed out',
+        };
+      }
+    });
   }
 
   private async probeRedis(timeoutMs: number): Promise<DependencyHealth> {
-    const start = Date.now();
-    try {
-      const redisUrl = this.configService.get('REDIS_URL');
-      const url = new URL(redisUrl);
-      const host = url.hostname;
-      const port = Number(url.port || 6379);
+    return tracer.withSpan('redis.probe', { 'db.system': 'redis' }, async () => {
+      const start = Date.now();
+      try {
+        const redisUrl = this.configService.get('REDIS_URL');
+        const url = new URL(redisUrl);
+        const host = url.hostname;
+        const port = Number(url.port || 6379);
 
-      await this.tcpPing(host, port, timeoutMs);
-      return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
-    } catch {
-      // NEVER leak connection credentials or stack traces
-      return {
-        status: 'down',
-        latencyMs: Date.now() - start,
-        message: 'Redis service is unreachable or timed out',
-      };
-    }
+        await this.tcpPing(host, port, timeoutMs);
+        return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
+      } catch {
+        // NEVER leak connection credentials or stack traces
+        return {
+          status: 'down',
+          latencyMs: Date.now() - start,
+          message: 'Redis service is unreachable or timed out',
+        };
+      }
+    });
   }
 
   private async probeStorage(timeoutMs: number): Promise<DependencyHealth> {
-    const start = Date.now();
-    try {
-      const host = this.configService.get('STORAGE_ENDPOINT');
-      const port = this.configService.get('STORAGE_PORT');
-      const protocol = this.configService.get('STORAGE_USE_SSL') ? 'https' : 'http';
-      const response = await fetch(`${protocol}://${host}:${port}/minio/health/ready`, {
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      await response.body?.cancel();
-      if (!response.ok) throw new Error('Storage readiness endpoint is not healthy');
-      return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
-    } catch {
-      // NEVER leak storage keys or credentials
-      return {
-        status: 'down',
-        latencyMs: Date.now() - start,
-        message: 'Object storage service is unreachable or timed out',
-      };
-    }
+    return tracer.withSpan('storage.probe', { 'rpc.system': 's3' }, async () => {
+      const start = Date.now();
+      try {
+        const host = this.configService.get('STORAGE_ENDPOINT');
+        const port = this.configService.get('STORAGE_PORT');
+        const protocol = this.configService.get('STORAGE_USE_SSL') ? 'https' : 'http';
+        const response = await fetch(`${protocol}://${host}:${port}/minio/health/ready`, {
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        await response.body?.cancel();
+        if (!response.ok) throw new Error('Storage readiness endpoint is not healthy');
+        return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
+      } catch {
+        // NEVER leak storage keys or credentials
+        return {
+          status: 'down',
+          latencyMs: Date.now() - start,
+          message: 'Object storage service is unreachable or timed out',
+        };
+      }
+    });
   }
 
   private tcpPing(host: string, port: number, timeoutMs: number): Promise<void> {

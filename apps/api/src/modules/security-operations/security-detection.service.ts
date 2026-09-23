@@ -551,6 +551,13 @@ export class SecurityDetectionService {
       }
     });
 
+    try {
+      const { MetricsService } = await import('../system-health/metrics.service.js');
+      MetricsService.getInstance().recordSecurityAlert(rule.severity, rule.ruleCode);
+    } catch {
+      // Fallback
+    }
+
     this.logger.warn(
       `Created new SecurityAlert [${rule.severity}] ${rule.ruleCode} (id: ${newAlertId}) for user ${userId?.toString() ?? 'system'} with ${matchingLogIds.length} linked logs.`,
     );

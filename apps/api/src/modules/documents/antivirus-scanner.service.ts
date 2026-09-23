@@ -30,44 +30,61 @@ export class AntivirusScannerService {
   async scan(source: Buffer | Readable): Promise<AntivirusScanResult> {
     const startTime = Date.now();
 
-    // 1. Direct EICAR check (guaranteed detection even in offline/mock environments)
-    if (source instanceof Buffer) {
-      if (source.toString('utf8').includes(EICAR_SIGNATURE)) {
+    const finalResult: AntivirusScanResult = await (async () => {
+      // 1. Direct EICAR check (guaranteed detection even in offline/mock environments)
+      if (source instanceof Buffer) {
+        if (source.toString('utf8').includes(EICAR_SIGNATURE)) {
+          return {
+            status: 'INFECTED' as const,
+            virusName: 'Eicar-Test-Signature',
+            durationMs: Date.now() - startTime,
+          };
+        }
+      }
+
+      // 2. ClamAV TCP scan
+      try {
+        const clamResult = await this.scanWithClamAv(source);
         return {
-          status: 'INFECTED',
-          virusName: 'Eicar-Test-Signature',
+          status: clamResult.status,
+          virusName: clamResult.virusName,
+          durationMs: Date.now() - startTime,
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`ClamAV socket communication failed: ${msg}`);
+
+        // If ClamAV daemon is unreachable in dev/test, check if buffer had EICAR (done above)
+        // Otherwise in production unreachable AV means scan FAILED
+        if (process.env['NODE_ENV'] === 'production') {
+          return {
+            status: 'FAILED' as const,
+            durationMs: Date.now() - startTime,
+          };
+        }
+
+        // In local dev/test fallback to clean if no EICAR found
+        return {
+          status: 'CLEAN' as const,
           durationMs: Date.now() - startTime,
         };
       }
-    }
+    })();
 
-    // 2. ClamAV TCP scan
     try {
-      const clamResult = await this.scanWithClamAv(source);
-      return {
-        status: clamResult.status,
-        virusName: clamResult.virusName,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`ClamAV socket communication failed: ${msg}`);
-
-      // If ClamAV daemon is unreachable in dev/test, check if buffer had EICAR (done above)
-      // Otherwise in production unreachable AV means scan FAILED
-      if (process.env['NODE_ENV'] === 'production') {
-        return {
-          status: 'FAILED',
-          durationMs: Date.now() - startTime,
-        };
-      }
-
-      // In local dev/test fallback to clean if no EICAR found
-      return {
-        status: 'CLEAN',
-        durationMs: Date.now() - startTime,
-      };
+      const { MetricsService } = await import('../system-health/metrics.service.js');
+      const metricResult =
+        finalResult.status === 'CLEAN'
+          ? 'CLEAN'
+          : finalResult.status === 'INFECTED'
+            ? 'INFECTED'
+            : 'ERROR';
+      MetricsService.getInstance().recordAntivirusScan(metricResult, finalResult.durationMs / 1000);
+    } catch {
+      // Fallback
     }
+
+    return finalResult;
   }
 
   private scanWithClamAv(

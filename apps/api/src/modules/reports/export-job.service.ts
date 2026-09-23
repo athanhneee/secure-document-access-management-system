@@ -74,6 +74,7 @@ export class ExportJobService {
   async createExportJob(
     input: CreateExportJobInput,
     actor: AuthPrincipal,
+    correlationId?: string,
   ): Promise<ExportJobDetail> {
     const id = randomUUID();
     const expiresAt = new Date(Date.now() + DEFAULT_TTL_HOURS * 60 * 60 * 1000);
@@ -103,12 +104,13 @@ export class ExportJobService {
           exportType: input.exportType,
           format: input.format,
           expiresAt: expiresAt.toISOString(),
+          correlationId: correlationId ?? null,
         },
       });
     }
 
-    // Process asynchronously (or immediate sync in background)
-    void this.processExportJob(id, input, actor);
+    // Process asynchronously with propagated correlation ID
+    void this.processExportJob(id, input, actor, correlationId);
 
     return this.mapToDetail(job);
   }
@@ -227,7 +229,13 @@ export class ExportJobService {
     jobId: string,
     input: CreateExportJobInput,
     _actor: AuthPrincipal,
+    correlationId?: string,
   ): Promise<void> {
+    const activeCorrId = correlationId || 'worker-internal';
+    this.logger.log(
+      `[Worker][ExportJob: ${jobId}][CorrelationId: ${activeCorrId}] Processing export ${input.exportType} (${input.format})`,
+    );
+
     try {
       await this.database.asyncExportJob.update({
         where: { id: jobId },

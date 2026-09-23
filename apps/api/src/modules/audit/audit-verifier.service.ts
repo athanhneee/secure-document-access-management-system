@@ -291,6 +291,14 @@ export class AuditVerifierService {
       `CRITICAL SECURITY ALERT: Audit trail integrity compromised in partition ${partition}! Total violations: ${violations.length}`,
     );
 
+    try {
+      const { MetricsService } = await import('../system-health/metrics.service.js');
+      MetricsService.getInstance().recordAuditVerifyFailure(partition);
+      MetricsService.getInstance().recordSecurityAlert('CRITICAL', 'audit_integrity');
+    } catch {
+      // Fallback
+    }
+
     await this.database.$transaction(async (tx) => {
       await tx.securityAlert.create({
         data: {

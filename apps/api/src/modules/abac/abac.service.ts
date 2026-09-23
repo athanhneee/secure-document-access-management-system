@@ -51,31 +51,49 @@ export class AbacService {
   }
 
   async evaluate(input: PolicyEvaluationInput): Promise<PdpResult> {
+    const start = performance.now();
+    let isCached = false;
+    let result: PdpResult;
+
     const version = await this.repository.currentPolicyVersion();
     const versionText = version.toString();
     const cached = await this.cache.get(versionText);
     if (cached) {
       try {
-        return evaluatePolicy(cached, input);
+        result = evaluatePolicy(cached, input);
+        isCached = true;
       } catch {
         await this.cache.invalidate(versionText);
       }
     }
-    try {
-      const source = await this.repository.loadPolicySource();
-      const compiled = compilePolicy(version, source.definitions, source.rules);
-      await this.cache.put(compiled);
-      return evaluatePolicy(compiled, input);
-    } catch (error) {
-      if (!(error instanceof PolicyCompilationError)) throw error;
-      return {
-        decision: 'DENY',
-        reasonCode: 'INVALID_POLICY',
-        matchedRuleIds: [],
-        obligations: [],
-        policyVersion: versionText,
-      };
+
+    if (!result!) {
+      try {
+        const source = await this.repository.loadPolicySource();
+        const compiled = compilePolicy(version, source.definitions, source.rules);
+        await this.cache.put(compiled);
+        result = evaluatePolicy(compiled, input);
+      } catch (error) {
+        if (!(error instanceof PolicyCompilationError)) throw error;
+        result = {
+          decision: 'DENY',
+          reasonCode: 'INVALID_POLICY',
+          matchedRuleIds: [],
+          obligations: [],
+          policyVersion: versionText,
+        };
+      }
     }
+
+    const durationSeconds = (performance.now() - start) / 1000;
+    try {
+      const { MetricsService } = await import('../system-health/metrics.service.js');
+      MetricsService.getInstance().recordPdpEvaluation(result.decision, durationSeconds, isCached);
+    } catch {
+      // Ignore if metrics service unavailable in lightweight test runner
+    }
+
+    return result;
   }
 
   async simulate(

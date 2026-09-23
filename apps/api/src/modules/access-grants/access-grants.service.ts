@@ -451,6 +451,7 @@ export class AccessGrantsService {
     principal: AuthPrincipal,
     context: RequestContext,
   ): Promise<GrantDetail> {
+    const start = performance.now();
     const now = new Date();
 
     // Load grant with optimistic locking
@@ -623,6 +624,15 @@ export class AccessGrantsService {
       where: { id: grantId },
       include: { access_grant_permissions: true },
     });
+
+    const durationSeconds = (performance.now() - start) / 1000;
+    try {
+      const { MetricsService } = await import('../system-health/metrics.service.js');
+      MetricsService.getInstance().recordGrantRevocation(durationSeconds, true);
+    } catch {
+      // Fallback
+    }
+
     return this.toGrantDetail(updated!);
   }
 

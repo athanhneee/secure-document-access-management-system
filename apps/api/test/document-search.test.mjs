@@ -243,8 +243,7 @@ async function buildService(options = {}) {
     /** @type {any} */ (mockAudit),
   );
   // Inject mock database
-  // @ts-ignore -- accessing private field for testing
-  service.database = mockDatabase;
+  Object.assign(service, { database: mockDatabase });
 
   return { service, capturedQueries, capturedAudits, mockDatabase, mockAuthorization };
 }

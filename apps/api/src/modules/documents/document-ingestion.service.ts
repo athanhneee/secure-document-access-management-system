@@ -242,6 +242,16 @@ export class DocumentIngestionService {
         bucket: this.storage.quarantineBucket,
         key: quarantineKey,
       });
+
+      try {
+        const { MetricsService } = await import('../system-health/metrics.service.js');
+        MetricsService.getInstance().recordDocumentUpload(
+          spoolBuffer.length,
+          validatedInfo.extension,
+        );
+      } catch {
+        // Fallback
+      }
     } catch (err: unknown) {
       await this.compensation.compensate(session);
       throw err;

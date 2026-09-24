@@ -1,11 +1,15 @@
-# Dependencies and local toolchains
+# =========================================================================
+# 1. Dependencies and local toolchains
+# =========================================================================
 node_modules/
 .pnpm-store/
 .tools/
 .local/
 !.local.example/
 
-# Build, framework and test artifacts
+# =========================================================================
+# 2. Build, framework, caches and test artifacts
+# =========================================================================
 dist/
 build/
 .next/
@@ -17,6 +21,17 @@ playwright-report/
 blob-report/
 *.tsbuildinfo
 next-env.d.ts
+.cache/
+.temp/
+.tmp/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# =========================================================================
+# 3. Logs and report output
+# =========================================================================
 *.log
 .logs/
 .reports/
@@ -25,8 +40,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .pnpm-debug.log*
+DumpStack.log*
 
-# Environment, credentials and decrypted or uploaded content
+# =========================================================================
+# 4. Environment, credentials, keys and confidential data
+# =========================================================================
 .env
 .env.*
 .env.local
@@ -42,6 +60,9 @@ credentials/
 *.pfx
 *.jks
 *.keystore
+*.crt
+*.cer
+*.der
 *.enc
 *.decrypted
 *.plaintext
@@ -57,11 +78,65 @@ storage/
 *.dump
 *.backup
 
-# Prisma generated client; migrations and schema MUST be tracked
+# =========================================================================
+# 5. Documents, PDFs, Office and Archives (Forbidden / Unnecessary)
+# =========================================================================
+# PDF files (Chặn tuyệt đối file PDF)
+*.pdf
+**/*.pdf
+
+# Office and raw binary documents (Chặn file Office)
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+*.odt
+*.ods
+*.odp
+*.rtf
+*.csv
+
+# Compressed and archive packages
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.iso
+
+# Media, video and audio files
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.mp3
+*.wav
+*.aac
+*.flac
+
+# =========================================================================
+# 6. Markdown files (Chỉ giữ lại duy nhất README.md)
+# =========================================================================
+*.md
+**/*.md
+!README.md
+!readme.md
+!**/README.md
+!**/readme.md
+
+# =========================================================================
+# 7. Prisma generated client; migrations and schema MUST be tracked
+# =========================================================================
 **/prisma/generated/
 **/generated/prisma/
 
-# IDE, OS, caches and temporary files
+# =========================================================================
+# 8. IDE, Editor, Agent and Operating System artifacts
+# =========================================================================
 .idea/
 .vscode/
 *.sublime-project
@@ -84,35 +159,13 @@ ehthumbs.db
 Thumbs.db
 Thumbs.db:encryptable
 desktop.ini
-.cache/
-.temp/
-.tmp/
-tmp/
-temp/
-*.tmp
-*.bak
+.agents/
+.gemini/
 
-# Docker data and volume mounts
+# =========================================================================
+# 9. Docker mounts and volume data
+# =========================================================================
 **/docker-data/
 **/docker-volumes/
 **/volumes/
 .husky/_/
-
-# Markdown and documentation files
-*.md
-**/*.md
-!docs/THREAT_MODEL.md
-!docs/TRACEABILITY_MATRIX.md
-!docs/PERFORMANCE_REPORT.md
-!docs/BUG_FIX_REPORT.md
-!SECURITY.md
-!docs/DEPLOYMENT.md
-!docs/BACKUP_RESTORE.md
-!docs/KEY_ROTATION.md
-!docs/INCIDENT_RESPONSE.md
-!docs/USER_GUIDE.md
-!docs/DEMO_SCRIPT.md
-!docs/IMPLEMENTATION_PROGRESS.md
-!RELEASE_CHECKLIST.md
-
-

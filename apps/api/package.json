@@ -25,6 +25,7 @@
     "@sda/contracts": "workspace:*",
     "@sda/database": "workspace:*",
     "@sda/security": "workspace:*",
+    "@simplewebauthn/server": "^14.0.2",
     "@standard-schema/spec": "1.0.0",
     "argon2": "^0.45.1",
     "fastify": "5.12.4",

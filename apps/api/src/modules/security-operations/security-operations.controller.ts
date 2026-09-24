@@ -8,7 +8,7 @@ import {
   Body,
   Req,
   HttpStatus,
-  ForbiddenException,
+  UnauthorizedException,
   BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
@@ -28,6 +28,7 @@ import {
   UpdateDetectionRuleConfigSchema,
   RunDetectionInputSchema,
 } from '@sda/contracts';
+import { CsrfService } from '../auth/csrf.service.js';
 import { RequirePermission } from '../rbac/require-permission.js';
 import { SecurityAlertsService } from './security-alerts.service.js';
 import { IncidentsService } from './incidents.service.js';
@@ -41,6 +42,7 @@ export class SecurityOperationsController {
     private readonly alertsService: SecurityAlertsService,
     private readonly incidentsService: IncidentsService,
     private readonly detectionService: SecurityDetectionService,
+    private readonly csrf: CsrfService,
   ) {}
 
   // --- Security Alerts Endpoints ---
@@ -50,7 +52,7 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'List security alerts with filters and pagination' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Paginated security alerts list' })
   async listAlerts(@Query() query: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = QuerySecurityAlertsSchema.safeParse(query);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.alertsService.listAlerts(parsed.data);
@@ -63,7 +65,7 @@ export class SecurityOperationsController {
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Security alert details' })
   async getAlertById(@Param('id') id: string, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     return this.alertsService.getAlertById(id);
   }
 
@@ -76,7 +78,8 @@ export class SecurityOperationsController {
     @Body() body: unknown,
     @Req() req: FastifyRequest,
   ) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = UpdateAlertStatusSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.alertsService.updateAlertStatus(id, parsed.data, req.auth);
@@ -87,7 +90,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Assign security alert to an officer' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Assigned security alert' })
   async assignAlert(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = AssignAlertSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.alertsService.assignAlert(id, parsed.data.assignedToUserId, req.auth);
@@ -98,7 +102,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Add investigation note to security alert' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Updated security alert with note' })
   async addAlertNote(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = AddAlertNoteSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.alertsService.addAlertNote(id, parsed.data.note, req.auth);
@@ -111,7 +116,7 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'List incident reports with filters and pagination' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Paginated incident reports list' })
   async listIncidents(@Query() query: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = QueryIncidentReportsSchema.safeParse(query);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.incidentsService.listIncidentReports(parsed.data);
@@ -122,7 +127,7 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Get incident report details by ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Incident report details' })
   async getIncidentById(@Param('id') id: string, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     return this.incidentsService.getIncidentReportById(id);
   }
 
@@ -131,7 +136,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Create a new incident report in DRAFT status' })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Created incident report' })
   async createIncident(@Body() body: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = CreateIncidentReportSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.incidentsService.createIncidentReport(parsed.data, req.auth);
@@ -142,7 +148,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Update incident report details' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Updated incident report' })
   async updateIncident(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = UpdateIncidentReportSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.incidentsService.updateIncidentReport(id, parsed.data, req.auth);
@@ -153,7 +160,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Submit incident report to owner or administrator' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Submitted incident report' })
   async submitIncident(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = SubmitIncidentReportSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.incidentsService.submitIncidentReport(id, parsed.data, req.auth);
@@ -164,7 +172,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Close incident report' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Closed incident report' })
   async closeIncident(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = CloseIncidentReportSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.incidentsService.closeIncidentReport(id, parsed.data, req.auth);
@@ -179,7 +188,8 @@ export class SecurityOperationsController {
     @Body() body: unknown,
     @Req() req: FastifyRequest,
   ) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = CreateIncidentActionSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.incidentsService.addIncidentAction(id, parsed.data, req.auth);
@@ -194,7 +204,8 @@ export class SecurityOperationsController {
     @Body() body: unknown,
     @Req() req: FastifyRequest,
   ) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = CompleteIncidentActionSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.incidentsService.completeIncidentAction(BigInt(actionId), parsed.data, req.auth);
@@ -207,7 +218,7 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'List configurable anomaly detection rules' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Detection rules list' })
   async getDetectionRules(@Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     return this.detectionService.getRules();
   }
 
@@ -222,7 +233,8 @@ export class SecurityOperationsController {
     @Body() body: unknown,
     @Req() req: FastifyRequest,
   ) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = UpdateDetectionRuleConfigSchema.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(parsed.error.flatten());
@@ -244,7 +256,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Manually trigger anomaly detection run' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Detection run results' })
   async runDetection(@Body() body: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = RunDetectionInputSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.detectionService.runAllDetections(parsed.data.windowMinutes);

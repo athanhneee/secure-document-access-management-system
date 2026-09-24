@@ -11,6 +11,14 @@ export const EnvSchema = z
       .min(1, 'DATABASE_URL is required')
       .default('postgresql://localhost:5432/secure_docs?schema=public'),
     REDIS_URL: z.string().min(1, 'REDIS_URL is required').default('redis://localhost:6379/0'),
+    REDLOCK_CLUSTER_NODES: z.string().optional(),
+    REDLOCK_RETRY_COUNT: z.coerce.number().int().min(0).default(10),
+    REDLOCK_RETRY_DELAY_MS: z.coerce.number().int().min(10).default(100),
+    REDLOCK_RETRY_JITTER_MS: z.coerce.number().int().min(0).default(50),
+    REDLOCK_DEFAULT_TTL_MS: z.coerce.number().int().min(500).default(5000),
+    REDLOCK_FAIL_CLOSED: z
+      .preprocess((val) => val === 'true' || val === true, z.boolean())
+      .default(false),
     ABAC_TRUSTED_NETWORK_CIDRS: z.string().default('127.0.0.0/8,::1/128'),
     STORAGE_ENDPOINT: z.string().default('127.0.0.1'),
     STORAGE_PORT: z.coerce.number().int().min(1).max(65535).default(9000),
@@ -24,6 +32,10 @@ export const EnvSchema = z
       .default(false),
     CLAMAV_HOST: z.string().default('127.0.0.1'),
     CLAMAV_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
+    GOTENBERG_URL: z.string().default('http://127.0.0.1:3003'),
+    GOTENBERG_ENABLED: z
+      .preprocess((val) => val === 'true' || val === true, z.boolean())
+      .default(true),
     UPLOAD_MAX_FILE_SIZE_BYTES: z.coerce.number().int().min(1024).default(52_428_800),
     ZIP_MAX_TOTAL_UNCOMPRESSED_SIZE: z.coerce.number().int().min(1024).default(209_715_200),
     ZIP_MAX_ENTRIES: z.coerce.number().int().min(1).default(1000),
@@ -38,6 +50,17 @@ export const EnvSchema = z
       .string()
       .min(32, 'APP_ENCRYPTION_MASTER_KEY must be at least 32 characters')
       .default('local-placeholder-not-for-real-encryption-000000000000000000000000'),
+    KMS_PROVIDER: z.enum(['local', 'hsm-pkcs11', 'vault', 'aws-kms']).default('local'),
+    HSM_PIN: z.string().default('123456'),
+    HSM_SLOT_INDEX: z.coerce.number().int().min(0).default(0),
+    HSM_KEY_LABEL: z.string().default('SDA-MASTER-KEK-v1'),
+    HSM_MODULE_PATH: z.string().optional(),
+    VAULT_ADDR: z.string().default('http://127.0.0.1:8200'),
+    VAULT_TOKEN: z.string().default('root-development-token'),
+    VAULT_KEY_NAME: z.string().default('sda-document-kek'),
+    VAULT_TRANSIT_MOUNT: z.string().default('transit'),
+    AWS_KMS_KEY_ID: z.string().default('alias/sda-master-kek'),
+    AWS_KMS_REGION: z.string().default('us-east-1'),
     AUTH_ISSUER: z.string().min(3).default('secure-document-access-api'),
     AUTH_AUDIENCE: z.string().min(3).default('secure-document-access-web'),
     AUTH_ACTIVE_KID: z.string().min(1).default('development-ephemeral'),
@@ -62,6 +85,9 @@ export const EnvSchema = z
       .default('local-only-audit-integrity-hmac-key-0000000000000000'),
     AUDIT_KEY_ROTATION_JSON: z.string().optional(),
     AUDIT_VERIFY_INTERVAL_MS: z.coerce.number().int().min(10_000).max(3_600_000).default(300_000),
+    WEBAUTHN_RP_NAME: z.string().default('Secure Document Access'),
+    WEBAUTHN_RP_ID: z.string().default('localhost'),
+    WEBAUTHN_ORIGINS: z.string().default('http://localhost:3000,http://127.0.0.1:3000'),
   })
   .superRefine((value, context) => {
     if (

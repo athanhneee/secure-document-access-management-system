@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
+import http from 'node:http';
 import zlib from 'node:zlib';
 import { PDFDocument } from 'pdf-lib';
 
@@ -365,6 +366,171 @@ test('OfficeConverter — converts safe DOCX to clean printable PDF', async () =
   assert.ok(pdfBuffer.length > 0);
   const loaded = await PDFDocument.load(pdfBuffer);
   assert.ok(loaded.getPageCount() >= 1, 'Converted PDF must have at least 1 page');
+});
+
+test('OfficeConverter — converts safe DOCX via Gotenberg container when service is available', async () => {
+  const mockGotenbergPdf = await PDFDocument.create();
+  mockGotenbergPdf.addPage([595.28, 841.89]);
+  const mockPdfBytes = Buffer.from(await mockGotenbergPdf.save());
+
+  let receivedRequest = false;
+  let receivedPath = '';
+  let receivedContentType = '';
+
+  const server = http.createServer((req, res) => {
+    receivedRequest = true;
+    receivedPath = req.url || '';
+    receivedContentType = req.headers['content-type'] || '';
+    if (req.url === '/forms/libreoffice/convert' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/pdf' });
+      res.end(mockPdfBytes);
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+
+  try {
+    const mockConfig = {
+      get(key) {
+        if (key === 'GOTENBERG_URL') return `http://127.0.0.1:${port}`;
+        if (key === 'GOTENBERG_ENABLED') return true;
+        return undefined;
+      },
+    };
+
+    const converter = new OfficeConverterService(mockConfig);
+    const safeDocx = createZipBuffer([
+      { name: '[Content_Types].xml', content: '<Types></Types>' },
+      {
+        name: 'word/document.xml',
+        content:
+          '<w:document><w:body><w:p><w:r><w:t>Financial Report 2026</w:t></w:r></w:p></w:body></w:document>',
+      },
+    ]);
+
+    const resultPdf = await converter.convertOfficeToPdf(safeDocx, 'annual_report.docx');
+    assert.ok(receivedRequest, 'Gotenberg server must receive conversion request');
+    assert.equal(receivedPath, '/forms/libreoffice/convert');
+    assert.ok(receivedContentType.includes('multipart/form-data'));
+    assert.ok(resultPdf.length > 0);
+
+    const loaded = await PDFDocument.load(resultPdf);
+    assert.equal(loaded.getPageCount(), 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('OfficeConverter — falls back gracefully to internal engine when Gotenberg returns 500', async () => {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('Internal LibreOffice Failure');
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+
+  try {
+    const mockConfig = {
+      get(key) {
+        if (key === 'GOTENBERG_URL') return `http://127.0.0.1:${port}`;
+        if (key === 'GOTENBERG_ENABLED') return true;
+        return undefined;
+      },
+    };
+
+    const converter = new OfficeConverterService(mockConfig);
+    const safeDocx = createZipBuffer([
+      { name: '[Content_Types].xml', content: '<Types></Types>' },
+      {
+        name: 'word/document.xml',
+        content:
+          '<w:document><w:body><w:p><w:r><w:t>Quarterly Financial Results</w:t></w:r></w:p></w:body></w:document>',
+      },
+    ]);
+
+    const resultPdf = await converter.convertOfficeToPdf(safeDocx, 'fallback_report.docx');
+    assert.ok(resultPdf.length > 0);
+    const loaded = await PDFDocument.load(resultPdf);
+    assert.ok(loaded.getPageCount() >= 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('OfficeConverter — falls back gracefully when Gotenberg service is offline (ECONNREFUSED)', async () => {
+  const mockConfig = {
+    get(key) {
+      if (key === 'GOTENBERG_URL') return 'http://127.0.0.1:59998';
+      if (key === 'GOTENBERG_ENABLED') return true;
+      return undefined;
+    },
+  };
+
+  const converter = new OfficeConverterService(mockConfig);
+  const safeDocx = createZipBuffer([
+    { name: '[Content_Types].xml', content: '<Types></Types>' },
+    {
+      name: 'word/document.xml',
+      content:
+        '<w:document><w:body><w:p><w:r><w:t>Offline Gotenberg Fallback</w:t></w:r></w:p></w:body></w:document>',
+    },
+  ]);
+
+  const resultPdf = await converter.convertOfficeToPdf(safeDocx, 'offline_report.docx');
+  assert.ok(resultPdf.length > 0);
+  const loaded = await PDFDocument.load(resultPdf);
+  assert.ok(loaded.getPageCount() >= 1);
+});
+
+test('OfficeConverter — blocks macro before attempting Gotenberg conversion (pre-flight security)', async () => {
+  let requestMade = false;
+  const server = http.createServer((_req, res) => {
+    requestMade = true;
+    res.writeHead(200);
+    res.end();
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+
+  try {
+    const mockConfig = {
+      get(key) {
+        if (key === 'GOTENBERG_URL') return `http://127.0.0.1:${port}`;
+        if (key === 'GOTENBERG_ENABLED') return true;
+        return undefined;
+      },
+    };
+
+    const converter = new OfficeConverterService(mockConfig);
+    const macroDocx = createZipBuffer([
+      { name: '[Content_Types].xml', content: '<Types></Types>' },
+      { name: 'word/document.xml', content: '<w:document></w:document>' },
+      { name: 'word/vbaProject.bin', content: Buffer.from('MACRO_PAYLOAD') },
+    ]);
+
+    await assert.rejects(
+      async () => {
+        await converter.convertOfficeToPdf(macroDocx, 'exploit.docx');
+      },
+      (err) => {
+        return err.getResponse?.()?.errorCode === AppErrorCode.OFFICE_MACRO_BLOCKED;
+      },
+    );
+
+    assert.equal(
+      requestMade,
+      false,
+      'Security pre-check must reject macro before calling Gotenberg',
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -793,4 +959,64 @@ test('Concurrent Access — parallel watermark rendering operates safely without
     assert.match(r.outputSha256Hash, /^[0-9a-f]{64}$/);
     assert.ok(r.watermarkedBuffer.length > 0);
   }
+});
+
+test('DocumentPEP — automatically allows Document Owner to preview with sufficient clearance', async () => {
+  const docId = randomUUID();
+  const mockDb = {
+    user: {
+      findUnique: async () => ({
+        id: 10n,
+        department_id: 1n,
+        status: 'ACTIVE',
+      }),
+    },
+    document: {
+      findUnique: async () => ({
+        id: docId,
+        status: 'ACTIVE',
+        department_id: 1n,
+        owner_id: 10n,
+        current_version: { id: 100n, version_no: 1, scan_status: 'CLEAN' },
+        classification_history: [
+          {
+            classification_levels: {
+              rank: 2,
+              allow_download: true,
+              require_watermark: true,
+            },
+          },
+        ],
+      }),
+    },
+    userAttributeAssignment: {
+      findFirst: async () => ({
+        attribute_options: { numeric_rank: 3 },
+      }),
+    },
+    accessGrant: {
+      findFirst: async () => null,
+      create: async ({ data }) => ({ id: 'auto-owner-grant-id', ...data }),
+    },
+    userRole: {
+      findMany: async () => [],
+    },
+    accessSession: {
+      create: async () => ({ id: 'new-session-id' }),
+    },
+  };
+  const mockGrants = {
+    assertGrantValidForAccess: async () => {},
+  };
+  const mockAbac = { evaluate: async () => ({ decision: 'PERMIT', obligations: [] }) };
+  const mockAudit = { record: async () => {} };
+
+  const pep = new DocumentPepService(mockAbac, mockGrants, mockAudit, mockDb);
+  const principal = { userId: 10n, username: 'owner_user', mfa: true };
+  const context = { ip: '127.0.0.1', userAgent: 'test-agent' };
+
+  const result = await pep.enforceAccess(docId, principal, context, { action: 'VIEW' });
+  assert.ok(result.sessionId);
+  assert.equal(result.documentId, docId);
+  assert.equal(result.versionNo, 1);
 });

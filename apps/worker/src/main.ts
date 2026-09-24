@@ -5,6 +5,7 @@ import { startAuditVerificationJob } from './audit-verification-job.js';
 import { startSecurityDetectionJob } from './security-detection-job.js';
 import { startNotificationOutboxJob } from './notification-outbox-job.js';
 import { startExportCleanupJob } from './export-cleanup-job.js';
+import { startIcapServerJob } from './icap/icap-worker-job.js';
 
 const shutdown = new AbortController();
 const requestShutdown = (): void => shutdown.abort();
@@ -39,9 +40,10 @@ startAuditVerificationJob(AUDIT_VERIFY_INTERVAL_MS, GRANT_AUDIT_HMAC_KEY, shutdo
 startSecurityDetectionJob(SECURITY_DETECTION_INTERVAL_MS, shutdown.signal);
 startNotificationOutboxJob(NOTIFICATION_OUTBOX_INTERVAL_MS, shutdown.signal);
 startExportCleanupJob(EXPORT_CLEANUP_INTERVAL_MS, shutdown.signal);
+startIcapServerJob(undefined, shutdown.signal);
 
 console.info(
-  'Worker initialized with grant expiry, derivative cleanup, audit verification, security detection, notification outbox, and export cleanup consumers.',
+  'Worker initialized with grant expiry, derivative cleanup, audit verification, security detection, notification outbox, export cleanup, and ICAP Network DLP server.',
 );
 try {
   await waitForShutdown(shutdown.signal);

@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 import {
   Body,
   Controller,
-  ForbiddenException,
   Get,
   HttpStatus,
   Param,
   Post,
   Req,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
@@ -98,7 +98,7 @@ export class AbacController {
   }
 
   private principal(request: FastifyRequest): AuthPrincipal {
-    if (!request.auth) throw new ForbiddenException('Authentication required.');
+    if (!request.auth) throw new UnauthorizedException('Authentication required.');
     return request.auth;
   }
 

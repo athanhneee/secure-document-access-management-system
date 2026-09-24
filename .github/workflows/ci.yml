@@ -52,6 +52,9 @@ jobs:
       - name: Start isolated service containers
         run: pnpm infra:up
 
+      - name: Deploy database migrations and seed
+        run: pnpm db:migrate && pnpm db:seed
+
       - name: Run mandatory quality, integration, infrastructure, and security gates
         run: pnpm check
 

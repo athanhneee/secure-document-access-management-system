@@ -109,11 +109,34 @@ async function main() {
   if (action !== 'doctor') await ensureEnvironment();
 
   switch (action) {
-    case 'up':
+    case 'up': {
       run('docker', [...composeBase, 'config', '--quiet']);
-      run('docker', [...composeBase, 'up', '--detach', '--wait', '--wait-timeout', '360']);
+      const isCi = process.env['CI'] === 'true';
+      // In CI environments, start core integration services and skip heavy ClamAV daemon
+      // (which has in-memory mock socket fallback in tests) and monitoring stack.
+      const targetServices = isCi
+        ? [
+            'postgres',
+            'redis-data-init',
+            'redis',
+            'minio',
+            'minio-provisioner',
+            'gotenberg',
+            'mailpit',
+          ]
+        : [];
+      run('docker', [
+        ...composeBase,
+        'up',
+        '--detach',
+        '--wait',
+        '--wait-timeout',
+        '360',
+        ...targetServices,
+      ]);
       run('docker', [...composeBase, 'ps']);
       break;
+    }
     case 'down':
       run('docker', [...composeBase, 'down', '--remove-orphans']);
       console.log('Containers stopped; named volumes and local data were preserved.');

@@ -30,6 +30,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Database connection required}
       REDIS_URL: ${REDIS_URL:?Redis connection required}
       APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:?Master key required}
+      GOTENBERG_URL: http://gotenberg:3000
     cpus: 2.0
     mem_limit: 1g
     mem_reservation: 256m
@@ -74,6 +75,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  gotenberg:
+    <<: *prod-defaults
+    image: gotenberg/gotenberg:8.17.0
+    environment:
+      LOG_LEVEL: info
+    healthcheck:
+      test: ['CMD', 'curl', '--fail', '--silent', 'http://localhost:3000/health']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    cpus: 1.0
+    mem_limit: 1g
+    mem_reservation: 256m
+    pids_limit: 128
 
 networks:
   backend_isolated:

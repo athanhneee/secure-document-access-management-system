@@ -12,7 +12,13 @@ import { FileValidationService } from './file-validation.service.js';
 import { ZipBombGuardService } from './zip-bomb-guard.service.js';
 import { ObjectStorageService } from './object-storage.service.js';
 import { AntivirusScannerService } from './antivirus-scanner.service.js';
-import { LocalKmsService } from './kms.service.js';
+import {
+  LocalKmsService,
+  UnifiedKmsService,
+  HsmPkcs11KmsService,
+  VaultTransitKmsService,
+  CloudKmsService,
+} from './kms.service.js';
 import { DocumentEncryptionService } from './document-encryption.service.js';
 import { DocumentAuditService } from './document-audit.service.js';
 import { OrphanCompensationService } from './orphan-compensation.service.js';
@@ -38,7 +44,14 @@ import { DocumentDeliveryAuditService } from './document-delivery-audit.service.
     ZipBombGuardService,
     ObjectStorageService,
     AntivirusScannerService,
-    LocalKmsService,
+    HsmPkcs11KmsService,
+    VaultTransitKmsService,
+    CloudKmsService,
+    UnifiedKmsService,
+    {
+      provide: LocalKmsService,
+      useExisting: UnifiedKmsService,
+    },
     DocumentEncryptionService,
     DocumentAuditService,
     OrphanCompensationService,
@@ -57,6 +70,10 @@ import { DocumentDeliveryAuditService } from './document-delivery-audit.service.
     ObjectStorageService,
     AntivirusScannerService,
     LocalKmsService,
+    UnifiedKmsService,
+    HsmPkcs11KmsService,
+    VaultTransitKmsService,
+    CloudKmsService,
     DocumentEncryptionService,
     DocumentAuditService,
     OrphanCompensationService,

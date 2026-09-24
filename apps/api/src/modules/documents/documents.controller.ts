@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Body,
   Controller,
-  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -12,9 +11,11 @@ import {
   Query,
   Req,
   Res,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { PublicEndpoint } from '../../public-endpoint.js';
 import {
   CreateDocumentDraftSchema,
   UpdateDocumentMetadataSchema,
@@ -287,7 +288,8 @@ export class DocumentsController {
   @Post('retention/check')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('DOCUMENT', 'CLASSIFY')
-  async checkRetention(): Promise<unknown> {
+  async checkRetention(@Req() request: FastifyRequest): Promise<unknown> {
+    this.csrf.assertRequest(request);
     return this.documentsService.checkRetentionWarnings();
   }
 
@@ -432,6 +434,7 @@ export class DocumentsController {
     );
   }
 
+  @PublicEndpoint()
   @Get('download-with-ticket/:ticket')
   async downloadWithTicket(
     @Param() params: unknown,
@@ -455,7 +458,7 @@ export class DocumentsController {
   }
 
   private principal(request: FastifyRequest): AuthPrincipal {
-    if (!request.auth) throw new ForbiddenException('Authentication required.');
+    if (!request.auth) throw new UnauthorizedException('Authentication required.');
     return request.auth;
   }
 

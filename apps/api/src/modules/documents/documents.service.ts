@@ -779,6 +779,45 @@ export class DocumentsService {
       },
     });
 
+    // Ensure active grant for owner upon activation so owner can view/download
+    if (this.database.accessGrant?.findFirst && this.database.accessGrant?.create) {
+      const existingOwnerGrant = await this.database.accessGrant.findFirst({
+        where: {
+          document_id: documentId,
+          principal_type: 'USER',
+          principal_user_id: doc.owner_id,
+          status: 'ACTIVE',
+        },
+      });
+
+      if (!existingOwnerGrant) {
+        const grantId = randomUUID();
+        const allowDownload = activeClassification.classification_levels.allow_download;
+        const validUntil = new Date(Date.now() + 365 * 86400000);
+        await this.database.accessGrant.create({
+          data: {
+            id: grantId,
+            document_id: documentId,
+            principal_type: 'USER',
+            principal_user_id: doc.owner_id,
+            source: 'DIRECT',
+            status: 'ACTIVE',
+            valid_from: new Date(),
+            valid_until: validUntil,
+            granted_by: doc.owner_id,
+            access_grant_permissions: {
+              createMany: {
+                data: [
+                  { permission: 'VIEW' },
+                  ...(allowDownload ? [{ permission: 'DOWNLOAD' as const }] : []),
+                ],
+              },
+            },
+          },
+        });
+      }
+    }
+
     await this.audit.record(
       {
         action: 'DOCUMENT_ACTIVATED',
@@ -937,6 +976,32 @@ export class DocumentsService {
       });
     }
 
+    // Bell-LaPadula: Verify target user clearance meets or exceeds document classification rank
+    const currentClassification = await this.database.documentClassificationHistory.findFirst({
+      where: { document_id: documentId, effective_to: null },
+      include: { classification_levels: true },
+    });
+    const documentRank = currentClassification?.classification_levels?.rank ?? 0;
+
+    const now = new Date();
+    const clearanceAssignment = await this.database.userAttributeAssignment.findFirst({
+      where: {
+        user_id: input.newOwnerId,
+        attribute_definitions: { code: 'CLEARANCE_LEVEL' },
+        valid_from: { lte: now },
+        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+      },
+      include: { attribute_options: true },
+      orderBy: { attribute_options: { numeric_rank: 'desc' } },
+    });
+    const userRank = clearanceAssignment?.attribute_options?.numeric_rank ?? 0;
+    if (userRank < documentRank) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.GRANT_CLEARANCE_INSUFFICIENT,
+        message: 'New owner clearance level is insufficient for this document classification.',
+      });
+    }
+
     const previousOwnerId = doc.owner_id;
 
     await this.database.document.update({
@@ -962,6 +1027,9 @@ export class DocumentsService {
       },
       context,
     );
+
+    this.cache.invalidateUser(previousOwnerId);
+    this.cache.invalidateUser(input.newOwnerId);
 
     return this.getDocumentById(documentId);
   }
@@ -1132,7 +1200,7 @@ export class DocumentsService {
             versionNo: doc.current_version.version_no,
             originalFilename: doc.current_version.original_filename,
             mimeType: doc.current_version.mime_type,
-            fileSizeBytes: doc.current_version.file_size_bytes.toString(),
+            fileSizeBytes: doc.current_version.file_size_bytes?.toString() ?? '0',
             sha256Hash: doc.current_version.sha256_hash,
             scanStatus: doc.current_version.scan_status,
             createdAt: doc.current_version.created_at
@@ -1142,16 +1210,22 @@ export class DocumentsService {
         : null,
       currentClassification: activeClassification
         ? {
-            id: activeClassification.id.toString(),
-            classificationLevelId: activeClassification.classification_level_id.toString(),
-            classificationLevelCode: activeClassification.classification_levels.code,
-            classificationLevelName: activeClassification.classification_levels.name,
-            rank: activeClassification.classification_levels.rank,
-            businessCategoryId: activeClassification.business_category_id.toString(),
-            businessCategoryCode: activeClassification.business_categories.code,
-            businessCategoryName: activeClassification.business_categories.name,
-            reason: activeClassification.reason,
-            classifiedBy: activeClassification.classified_by.toString(),
+            id: activeClassification.id ? activeClassification.id.toString() : '',
+            classificationLevelId: activeClassification.classification_level_id
+              ? activeClassification.classification_level_id.toString()
+              : '',
+            classificationLevelCode: activeClassification.classification_levels?.code ?? '',
+            classificationLevelName: activeClassification.classification_levels?.name ?? '',
+            rank: activeClassification.classification_levels?.rank ?? 0,
+            businessCategoryId: activeClassification.business_category_id
+              ? activeClassification.business_category_id.toString()
+              : '',
+            businessCategoryCode: activeClassification.business_categories?.code ?? '',
+            businessCategoryName: activeClassification.business_categories?.name ?? '',
+            reason: activeClassification.reason ?? '',
+            classifiedBy: activeClassification.classified_by
+              ? activeClassification.classified_by.toString()
+              : '',
             effectiveFrom: activeClassification.effective_from
               ? activeClassification.effective_from.toISOString()
               : new Date().toISOString(),

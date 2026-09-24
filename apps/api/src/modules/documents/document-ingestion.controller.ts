@@ -1,11 +1,11 @@
 import {
   BadRequestException,
   Controller,
-  ForbiddenException,
   HttpCode,
   HttpStatus,
   Post,
   Req,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
@@ -71,7 +71,7 @@ export class DocumentIngestionController {
   }
 
   private principal(request: FastifyRequest): AuthPrincipal {
-    if (!request.auth) throw new ForbiddenException('Authentication required.');
+    if (!request.auth) throw new UnauthorizedException('Authentication required.');
     return request.auth;
   }
 

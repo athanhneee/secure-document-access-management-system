@@ -22,6 +22,7 @@ import { AntivirusScannerService } from './antivirus-scanner.service.js';
 import { DocumentEncryptionService } from './document-encryption.service.js';
 import { DocumentAuditService } from './document-audit.service.js';
 import { OrphanCompensationService } from './orphan-compensation.service.js';
+import { RedlockService } from '../concurrency/redlock.service.js';
 
 export interface IngestDocumentInput {
   fileStream: Readable;
@@ -63,6 +64,7 @@ export class DocumentIngestionService {
     private readonly audit: DocumentAuditService,
     private readonly compensation: OrphanCompensationService,
     @Optional() databaseClient?: ReturnType<typeof getDatabaseClient> | undefined,
+    @Optional() private readonly redlock?: RedlockService,
   ) {
     this.maxFileSize = config.get('UPLOAD_MAX_FILE_SIZE_BYTES');
     try {
@@ -355,77 +357,90 @@ export class DocumentIngestionService {
       const title = input.title ?? validatedInfo.sanitizedFilename;
       const docCode = input.documentCode ?? `DOC-${randomUUID().substring(0, 8).toUpperCase()}`;
 
-      await this.database.$transaction(async (tx) => {
-        // Concurrency control: Lock document row FOR UPDATE in PostgreSQL
-        if (
-          typeof (tx as unknown as { $executeRawUnsafe?: unknown }).$executeRawUnsafe === 'function'
-        ) {
-          await (
-            tx as unknown as {
-              $executeRawUnsafe: (sql: string, ...args: unknown[]) => Promise<unknown>;
-            }
-          ).$executeRawUnsafe(
-            'SELECT id FROM documents WHERE id = $1::uuid FOR UPDATE',
-            targetDocId,
-          );
-        }
+      const persistVersionMetadata = async () => {
+        await this.database.$transaction(async (tx) => {
+          // Concurrency control: Lock document row FOR UPDATE in PostgreSQL
+          if (
+            typeof (tx as unknown as { $executeRawUnsafe?: unknown }).$executeRawUnsafe ===
+            'function'
+          ) {
+            await (
+              tx as unknown as {
+                $executeRawUnsafe: (sql: string, ...args: unknown[]) => Promise<unknown>;
+              }
+            ).$executeRawUnsafe(
+              'SELECT id FROM documents WHERE id = $1::uuid FOR UPDATE',
+              targetDocId,
+            );
+          }
 
-        // Check if document already exists
-        const existingDoc = await tx.document.findUnique({
-          where: { id: targetDocId },
-          include: { versions: { select: { version_no: true } } },
-        });
-
-        if (
-          existingDoc &&
-          (existingDoc.status === 'ARCHIVED' || existingDoc.status === 'DELETED')
-        ) {
-          throw new BadRequestException({
-            errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
-            message: 'Cannot upload new version to an archived or deleted document.',
+          // Check if document already exists
+          const existingDoc = await tx.document.findUnique({
+            where: { id: targetDocId },
+            include: { versions: { select: { version_no: true } } },
           });
-        }
 
-        if (!existingDoc) {
-          // New document created in DRAFT status (Prompt 09 will handle ACTIVE transition)
-          await tx.document.create({
+          if (
+            existingDoc &&
+            (existingDoc.status === 'ARCHIVED' || existingDoc.status === 'DELETED')
+          ) {
+            throw new BadRequestException({
+              errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
+              message: 'Cannot upload new version to an archived or deleted document.',
+            });
+          }
+
+          if (!existingDoc) {
+            // New document created in DRAFT status (Prompt 09 will handle ACTIVE transition)
+            await tx.document.create({
+              data: {
+                id: targetDocId,
+                document_code: docCode,
+                title,
+                owner_id: input.principal.userId,
+                department_id: deptId,
+                status: 'DRAFT',
+                discoverable: true,
+              },
+            });
+            finalVersionNo = 1;
+          } else {
+            // Increment version atomically
+            const currentMaxVersion = existingDoc.versions.reduce(
+              (max, v) => (v.version_no > max ? v.version_no : max),
+              0,
+            );
+            finalVersionNo = currentMaxVersion + 1;
+          }
+
+          // Insert new document version
+          await tx.documentVersion.create({
             data: {
-              id: targetDocId,
-              document_code: docCode,
-              title,
-              owner_id: input.principal.userId,
-              department_id: deptId,
-              status: 'DRAFT',
-              discoverable: true,
+              document_id: targetDocId,
+              version_no: finalVersionNo,
+              original_filename: validatedInfo.sanitizedFilename,
+              storage_key: documentStorageKey,
+              mime_type: validatedInfo.mimeType,
+              file_size_bytes: BigInt(totalBytes),
+              sha256_hash: sha256Hash,
+              encryption_key_ref: encryptedResult.dekReference,
+              scan_status: 'CLEAN',
+              change_note: input.changeNote ?? 'Initial version',
+              uploaded_by: input.principal.userId,
             },
           });
-          finalVersionNo = 1;
-        } else {
-          // Increment version atomically
-          const currentMaxVersion = existingDoc.versions.reduce(
-            (max, v) => (v.version_no > max ? v.version_no : max),
-            0,
-          );
-          finalVersionNo = currentMaxVersion + 1;
-        }
-
-        // Insert new document version
-        await tx.documentVersion.create({
-          data: {
-            document_id: targetDocId,
-            version_no: finalVersionNo,
-            original_filename: validatedInfo.sanitizedFilename,
-            storage_key: documentStorageKey,
-            mime_type: validatedInfo.mimeType,
-            file_size_bytes: BigInt(totalBytes),
-            sha256_hash: sha256Hash,
-            encryption_key_ref: encryptedResult.dekReference,
-            scan_status: 'CLEAN',
-            change_note: input.changeNote ?? 'Initial version',
-            uploaded_by: input.principal.userId,
-          },
         });
-      });
+      };
+
+      if (this.redlock) {
+        await this.redlock.withLock(
+          `document:version:${targetDocId}`,
+          10_000,
+          persistVersionMetadata,
+        );
+      } else {
+        await persistVersionMetadata();
+      }
     } catch (err: unknown) {
       // Transaction failed -> rollback storage objects via compensation
       await this.compensation.compensate(session);

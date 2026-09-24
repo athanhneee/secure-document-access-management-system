@@ -13,6 +13,13 @@ import {
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
+import {
+  WebAuthnAuthOptionsRequestSchema,
+  WebAuthnRegistrationOptionsRequestSchema,
+  WebAuthnVerifyAuthRequestSchema,
+  WebAuthnVerifyRegistrationRequestSchema,
+} from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
 import { PublicEndpoint } from '../../public-endpoint.js';
 import { AllowPreMfa } from './allow-pre-mfa.js';
@@ -196,6 +203,66 @@ export class AuthController {
       this.principal(request),
       input.code,
       input.recoveryCode,
+      this.context(request),
+    );
+    this.setSessionCookies(reply, result);
+    return { authenticated: true };
+  }
+
+  @AllowPreMfa()
+  @Post('mfa/webauthn/register/options')
+  async webauthnRegisterOptions(@Body() body: unknown, @Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    const input = this.parse(WebAuthnRegistrationOptionsRequestSchema, body);
+    return this.auth.beginWebAuthnEnrollment(
+      this.principal(request),
+      input.label,
+      this.context(request),
+    );
+  }
+
+  @AllowPreMfa()
+  @Post('mfa/webauthn/register/verify')
+  async webauthnRegisterVerify(
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ recoveryCodes: string[] }> {
+    this.csrf.assertRequest(request);
+    const input = this.parse(WebAuthnVerifyRegistrationRequestSchema, body);
+    const result = await this.auth.verifyWebAuthnEnrollment(
+      this.principal(request),
+      input.response as unknown as RegistrationResponseJSON,
+      input.challengeToken,
+      input.label,
+      this.context(request),
+    );
+    this.setSessionCookies(reply, result);
+    return { recoveryCodes: result.recoveryCodes };
+  }
+
+  @AllowPreMfa()
+  @Post('mfa/webauthn/auth/options')
+  async webauthnAuthOptions(@Body() body: unknown, @Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    const input = this.parse(WebAuthnAuthOptionsRequestSchema, body);
+    const principal = request.auth;
+    return this.auth.getWebAuthnAuthOptions(principal, input.username, this.context(request));
+  }
+
+  @AllowPreMfa()
+  @Post('mfa/webauthn/auth/verify')
+  async webauthnAuthVerify(
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ authenticated: true }> {
+    this.csrf.assertRequest(request);
+    const input = this.parse(WebAuthnVerifyAuthRequestSchema, body);
+    const result = await this.auth.verifyWebAuthnAuth(
+      this.principal(request),
+      input.response as unknown as AuthenticationResponseJSON,
+      input.challengeToken,
       this.context(request),
     );
     this.setSessionCookies(reply, result);

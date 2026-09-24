@@ -72,18 +72,26 @@ export class MfaService {
       .digest('hex');
   }
 
-  private encrypt(value: string): string {
+  encrypt(value: string): string {
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, iv);
     const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
     return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64url');
   }
 
-  private decrypt(value: string): string {
+  decrypt(value: string): string {
     const packed = Buffer.from(value, 'base64url');
     if (packed.length < 29) throw new Error('Invalid encrypted MFA secret.');
     const decipher = createDecipheriv('aes-256-gcm', this.encryptionKey, packed.subarray(0, 12));
     decipher.setAuthTag(packed.subarray(12, 28));
     return Buffer.concat([decipher.update(packed.subarray(28)), decipher.final()]).toString('utf8');
+  }
+
+  encryptPayload<T>(payload: T): string {
+    return this.encrypt(JSON.stringify(payload));
+  }
+
+  decryptPayload<T>(value: string): T {
+    return JSON.parse(this.decrypt(value)) as T;
   }
 }

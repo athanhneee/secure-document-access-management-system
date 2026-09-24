@@ -3,8 +3,10 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { AppConfigService } from '../../config/config.service.js';
 import { AuthAuditService } from './auth-audit.service.js';
 import { AuthRepository } from './auth.repository.js';
@@ -14,6 +16,7 @@ import { MfaService } from './mfa.service.js';
 import { PasswordService } from './password.service.js';
 import { ResetMailerService } from './reset-mailer.service.js';
 import { TokenService } from './token.service.js';
+import { WebAuthnService, type StoredWebAuthnCredential } from './webauthn.service.js';
 
 export interface SessionArtifacts {
   accessToken: string;
@@ -34,6 +37,7 @@ export class AuthService {
   private readonly accessTtl: number;
   private readonly refreshTtl: number;
   private readonly resetTtl: number;
+  private readonly webauthn: WebAuthnService;
 
   constructor(
     private readonly repository: AuthRepository,
@@ -44,7 +48,9 @@ export class AuthService {
     private readonly audit: AuthAuditService,
     private readonly mailer: ResetMailerService,
     config: AppConfigService,
+    @Optional() webauthn?: WebAuthnService,
   ) {
+    this.webauthn = webauthn ?? new WebAuthnService(this.mfa, config);
     this.accessTtl = config.get('AUTH_ACCESS_TTL_SECONDS');
     this.refreshTtl = config.get('AUTH_REFRESH_TTL_SECONDS');
     this.resetTtl = config.get('AUTH_RESET_TTL_SECONDS');
@@ -286,23 +292,236 @@ export class AuthService {
     return { ...artifacts, recoveryCodes: recovery.plaintext };
   }
 
+  async beginWebAuthnEnrollment(
+    principal: AuthPrincipal,
+    label: string | undefined,
+    context: RequestContext,
+  ) {
+    const existing = await this.repository.getActiveMfaMethods(principal.userId);
+    const existingCreds = existing
+      .map((m) => this.webauthn.parseStoredCredential(m.encryptedSecret))
+      .filter((c): c is StoredWebAuthnCredential => c !== null);
+
+    const { options, challengeToken } = await this.webauthn.generateRegistrationOptions(
+      principal.userId,
+      principal.username,
+      existingCreds,
+    );
+
+    await this.audit.record(
+      {
+        action: 'MFA_WEBAUTHN_ENROLL_START',
+        outcome: 'SUCCESS',
+        actorUserId: principal.userId,
+        actorUsername: principal.username,
+        details: { label: label ?? null },
+      },
+      context,
+    );
+
+    return { options, challengeToken };
+  }
+
+  async verifyWebAuthnEnrollment(
+    principal: AuthPrincipal,
+    response: RegistrationResponseJSON,
+    challengeToken: string,
+    label: string | undefined,
+    context: RequestContext,
+  ): Promise<SessionArtifacts & { recoveryCodes: string[] }> {
+    const verification = await this.webauthn.verifyRegistration(
+      response,
+      challengeToken,
+      principal.userId,
+      label,
+    );
+
+    const recovery = this.mfa.createRecoveryCodes();
+    const methodId = await this.repository.createMfaEnrollment(
+      principal.userId,
+      verification.encryptedSecret,
+      label ?? 'FIDO2 / WebAuthn Key',
+    );
+    await this.repository.enableMfa(methodId, principal.userId, recovery.hashes);
+
+    const artifacts = await this.activateMfaSession(principal);
+    await this.audit.record(
+      {
+        action: 'MFA_WEBAUTHN_ENROLLED',
+        outcome: 'SUCCESS',
+        actorUserId: principal.userId,
+        actorUsername: principal.username,
+        objectId: methodId,
+        details: {
+          credentialId: verification.credential.credentialId,
+          deviceName: verification.credential.deviceName ?? null,
+          aaguid: verification.credential.aaguid ?? null,
+        },
+      },
+      context,
+    );
+
+    return { ...artifacts, recoveryCodes: recovery.plaintext };
+  }
+
+  async getWebAuthnAuthOptions(
+    principal: AuthPrincipal | undefined,
+    username: string | undefined,
+    context: RequestContext,
+  ) {
+    let userId: bigint | undefined = principal?.userId;
+    if (!userId && username) {
+      const user = await this.repository.findUserByIdentifier(username.trim().toLowerCase());
+      if (user) userId = user.id;
+    }
+
+    if (!userId) {
+      throw new BadRequestException('User identification is required for WebAuthn authentication.');
+    }
+
+    const activeMethods = await this.repository.getActiveMfaMethods(userId);
+    const webauthnCreds = activeMethods
+      .map((m) => this.webauthn.parseStoredCredential(m.encryptedSecret))
+      .filter((c): c is StoredWebAuthnCredential => c !== null);
+
+    if (webauthnCreds.length === 0) {
+      throw new BadRequestException('No WebAuthn security keys found for this account.');
+    }
+
+    const { options, challengeToken } = await this.webauthn.generateAuthenticationOptions(
+      webauthnCreds,
+      userId,
+    );
+
+    await this.audit.record(
+      {
+        action: 'MFA_WEBAUTHN_AUTH_OPTIONS',
+        outcome: 'SUCCESS',
+        actorUserId: userId,
+      },
+      context,
+    );
+
+    return { options, challengeToken };
+  }
+
+  async verifyWebAuthnAuth(
+    principal: AuthPrincipal,
+    response: AuthenticationResponseJSON,
+    challengeToken: string,
+    context: RequestContext,
+  ): Promise<SessionArtifacts> {
+    const activeMethods = await this.repository.getActiveMfaMethods(principal.userId);
+    let matchedMethod: (typeof activeMethods)[number] | null = null;
+    let matchedCred: StoredWebAuthnCredential | null = null;
+
+    for (const m of activeMethods) {
+      const cred = this.webauthn.parseStoredCredential(m.encryptedSecret);
+      if (cred && cred.credentialId === response.id) {
+        matchedMethod = m;
+        matchedCred = cred;
+        break;
+      }
+    }
+
+    if (!matchedMethod || !matchedCred) {
+      await this.audit.record(
+        {
+          action: 'MFA_WEBAUTHN_VERIFY',
+          outcome: 'DENIED',
+          actorUserId: principal.userId,
+          reasonCode: 'CREDENTIAL_NOT_FOUND',
+        },
+        context,
+      );
+      throw new UnauthorizedException('Security key credential was not recognized for this user.');
+    }
+
+    const result = await this.webauthn.verifyAuthentication(
+      response,
+      challengeToken,
+      matchedCred,
+      principal.userId,
+    );
+
+    if (result.cloneDetected) {
+      await this.repository.recordSecurityAlert({
+        alertType: 'WEBAUTHN_CLONE_DETECTED',
+        severity: 'CRITICAL',
+        title: 'FIDO2 / WebAuthn clone attack detected',
+        description: `Authenticator counter rollback or cloned key detected for user ID ${principal.userId}.`,
+        detectedUserId: principal.userId,
+      });
+
+      await this.audit.record(
+        {
+          action: 'MFA_WEBAUTHN_VERIFY',
+          outcome: 'DENIED',
+          actorUserId: principal.userId,
+          reasonCode: 'CLONE_DETECTED',
+          details: { credentialId: matchedCred.credentialId },
+        },
+        context,
+      );
+
+      throw new UnauthorizedException('Security key cloning or replay attack detected.');
+    }
+
+    await this.repository.updateMfaSecret(matchedMethod.id, result.updatedEncryptedSecret);
+
+    const artifacts = await this.activateMfaSession(principal);
+    await this.audit.record(
+      {
+        action: 'MFA_WEBAUTHN_VERIFY',
+        outcome: 'SUCCESS',
+        actorUserId: principal.userId,
+        actorUsername: principal.username,
+        objectId: matchedMethod.id,
+        details: {
+          credentialId: matchedCred.credentialId,
+          counter: result.newCounter,
+        },
+      },
+      context,
+    );
+
+    return artifacts;
+  }
+
   async verifyMfa(
     principal: AuthPrincipal,
     code: string | undefined,
     recoveryCode: string | undefined,
     context: RequestContext,
   ): Promise<SessionArtifacts> {
-    const user = await this.repository.findUserById(principal.userId);
-    const method = user?.mfaMethod;
-    if (!method) throw new UnauthorizedException('MFA verification failed.');
-    let valid = code ? this.mfa.verifyTotp(method.encryptedSecret, code) : false;
-    if (!valid && recoveryCode) {
-      const remaining = this.mfa.consumeRecoveryCode(method.recoveryCodeHashes, recoveryCode);
-      if (remaining) {
-        await this.repository.consumeRecoveryCode(method.id, remaining);
-        valid = true;
+    const activeMethods = await this.repository.getActiveMfaMethods(principal.userId);
+    if (activeMethods.length === 0) throw new UnauthorizedException('MFA verification failed.');
+
+    let valid = false;
+    if (code) {
+      for (const method of activeMethods) {
+        try {
+          if (this.mfa.verifyTotp(method.encryptedSecret, code)) {
+            valid = true;
+            break;
+          }
+        } catch {
+          // Ignore non-TOTP secrets
+        }
       }
     }
+
+    if (!valid && recoveryCode) {
+      for (const method of activeMethods) {
+        const remaining = this.mfa.consumeRecoveryCode(method.recoveryCodeHashes, recoveryCode);
+        if (remaining) {
+          await this.repository.consumeRecoveryCode(method.id, remaining);
+          valid = true;
+          break;
+        }
+      }
+    }
+
     if (!valid) {
       await this.audit.record(
         { action: 'MFA_VERIFY', outcome: 'DENIED', actorUserId: principal.userId },

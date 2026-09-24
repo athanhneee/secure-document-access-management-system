@@ -9,6 +9,7 @@ import { MfaService } from './mfa.service.js';
 import { PasswordService } from './password.service.js';
 import { ResetMailerService } from './reset-mailer.service.js';
 import { TokenService } from './token.service.js';
+import { WebAuthnService } from './webauthn.service.js';
 
 @Module({
   controllers: [AuthController],
@@ -22,7 +23,15 @@ import { TokenService } from './token.service.js';
     PasswordService,
     ResetMailerService,
     TokenService,
+    WebAuthnService,
   ],
-  exports: [AuthService, AuthRepository, TokenService, CsrfService, PasswordService],
+  exports: [
+    AuthService,
+    AuthRepository,
+    TokenService,
+    CsrfService,
+    PasswordService,
+    WebAuthnService,
+  ],
 })
 export class AuthModule {}

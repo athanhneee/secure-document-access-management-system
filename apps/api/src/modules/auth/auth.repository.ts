@@ -395,6 +395,56 @@ export class AuthRepository {
     });
   }
 
+  async updateMfaSecret(methodId: string, encryptedSecret: string): Promise<void> {
+    await this.database.mfaMethod.update({
+      where: { id: methodId },
+      data: { secret_encrypted: encryptedSecret },
+    });
+  }
+
+  async getActiveMfaMethods(userId: bigint): Promise<
+    Array<{
+      id: string;
+      encryptedSecret: string;
+      label: string | null;
+      recoveryCodeHashes: string[];
+      createdAt: Date;
+    }>
+  > {
+    const methods = await this.database.mfaMethod.findMany({
+      where: { user_id: userId, enabled_at: { not: null }, disabled_at: null },
+      orderBy: { created_at: 'desc' },
+    });
+    return methods.map((m) => ({
+      id: m.id,
+      encryptedSecret: m.secret_encrypted,
+      label: m.label,
+      recoveryCodeHashes: Array.isArray(m.recovery_code_hashes)
+        ? (m.recovery_code_hashes as string[])
+        : [],
+      createdAt: m.created_at,
+    }));
+  }
+
+  async recordSecurityAlert(data: {
+    alertType: string;
+    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    title: string;
+    description: string;
+    detectedUserId?: bigint;
+  }): Promise<void> {
+    await this.database.securityAlert.create({
+      data: {
+        id: randomUUID(),
+        alert_type: data.alertType,
+        severity: data.severity,
+        title: data.title,
+        description: data.description,
+        detected_user_id: data.detectedUserId ?? null,
+      },
+    });
+  }
+
   async disableMfa(userId: bigint): Promise<boolean> {
     const result = await this.database.mfaMethod.updateMany({
       where: { user_id: userId, enabled_at: { not: null }, disabled_at: null },

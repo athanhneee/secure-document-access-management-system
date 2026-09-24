@@ -7,6 +7,7 @@ import type {
   VerifyAuditChainInput,
 } from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
+import { formatCsvRow } from '../reports/csv-formula-sanitizer.js';
 import { AuditWriterService } from './audit-writer.service.js';
 import {
   AuditVerifierService,
@@ -232,36 +233,27 @@ export class AuditService {
         'entry_hash',
       ];
 
-      const escapeCsv = (val: unknown): string => {
-        if (val === null || val === undefined) return '';
-        const str = String(val);
-        if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-          return `"${str.replace(/"/g, '""')}"`;
-        }
-        return str;
-      };
-
-      const rows = [headers.join(',')];
+      const rows = [formatCsvRow(headers)];
       for (const log of logs) {
         rows.push(
-          [
+          formatCsvRow([
             log.id.toString(),
             log.occurred_at.toISOString(),
             log.actor_user_id?.toString() ?? '',
-            escapeCsv(log.actor_username),
-            escapeCsv(log.action),
-            escapeCsv(log.object_type),
-            escapeCsv(log.object_id),
+            log.actor_username,
+            log.action,
+            log.object_type,
+            log.object_id,
             log.document_id ?? '',
             log.access_session_id ?? '',
             log.outcome,
-            escapeCsv(log.reason_code),
+            log.reason_code,
             log.ip_address ?? '',
             log.correlation_id,
-            escapeCsv(log.chain_partition),
+            log.chain_partition,
             log.chain_sequence.toString(),
             log.entry_hash,
-          ].join(','),
+          ]),
         );
       }
 

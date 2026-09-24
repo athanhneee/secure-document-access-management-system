@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Body,
   Controller,
-  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -10,6 +9,7 @@ import {
   Query,
   Req,
   Res,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { FastifyRequest, FastifyReply } from 'fastify';
@@ -46,7 +46,7 @@ export class AuditController {
     @Req() request: FastifyRequest,
   ): Promise<PaginatedAuditLogs> {
     if (!request.auth) {
-      throw new ForbiddenException('Authenticated principal is required');
+      throw new UnauthorizedException('Authenticated principal is required');
     }
 
     const parsed = QueryAuditLogsSchema.safeParse(rawQuery);
@@ -67,6 +67,7 @@ export class AuditController {
    */
   @Post('export')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('AUDIT_LOG', 'VIEW')
   @ApiOperation({ summary: 'Export audit logs in CSV or JSON format' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Audit export payload' })
   @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Insufficient permissions' })
@@ -77,7 +78,7 @@ export class AuditController {
   ): Promise<void> {
     this.csrf.assertRequest(request);
     if (!request.auth) {
-      throw new ForbiddenException('Authenticated principal is required');
+      throw new UnauthorizedException('Authenticated principal is required');
     }
 
     const parsed = ExportAuditLogsSchema.safeParse(body);
@@ -115,7 +116,7 @@ export class AuditController {
   @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Insufficient permissions' })
   async verifyChain(@Query() rawQuery: unknown, @Req() request: FastifyRequest): Promise<unknown> {
     if (!request.auth) {
-      throw new ForbiddenException('Authenticated principal is required');
+      throw new UnauthorizedException('Authenticated principal is required');
     }
 
     const parsed = VerifyAuditChainSchema.safeParse(rawQuery);
@@ -142,7 +143,7 @@ export class AuditController {
   async createAnchor(@Body() body: unknown, @Req() request: FastifyRequest): Promise<unknown> {
     this.csrf.assertRequest(request);
     if (!request.auth) {
-      throw new ForbiddenException('Authenticated principal is required');
+      throw new UnauthorizedException('Authenticated principal is required');
     }
 
     const parsed = CreateAuditAnchorSchema.safeParse(body);

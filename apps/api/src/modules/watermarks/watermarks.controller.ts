@@ -4,7 +4,7 @@ import {
   HttpStatus,
   Param,
   Req,
-  ForbiddenException,
+  UnauthorizedException,
   BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
@@ -23,7 +23,7 @@ export class WatermarksController {
   @ApiOperation({ summary: 'List active watermark templates and configurations' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Watermark configurations list' })
   async listConfigs(@Req() request: FastifyRequest): Promise<{ data: unknown[] }> {
-    if (!request.auth) throw new ForbiddenException('Authentication required.');
+    if (!request.auth) throw new UnauthorizedException('Authentication required.');
     return this.watermarksService.listConfigs();
   }
 
@@ -40,7 +40,7 @@ export class WatermarksController {
     @Param('token') token: string,
     @Req() request: FastifyRequest,
   ): Promise<WatermarkVerificationResult> {
-    if (!request.auth) throw new ForbiddenException('Authentication required.');
+    if (!request.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = WatermarkTokenParamSchema.safeParse({ token });
     if (!parsed.success) {
       throw new BadRequestException(parsed.error.flatten());

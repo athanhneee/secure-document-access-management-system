@@ -8,8 +8,12 @@ skinparam actorStyle awesome
 actor "Quản trị viên\nhệ thống" as Admin
 actor "Nhân viên\nbảo mật" as Security
 actor "Kiểm toán viên" as Auditor
+actor "Cán bộ\nnhân viên" as Staff
 actor "Chủ sở hữu\ntài liệu" as Owner
 actor "Người đọc\ntài liệu" as Reader
+
+Staff <|-- Owner
+Staff <|-- Reader
 
 rectangle "Hệ thống quản lý truy cập tài liệu mật" {
   package "Quản trị và chính sách" {
@@ -73,6 +77,9 @@ Owner --> UC12
 Owner --> UC16
 Owner --> UC17
 Owner --> UC18
+Owner --> UC19
+Owner --> UC20
+Owner --> UC21
 Owner --> UC25
 
 Reader --> UC13

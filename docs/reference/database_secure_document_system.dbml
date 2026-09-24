@@ -358,7 +358,7 @@ Table access_grants {
   principal_user_id bigint
   principal_role_id bigint
   source grant_source [not null]
-  access_request_id uuid
+  access_request_id uuid [unique]
   valid_from timestamp [not null]
   valid_until timestamp [not null]
   status grant_status [not null, default: `'ACTIVE'`]
@@ -553,12 +553,12 @@ Ref: document_classification_history.classified_by > users.id
 Ref: access_requests.document_id > documents.id
 Ref: access_requests.requester_id > users.id
 Ref: access_request_permissions.access_request_id > access_requests.id
-Ref: access_request_decisions.access_request_id > access_requests.id
+Ref: access_request_decisions.access_request_id - access_requests.id
 Ref: access_request_decisions.decided_by > users.id
 Ref: access_grants.document_id > documents.id
 Ref: access_grants.principal_user_id > users.id
 Ref: access_grants.principal_role_id > roles.id
-Ref: access_grants.access_request_id > access_requests.id
+Ref: access_grants.access_request_id - access_requests.id
 Ref: access_grants.granted_by > users.id
 Ref: access_grants.revoked_by > users.id
 Ref: access_grant_permissions.access_grant_id > access_grants.id

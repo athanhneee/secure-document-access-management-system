@@ -477,6 +477,7 @@ CREATE INDEX idx_access_requests_owner_queue ON access_requests(document_id, sta
 CREATE INDEX idx_access_requests_requester ON access_requests(requester_id, status, submitted_at DESC);
 CREATE INDEX idx_access_grants_user_active ON access_grants(principal_user_id, document_id, status, valid_until);
 CREATE INDEX idx_access_grants_role_active ON access_grants(principal_role_id, document_id, status, valid_until);
+CREATE UNIQUE INDEX uq_access_grants_request ON access_grants(access_request_id) WHERE access_request_id IS NOT NULL;
 CREATE INDEX idx_sessions_user_active ON access_sessions(user_id, status, last_activity_at DESC);
 CREATE INDEX idx_audit_actor_time ON audit_logs(actor_user_id, occurred_at DESC);
 CREATE INDEX idx_audit_document_time ON audit_logs(document_id, occurred_at DESC);

@@ -46,6 +46,16 @@ test('five-role matrix preserves least privilege and admin has no document conte
   assert.equal(systemRoleAllows('SYSTEM_ADMIN', ['USER_MANAGE', 'DEPARTMENT_MANAGE']), true);
   assert.equal(systemRoleAllows('SYSTEM_ADMIN', ['DOCUMENT_VIEW']), false);
   assert.equal(systemRoleAllows('AUDITOR', ['ROLE_MANAGE']), false);
+  assert.equal(
+    systemRoleAllows('DOCUMENT_OWNER', [
+      'DOCUMENT_VIEW',
+      'DOCUMENT_DOWNLOAD',
+      'DOCUMENT_DISCOVER',
+      'ACCESS_REQUEST_VIEW_OWN',
+      'NOTIFICATION_VIEW',
+    ]),
+    true,
+  );
 });
 
 test('authorization guard returns forbidden when resource/action permission is absent', async () => {

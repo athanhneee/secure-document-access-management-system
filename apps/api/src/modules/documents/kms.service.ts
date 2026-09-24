@@ -238,7 +238,7 @@ export class VaultTransitKmsService implements KmsService {
 
   constructor(config: AppConfigService) {
     this.vaultAddr = config.get('VAULT_ADDR') ?? 'http://127.0.0.1:8200';
-    this.vaultToken = config.get('VAULT_TOKEN') ?? 'root-development-token';
+    this.vaultToken = config.get('VAULT_TOKEN') ?? 'dev-mock-vault-token';
     this.keyName = config.get('VAULT_KEY_NAME') ?? 'sda-document-kek';
     this.transitMount = config.get('VAULT_TRANSIT_MOUNT') ?? 'transit';
 

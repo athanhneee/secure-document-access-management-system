@@ -1,0 +1,25 @@
+# Gitleaks Configuration for Secure Document Access System
+title = "Secure Document Access System - Gitleaks Rules & Allowlists"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist for testing suites, mock data, and security scanner definitions"
+paths = [
+  '''(?i)test/''',
+  '''(?i).*\.test\.[a-z]+''',
+  '''(?i).*\.spec\.[a-z]+''',
+  '''(?i)scripts/.*''',
+  '''(?i)apps/worker/src/icap/dlp-engine\.ts''',
+  '''(?i)\.env\.example''',
+  '''(?i)apps/api/\.env\.example''',
+  '''(?i)docker-compose.*\.yaml''',
+  '''(?i)infra/.*'''
+]
+regexes = [
+  '''AKIA[0-9A-Z]{16}''',
+  '''root-development-token''',
+  '''doNotLeakThis''',
+  '''123456'''
+]

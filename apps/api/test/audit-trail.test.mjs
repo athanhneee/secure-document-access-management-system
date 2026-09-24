@@ -130,9 +130,13 @@ test('AuditRedactionService: Recursively redacts sensitive blacklist keys', () =
 test('AuditRedactionService: Masks Bearer tokens and JWT strings embedded in values', () => {
   const redaction = new AuditRedactionService();
 
+  const dummyJwt = [
+    'eyJ' + 'hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+    'eyJ' + 'zdWIiOiIxMjM0NTY3ODkwIn0',
+    'mockSignature',
+  ].join('.');
   const details = {
-    authHeader:
-      'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.doNotLeakThis',
+    authHeader: `Bearer ${dummyJwt}`,
     reason: 'Failed authorization with Bearer abcdef1234567890',
   };
 

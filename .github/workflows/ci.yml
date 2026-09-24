@@ -15,7 +15,7 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
       - name: Dependency Review Action
         uses: actions/dependency-review-action@v4
         with:
@@ -29,15 +29,19 @@ jobs:
       NODE_ENV: test
       INFRA_RESET_TARGET: secure-document-access-system-local-data
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v5
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 24.14.0
           cache: pnpm
-
-      - name: Enable locked pnpm
-        run: corepack enable && corepack prepare pnpm@12.4.1 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -53,8 +57,15 @@ jobs:
 
       - name: Show container status and logs on failure
         if: failure()
-        run: docker compose --env-file .local/dev.env -f infra/compose.yaml -p secure-document-access-system-local ps && docker compose --env-file .local/dev.env -f infra/compose.yaml -p secure-document-access-system-local logs --tail 200
+        run: |
+          if [ -f .local/dev.env ]; then
+            docker compose --env-file .local/dev.env -f infra/compose.yaml -p secure-document-access-system-local ps
+            docker compose --env-file .local/dev.env -f infra/compose.yaml -p secure-document-access-system-local logs --tail 200
+          fi
 
       - name: Remove CI-only containers and volumes
         if: always()
-        run: pnpm infra:reset-safe
+        run: |
+          if [ -f .local/dev.env ]; then
+            pnpm infra:reset-safe
+          fi

@@ -17,12 +17,17 @@ import {
   AlertOctagon,
   Eye,
   Download,
+  ChevronLeft,
+  ChevronRight,
+  QrCode,
+  FileType,
 } from 'lucide-react';
-import { apiClient, ApiError } from '@/lib/api-client';
+import { apiClient, apiDownload, ApiError } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth-context';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { AuthGuard } from '@/components/auth-guard';
 import { ClassificationBadge, type ClassificationCode } from '@/components/classification-badge';
-import { Button } from '@/components/ui/button';
+import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -113,6 +118,7 @@ interface AccessGrantItem {
 }
 
 export function OwnerWorkspace() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('documents');
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [requests, setRequests] = useState<AccessRequestItem[]>([]);
@@ -122,6 +128,16 @@ export function OwnerWorkspace() {
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Preview and Download States
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<DocumentItem | null>(null);
+  const [previewSessionId, setPreviewSessionId] = useState<string | null>(null);
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
+  const [previewPage, setPreviewPage] = useState(1);
+  const previewTotalPages = 3;
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
 
   // 3-step Upload Wizard State
   const [uploadWizardOpen, setUploadWizardOpen] = useState(false);
@@ -152,11 +168,14 @@ export function OwnerWorkspace() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const [docsRes, grantsRes] = await Promise.all([
+      const [docsRes, grantsRes, requestsRes] = await Promise.all([
         apiClient<{ data: DocumentApiDto[] }>('/documents?pageSize=50').catch(() => ({ data: [] })),
         apiClient<{ data: AccessGrantApiDto[] }>('/access-grants?pageSize=50').catch(() => ({
           data: [],
         })),
+        apiClient<{ data: AccessRequestItem[] }>(
+          '/access-requests?scope=incoming&status=PENDING',
+        ).catch(() => ({ data: [] })),
       ]);
 
       const mappedDocs: DocumentItem[] = (docsRes.data || []).map((d) => ({
@@ -190,20 +209,18 @@ export function OwnerWorkspace() {
       }));
       setGrants(mappedGrants);
 
-      // Demo/Fallback requests for owner review
-      setRequests([
-        {
-          id: 'req-01',
-          documentId: mappedDocs[0]?.id || 'doc-1',
-          documentTitle: mappedDocs[0]?.title || 'Phương án phòng chống rò rỉ dữ liệu quý IV',
-          requestorName: 'Nguyễn Văn Đọc',
-          requestorDepartment: 'Ban Pháp chế',
-          requestedAction: 'VIEW',
-          justification: 'Cần đối chiếu căn cứ pháp lý để lập báo cáo đánh giá tác động nội bộ.',
-          status: 'PENDING',
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+      const mappedRequests: AccessRequestItem[] = (requestsRes.data || []).map((r) => ({
+        id: r.id,
+        documentId: r.documentId,
+        documentTitle: r.documentTitle || 'Tài liệu mật',
+        requestorName: r.requestorName || 'Nhân viên yêu cầu',
+        requestorDepartment: r.requestorDepartment || 'Chung',
+        requestedAction: r.requestedAction || 'VIEW',
+        justification: r.justification || '',
+        status: r.status || 'PENDING',
+        createdAt: r.createdAt || new Date().toISOString(),
+      }));
+      setRequests(mappedRequests);
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(err.message);
@@ -228,6 +245,114 @@ export function OwnerWorkspace() {
       ignore = true;
     };
   }, [refreshData]);
+
+  const handleClosePreview = useCallback(
+    (open: boolean) => {
+      setPreviewOpen(open);
+      if (!open && previewPdfUrl) {
+        URL.revokeObjectURL(previewPdfUrl);
+        setPreviewPdfUrl(null);
+      }
+    },
+    [previewPdfUrl],
+  );
+
+  // Open Preview with Controlled Session
+  async function handleOpenPreview(doc: DocumentItem) {
+    setIsLoadingPreview(true);
+    setErrorMessage(null);
+    if (previewPdfUrl) {
+      URL.revokeObjectURL(previewPdfUrl);
+      setPreviewPdfUrl(null);
+    }
+
+    try {
+      const sessionResult = await apiClient<{ sessionId: string }>(
+        `/documents/${doc.id}/sessions`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ action: 'VIEW' }),
+        },
+      );
+
+      setPreviewDoc(doc);
+      setPreviewSessionId(sessionResult.sessionId);
+      setPreviewPage(1);
+      setPreviewOpen(true);
+
+      // Fetch the watermarked PDF preview stream directly from backend
+      try {
+        const pdfBlob = await apiDownload(
+          `/documents/${doc.id}/preview?sessionId=${sessionResult.sessionId}`,
+        );
+        const objectUrl = URL.createObjectURL(pdfBlob);
+        setPreviewPdfUrl(objectUrl);
+      } catch (streamErr) {
+        console.warn(
+          'Could not load binary PDF preview stream, using sandbox canvas fallback:',
+          streamErr,
+        );
+      }
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrorMessage(err.message || 'Không thể tạo phiên xem trước tài liệu.');
+      } else {
+        setErrorMessage('Không thể tạo phiên xem trước tài liệu.');
+      }
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  }
+
+  // Handle Download Ticket Flow
+  async function handleDownloadWithTicket(doc: DocumentItem) {
+    if (!doc.allowDownload) {
+      setErrorMessage('Tài liệu này thuộc diện cấm tải theo chính sách phân loại mật.');
+      return;
+    }
+
+    setDownloadingDocId(doc.id);
+    setErrorMessage(null);
+
+    try {
+      const sessionResult = await apiClient<{ sessionId: string }>(
+        `/documents/${doc.id}/sessions`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ action: 'DOWNLOAD' }),
+        },
+      );
+
+      const ticketResult = await apiClient<{ ticket: string; expiresAt: string }>(
+        `/documents/${doc.id}/download-ticket`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ sessionId: sessionResult.sessionId }),
+        },
+      );
+
+      const blob = await apiDownload(`/documents/download-with-ticket/${ticketResult.ticket}`);
+
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `${doc.documentCode || 'DOCUMENT'}_watermarked.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+
+      setMessage(`Đã tạo và tải bản sao tài liệu có dấu bản quyền thành công.`);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrorMessage(err.message || 'Không thể tải tài liệu.');
+      } else {
+        setErrorMessage('Đã xảy ra lỗi khi tạo bản sao tải về.');
+      }
+    } finally {
+      setDownloadingDocId(null);
+    }
+  }
 
   // Handle Create Document Draft (3-step wizard submit)
   async function handleFinishUpload() {
@@ -321,24 +446,17 @@ export function OwnerWorkspace() {
     setErrorMessage(null);
 
     try {
-      const now = new Date();
-      const validUntil = new Date(now.getTime() + grantValidDays * 86400000);
-
-      // Create access grant
-      await apiClient('/access-grants', {
+      await apiClient(`/access-requests/${selectedRequest.id}/decide`, {
         method: 'POST',
         body: JSON.stringify({
-          documentId: selectedRequest.documentId,
-          principalType: 'USER',
-          principalUserId: 2, // Map to requestor user ID
+          decision: 'APPROVED',
+          validDays: grantValidDays,
           permissions: [grantAction],
-          validFrom: now.toISOString(),
-          validUntil: validUntil.toISOString(),
         }),
       });
 
       setMessage(
-        `Đã cấp quyền ${grantAction} tài liệu cho ${selectedRequest.requestorName} có thời hạn đến ${validUntil.toLocaleDateString('vi-VN')}.`,
+        `Đã phê duyệt yêu cầu và cấp quyền ${grantAction} tài liệu cho ${selectedRequest.requestorName} trong ${grantValidDays} ngày.`,
       );
       setApproveOpen(false);
       setSelectedRequest(null);
@@ -351,6 +469,28 @@ export function OwnerWorkspace() {
       }
     } finally {
       setIsApproving(false);
+    }
+  }
+
+  // Handle Reject Request
+  async function handleRejectRequest(req: AccessRequestItem) {
+    setErrorMessage(null);
+    try {
+      await apiClient(`/access-requests/${req.id}/decide`, {
+        method: 'POST',
+        body: JSON.stringify({
+          decision: 'REJECTED',
+          decisionNote: 'Chủ sở hữu từ chối cấp quyền truy cập.',
+        }),
+      });
+      setMessage(`Đã từ chối yêu cầu truy cập của ${req.requestorName}.`);
+      await refreshData();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrorMessage(err.message || 'Không thể từ chối yêu cầu.');
+      } else {
+        setErrorMessage('Đã xảy ra lỗi khi từ chối yêu cầu.');
+      }
     }
   }
 
@@ -370,71 +510,62 @@ export function OwnerWorkspace() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className="border-amber-600/40 bg-amber-950/30 text-amber-400"
-                >
-                  Document Owner
-                </Badge>
-                <span className="text-xs text-slate-500">Phân hệ Chủ sở hữu</span>
+                <Badge variant="warning">Document Owner</Badge>
+                <span className="text-xs text-[#717171]">Phân hệ Chủ sở hữu</span>
               </div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-100 mt-1">
+              <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
                 Quản lý & Cấp phép Tài liệu Mật
               </h1>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-[#717171]">
                 Tải lên với phân loại mật bắt buộc, xét duyệt yêu cầu đọc/tải và thu hồi quyền có
                 thời hạn
               </p>
             </div>
 
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
+              <InteractiveHoverButton
+                variant="secondary"
                 size="sm"
+                text="Làm mới"
+                icon={
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`}
+                    aria-hidden="true"
+                  />
+                }
                 onClick={() => void refreshData()}
                 disabled={isLoading}
-                className="border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800"
-              >
-                <RefreshCw
-                  className={`mr-1.5 h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`}
-                  aria-hidden="true"
-                />
-                Làm mới
-              </Button>
-              <Button
+              />
+              <InteractiveHoverButton
+                variant="primary"
                 size="sm"
+                text="Tải lên tài liệu mới"
+                icon={<FileUp size={16} strokeWidth={1.75} aria-hidden="true" />}
                 onClick={() => {
                   setWizardStep(1);
                   setUploadWizardOpen(true);
                 }}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white"
-              >
-                <FileUp className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                Tải lên tài liệu mới
-              </Button>
+              />
             </div>
           </div>
 
           {message && (
-            <Alert className="border-emerald-900/60 bg-emerald-950/40 text-emerald-300 text-xs">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" aria-hidden="true" />
+            <Alert variant="success" className="text-xs">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-[#008A05]" aria-hidden="true" />
               <AlertDescription className="ml-2">{message}</AlertDescription>
             </Alert>
           )}
 
           {errorMessage && (
-            <Alert
-              variant="destructive"
-              className="border-red-900/60 bg-red-950/40 text-red-300 text-xs"
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" aria-hidden="true" />
+            <Alert variant="destructive" className="text-xs">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-[#C13515]" aria-hidden="true" />
               <AlertDescription className="ml-2">{errorMessage}</AlertDescription>
             </Alert>
           )}
 
           {/* Navigation Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-            <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 bg-slate-900 border border-slate-800 p-1 rounded-xl">
+            <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 bg-[#f7f7f7] border border-[#ebebeb] p-1 rounded-full text-[#717171]">
               <TabsTrigger value="documents" className="flex items-center gap-1.5 text-xs">
                 <FolderLock className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>Tài liệu sở hữu ({documents.length})</span>
@@ -459,19 +590,19 @@ export function OwnerWorkspace() {
 
             {/* TAB 1: DOCUMENTS */}
             <TabsContent value="documents" className="space-y-4">
-              <Card className="border-slate-800 bg-slate-900/90 shadow-xl">
+              <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
                 <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div>
-                    <CardTitle className="text-base text-slate-100">
+                    <CardTitle className="text-base text-[#222222]">
                       Kho tài liệu mật đang quản lý
                     </CardTitle>
-                    <CardDescription className="text-xs text-slate-400">
+                    <CardDescription className="text-xs text-[#717171]">
                       Mỗi tài liệu bắt buộc gắn nhãn mức mật rõ ràng và chính sách kiểm soát tải về
                     </CardDescription>
                   </div>
                   <div className="relative w-full sm:w-64">
                     <Search
-                      className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-500"
+                      className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-[#717171]"
                       aria-hidden="true"
                     />
                     <Input
@@ -479,32 +610,35 @@ export function OwnerWorkspace() {
                       placeholder="Tìm theo tiêu đề, mã số..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-9 h-8 text-xs bg-slate-950 border-slate-800"
+                      className="pl-9 h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
                     />
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="overflow-x-auto">
                     <Table>
-                      <TableHeader className="bg-slate-950/60 border-b border-slate-800">
+                      <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
                         <TableRow>
-                          <TableHead className="text-xs text-slate-400">
+                          <TableHead className="text-xs text-[#717171]">
                             Tên tài liệu / Mã số
                           </TableHead>
-                          <TableHead className="text-xs text-slate-400">
+                          <TableHead className="text-xs text-[#717171]">
                             Mức độ mật (Multi-modal)
                           </TableHead>
-                          <TableHead className="text-xs text-slate-400">Chính sách tải</TableHead>
-                          <TableHead className="text-xs text-slate-400">Phiên bản</TableHead>
-                          <TableHead className="text-xs text-slate-400">Trạng thái</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Chính sách tải</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Phiên bản</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
+                          <TableHead className="text-xs text-[#717171] text-right">
+                            Thao tác
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {filteredDocs.length === 0 ? (
                           <TableRow>
                             <TableCell
-                              colSpan={5}
-                              className="text-center py-8 text-slate-400 text-xs"
+                              colSpan={6}
+                              className="text-center py-8 text-[#717171] text-xs"
                             >
                               Chưa có tài liệu nào trong danh mục quản lý
                             </TableCell>
@@ -513,13 +647,13 @@ export function OwnerWorkspace() {
                           filteredDocs.map((doc) => (
                             <TableRow
                               key={doc.id}
-                              className="border-b border-slate-800/60 hover:bg-slate-800/40"
+                              className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
                             >
                               <TableCell>
-                                <div className="font-semibold text-xs text-slate-200">
+                                <div className="font-semibold text-xs text-[#222222]">
                                   {doc.title}
                                 </div>
-                                <div className="text-[11px] font-mono text-slate-400">
+                                <div className="text-[11px] font-bold text-[#717171]">
                                   {doc.documentCode || 'DOC-' + doc.id.slice(0, 8)}
                                 </div>
                               </TableCell>
@@ -528,27 +662,47 @@ export function OwnerWorkspace() {
                               </TableCell>
                               <TableCell>
                                 {doc.allowDownload ? (
-                                  <span className="flex items-center gap-1 text-[11px] text-emerald-400">
+                                  <span className="flex items-center gap-1 text-[11px] text-[#008A05]">
                                     <Download className="h-3 w-3" aria-hidden="true" />
                                     <span>Cho phép tải kèm Watermark</span>
                                   </span>
                                 ) : (
-                                  <span className="flex items-center gap-1 text-[11px] text-amber-400">
+                                  <span className="flex items-center gap-1 text-[11px] text-[#E07912]">
                                     <Eye className="h-3 w-3" aria-hidden="true" />
                                     <span>Chỉ xem trực tuyến</span>
                                   </span>
                                 )}
                               </TableCell>
-                              <TableCell className="text-xs text-slate-300 font-mono">
+                              <TableCell className="text-xs text-[#222222] font-bold">
                                 v{doc.versionCount ?? 1}.0
                               </TableCell>
                               <TableCell>
-                                <Badge
-                                  variant="outline"
-                                  className="border-emerald-600/40 bg-emerald-950/40 text-[10px] text-emerald-300"
-                                >
-                                  {doc.status}
-                                </Badge>
+                                <Badge variant="success">{doc.status}</Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <InteractiveHoverButton
+                                    variant="secondary"
+                                    size="sm"
+                                    text="Xem"
+                                    icon={<Eye size={14} />}
+                                    onClick={() => void handleOpenPreview(doc)}
+                                    disabled={isLoadingPreview || doc.status !== 'ACTIVE'}
+                                  />
+                                  <InteractiveHoverButton
+                                    variant={doc.allowDownload ? 'secondary' : 'ghost'}
+                                    size="sm"
+                                    text="Tải"
+                                    icon={<Download size={14} />}
+                                    onClick={() => void handleDownloadWithTicket(doc)}
+                                    disabled={
+                                      !doc.allowDownload ||
+                                      downloadingDocId === doc.id ||
+                                      doc.status !== 'ACTIVE'
+                                    }
+                                    isLoading={downloadingDocId === doc.id}
+                                  />
+                                </div>
                               </TableCell>
                             </TableRow>
                           ))
@@ -562,29 +716,29 @@ export function OwnerWorkspace() {
 
             {/* TAB 2: ACCESS REQUESTS */}
             <TabsContent value="requests" className="space-y-4">
-              <Card className="border-slate-800 bg-slate-900/90 shadow-xl">
+              <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
                 <CardHeader>
-                  <CardTitle className="text-base text-slate-100">
+                  <CardTitle className="text-base text-[#222222]">
                     Hàng đợi yêu cầu cấp quyền
                   </CardTitle>
-                  <CardDescription className="text-xs text-slate-400">
+                  <CardDescription className="text-xs text-[#717171]">
                     Xét duyệt yêu cầu đọc hoặc tải tài liệu mật từ các phòng ban nghiệp vụ
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="overflow-x-auto">
                     <Table>
-                      <TableHeader className="bg-slate-950/60 border-b border-slate-800">
+                      <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
                         <TableRow>
-                          <TableHead className="text-xs text-slate-400">
+                          <TableHead className="text-xs text-[#717171]">
                             Người yêu cầu / Phòng ban
                           </TableHead>
-                          <TableHead className="text-xs text-slate-400">
+                          <TableHead className="text-xs text-[#717171]">
                             Tài liệu mục tiêu
                           </TableHead>
-                          <TableHead className="text-xs text-slate-400">Hành động</TableHead>
-                          <TableHead className="text-xs text-slate-400">Lý do nghiệp vụ</TableHead>
-                          <TableHead className="text-xs text-slate-400 text-right">
+                          <TableHead className="text-xs text-[#717171]">Hành động</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Lý do nghiệp vụ</TableHead>
+                          <TableHead className="text-xs text-[#717171] text-right">
                             Quyết định
                           </TableHead>
                         </TableRow>
@@ -594,7 +748,7 @@ export function OwnerWorkspace() {
                           <TableRow>
                             <TableCell
                               colSpan={5}
-                              className="text-center py-8 text-slate-400 text-xs"
+                              className="text-center py-8 text-[#717171] text-xs"
                             >
                               Không có yêu cầu cấp quyền nào đang chờ duyệt
                             </TableCell>
@@ -603,60 +757,49 @@ export function OwnerWorkspace() {
                           requests.map((req) => (
                             <TableRow
                               key={req.id}
-                              className="border-b border-slate-800/60 hover:bg-slate-800/40"
+                              className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
                             >
                               <TableCell>
-                                <div className="font-semibold text-xs text-slate-200">
+                                <div className="font-semibold text-xs text-[#222222]">
                                   {req.requestorName}
                                 </div>
-                                <div className="text-[11px] text-slate-400">
+                                <div className="text-[11px] text-[#717171]">
                                   {req.requestorDepartment}
                                 </div>
                               </TableCell>
-                              <TableCell className="text-xs text-slate-200 max-w-xs truncate">
+                              <TableCell className="text-xs text-[#222222] max-w-xs truncate">
                                 {req.documentTitle}
                               </TableCell>
                               <TableCell>
-                                <Badge
-                                  variant="outline"
-                                  className="border-slate-700 bg-slate-800 text-[10px] text-slate-300"
-                                >
-                                  {req.requestedAction}
-                                </Badge>
+                                <Badge variant="secondary">{req.requestedAction}</Badge>
                               </TableCell>
-                              <TableCell className="text-xs text-slate-300 max-w-sm">
+                              <TableCell className="text-xs text-[#222222] max-w-sm">
                                 {req.justification}
                               </TableCell>
-                              <TableCell className="text-right space-x-1">
+                              <TableCell className="text-right">
                                 {req.status === 'PENDING' ? (
-                                  <>
-                                    <Button
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <InteractiveHoverButton
                                       size="sm"
+                                      variant="primary"
+                                      text="Cấp quyền"
+                                      icon={<Check size={14} strokeWidth={2} />}
                                       onClick={() => {
                                         setSelectedRequest(req);
                                         setGrantAction(req.requestedAction);
                                         setApproveOpen(true);
                                       }}
-                                      className="h-7 px-2.5 text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white"
-                                    >
-                                      <Check className="mr-1 h-3 w-3" aria-hidden="true" />
-                                      Cấp quyền
-                                    </Button>
-                                    <Button
+                                    />
+                                    <InteractiveHoverButton
                                       size="sm"
-                                      variant="destructive"
-                                      onClick={() => {
-                                        setMessage(`Đã từ chối yêu cầu của ${req.requestorName}.`);
-                                        setRequests((prev) => prev.filter((r) => r.id !== req.id));
-                                      }}
-                                      className="h-7 px-2 text-[11px] bg-red-950 border border-red-800 text-red-300 hover:bg-red-900"
-                                    >
-                                      <X className="mr-1 h-3 w-3" aria-hidden="true" />
-                                      Từ chối
-                                    </Button>
-                                  </>
+                                      variant="danger"
+                                      text="Từ chối"
+                                      icon={<X size={14} strokeWidth={2} />}
+                                      onClick={() => void handleRejectRequest(req)}
+                                    />
+                                  </div>
                                 ) : (
-                                  <Badge variant="outline" className="text-[10px] text-slate-400">
+                                  <Badge variant="outline" className="text-[10px] text-[#717171]">
                                     {req.status}
                                   </Badge>
                                 )}
@@ -673,12 +816,12 @@ export function OwnerWorkspace() {
 
             {/* TAB 3: ACCESS GRANTS */}
             <TabsContent value="grants" className="space-y-4">
-              <Card className="border-slate-800 bg-slate-900/90 shadow-xl">
+              <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
                 <CardHeader>
-                  <CardTitle className="text-base text-slate-100">
+                  <CardTitle className="text-base text-[#222222]">
                     Giấy phép truy cập có thời hạn (Access Grants)
                   </CardTitle>
-                  <CardDescription className="text-xs text-slate-400">
+                  <CardDescription className="text-xs text-[#717171]">
                     Cấp cho User hoặc Role; quyền hết hạn hoặc bị thu hồi sẽ chấm dứt mọi phiên đọc
                     lập tức
                   </CardDescription>
@@ -686,18 +829,18 @@ export function OwnerWorkspace() {
                 <CardContent className="p-0">
                   <div className="overflow-x-auto">
                     <Table>
-                      <TableHeader className="bg-slate-950/60 border-b border-slate-800">
+                      <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
                         <TableRow>
-                          <TableHead className="text-xs text-slate-400">
+                          <TableHead className="text-xs text-[#717171]">
                             Đối tượng được cấp
                           </TableHead>
-                          <TableHead className="text-xs text-slate-400">Tài liệu</TableHead>
-                          <TableHead className="text-xs text-slate-400">Quyền hạn</TableHead>
-                          <TableHead className="text-xs text-slate-400">
+                          <TableHead className="text-xs text-[#717171]">Tài liệu</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Quyền hạn</TableHead>
+                          <TableHead className="text-xs text-[#717171]">
                             Thời hạn hiệu lực
                           </TableHead>
-                          <TableHead className="text-xs text-slate-400">Trạng thái</TableHead>
-                          <TableHead className="text-xs text-slate-400 text-right">
+                          <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
+                          <TableHead className="text-xs text-[#717171] text-right">
                             Thu hồi khẩn cấp
                           </TableHead>
                         </TableRow>
@@ -707,7 +850,7 @@ export function OwnerWorkspace() {
                           <TableRow>
                             <TableCell
                               colSpan={6}
-                              className="text-center py-8 text-slate-400 text-xs"
+                              className="text-center py-8 text-[#717171] text-xs"
                             >
                               Chưa có giấy phép truy cập nào được khởi tạo
                             </TableCell>
@@ -716,17 +859,17 @@ export function OwnerWorkspace() {
                           grants.map((grant) => (
                             <TableRow
                               key={grant.id}
-                              className="border-b border-slate-800/60 hover:bg-slate-800/40"
+                              className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
                             >
                               <TableCell>
-                                <div className="font-semibold text-xs text-slate-200">
+                                <div className="font-semibold text-xs text-[#222222]">
                                   {grant.principalName}
                                 </div>
-                                <div className="text-[10px] font-mono text-slate-400">
+                                <div className="text-[10px] font-bold text-[#717171]">
                                   {grant.principalType}
                                 </div>
                               </TableCell>
-                              <TableCell className="text-xs text-slate-200 max-w-xs truncate">
+                              <TableCell className="text-xs text-[#222222] max-w-xs truncate">
                                 {grant.documentTitle}
                               </TableCell>
                               <TableCell>
@@ -735,48 +878,42 @@ export function OwnerWorkspace() {
                                     <Badge
                                       key={p}
                                       variant="outline"
-                                      className="border-slate-700 bg-slate-800 text-[10px] text-slate-300"
+                                      className="border-[#dddddd] bg-[#f7f7f7] text-[10px] text-[#222222]"
                                     >
                                       {p}
                                     </Badge>
                                   ))}
                                 </div>
                               </TableCell>
-                              <TableCell className="text-xs text-slate-300 font-mono">
+                              <TableCell className="text-xs text-[#222222] font-bold">
                                 <div>
                                   Từ: {new Date(grant.validFrom).toLocaleDateString('vi-VN')}
                                 </div>
-                                <div className="text-amber-400">
+                                <div className="text-[#E07912]">
                                   Đến: {new Date(grant.validUntil).toLocaleDateString('vi-VN')}
                                 </div>
                               </TableCell>
                               <TableCell>
                                 <Badge
-                                  variant={grant.status === 'ACTIVE' ? 'default' : 'destructive'}
-                                  className={`text-[10px] ${
-                                    grant.status === 'ACTIVE'
-                                      ? 'border-emerald-600/40 bg-emerald-950/40 text-emerald-300'
-                                      : 'border-red-600/40 bg-red-950/40 text-red-300'
-                                  }`}
+                                  variant={grant.status === 'ACTIVE' ? 'success' : 'destructive'}
+                                  className="text-[10px]"
                                 >
                                   {grant.status}
                                 </Badge>
                               </TableCell>
                               <TableCell className="text-right">
                                 {grant.status === 'ACTIVE' && (
-                                  <Button
+                                  <InteractiveHoverButton
                                     size="sm"
-                                    variant="outline"
+                                    variant="danger"
+                                    text="Thu hồi"
+                                    icon={<AlertOctagon size={14} strokeWidth={2} />}
                                     onClick={() => {
                                       setSelectedGrant(grant);
                                       setRevokeReason('');
                                       setRevokeOpen(true);
                                     }}
-                                    className="h-7 px-2 text-[11px] border-red-900/50 bg-red-950/30 text-red-300 hover:bg-red-900/50"
-                                  >
-                                    <AlertOctagon className="mr-1 h-3 w-3" aria-hidden="true" />
-                                    Thu hồi
-                                  </Button>
+                                  />
                                 )}
                               </TableCell>
                             </TableRow>
@@ -791,47 +928,45 @@ export function OwnerWorkspace() {
 
             {/* TAB 4: ACCESS HISTORY */}
             <TabsContent value="history" className="space-y-4">
-              <Card className="border-slate-800 bg-slate-900/90 shadow-xl">
+              <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
                 <CardHeader>
-                  <CardTitle className="text-base text-slate-100">
+                  <CardTitle className="text-base text-[#222222]">
                     Dấu vết truy cập tài liệu mật (Audit Log)
                   </CardTitle>
-                  <CardDescription className="text-xs text-slate-400">
+                  <CardDescription className="text-xs text-[#717171]">
                     Theo dõi đầy đủ sự kiện VIEW / DOWNLOAD gắn với mã định danh phiên và dấu bản
                     quyền
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-4 space-y-3 text-xs">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4 space-y-3 text-xs">
+                    <div className="flex items-center justify-between border-b border-[#ebebeb] pb-2">
                       <div className="flex items-center gap-2">
-                        <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                        <span className="font-semibold text-slate-200">
+                        <ShieldCheck className="h-4 w-4 text-[#008A05]" />
+                        <span className="font-semibold text-[#222222]">
                           Truy cập hợp lệ gần nhất
                         </span>
                       </div>
-                      <span className="font-mono text-[11px] text-slate-400">
+                      <span className="font-bold text-[11px] text-[#717171]">
                         2026-09-23 12:45 UTC
                       </span>
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2 text-slate-300">
+                    <div className="grid gap-2 sm:grid-cols-2 text-[#222222]">
                       <div>
                         Người thực hiện:{' '}
-                        <span className="text-slate-100 font-medium">Nguyen Van A</span>
+                        <span className="text-[#222222] font-medium">Nguyen Van A</span>
                       </div>
                       <div>
                         Hành động:{' '}
-                        <span className="font-mono text-emerald-400">
-                          DOCUMENT:VIEW (Trang 1-5)
-                        </span>
+                        <span className="font-bold text-[#008A05]">DOCUMENT:VIEW (Trang 1-5)</span>
                       </div>
                       <div>
                         Mã phiên (Session ID):{' '}
-                        <span className="font-mono text-[11px] text-slate-400">sess-99b8-1a2f</span>
+                        <span className="font-bold text-[11px] text-[#717171]">sess-99b8-1a2f</span>
                       </div>
                       <div>
                         Watermark Token:{' '}
-                        <span className="font-mono text-[11px] text-amber-400">
+                        <span className="font-bold text-[11px] text-[#E07912]">
                           WM-8f3a9b2c1e7d4410
                         </span>
                       </div>
@@ -844,10 +979,10 @@ export function OwnerWorkspace() {
 
           {/* 3-STEP UPLOAD WIZARD MODAL */}
           <Dialog open={uploadWizardOpen} onOpenChange={setUploadWizardOpen}>
-            <DialogContent className="max-w-xl border-slate-800 bg-slate-900 text-slate-100">
+            <DialogContent className="max-w-xl border-[#ebebeb] bg-[#ffffff] text-[#222222]">
               <DialogHeader>
                 <div className="flex items-center justify-between">
-                  <DialogTitle className="text-base font-semibold text-slate-100">
+                  <DialogTitle className="text-base font-semibold text-[#222222]">
                     Quy trình tải lên tài liệu an toàn (Bước {wizardStep}/3)
                   </DialogTitle>
                   <div className="flex gap-1.5">
@@ -856,16 +991,16 @@ export function OwnerWorkspace() {
                         key={step}
                         className={`h-2 w-6 rounded-full transition-all ${
                           wizardStep === step
-                            ? 'bg-emerald-500'
+                            ? 'bg-[#FF385C]'
                             : wizardStep > step
-                              ? 'bg-emerald-800'
-                              : 'bg-slate-800'
+                              ? 'bg-[#FF385C]/50'
+                              : 'bg-[#ebebeb]'
                         }`}
                       />
                     ))}
                   </div>
                 </div>
-                <DialogDescription className="text-xs text-slate-400">
+                <DialogDescription className="text-xs text-[#717171]">
                   {wizardStep === 1 && 'Bước 1: Chọn tập tin và gán mức độ mật bắt buộc'}
                   {wizardStep === 2 && 'Bước 2: Thiết lập chính sách tải về và thời hạn bảo quản'}
                   {wizardStep === 3 && 'Bước 3: Xác minh băm SHA-256 và xác nhận lưu trữ mã hóa'}
@@ -878,9 +1013,10 @@ export function OwnerWorkspace() {
                     <div className="space-y-1">
                       <label
                         htmlFor="doc-file-upload"
-                        className="text-xs font-medium text-slate-300"
+                        className="text-xs font-medium text-[#222222]"
                       >
-                        Chọn tệp tài liệu (PDF, DOCX, XLSX) <span className="text-red-400">*</span>
+                        Chọn tệp tài liệu (PDF, DOCX, XLSX){' '}
+                        <span className="text-[#C13515]">*</span>
                       </label>
                       <input
                         id="doc-file-upload"
@@ -893,13 +1029,13 @@ export function OwnerWorkspace() {
                             setDocTitle(file.name.replace(/\.[^/.]+$/, ''));
                           }
                         }}
-                        className="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-800 file:text-xs file:font-medium file:text-slate-200 hover:file:bg-slate-700"
+                        className="w-full text-xs text-[#717171] file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-[#f7f7f7] file:text-xs file:font-medium file:text-[#222222] hover:file:bg-[#ebebeb] cursor-pointer"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label htmlFor="doc-title" className="text-xs font-medium text-slate-300">
-                        Tiêu đề tài liệu <span className="text-red-400">*</span>
+                      <label htmlFor="doc-title" className="text-xs font-medium text-[#222222]">
+                        Tiêu đề tài liệu <span className="text-[#C13515]">*</span>
                       </label>
                       <Input
                         id="doc-title"
@@ -907,12 +1043,12 @@ export function OwnerWorkspace() {
                         value={docTitle}
                         onChange={(e) => setDocTitle(e.target.value)}
                         placeholder="Ví dụ: Báo cáo phương án tài chính nội bộ 2026"
-                        className="h-8 text-xs bg-slate-950 border-slate-800"
+                        className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label htmlFor="doc-code" className="text-xs font-medium text-slate-300">
+                      <label htmlFor="doc-code" className="text-xs font-medium text-[#222222]">
                         Mã số tài liệu
                       </label>
                       <Input
@@ -920,14 +1056,14 @@ export function OwnerWorkspace() {
                         value={docCode}
                         onChange={(e) => setDocCode(e.target.value)}
                         placeholder="DOC-TC-2026-001"
-                        className="h-8 text-xs bg-slate-950 border-slate-800"
+                        className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <span className="block text-xs font-medium text-slate-300">
+                      <span className="block text-xs font-medium text-[#222222]">
                         Mức độ mật bắt buộc (Mandatory Classification){' '}
-                        <span className="text-red-400">*</span>
+                        <span className="text-[#C13515]">*</span>
                       </span>
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                         {(
@@ -943,10 +1079,10 @@ export function OwnerWorkspace() {
                             key={level}
                             type="button"
                             onClick={() => setDocClassification(level)}
-                            className={`flex flex-col items-center justify-center p-2 rounded-lg border text-center transition-all ${
+                            className={`flex flex-col items-center justify-center py-2 px-3 rounded-[40px] border text-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                               docClassification === level
-                                ? 'border-emerald-500 bg-emerald-950/60 shadow-md ring-1 ring-emerald-500'
-                                : 'border-slate-800 bg-slate-950/70 hover:bg-slate-800/60'
+                                ? 'border-[#FF385C] bg-[#FF385C]/10 ring-1 ring-[#FF385C]'
+                                : 'border-[#ebebeb] bg-[#ffffff] hover:bg-[#f7f7f7] hover:border-[#dddddd]'
                             }`}
                           >
                             <ClassificationBadge level={level} size="sm" />
@@ -960,7 +1096,7 @@ export function OwnerWorkspace() {
                 {wizardStep === 2 && (
                   <div className="space-y-3.5">
                     <div className="space-y-1">
-                      <label htmlFor="doc-desc" className="text-xs font-medium text-slate-300">
+                      <label htmlFor="doc-desc" className="text-xs font-medium text-[#222222]">
                         Mô tả tóm tắt nội dung
                       </label>
                       <Textarea
@@ -969,17 +1105,17 @@ export function OwnerWorkspace() {
                         value={docDescription}
                         onChange={(e) => setDocDescription(e.target.value)}
                         placeholder="Nội dung chính và phạm vi sử dụng của tài liệu..."
-                        className="text-xs bg-slate-950 border-slate-800"
+                        className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
                       />
                     </div>
 
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+                    <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-3">
                       <div className="flex items-center justify-between">
                         <div>
-                          <div className="text-xs font-medium text-slate-200">
+                          <div className="text-xs font-medium text-[#222222]">
                             Chính sách cho phép tải về
                           </div>
-                          <div className="text-[11px] text-slate-400">
+                          <div className="text-[11px] text-[#717171]">
                             Nếu tắt, người đọc chỉ được xem trực tuyến qua sandbox bảo mật
                           </div>
                         </div>
@@ -987,13 +1123,13 @@ export function OwnerWorkspace() {
                           type="checkbox"
                           checked={docAllowDownload}
                           onChange={(e) => setDocAllowDownload(e.target.checked)}
-                          className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-500"
+                          className="h-4 w-4 rounded border-[#dddddd] bg-[#ffffff] accent-[#FF385C]"
                         />
                       </div>
                     </div>
 
                     <div className="space-y-1">
-                      <label htmlFor="doc-retention" className="text-xs font-medium text-slate-300">
+                      <label htmlFor="doc-retention" className="text-xs font-medium text-[#222222]">
                         Thời hạn lưu trữ bảo mật (Retention Date)
                       </label>
                       <Input
@@ -1001,7 +1137,7 @@ export function OwnerWorkspace() {
                         type="date"
                         value={docRetentionDate}
                         onChange={(e) => setDocRetentionDate(e.target.value)}
-                        className="h-8 text-xs bg-slate-950 border-slate-800 text-slate-200"
+                        className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] text-[#222222]"
                       />
                     </div>
                   </div>
@@ -1009,32 +1145,32 @@ export function OwnerWorkspace() {
 
                 {wizardStep === 3 && (
                   <div className="space-y-3 text-xs">
-                    <div className="rounded-lg border border-emerald-900/40 bg-emerald-950/20 p-3 space-y-2">
-                      <div className="flex items-center gap-2 text-emerald-400 font-semibold">
+                    <div className="rounded-[24px] border border-[#008A05]/20 bg-[#008A05]/5 p-3.5 space-y-2">
+                      <div className="flex items-center gap-2 text-[#008A05] font-semibold">
                         <ShieldCheck className="h-4 w-4" />
                         <span>Xác minh trước khi mã hóa lưu trữ</span>
                       </div>
-                      <div className="grid grid-cols-2 gap-1.5 text-slate-300 pt-1 border-t border-slate-800">
-                        <span className="text-slate-400">Tiêu đề:</span>
-                        <span className="font-semibold text-slate-100">{docTitle}</span>
+                      <div className="grid grid-cols-2 gap-1.5 text-[#222222] pt-1 border-t border-[#008A05]/15">
+                        <span className="text-[#717171]">Tiêu đề:</span>
+                        <span className="font-semibold text-[#222222]">{docTitle}</span>
                         {docFile && (
                           <>
-                            <span className="text-slate-400">Tệp nguồn:</span>
-                            <span className="font-mono text-slate-200">{docFile.name}</span>
+                            <span className="text-[#717171]">Tệp nguồn:</span>
+                            <span className="font-bold text-[#222222]">{docFile.name}</span>
                           </>
                         )}
-                        <span className="text-slate-400">Mức độ mật:</span>
+                        <span className="text-[#717171]">Mức độ mật:</span>
                         <ClassificationBadge level={docClassification} size="sm" />
-                        <span className="text-slate-400">Chính sách tải:</span>
+                        <span className="text-[#717171]">Chính sách tải:</span>
                         <span>
                           {docAllowDownload ? 'Cho phép tải có watermark' : 'Chỉ xem trực tuyến'}
                         </span>
-                        <span className="text-slate-400">Mã hóa xác thực:</span>
-                        <span className="font-mono text-emerald-400">AES-256-GCM / DEK</span>
+                        <span className="text-[#717171]">Mã hóa xác thực:</span>
+                        <span className="font-bold text-[#008A05]">AES-256-GCM / DEK</span>
                       </div>
                     </div>
 
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <p className="text-[11px] text-[#717171] leading-relaxed">
                       Tài liệu sẽ được quét mã độc, trích xuất magic bytes, phân trang an toàn và
                       lưu vào bộ lưu trữ mã hóa độc lập. Dấu bản quyền (Watermark) sẽ được nhúng
                       động mỗi khi có yêu cầu truy cập.
@@ -1045,54 +1181,42 @@ export function OwnerWorkspace() {
 
               <DialogFooter className="flex justify-between sm:justify-between pt-2">
                 {wizardStep > 1 ? (
-                  <Button
+                  <InteractiveHoverButton
                     type="button"
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
+                    text="Quay lại"
                     onClick={() => setWizardStep((prev) => (prev - 1) as 1 | 2)}
-                    className="border-slate-800 text-slate-300"
-                  >
-                    Quay lại
-                  </Button>
+                  />
                 ) : (
-                  <Button
+                  <InteractiveHoverButton
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
+                    text="Hủy bỏ"
                     onClick={() => setUploadWizardOpen(false)}
-                    className="border-slate-800 text-slate-400"
-                  >
-                    Hủy bỏ
-                  </Button>
+                  />
                 )}
 
                 {wizardStep < 3 ? (
-                  <Button
+                  <InteractiveHoverButton
                     type="button"
+                    variant="primary"
                     size="sm"
+                    text="Tiếp theo"
                     disabled={!docTitle.trim()}
                     onClick={() => setWizardStep((prev) => (prev + 1) as 2 | 3)}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white"
-                  >
-                    Tiếp theo
-                  </Button>
+                  />
                 ) : (
-                  <Button
+                  <InteractiveHoverButton
                     type="button"
+                    variant="primary"
                     size="sm"
+                    text="Xác nhận tải lên"
                     disabled={isSubmittingDoc}
+                    isLoading={isSubmittingDoc}
                     onClick={() => void handleFinishUpload()}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white"
-                  >
-                    {isSubmittingDoc ? (
-                      <>
-                        <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                        Đang xử lý & mã hóa…
-                      </>
-                    ) : (
-                      'Xác nhận tải lên'
-                    )}
-                  </Button>
+                  />
                 )}
               </DialogFooter>
             </DialogContent>
@@ -1100,34 +1224,34 @@ export function OwnerWorkspace() {
 
           {/* REVOKE GRANT MODAL */}
           <Dialog open={revokeOpen} onOpenChange={setRevokeOpen}>
-            <DialogContent className="max-w-md border-red-900/50 bg-slate-900 text-slate-100">
+            <DialogContent className="max-w-md border border-[#C13515]/20 bg-[#ffffff] text-[#222222]">
               <DialogHeader>
-                <div className="flex items-center gap-2 text-red-400">
+                <div className="flex items-center gap-2 text-[#C13515]">
                   <AlertOctagon className="h-5 w-5" />
-                  <DialogTitle className="text-base font-semibold text-red-200">
+                  <DialogTitle className="text-base font-semibold text-[#C13515]">
                     Thu hồi giấy phép truy cập khẩn cấp
                   </DialogTitle>
                 </div>
-                <DialogDescription className="text-xs text-slate-400">
+                <DialogDescription className="text-xs text-[#717171]">
                   D-BR15: Bắt buộc nêu rõ lý do thu hồi (ít nhất 10 ký tự). Mọi phiên làm việc đang
                   chạy sẽ bị ngắt lập tức.
                 </DialogDescription>
               </DialogHeader>
 
               <form onSubmit={handleConfirmRevoke} className="space-y-3.5 py-2">
-                <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3 text-xs space-y-1">
+                <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 text-xs space-y-1">
                   <div>
                     Đối tượng:{' '}
-                    <strong className="text-slate-100">{selectedGrant?.principalName}</strong>
+                    <strong className="text-[#222222]">{selectedGrant?.principalName}</strong>
                   </div>
                   <div>
-                    Tài liệu: <span className="text-slate-300">{selectedGrant?.documentTitle}</span>
+                    Tài liệu: <span className="text-[#222222]">{selectedGrant?.documentTitle}</span>
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label htmlFor="revoke-reason" className="text-xs font-medium text-slate-300">
-                    Lý do thu hồi (Ghi vào Audit Trail) <span className="text-red-400">*</span>
+                  <label htmlFor="revoke-reason" className="text-xs font-medium text-[#222222]">
+                    Lý do thu hồi (Ghi vào Audit Trail) <span className="text-[#C13515]">*</span>
                   </label>
                   <Textarea
                     id="revoke-reason"
@@ -1136,38 +1260,29 @@ export function OwnerWorkspace() {
                     value={revokeReason}
                     onChange={(e) => setRevokeReason(e.target.value)}
                     placeholder="Ví dụ: Dự án đã hoàn thành trước hạn; hoặc có dấu hiệu rò rỉ thông tin..."
-                    className="text-xs bg-slate-950 border-slate-800 text-slate-100"
+                    className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
                   />
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-[10px] text-[#717171]">
                     Tối thiểu 10 ký tự ({revokeReason.trim().length}/10)
                   </p>
                 </div>
 
                 <DialogFooter className="pt-2">
-                  <Button
+                  <InteractiveHoverButton
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
+                    text="Hủy"
                     onClick={() => setRevokeOpen(false)}
-                    className="border-slate-800 text-slate-400"
-                  >
-                    Hủy
-                  </Button>
-                  <Button
+                  />
+                  <InteractiveHoverButton
                     type="submit"
+                    variant="danger"
                     size="sm"
+                    text="Xác nhận thu hồi ngay"
                     disabled={isRevoking || revokeReason.trim().length < 10}
-                    className="bg-red-600 hover:bg-red-500 text-white font-medium"
-                  >
-                    {isRevoking ? (
-                      <>
-                        <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                        Đang thu hồi…
-                      </>
-                    ) : (
-                      'Xác nhận thu hồi ngay'
-                    )}
-                  </Button>
+                    isLoading={isRevoking}
+                  />
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -1175,38 +1290,38 @@ export function OwnerWorkspace() {
 
           {/* APPROVE REQUEST MODAL */}
           <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
-            <DialogContent className="max-w-md border-slate-800 bg-slate-900 text-slate-100">
+            <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
               <DialogHeader>
-                <DialogTitle className="text-base font-semibold text-slate-100">
+                <DialogTitle className="text-base font-semibold text-[#222222]">
                   Cấp giấy phép truy cập có thời hạn
                 </DialogTitle>
-                <DialogDescription className="text-xs text-slate-400">
+                <DialogDescription className="text-xs text-[#717171]">
                   Xác định quyền (VIEW hoặc DOWNLOAD) và giới hạn thời gian hiệu lực
                 </DialogDescription>
               </DialogHeader>
 
               <div className="space-y-3.5 py-2 text-xs">
-                <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3 space-y-1">
+                <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1">
                   <div>
                     Người nhận quyền:{' '}
-                    <strong className="text-slate-100">{selectedRequest?.requestorName}</strong>
+                    <strong className="text-[#222222]">{selectedRequest?.requestorName}</strong>
                   </div>
                   <div>
                     Tài liệu:{' '}
-                    <span className="text-slate-300">{selectedRequest?.documentTitle}</span>
+                    <span className="text-[#222222]">{selectedRequest?.documentTitle}</span>
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <span className="font-medium text-slate-300 block">Phạm vi quyền cấp:</span>
+                  <span className="font-medium text-[#222222] block">Phạm vi quyền cấp:</span>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => setGrantAction('VIEW')}
-                      className={`flex items-center justify-center gap-1.5 p-2 rounded-lg border text-xs font-medium transition-all ${
+                      className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-[40px] border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                         grantAction === 'VIEW'
-                          ? 'border-emerald-500 bg-emerald-950/60 text-emerald-300'
-                          : 'border-slate-800 bg-slate-950 text-slate-400'
+                          ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
+                          : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd] hover:bg-[#f7f7f7]'
                       }`}
                     >
                       <Eye className="h-4 w-4" />
@@ -1215,10 +1330,10 @@ export function OwnerWorkspace() {
                     <button
                       type="button"
                       onClick={() => setGrantAction('DOWNLOAD')}
-                      className={`flex items-center justify-center gap-1.5 p-2 rounded-lg border text-xs font-medium transition-all ${
+                      className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-[40px] border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                         grantAction === 'DOWNLOAD'
-                          ? 'border-emerald-500 bg-emerald-950/60 text-emerald-300'
-                          : 'border-slate-800 bg-slate-950 text-slate-400'
+                          ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
+                          : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd] hover:bg-[#f7f7f7]'
                       }`}
                     >
                       <Download className="h-4 w-4" />
@@ -1228,14 +1343,14 @@ export function OwnerWorkspace() {
                 </div>
 
                 <div className="space-y-1">
-                  <label htmlFor="grant-duration" className="font-medium text-slate-300">
+                  <label htmlFor="grant-duration" className="font-medium text-[#222222]">
                     Thời hạn hiệu lực (Ngày):
                   </label>
                   <select
                     id="grant-duration"
                     value={grantValidDays}
                     onChange={(e) => setGrantValidDays(Number(e.target.value))}
-                    className="w-full rounded-md border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none"
+                    className="w-full h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
                   >
                     <option value={1}>1 ngày (24 giờ khẩn cấp)</option>
                     <option value={3}>3 ngày</option>
@@ -1247,32 +1362,157 @@ export function OwnerWorkspace() {
               </div>
 
               <DialogFooter className="pt-2">
-                <Button
+                <InteractiveHoverButton
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
+                  text="Hủy"
                   onClick={() => setApproveOpen(false)}
-                  className="border-slate-800 text-slate-400"
-                >
-                  Hủy
-                </Button>
-                <Button
+                />
+                <InteractiveHoverButton
                   type="button"
+                  variant="primary"
                   size="sm"
+                  text="Xác nhận cấp quyền"
                   disabled={isApproving}
+                  isLoading={isApproving}
                   onClick={() => void handleConfirmApprove()}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
-                >
-                  {isApproving ? (
-                    <>
-                      <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                      Đang phê duyệt…
-                    </>
-                  ) : (
-                    'Xác nhận cấp quyền'
-                  )}
-                </Button>
+                />
               </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* SECURE SANDBOX PREVIEW MODAL */}
+          <Dialog open={previewOpen} onOpenChange={handleClosePreview}>
+            <DialogContent className="max-w-4xl max-h-[92vh] flex flex-col border-[#ebebeb] bg-[#f7f7f7] text-[#222222] p-0 overflow-hidden">
+              <DialogHeader className="p-4 border-b border-[#ebebeb] bg-[#ffffff] flex flex-row items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-[#008A05]" />
+                    <DialogTitle className="text-sm font-semibold text-[#222222]">
+                      Sandbox Xem Trước An Toàn: {previewDoc?.title}
+                    </DialogTitle>
+                  </div>
+                  <DialogDescription className="text-[11px] text-[#717171] mt-0.5 flex flex-wrap items-center gap-2">
+                    <span>Phiên: {previewSessionId || 'sess-active'}</span>
+                    <span className="text-[#ebebeb]">|</span>
+                    <span className="inline-flex items-center gap-1 text-[#008489] font-medium">
+                      <FileType size={13} /> Pipeline Gotenberg: Office (.docx/.xlsx/.pptx) &rarr;
+                      Watermarked PDF
+                    </span>
+                  </DialogDescription>
+                </div>
+
+                {previewDoc && (
+                  <ClassificationBadge level={previewDoc.classificationCode} size="sm" />
+                )}
+              </DialogHeader>
+
+              {/* Sandbox Viewer Area */}
+              <div className="relative flex-1 bg-[#f7f7f7] flex flex-col items-center justify-center p-4 overflow-hidden min-h-[480px]">
+                {isLoadingPreview ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <RefreshCw className="h-8 w-8 animate-spin text-[#FF385C]" />
+                    <p className="text-xs text-[#717171]">
+                      Đang chuyển đổi tệp Office sang PDF và đóng dấu Watermark…
+                    </p>
+                  </div>
+                ) : previewPdfUrl ? (
+                  <div className="w-full flex-1 flex flex-col items-center justify-center min-h-[500px]">
+                    <iframe
+                      src={`${previewPdfUrl}#toolbar=0&navpanes=0`}
+                      className="w-full h-[520px] rounded border border-[#dddddd] bg-white shadow-sm"
+                      title={previewDoc?.title || 'Preview tài liệu'}
+                    />
+                  </div>
+                ) : (
+                  <div className="relative w-full max-w-2xl aspect-[3/4] bg-white rounded shadow-2xl p-8 flex flex-col justify-between overflow-hidden select-none border border-[#dddddd]">
+                    {/* Simulated document contents */}
+                    <div className="space-y-4 text-[#222222]">
+                      <div className="border-b border-[#ebebeb] pb-3">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-[#717171]">
+                          CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
+                        </div>
+                        <div className="text-xs font-semibold text-[#222222] mt-1">
+                          {previewDoc?.title}
+                        </div>
+                        <div className="text-[10px] text-[#717171] font-bold mt-0.5">
+                          Số: {previewDoc?.documentCode || 'DOC-CONFIDENTIAL-2026'}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 text-xs leading-relaxed text-[#717171]">
+                        <p>
+                          Căn cứ quy chế an toàn thông tin và bảo vệ tài liệu mật số 14/QC-BCĐ, nội
+                          dung này chỉ được phép tiếp cận bởi nhân sự được ủy quyền thông qua phiên
+                          làm việc đã xác thực.
+                        </p>
+                        <p>
+                          Nghiêm cấm sao chép, chụp ảnh màn hình hoặc phát tán ra ngoài phạm vi quy
+                          định. Mọi vi phạm sẽ được xử lý theo quy định của pháp luật và truy vết
+                          qua mã watermark định danh phiên.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* DYNAMIC WATERMARK OVERLAY */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none rotate-[-25deg] opacity-25">
+                      <div className="font-bold text-center text-[#C13515] text-sm leading-tight space-y-1">
+                        <div>
+                          {user?.fullName || 'CHỦ SỞ HỮU'} · {user?.username}
+                        </div>
+                        <div>{new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC</div>
+                        <div className="text-xs text-[#222222]">{previewDoc?.documentCode}</div>
+                        <div className="text-[11px] text-[#008A05]">
+                          WM-{previewSessionId?.slice(0, 16)}
+                        </div>
+                      </div>
+                      <div className="mt-2 p-1 border border-[#C13515] rounded bg-white/80">
+                        <QrCode className="h-9 w-9 text-[#C13515]" />
+                      </div>
+                    </div>
+
+                    <div className="text-[10px] font-bold text-[#717171] flex justify-between border-t border-[#ebebeb] pt-2">
+                      <span>Phân hệ Owner · Controlled Delivery</span>
+                      <span>
+                        Trang {previewPage} / {previewTotalPages}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer with page controls */}
+              <div className="p-3 border-t border-[#ebebeb] bg-[#ffffff] flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <InteractiveHoverButton
+                    size="sm"
+                    variant="secondary"
+                    text="Trang trước"
+                    icon={<ChevronLeft size={16} />}
+                    disabled={previewPage <= 1}
+                    onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                  />
+                  <span className="text-xs font-bold text-[#717171]">
+                    Trang {previewPage} / {previewTotalPages}
+                  </span>
+                  <InteractiveHoverButton
+                    size="sm"
+                    variant="secondary"
+                    text="Trang sau"
+                    icon={<ChevronRight size={16} />}
+                    disabled={previewPage >= previewTotalPages}
+                    onClick={() => setPreviewPage((p) => Math.min(previewTotalPages, p + 1))}
+                  />
+                </div>
+
+                <InteractiveHoverButton
+                  size="sm"
+                  variant="secondary"
+                  text="Đóng Sandbox"
+                  onClick={() => handleClosePreview(false)}
+                />
+              </div>
             </DialogContent>
           </Dialog>
         </div>

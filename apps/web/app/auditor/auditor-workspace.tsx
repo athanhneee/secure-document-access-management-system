@@ -16,10 +16,10 @@ import {
   FileJson,
   FileText,
 } from 'lucide-react';
-import { apiClient, ApiError } from '@/lib/api-client';
+import { apiClient, apiDownload, ApiError } from '@/lib/api-client';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { AuthGuard } from '@/components/auth-guard';
-import { Button } from '@/components/ui/button';
+import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -82,7 +82,7 @@ interface ChainVerificationReport {
   isChainValid: boolean;
   totalEntriesChecked: number;
   tamperingDetected: boolean;
-  brokenSequences: number[];
+  brokenSequences: (number | string)[];
   verifiedAt: string;
   chainPartition: string;
 }
@@ -150,60 +150,7 @@ export function AuditorWorkspace() {
         entryHash: l.entryHash || l.entry_hash || 'hmac-sha256-verified',
       }));
 
-      // Sample fallback if empty
-      if (mappedLogs.length === 0) {
-        mappedLogs.push({
-          id: 'log-01',
-          occurredAt: new Date().toISOString(),
-          actorUsername: 'nguyenvana',
-          action: 'DOCUMENT:VIEW',
-          objectType: 'DOCUMENT',
-          objectId: 'doc-8819',
-          outcome: 'SUCCESS',
-          ipAddress: '192.168.1.20',
-          correlationId: 'corr-8fa2-001',
-          chainSequence: 1042,
-          entryHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-        });
-        mappedLogs.push({
-          id: 'log-02',
-          occurredAt: new Date(Date.now() - 1800000).toISOString(),
-          actorUsername: 'tranvantai',
-          action: 'ACCESS_GRANT:REVOKE',
-          objectType: 'ACCESS_GRANT',
-          objectId: 'grant-2201',
-          outcome: 'SUCCESS',
-          ipAddress: '10.0.4.15',
-          correlationId: 'corr-8fa2-002',
-          chainSequence: 1041,
-          entryHash: 'a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e',
-        });
-        mappedLogs.push({
-          id: 'log-03',
-          occurredAt: new Date(Date.now() - 3600000).toISOString(),
-          actorUsername: 'levanthu',
-          action: 'DOCUMENT:DOWNLOAD',
-          objectType: 'DOCUMENT',
-          objectId: 'doc-topsecret',
-          outcome: 'DENIED',
-          ipAddress: '10.0.4.12',
-          correlationId: 'corr-8fa2-003',
-          chainSequence: 1040,
-          entryHash: '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
-        });
-      }
       setLogs(mappedLogs);
-
-      // Export jobs list
-      setExportJobs([
-        {
-          id: 'job-01',
-          exportType: 'AUDIT_LOGS',
-          format: 'CSV',
-          status: 'COMPLETED',
-          createdAt: new Date(Date.now() - 86400000).toISOString(),
-        },
-      ]);
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(err.message);
@@ -234,26 +181,42 @@ export function AuditorWorkspace() {
     setIsVerifyingChain(true);
     setErrorMessage(null);
     try {
-      const res = await apiClient<ChainVerificationReport>(
-        '/audit-logs/verify?chainPartition=GLOBAL_CHAIN',
-      ).catch(() => ({
-        isChainValid: true,
-        totalEntriesChecked: 1042,
-        tamperingDetected: false,
-        brokenSequences: [],
-        verifiedAt: new Date().toISOString(),
-        chainPartition: 'GLOBAL_CHAIN',
-      }));
+      const res = await apiClient<
+        Record<
+          string,
+          {
+            partition: string;
+            valid: boolean;
+            totalChecked: number;
+            anchorsChecked: number;
+            violations: { code: string; message: string }[];
+          }
+        >
+      >('/audit-logs/verify');
+
+      const partitions = Object.values(res || {});
+      const totalChecked = partitions.reduce((acc, p) => acc + (p.totalChecked || 0), 0);
+      const isAllValid = partitions.length > 0 ? partitions.every((p) => p.valid) : true;
+      const allViolations = partitions.flatMap((p) =>
+        (p.violations || []).map((v) => `${p.partition}: ${v.message || v.code}`),
+      );
 
       setVerificationReport({
-        isChainValid: res.isChainValid ?? true,
-        totalEntriesChecked: res.totalEntriesChecked ?? 1042,
-        tamperingDetected: res.tamperingDetected ?? false,
-        brokenSequences: res.brokenSequences ?? [],
-        verifiedAt: res.verifiedAt || new Date().toISOString(),
-        chainPartition: res.chainPartition || 'GLOBAL_CHAIN',
+        isChainValid: isAllValid,
+        totalEntriesChecked: totalChecked,
+        tamperingDetected: !isAllValid,
+        brokenSequences: allViolations,
+        verifiedAt: new Date().toISOString(),
+        chainPartition: partitions.map((p) => p.partition).join(', ') || 'ALL_PARTITIONS',
       });
-      setMessage('Đã hoàn thành kiểm tra tính toàn vẹn chuỗi băm HMAC-SHA256: Hợp lệ 100%.');
+
+      if (isAllValid) {
+        setMessage(
+          `Đã hoàn thành kiểm tra tính toàn vẹn chuỗi băm HMAC-SHA256 trên ${partitions.length} phân vùng: Hợp lệ 100% (${totalChecked} bản ghi).`,
+        );
+      } else {
+        setErrorMessage(`Phát hiện sai lệch chuỗi băm trong ${allViolations.length} vị trí!`);
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(err.message || 'Xác minh chuỗi băm thất bại.');
@@ -272,19 +235,27 @@ export function AuditorWorkspace() {
     setErrorMessage(null);
 
     try {
-      // In production calls POST /reports/export
-      const newJob: ExportJobItem = {
-        id: 'job-' + Date.now().toString(36),
-        exportType: 'AUDIT_LOGS',
-        format: exportFormat,
-        status: 'COMPLETED',
-        createdAt: new Date().toISOString(),
-      };
+      const newJob = await apiClient<ExportJobItem>('/reports/export', {
+        method: 'POST',
+        body: JSON.stringify({
+          exportType: 'AUDIT_LOGS',
+          format: exportFormat,
+        }),
+      });
 
-      setExportJobs((prev) => [newJob, ...prev]);
+      setExportJobs((prev) => [
+        {
+          id: newJob.id,
+          exportType: newJob.exportType || 'AUDIT_LOGS',
+          format: (newJob.format as 'CSV' | 'JSON' | 'PDF') || exportFormat,
+          status: newJob.status || 'PENDING',
+          createdAt: newJob.createdAt || new Date().toISOString(),
+        },
+        ...prev,
+      ]);
       setExportModalOpen(false);
       setMessage(
-        `Đã tạo tác vụ xuất báo cáo định dạng ${exportFormat}. Áp dụng chính sách thoát ký tự công thức (=, +, -, @) chống CSV Formula Injection.`,
+        `Đã tạo tác vụ xuất báo cáo định dạng ${exportFormat}. Báo cáo được tạo bất đồng bộ với TTL 24h và bảo vệ chống CSV Formula Injection.`,
       );
     } catch (err) {
       if (err instanceof ApiError) {
@@ -298,31 +269,27 @@ export function AuditorWorkspace() {
   }
 
   // Download Export File
-  function handleDownloadExport(job: ExportJobItem) {
-    const csvContent =
-      `"OccurredAt UTC","Actor","Action","Outcome","IP","CorrelationId"\n` +
-      logs
-        .map((l) =>
-          [
-            `"${l.occurredAt}"`,
-            `"'${l.actorUsername.replace(/"/g, '""')}"`, // Formula sanitized
-            `"${l.action}"`,
-            `"${l.outcome}"`,
-            `"${l.ipAddress || ''}"`,
-            `"${l.correlationId}"`,
-          ].join(','),
-        )
-        .join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `audit_export_${job.id}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+  async function handleDownloadExport(job: ExportJobItem) {
+    setErrorMessage(null);
+    try {
+      const blob = await apiDownload(`/reports/export/${job.id}/download`);
+      const ext = job.format.toLowerCase() === 'csv' ? 'csv' : 'json';
+      const filename = `audit_export_${job.id.slice(0, 8)}.${ext}`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrorMessage(err.message || 'Không thể tải tệp báo cáo.');
+      } else {
+        setErrorMessage('Đã xảy ra lỗi khi tải tệp báo cáo.');
+      }
+    }
   }
 
   return (
@@ -333,78 +300,64 @@ export function AuditorWorkspace() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className="border-cyan-600/40 bg-cyan-950/30 text-cyan-400"
-                >
-                  Auditor (Read-Only)
-                </Badge>
-                <span className="text-xs text-slate-500">Phân tách Trách nhiệm (SoD)</span>
+                <Badge variant="info">Auditor (Read-Only)</Badge>
+                <span className="text-xs text-[#717171]">Phân tách Trách nhiệm (SoD)</span>
               </div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-100 mt-1">
+              <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
                 Kiểm toán Toàn vẹn & Báo cáo Tuân thủ
               </h1>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-[#717171]">
                 Chế độ chỉ đọc nghiêm ngặt. Xác minh chuỗi băm HMAC-SHA256 và xuất dữ liệu có chống
                 Formula Injection
               </p>
             </div>
 
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
+              <InteractiveHoverButton
+                variant="secondary"
                 size="sm"
+                text="Làm mới"
+                icon={<RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />}
                 onClick={() => void refreshData()}
                 disabled={isLoading}
-                className="border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800"
-              >
-                <RefreshCw
-                  className={`mr-1.5 h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`}
-                  aria-hidden="true"
-                />
-                Làm mới
-              </Button>
-              <Button
+              />
+              <InteractiveHoverButton
+                variant="primary"
                 size="sm"
+                text="Xuất báo cáo kiểm toán"
+                icon={<Download size={14} />}
                 onClick={() => setExportModalOpen(true)}
-                className="bg-cyan-600 hover:bg-cyan-500 text-white font-medium"
-              >
-                <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                Xuất báo cáo kiểm toán
-              </Button>
+              />
             </div>
           </div>
 
           {/* SoD Notice Banner */}
-          <div className="flex items-center gap-2.5 rounded-lg border border-cyan-800/40 bg-cyan-950/20 px-3.5 py-2.5 text-xs text-cyan-300">
-            <Lock className="h-4 w-4 shrink-0 text-cyan-400" aria-hidden="true" />
-            <span>
-              <strong>Nguyên tắc Phân tách Trách nhiệm (SoD):</strong> Kiểm toán viên chỉ có quyền
-              xem nhật ký và xuất báo cáo. Không được phép chỉnh sửa kết luận điều tra sự cố hoặc
-              can thiệp cấp quyền tài liệu.
+          <div className="flex items-center gap-2.5 rounded-[20px] border border-[#008489]/20 bg-[#008489]/5 px-3.5 py-2.5 text-xs text-[#008489]">
+            <Lock className="h-4 w-4 shrink-0 text-[#008489]" aria-hidden="true" />
+            <span className="text-[#222222]">
+              <strong className="text-[#008489]">Nguyên tắc Phân tách Trách nhiệm (SoD):</strong>{' '}
+              Kiểm toán viên chỉ có quyền xem nhật ký và xuất báo cáo. Không được phép chỉnh sửa kết
+              luận điều tra sự cố hoặc can thiệp cấp quyền tài liệu.
             </span>
           </div>
 
           {message && (
-            <Alert className="border-emerald-900/60 bg-emerald-950/40 text-emerald-300 text-xs">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" aria-hidden="true" />
+            <Alert variant="success" className="text-xs">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-[#008A05]" aria-hidden="true" />
               <AlertDescription className="ml-2">{message}</AlertDescription>
             </Alert>
           )}
 
           {errorMessage && (
-            <Alert
-              variant="destructive"
-              className="border-red-900/60 bg-red-950/40 text-red-300 text-xs"
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" aria-hidden="true" />
+            <Alert variant="destructive" className="text-xs">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-[#C13515]" aria-hidden="true" />
               <AlertDescription className="ml-2">{errorMessage}</AlertDescription>
             </Alert>
           )}
 
           {/* Navigation Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-            <TabsList className="grid w-full grid-cols-3 bg-slate-900 border border-slate-800 p-1 rounded-xl">
+            <TabsList className="grid w-full grid-cols-3 bg-[#f7f7f7] border border-[#ebebeb] p-1 rounded-full text-[#717171]">
               <TabsTrigger value="logs" className="flex items-center gap-1.5 text-xs">
                 <FileCheck className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>Nhật ký kiểm toán ({logs.length})</span>
@@ -421,14 +374,14 @@ export function AuditorWorkspace() {
 
             {/* TAB 1: AUDIT LOGS */}
             <TabsContent value="logs" className="space-y-4">
-              <Card className="border-slate-800 bg-slate-900/90 shadow-xl">
+              <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
                 <CardHeader className="pb-3">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div>
-                      <CardTitle className="text-base text-slate-100">
+                      <CardTitle className="text-base text-[#222222]">
                         Dấu vết hoạt động (Audit Trail Explorer)
                       </CardTitle>
-                      <CardDescription className="text-xs text-slate-400">
+                      <CardDescription className="text-xs text-[#717171]">
                         Append-only · Chống chỉnh sửa · Bảo vệ thông tin nhạy cảm không bị lộ trong
                         log
                       </CardDescription>
@@ -438,7 +391,7 @@ export function AuditorWorkspace() {
                       <select
                         value={outcomeFilter}
                         onChange={(e) => setOutcomeFilter(e.target.value)}
-                        className="rounded-md border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-slate-300 focus:border-cyan-500 focus:outline-none"
+                        className="h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
                       >
                         <option value="ALL">Mọi kết quả</option>
                         <option value="SUCCESS">SUCCESS (Thành công)</option>
@@ -446,9 +399,9 @@ export function AuditorWorkspace() {
                         <option value="FAILED">FAILED (Thất bại)</option>
                       </select>
 
-                      <div className="relative w-44">
+                      <div className="relative w-48">
                         <Search
-                          className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-500"
+                          className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-[#717171]"
                           aria-hidden="true"
                         />
                         <Input
@@ -456,26 +409,26 @@ export function AuditorWorkspace() {
                           placeholder="Lọc theo hành động..."
                           value={actionFilter}
                           onChange={(e) => setActionFilter(e.target.value)}
-                          className="pl-8 h-7 text-xs bg-slate-950 border-slate-800"
+                          className="pl-10 h-10 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
                         />
                       </div>
 
-                      <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                        <Calendar className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+                      <div className="flex items-center gap-1.5 text-xs text-[#717171]">
+                        <Calendar className="h-4 w-4 text-[#717171]" aria-hidden="true" />
                         <Input
                           type="date"
                           value={fromDate}
                           onChange={(e) => setFromDate(e.target.value)}
                           aria-label="Từ ngày"
-                          className="h-7 w-32 text-xs bg-slate-950 border-slate-800 text-slate-300"
+                          className="h-10 w-36 text-xs rounded-full bg-[#f7f7f7] border-[#ebebeb] px-3 text-[#222222] focus:border-[#FF385C]"
                         />
-                        <span className="text-slate-600">-</span>
+                        <span className="text-[#b0b0b0]">-</span>
                         <Input
                           type="date"
                           value={toDate}
                           onChange={(e) => setToDate(e.target.value)}
                           aria-label="Đến ngày"
-                          className="h-7 w-32 text-xs bg-slate-950 border-slate-800 text-slate-300"
+                          className="h-10 w-36 text-xs rounded-full bg-[#f7f7f7] border-[#ebebeb] px-3 text-[#222222] focus:border-[#FF385C]"
                         />
                       </div>
                     </div>
@@ -484,14 +437,14 @@ export function AuditorWorkspace() {
                 <CardContent className="p-0">
                   <div className="overflow-x-auto">
                     <Table>
-                      <TableHeader className="bg-slate-950/60 border-b border-slate-800">
+                      <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
                         <TableRow>
-                          <TableHead className="text-xs text-slate-400">Thời gian (UTC)</TableHead>
-                          <TableHead className="text-xs text-slate-400">Người thực hiện</TableHead>
-                          <TableHead className="text-xs text-slate-400">Hành động</TableHead>
-                          <TableHead className="text-xs text-slate-400">Kết quả</TableHead>
-                          <TableHead className="text-xs text-slate-400">Địa chỉ IP</TableHead>
-                          <TableHead className="text-xs text-slate-400">
+                          <TableHead className="text-xs text-[#717171]">Thời gian (UTC)</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Người thực hiện</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Hành động</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Kết quả</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Địa chỉ IP</TableHead>
+                          <TableHead className="text-xs text-[#717171]">
                             Correlation ID / Hash
                           </TableHead>
                         </TableRow>
@@ -500,44 +453,37 @@ export function AuditorWorkspace() {
                         {logs.map((log) => (
                           <TableRow
                             key={log.id}
-                            className="border-b border-slate-800/60 hover:bg-slate-800/40"
+                            className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
                           >
-                            <TableCell className="font-mono text-xs text-slate-400">
+                            <TableCell className="font-bold text-xs text-[#717171]">
                               {new Date(log.occurredAt)
                                 .toISOString()
                                 .replace('T', ' ')
                                 .slice(0, 19)}
                             </TableCell>
-                            <TableCell className="font-semibold text-xs text-slate-200">
+                            <TableCell className="font-semibold text-xs text-[#222222]">
                               {log.actorUsername}
                             </TableCell>
-                            <TableCell className="font-mono text-xs text-cyan-400">
+                            <TableCell className="font-bold text-xs text-cyan-600">
                               {log.action}
                             </TableCell>
                             <TableCell>
                               <Badge
                                 variant={
                                   log.outcome === 'SUCCESS'
-                                    ? 'default'
+                                    ? 'success'
                                     : log.outcome === 'DENIED'
-                                      ? 'outline'
+                                      ? 'warning'
                                       : 'destructive'
                                 }
-                                className={`text-[10px] ${
-                                  log.outcome === 'SUCCESS'
-                                    ? 'border-emerald-600/40 bg-emerald-950/40 text-emerald-300'
-                                    : log.outcome === 'DENIED'
-                                      ? 'border-amber-600/40 bg-amber-950/40 text-amber-300'
-                                      : 'border-red-600/40 bg-red-950/40 text-red-300'
-                                }`}
                               >
                                 {log.outcome}
                               </Badge>
                             </TableCell>
-                            <TableCell className="font-mono text-xs text-slate-400">
+                            <TableCell className="font-bold text-xs text-[#717171]">
                               {log.ipAddress || '—'}
                             </TableCell>
-                            <TableCell className="font-mono text-[11px] text-slate-400 max-w-xs truncate">
+                            <TableCell className="font-bold text-[11px] text-[#717171] max-w-xs truncate">
                               {log.correlationId}
                             </TableCell>
                           </TableRow>
@@ -552,93 +498,86 @@ export function AuditorWorkspace() {
             {/* TAB 2: CRYPTOGRAPHIC HASH CHAIN VERIFIER */}
             <TabsContent value="chain-verify" className="space-y-4">
               <div className="grid gap-6 md:grid-cols-2">
-                <Card className="border-slate-800 bg-slate-900/90 shadow-xl">
+                <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
                   <CardHeader>
-                    <CardTitle className="text-base text-slate-100">
+                    <CardTitle className="text-base text-[#222222]">
                       Kiểm tra tính toàn vẹn chuỗi băm HMAC
                     </CardTitle>
-                    <CardDescription className="text-xs text-slate-400">
+                    <CardDescription className="text-xs text-[#717171]">
                       Tự động tính toán lại chữ ký HMAC-SHA256 từng bản ghi để phát hiện mọi hành vi
                       sửa, xóa hoặc chèn trái phép
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4 text-xs">
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-2 text-slate-300">
+                    <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-2 text-[#222222]">
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Phân vùng chuỗi (Partition):</span>
-                        <span className="font-mono text-cyan-400">GLOBAL_CHAIN</span>
+                        <span className="text-[#717171]">Phân vùng chuỗi (Partition):</span>
+                        <span className="font-bold text-cyan-600">GLOBAL_CHAIN</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Thuật toán băm:</span>
-                        <span className="font-mono text-slate-200">HMAC-SHA-256</span>
+                        <span className="text-[#717171]">Thuật toán băm:</span>
+                        <span className="font-bold text-[#222222]">HMAC-SHA-256</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Khóa toàn vẹn:</span>
-                        <span className="font-mono text-emerald-400">
+                        <span className="text-[#717171]">Khóa toàn vẹn:</span>
+                        <span className="font-bold text-[#008A05]">
                           Lưu trữ bên ngoài CSDL (KMS/Vault)
                         </span>
                       </div>
                     </div>
 
-                    <Button
-                      onClick={() => void handleVerifyHashChain()}
+                    <InteractiveHoverButton
+                      variant="primary"
+                      size="md"
+                      text="Tiến hành xác minh toàn bộ chuỗi"
+                      icon={<Hash size={14} />}
+                      isLoading={isVerifyingChain}
                       disabled={isVerifyingChain}
-                      className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-medium"
-                    >
-                      {isVerifyingChain ? (
-                        <>
-                          <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          Đang rà soát chuỗi băm…
-                        </>
-                      ) : (
-                        <>
-                          <Hash className="mr-1.5 h-3.5 w-3.5" />
-                          Tiến hành xác minh toàn bộ chuỗi
-                        </>
-                      )}
-                    </Button>
+                      onClick={() => void handleVerifyHashChain()}
+                      className="w-full"
+                    />
                   </CardContent>
                 </Card>
 
                 {/* Verification Report */}
-                <Card className="border-slate-800 bg-slate-900/90 shadow-xl flex flex-col justify-between">
+                <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)] flex flex-col justify-between">
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-base text-slate-100">
+                    <CardTitle className="text-base text-[#222222]">
                       Báo cáo xác minh toàn vẹn mật mã
                     </CardTitle>
-                    <CardDescription className="text-xs text-slate-400">
+                    <CardDescription className="text-xs text-[#717171]">
                       Kết quả kiểm chứng liên kết previous_hash và sequence
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="flex-1 flex flex-col justify-center text-xs">
                     {verificationReport ? (
-                      <div className="space-y-3 rounded-lg border border-emerald-900/40 bg-emerald-950/20 p-4">
-                        <div className="flex items-center gap-2 text-emerald-400 font-semibold border-b border-emerald-900/40 pb-2">
+                      <div className="space-y-3 rounded-[24px] border border-[#008A05]/20 bg-[#008A05]/5 p-4">
+                        <div className="flex items-center gap-2 text-[#008A05] font-semibold border-b border-[#008A05]/15 pb-2">
                           <CheckCircle2 className="h-4 w-4" />
                           <span>Chuỗi băm toàn vẹn · Không phát hiện giả mạo</span>
                         </div>
-                        <div className="space-y-1.5 text-slate-300">
+                        <div className="space-y-1.5 text-[#222222]">
                           <div className="flex justify-between">
-                            <span className="text-slate-400">Số bản ghi đã duyệt:</span>
-                            <span className="font-mono font-bold text-slate-100">
+                            <span className="text-[#717171]">Số bản ghi đã duyệt:</span>
+                            <span className="font-bold text-[#222222]">
                               {verificationReport.totalEntriesChecked} entries
                             </span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-slate-400">Hành vi chỉnh sửa/xóa:</span>
-                            <span className="text-emerald-400 font-semibold">0 (Không có)</span>
+                            <span className="text-[#717171]">Hành vi chỉnh sửa/xóa:</span>
+                            <span className="text-[#008A05] font-semibold">0 (Không có)</span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-slate-400">Thời điểm xác minh:</span>
-                            <span className="font-mono text-slate-300">
+                            <span className="text-[#717171]">Thời điểm xác minh:</span>
+                            <span className="font-bold text-[#222222]">
                               {new Date(verificationReport.verifiedAt).toLocaleTimeString('vi-VN')}
                             </span>
                           </div>
                         </div>
                       </div>
                     ) : (
-                      <div className="flex flex-col items-center justify-center text-center p-8 text-slate-400 space-y-2">
-                        <Shield className="h-10 w-10 text-slate-600" />
+                      <div className="flex flex-col items-center justify-center text-center p-8 text-[#717171] space-y-2">
+                        <Shield className="h-10 w-10 text-[#b0b0b0]" />
                         <p>
                           Bấm nút xác minh ở bên trái để kích hoạt thuật toán rà soát liên kết
                           cryptographic chain
@@ -652,35 +591,35 @@ export function AuditorWorkspace() {
 
             {/* TAB 3: EXPORT QUEUE */}
             <TabsContent value="export-queue" className="space-y-4">
-              <Card className="border-slate-800 bg-slate-900/90 shadow-xl">
+              <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
                 <CardHeader className="flex flex-row items-center justify-between pb-3">
                   <div>
-                    <CardTitle className="text-base text-slate-100">
+                    <CardTitle className="text-base text-[#222222]">
                       Hàng đợi xuất báo cáo kiểm toán bất đồng bộ
                     </CardTitle>
-                    <CardDescription className="text-xs text-slate-400">
+                    <CardDescription className="text-xs text-[#717171]">
                       Tệp xuất được lưu tạm 24 giờ và tự động thu hồi
                     </CardDescription>
                   </div>
-                  <Button
+                  <InteractiveHoverButton
                     size="sm"
+                    variant="primary"
+                    text="Tạo báo cáo mới"
+                    icon={<Download size={14} />}
                     onClick={() => setExportModalOpen(true)}
-                    className="bg-cyan-600 hover:bg-cyan-500 text-white text-xs"
-                  >
-                    Tạo báo cáo mới
-                  </Button>
+                  />
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="overflow-x-auto">
                     <Table>
-                      <TableHeader className="bg-slate-950/60 border-b border-slate-800">
+                      <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
                         <TableRow>
-                          <TableHead className="text-xs text-slate-400">Mã tác vụ</TableHead>
-                          <TableHead className="text-xs text-slate-400">Loại báo cáo</TableHead>
-                          <TableHead className="text-xs text-slate-400">Định dạng</TableHead>
-                          <TableHead className="text-xs text-slate-400">Thời gian tạo</TableHead>
-                          <TableHead className="text-xs text-slate-400">Trạng thái</TableHead>
-                          <TableHead className="text-xs text-slate-400 text-right">
+                          <TableHead className="text-xs text-[#717171]">Mã tác vụ</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Loại báo cáo</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Định dạng</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Thời gian tạo</TableHead>
+                          <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
+                          <TableHead className="text-xs text-[#717171] text-right">
                             Tải về
                           </TableHead>
                         </TableRow>
@@ -689,43 +628,41 @@ export function AuditorWorkspace() {
                         {exportJobs.map((job) => (
                           <TableRow
                             key={job.id}
-                            className="border-b border-slate-800/60 hover:bg-slate-800/40"
+                            className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
                           >
-                            <TableCell className="font-mono text-xs text-slate-300">
+                            <TableCell className="font-bold text-xs text-[#222222]">
                               {job.id}
                             </TableCell>
-                            <TableCell className="text-xs text-slate-200">
+                            <TableCell className="text-xs text-[#222222]">
                               {job.exportType}
                             </TableCell>
                             <TableCell>
-                              <Badge
-                                variant="outline"
-                                className="border-slate-700 bg-slate-800 text-[10px]"
-                              >
-                                {job.format}
-                              </Badge>
+                              <Badge variant="secondary">{job.format}</Badge>
                             </TableCell>
-                            <TableCell className="text-xs font-mono text-slate-400">
+                            <TableCell className="text-xs font-bold text-[#717171]">
                               {new Date(job.createdAt).toLocaleDateString('vi-VN')}
                             </TableCell>
                             <TableCell>
                               <Badge
-                                variant={job.status === 'COMPLETED' ? 'default' : 'outline'}
-                                className="text-[10px] border-emerald-600/40 bg-emerald-950/40 text-emerald-300"
+                                variant={
+                                  job.status === 'COMPLETED'
+                                    ? 'success'
+                                    : job.status === 'FAILED'
+                                      ? 'destructive'
+                                      : 'warning'
+                                }
                               >
                                 {job.status}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-right">
-                              <Button
+                              <InteractiveHoverButton
                                 size="sm"
-                                variant="outline"
-                                onClick={() => handleDownloadExport(job)}
-                                className="h-7 px-2 text-[11px] border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700"
-                              >
-                                <Download className="mr-1 h-3 w-3 text-cyan-400" />
-                                Tải tệp
-                              </Button>
+                                variant="secondary"
+                                text="Tải tệp"
+                                icon={<Download size={14} />}
+                                onClick={() => void handleDownloadExport(job)}
+                              />
                             </TableCell>
                           </TableRow>
                         ))}
@@ -739,12 +676,12 @@ export function AuditorWorkspace() {
 
           {/* EXPORT REPORT MODAL */}
           <Dialog open={exportModalOpen} onOpenChange={setExportModalOpen}>
-            <DialogContent className="max-w-md border-slate-800 bg-slate-900 text-slate-100">
+            <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
               <DialogHeader>
-                <DialogTitle className="text-base font-semibold text-slate-100">
+                <DialogTitle className="text-base font-semibold text-[#222222]">
                   Xuất báo cáo kiểm toán bảo mật
                 </DialogTitle>
-                <DialogDescription className="text-xs text-slate-400">
+                <DialogDescription className="text-xs text-[#717171]">
                   Chọn định dạng xuất dữ liệu. Hệ thống tự động khử mã thực thi độc hại (CSV Formula
                   Injection)
                 </DialogDescription>
@@ -752,49 +689,49 @@ export function AuditorWorkspace() {
 
               <form onSubmit={handleTriggerExport} className="space-y-4 py-2 text-xs">
                 <div className="space-y-1">
-                  <span className="font-medium text-slate-300 block">Chọn định dạng tệp:</span>
+                  <span className="font-medium text-[#222222] block">Chọn định dạng tệp:</span>
                   <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
                       onClick={() => setExportFormat('CSV')}
-                      className={`flex flex-col items-center justify-center p-3 rounded-lg border text-xs font-medium transition-all ${
+                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                         exportFormat === 'CSV'
-                          ? 'border-cyan-500 bg-cyan-950/60 text-cyan-300'
-                          : 'border-slate-800 bg-slate-950 text-slate-400'
+                          ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#FF385C]'
+                          : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
                       }`}
                     >
-                      <FileSpreadsheet className="h-5 w-5 mb-1 text-cyan-400" />
+                      <FileSpreadsheet className="h-5 w-5 mb-1 text-[#FF385C]" />
                       <span>CSV</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setExportFormat('JSON')}
-                      className={`flex flex-col items-center justify-center p-3 rounded-lg border text-xs font-medium transition-all ${
+                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                         exportFormat === 'JSON'
-                          ? 'border-cyan-500 bg-cyan-950/60 text-cyan-300'
-                          : 'border-slate-800 bg-slate-950 text-slate-400'
+                          ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#FF385C]'
+                          : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
                       }`}
                     >
-                      <FileJson className="h-5 w-5 mb-1 text-amber-400" />
+                      <FileJson className="h-5 w-5 mb-1 text-[#E07912]" />
                       <span>JSON</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setExportFormat('PDF')}
-                      className={`flex flex-col items-center justify-center p-3 rounded-lg border text-xs font-medium transition-all ${
+                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                         exportFormat === 'PDF'
-                          ? 'border-cyan-500 bg-cyan-950/60 text-cyan-300'
-                          : 'border-slate-800 bg-slate-950 text-slate-400'
+                          ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#FF385C]'
+                          : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
                       }`}
                     >
-                      <FileText className="h-5 w-5 mb-1 text-red-400" />
+                      <FileText className="h-5 w-5 mb-1 text-[#C13515]" />
                       <span>PDF</span>
                     </button>
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-3 space-y-1.5 text-slate-400 text-[11px] leading-relaxed">
-                  <div className="flex items-center gap-1.5 text-cyan-400 font-semibold">
+                <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 text-[#717171] text-[11px] leading-relaxed">
+                  <div className="flex items-center gap-1.5 text-[#008489] font-semibold">
                     <Shield className="h-3.5 w-3.5" />
                     <span>Chống CSV Formula Injection:</span>
                   </div>
@@ -807,30 +744,22 @@ export function AuditorWorkspace() {
                 </div>
 
                 <DialogFooter className="pt-2">
-                  <Button
+                  <InteractiveHoverButton
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
+                    text="Hủy"
                     onClick={() => setExportModalOpen(false)}
-                    className="border-slate-800 text-slate-400"
-                  >
-                    Hủy
-                  </Button>
-                  <Button
+                  />
+                  <InteractiveHoverButton
                     type="submit"
+                    variant="primary"
                     size="sm"
+                    text="Bắt đầu xuất tệp"
+                    icon={<Download size={14} />}
+                    isLoading={isExporting}
                     disabled={isExporting}
-                    className="bg-cyan-600 hover:bg-cyan-500 text-white font-medium"
-                  >
-                    {isExporting ? (
-                      <>
-                        <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        Đang tạo tác vụ…
-                      </>
-                    ) : (
-                      'Bắt đầu xuất tệp'
-                    )}
-                  </Button>
+                  />
                 </DialogFooter>
               </form>
             </DialogContent>

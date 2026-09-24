@@ -28,7 +28,7 @@ export function TabsList({ className, ...props }: React.HTMLAttributes<HTMLDivEl
     <div
       role="tablist"
       className={cn(
-        'inline-flex h-10 items-center justify-center rounded-lg bg-slate-900 p-1 text-slate-400',
+        'inline-flex h-11 items-center justify-center rounded-full bg-[#f7f7f7] p-1 text-[#717171] border border-[#ebebeb]',
         className,
       )}
       {...props}
@@ -53,10 +53,10 @@ export function TabsTrigger({ className, value, children, ...props }: TabsTrigge
       aria-selected={isSelected}
       onClick={() => context.onValueChange(value)}
       className={cn(
-        'inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
+        'inline-flex items-center justify-center whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
         isSelected
-          ? 'bg-slate-800 text-slate-100 shadow-xs font-semibold'
-          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850',
+          ? 'bg-[#ffffff] text-[#222222] shadow-xs font-semibold'
+          : 'text-[#717171] hover:text-[#222222] hover:bg-[#ffffff]/80',
         className,
       )}
       {...props}
@@ -80,7 +80,10 @@ export function TabsContent({ className, value, children, ...props }: TabsConten
     <div
       role="tabpanel"
       tabIndex={0}
-      className={cn('mt-2 ring-offset-background focus-visible:outline-none', className)}
+      className={cn(
+        'mt-2 ring-offset-background focus-visible:outline-none animate-fade-in-up',
+        className,
+      )}
       {...props}
     >
       {children}

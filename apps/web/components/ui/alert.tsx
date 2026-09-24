@@ -7,18 +7,18 @@ export interface AlertProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function Alert({ className, variant = 'default', role = 'alert', ...props }: AlertProps) {
   const variants: Record<string, string> = {
-    default: 'bg-slate-900 text-slate-100 border-slate-800',
-    destructive: 'border-red-900/60 bg-red-950/40 text-red-300 [&>svg]:text-red-400',
-    success: 'border-emerald-900/60 bg-emerald-950/40 text-emerald-300 [&>svg]:text-emerald-400',
-    warning: 'border-amber-900/60 bg-amber-950/40 text-amber-300 [&>svg]:text-amber-400',
-    info: 'border-sky-900/60 bg-sky-950/40 text-sky-300 [&>svg]:text-sky-400',
+    default: 'bg-[#ffffff] text-[#222222] border-[#ebebeb] shadow-xs',
+    destructive: 'border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] [&>svg]:text-[#C13515]',
+    success: 'border-[#008A05]/30 bg-[#008A05]/10 text-[#008A05] [&>svg]:text-[#008A05]',
+    warning: 'border-[#E07912]/30 bg-[#E07912]/10 text-[#E07912] [&>svg]:text-[#E07912]',
+    info: 'border-[#008489]/30 bg-[#008489]/10 text-[#008489] [&>svg]:text-[#008489]',
   };
 
   return (
     <div
       role={role}
       className={cn(
-        'relative w-full rounded-lg border p-4 text-xs [&>svg~*]:pl-7 [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4',
+        'relative w-full rounded-[20px] border p-4 text-xs [&>svg~*]:pl-7 [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 animate-fade-in-down',
         variants[variant],
         className,
       )}
@@ -34,7 +34,7 @@ export function AlertTitle({
 }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h5
-      className={cn('mb-1 font-semibold leading-none tracking-tight text-slate-100', className)}
+      className={cn('mb-1 font-bold leading-none tracking-tight text-[#222222]', className)}
       {...props}
     >
       {children}

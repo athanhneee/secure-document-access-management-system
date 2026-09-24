@@ -1,29 +1,22 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
-import localFont from 'next/font/local';
+import { Inter } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth-context';
 import './globals.css';
 
-const airbnbCereal = localFont({
-  src: [
-    { path: './fonts/AirbnbCereal_W_Lt.otf', weight: '300', style: 'normal' },
-    { path: './fonts/AirbnbCereal_W_Bk.otf', weight: '400', style: 'normal' },
-    { path: './fonts/AirbnbCereal_W_Md.otf', weight: '500', style: 'normal' },
-    { path: './fonts/AirbnbCereal_W_Bd.otf', weight: '700', style: 'normal' },
-    { path: './fonts/AirbnbCereal_W_XBd.otf', weight: '800', style: 'normal' },
-    { path: './fonts/AirbnbCereal_W_Blk.otf', weight: '900', style: 'normal' },
-  ],
-  variable: '--font-cereal',
-  fallback: [
-    'system-ui',
-    '-apple-system',
-    'BlinkMacSystemFont',
-    'Segoe UI',
-    'Roboto',
-    'sans-serif',
-  ],
+export const inter = Inter({
+  subsets: ['vietnamese', 'latin', 'latin-ext'],
+  weight: ['300', '400', '500', '600', '700', '800', '900'],
   display: 'swap',
+  variable: '--font-inter',
 });
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: '#ffffff',
+};
 
 export const metadata: Metadata = {
   title: 'Secure Document | Hệ thống quản lý truy cập tài liệu mật',
@@ -34,9 +27,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="vi" className={`dark ${airbnbCereal.variable}`}>
+    <html lang="vi" className={`${inter.variable}`}>
       <body
-        className={`min-h-screen bg-slate-950 font-sans text-slate-100 antialiased ${airbnbCereal.className}`}
+        className={`${inter.className} min-h-screen bg-[#ffffff] font-sans text-[#222222] antialiased selection:bg-[#FF385C]/20 selection:text-[#FF385C]`}
       >
         <AuthProvider>{children}</AuthProvider>
       </body>

@@ -10,11 +10,10 @@ import {
   ArrowLeft,
   CheckCircle2,
   AlertCircle,
-  RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
-import { Button } from '@/components/ui/button';
+import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Input } from '@/components/ui/input';
 import {
   Card,
@@ -121,28 +120,32 @@ function ResetPasswordContent() {
   ).length;
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-12 antialiased selection:bg-emerald-500/20 selection:text-emerald-300">
-      <div className="w-full max-w-md space-y-6">
-        <div className="flex flex-col items-center text-center space-y-2">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 border border-slate-700 text-slate-300 shadow-xl">
-            <KeyRound className="h-7 w-7 text-emerald-400" aria-hidden="true" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-100">
+    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#FF385C] overflow-hidden">
+      {/* Ambient background aura */}
+      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full bg-[#FF385C]/5 blur-3xl animate-float" />
+        <div className="absolute -bottom-32 left-1/3 w-[500px] h-[400px] rounded-full bg-[#008489]/5 blur-3xl animate-float delay-200" />
+      </div>
+
+      <div className="relative z-10 w-full max-w-md space-y-6">
+        <div className="flex flex-col items-center text-center space-y-2 animate-fade-in-down">
+          <KeyRound size={24} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
+          <h1 className="text-2xl font-bold tracking-tight text-[#222222]">
             {token ? 'Đặt lại mật khẩu mới' : 'Khôi phục mật khẩu tài khoản'}
           </h1>
-          <p className="text-xs text-slate-400 max-w-xs">
+          <p className="text-xs text-[#717171] max-w-xs leading-relaxed">
             {token
               ? 'Thiết lập mật khẩu an toàn theo tiêu chuẩn bảo vệ tài liệu mật'
               : 'Gửi yêu cầu qua kênh nội bộ bảo mật'}
           </p>
         </div>
 
-        <Card className="border-slate-800 bg-slate-900/90 shadow-2xl backdrop-blur-xl">
+        <Card className="rounded-[28px] border border-[#ebebeb] bg-[#ffffff] shadow-[0_12px_40px_rgba(0,0,0,0.06)] animate-fade-in-up delay-100">
           <CardHeader className="space-y-1 pb-4">
-            <CardTitle className="text-base font-semibold text-slate-100">
+            <CardTitle className="text-base font-bold text-[#222222]">
               {token ? 'Thông tin mật khẩu mới' : 'Xác minh danh tính người dùng'}
             </CardTitle>
-            <CardDescription className="text-xs text-slate-400">
+            <CardDescription className="text-xs text-[#717171]">
               {token
                 ? 'Mật khẩu phải đáp ứng độ dài tối thiểu 15 ký tự và bao gồm các lớp ký tự'
                 : 'Nhập tên đăng nhập hoặc email để nhận mã liên kết khôi phục'}
@@ -153,16 +156,16 @@ function ResetPasswordContent() {
             {errorMessage && (
               <Alert
                 variant="destructive"
-                className="border-red-900/60 bg-red-950/40 text-red-300 text-xs"
+                className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
               >
-                <AlertCircle className="h-4 w-4 shrink-0 text-red-400" aria-hidden="true" />
+                <AlertCircle className="h-4 w-4 shrink-0 text-[#C13515]" aria-hidden="true" />
                 <AlertDescription className="ml-2 leading-relaxed">{errorMessage}</AlertDescription>
               </Alert>
             )}
 
             {successMessage && (
-              <Alert className="border-emerald-900/60 bg-emerald-950/40 text-emerald-300 text-xs">
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" aria-hidden="true" />
+              <Alert className="rounded-[20px] border border-[#008A05]/30 bg-[#008A05]/10 text-[#008A05] text-xs">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-[#008A05]" aria-hidden="true" />
                 <AlertDescription className="ml-2 leading-relaxed">
                   {successMessage}
                 </AlertDescription>
@@ -173,11 +176,14 @@ function ResetPasswordContent() {
               // Step 1: Request reset link
               <form onSubmit={handleForgot} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label htmlFor="identifier" className="block text-xs font-medium text-slate-300">
+                  <label
+                    htmlFor="identifier"
+                    className="block text-xs font-semibold text-[#222222]"
+                  >
                     Tên đăng nhập hoặc Email
                   </label>
                   <div className="relative">
-                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#717171]">
                       <Mail className="h-4 w-4" aria-hidden="true" />
                     </div>
                     <Input
@@ -188,25 +194,18 @@ function ResetPasswordContent() {
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
                       placeholder="nguyenvana hoặc email nội bộ"
-                      className="pl-9 bg-slate-950/80 border-slate-800 text-slate-100 placeholder:text-slate-600 focus:border-emerald-500 focus:ring-emerald-500/20"
+                      className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
                     />
                   </div>
                 </div>
 
-                <Button
+                <InteractiveHoverButton
                   type="submit"
                   disabled={isLoading || Boolean(successMessage)}
-                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2 rounded-lg transition-all shadow-lg shadow-emerald-950/40"
-                >
-                  {isLoading ? (
-                    <>
-                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                      Đang gửi yêu cầu…
-                    </>
-                  ) : (
-                    'Gửi liên kết khôi phục'
-                  )}
-                </Button>
+                  isLoading={isLoading}
+                  text="Gửi liên kết khôi phục"
+                  className="w-full py-2.5 text-xs font-semibold"
+                />
               </form>
             ) : (
               // Step 2: Set new password
@@ -214,12 +213,12 @@ function ResetPasswordContent() {
                 <div className="space-y-1.5">
                   <label
                     htmlFor="new-password"
-                    className="block text-xs font-medium text-slate-300"
+                    className="block text-xs font-semibold text-[#222222]"
                   >
                     Mật khẩu mới (Tối thiểu 15 ký tự)
                   </label>
                   <div className="relative">
-                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#717171]">
                       <Lock className="h-4 w-4" aria-hidden="true" />
                     </div>
                     <Input
@@ -230,25 +229,25 @@ function ResetPasswordContent() {
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="•••••••••••••••"
-                      className="pl-9 bg-slate-950/80 border-slate-800 text-slate-100 placeholder:text-slate-600 focus:border-emerald-500 focus:ring-emerald-500/20"
+                      className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
                     />
                   </div>
 
                   {/* Password strength meter */}
                   {newPassword && (
                     <div className="space-y-1 pt-1">
-                      <div className="flex h-1.5 w-full gap-1 overflow-hidden rounded-full bg-slate-800">
+                      <div className="flex h-1.5 w-full gap-1 overflow-hidden rounded-full bg-[#ebebeb]">
                         <div
                           className={`h-full transition-all ${
                             strengthScore <= 2
-                              ? 'w-1/3 bg-red-500'
+                              ? 'w-1/3 bg-[#C13515]'
                               : strengthScore <= 4
-                                ? 'w-2/3 bg-amber-500'
-                                : 'w-full bg-emerald-500'
+                                ? 'w-2/3 bg-[#E07912]'
+                                : 'w-full bg-[#008A05]'
                           }`}
                         />
                       </div>
-                      <p className="text-[10px] text-slate-400">
+                      <p className="text-[10px] text-[#717171]">
                         Độ mạnh:{' '}
                         {strengthScore <= 2
                           ? 'Yếu'
@@ -263,12 +262,12 @@ function ResetPasswordContent() {
                 <div className="space-y-1.5">
                   <label
                     htmlFor="confirm-password"
-                    className="block text-xs font-medium text-slate-300"
+                    className="block text-xs font-semibold text-[#222222]"
                   >
                     Xác nhận mật khẩu mới
                   </label>
                   <div className="relative">
-                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#717171]">
                       <ShieldCheck className="h-4 w-4" aria-hidden="true" />
                     </div>
                     <Input
@@ -279,33 +278,26 @@ function ResetPasswordContent() {
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       placeholder="•••••••••••••••"
-                      className="pl-9 bg-slate-950/80 border-slate-800 text-slate-100 placeholder:text-slate-600 focus:border-emerald-500 focus:ring-emerald-500/20"
+                      className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
                     />
                   </div>
                 </div>
 
-                <Button
+                <InteractiveHoverButton
                   type="submit"
                   disabled={isLoading || Boolean(successMessage)}
-                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2 rounded-lg transition-all shadow-lg shadow-emerald-950/40"
-                >
-                  {isLoading ? (
-                    <>
-                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                      Đang cập nhật mật khẩu…
-                    </>
-                  ) : (
-                    'Cập nhật mật khẩu mới'
-                  )}
-                </Button>
+                  isLoading={isLoading}
+                  text="Cập nhật mật khẩu mới"
+                  className="w-full py-2.5 text-xs font-semibold"
+                />
               </form>
             )}
           </CardContent>
 
-          <CardFooter className="pt-2 border-t border-slate-800/80 flex justify-center">
+          <CardFooter className="pt-2 border-t border-[#ebebeb] flex justify-center">
             <Link
               href="/login"
-              className="text-xs text-slate-400 hover:text-slate-200 transition-colors flex items-center justify-center gap-1.5"
+              className="text-xs text-[#717171] hover:text-[#222222] transition-colors flex items-center justify-center gap-1.5"
             >
               <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Quay về trang đăng nhập</span>
@@ -321,7 +313,7 @@ export default function ResetPasswordPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400 text-xs">
+        <div className="flex min-h-screen items-center justify-center bg-[#f7f7f7] text-[#717171] text-xs">
           Đang tải trang đặt lại mật khẩu…
         </div>
       }

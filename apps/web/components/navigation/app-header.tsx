@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
@@ -18,7 +18,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { useAuth, ROLE_LABELS, type RoleType } from '@/lib/auth-context';
-import { Button } from '@/components/ui/button';
+import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
 interface AppHeaderProps {
   onToggleSidebar?: () => void;
@@ -28,8 +28,30 @@ interface AppHeaderProps {
 export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
   const { user, activeRole, setActiveRole, logout, isAuthenticated } = useAuth();
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const pathname = usePathname();
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setRoleMenuOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && roleMenuOpen) {
+        setRoleMenuOpen(false);
+      }
+    }
+    if (roleMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [roleMenuOpen]);
 
   const roleNavItems: Array<{
     role: RoleType;
@@ -45,53 +67,53 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
   ];
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b border-slate-800 bg-slate-950/85 px-4 sm:px-6 backdrop-blur-md">
+    <header className="sticky top-0 z-40 flex h-14 w-full items-center justify-between border-b border-[#ebebeb] bg-[#ffffff]/90 px-4 sm:px-6 backdrop-blur-md">
       <div className="flex items-center gap-3">
         {onToggleSidebar && (
           <button
             type="button"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-slate-100 lg:hidden"
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] lg:hidden cursor-pointer transition-colors"
             onClick={onToggleSidebar}
             aria-label={isSidebarOpen ? 'Đóng bảng điều hướng' : 'Mở bảng điều hướng'}
           >
-            {isSidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            {isSidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
           </button>
         )}
 
         <Link
           href="/"
-          className="flex items-center gap-2.5 transition-opacity hover:opacity-90"
+          className="flex items-center gap-2 transition-opacity hover:opacity-90"
           aria-label="Về trang chủ Secure Document"
         >
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-950/90 border border-emerald-500/40 text-emerald-400 shadow-sm">
-            <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <span className="hidden text-base font-semibold tracking-tight text-slate-100 sm:inline-block">
-            Secure<span className="font-light text-emerald-400">Document</span>
+          <ShieldCheck size={20} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
+          <span className="hidden text-sm font-semibold tracking-tight text-[#222222] sm:inline-block">
+            Secure<span className="font-light text-[#FF385C]">Document</span>
           </span>
         </Link>
 
         {isAuthenticated && user && (
-          <div className="relative ml-2">
+          <div className="relative ml-2" ref={menuRef}>
             <button
               type="button"
               onClick={() => setRoleMenuOpen(!roleMenuOpen)}
-              className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/90 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-slate-700 hover:bg-slate-800"
+              className="flex items-center gap-1.5 sm:gap-2 rounded-full border border-[#ebebeb] bg-[#ffffff] px-2.5 py-1 sm:px-3 text-xs font-medium text-[#222222] transition-colors hover:border-[#dddddd] hover:bg-[#f7f7f7] cursor-pointer shadow-2xs"
               aria-expanded={roleMenuOpen}
               aria-haspopup="true"
             >
-              <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
-              <span>{activeRole ? ROLE_LABELS[activeRole] : 'Chọn góc nhìn vai trò'}</span>
-              <ChevronDown className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+              <span className="dot dot-success" aria-hidden="true" />
+              <span className="max-w-[100px] sm:max-w-none truncate">
+                {activeRole ? ROLE_LABELS[activeRole] : 'Góc nhìn'}
+              </span>
+              <ChevronDown className="h-3 w-3 shrink-0 text-[#717171]" aria-hidden="true" />
             </button>
 
             {roleMenuOpen && (
               <div
-                className="absolute left-0 mt-2 w-64 rounded-xl border border-slate-800 bg-slate-900 p-2 shadow-2xl backdrop-blur-xl z-50 animate-in fade-in zoom-in-95 duration-100"
+                className="absolute left-0 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-[24px] border border-[#ebebeb] bg-[#ffffff] p-2 shadow-[0_12px_36px_rgba(0,0,0,0.1)] backdrop-blur-xl z-50 animate-in fade-in zoom-in-95 duration-100"
                 role="menu"
               >
-                <div className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Góc nhìn theo vai trò
+                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#717171]">
+                  Góc nhìn theo vai trò (RBAC)
                 </div>
                 {roleNavItems.map((item) => {
                   const hasAccess = user.roles.includes(item.role);
@@ -108,23 +130,23 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                         setRoleMenuOpen(false);
                         router.push(item.href);
                       }}
-                      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs transition-colors ${
+                      className={`flex w-full items-center justify-between rounded-full px-3 py-2 text-xs transition-colors cursor-pointer ${
                         isCurrent
-                          ? 'bg-emerald-950/60 font-semibold text-emerald-300 border border-emerald-800/40'
+                          ? 'bg-[#FF385C]/10 font-semibold text-[#FF385C] border border-[#FF385C]/30'
                           : hasAccess
-                            ? 'text-slate-300 hover:bg-slate-800 hover:text-slate-100'
-                            : 'cursor-not-allowed text-slate-600'
+                            ? 'text-[#222222] hover:bg-[#f7f7f7]'
+                            : 'cursor-not-allowed text-[#b0b0b0]'
                       }`}
                       role="menuitem"
                     >
                       <div className="flex items-center gap-2">
-                        <Icon className="h-4 w-4" aria-hidden="true" />
+                        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>{item.label}</span>
                       </div>
                       {hasAccess ? (
-                        <span className="text-[10px] text-emerald-500 font-mono">Được cấp</span>
+                        <span className="text-[10px] text-[#008A05] font-bold">Được cấp</span>
                       ) : (
-                        <span className="text-[10px] text-slate-600">Khóa</span>
+                        <span className="text-[10px] text-[#b0b0b0]">Khóa</span>
                       )}
                     </button>
                   );
@@ -140,40 +162,35 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
           <>
             <Link
               href="/sessions"
-              className={`flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-slate-100 transition-colors ${
-                pathname === '/sessions'
-                  ? 'border-emerald-600/50 bg-emerald-950/30 text-emerald-300'
-                  : ''
+              className={`flex items-center gap-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] px-3 py-1 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors shadow-2xs ${
+                pathname === '/sessions' ? 'border-[#FF385C]/40 bg-[#FF385C]/10 text-[#FF385C]' : ''
               }`}
               title="Quản lý phiên đăng nhập thiết bị"
               aria-label="Quản lý phiên đăng nhập"
             >
-              <Laptop className="h-4 w-4" aria-hidden="true" />
-              <span className="hidden md:inline">Phiên làm việc</span>
+              <Laptop className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="hidden md:inline text-xs font-medium">Phiên làm việc</span>
             </Link>
 
-            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-800/80 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">
-              <User className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
-              <span className="font-medium text-slate-200">{user.fullName || user.username}</span>
-            </div>
+            <span
+              className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-[#008489] select-none"
+              style={{ background: 'transparent', border: 'none', padding: 0 }}
+            >
+              <User size={16} strokeWidth={1.75} aria-hidden="true" />
+              <span>{user.fullName || user.username}</span>
+            </span>
 
-            <Button
-              variant="outline"
+            <InteractiveHoverButton
+              variant="secondary"
               size="sm"
-              className="border-slate-800 bg-slate-900 text-slate-300 hover:border-red-900/50 hover:bg-red-950/40 hover:text-red-300"
+              text="Đăng xuất"
+              icon={<LogOut size={16} strokeWidth={1.75} aria-hidden="true" />}
               onClick={() => void logout()}
               aria-label="Đăng xuất khỏi hệ thống"
-            >
-              <LogOut className="h-3.5 w-3.5 sm:mr-1.5" aria-hidden="true" />
-              <span className="hidden sm:inline">Đăng xuất</span>
-            </Button>
+            />
           </>
         ) : (
-          <Link href="/login">
-            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-500 text-white">
-              Đăng nhập
-            </Button>
-          </Link>
+          <InteractiveHoverButton href="/login" variant="primary" size="sm" text="Đăng nhập" />
         )}
       </div>
     </header>

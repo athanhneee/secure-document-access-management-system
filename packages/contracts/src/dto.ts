@@ -131,6 +131,7 @@ export const CreateAccessGrantSchema = z
     permissions: z.array(GrantPermissionSchema).min(1).max(2),
     validFrom: z.string().datetime({ offset: true }),
     validUntil: z.string().datetime({ offset: true }),
+    accessRequestId: z.string().uuid().optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -202,6 +203,46 @@ export const ListAccessGrantsSchema = z
   .strict();
 
 export type ListAccessGrantsInput = z.infer<typeof ListAccessGrantsSchema>;
+
+// --- Access Request Schemas (Prompt 10-12) ---
+
+export const CreateAccessRequestSchema = z
+  .object({
+    documentId: z.string().uuid(),
+    requestedAction: z.enum(['VIEW', 'DOWNLOAD']).default('VIEW'),
+    reason: z.string().trim().min(10, 'Reason must be at least 10 characters.').max(1000),
+    requestedFrom: z.string().datetime({ offset: true }).optional(),
+    requestedUntil: z.string().datetime({ offset: true }).optional(),
+  })
+  .strict();
+
+export type CreateAccessRequestInput = z.infer<typeof CreateAccessRequestSchema>;
+
+export const DecideAccessRequestSchema = z
+  .object({
+    decision: z.enum(['APPROVED', 'REJECTED']),
+    decisionNote: z.string().trim().max(1000).optional(),
+    validDays: z.coerce.number().int().min(1).max(365).default(7),
+    permissions: z
+      .array(z.enum(['VIEW', 'DOWNLOAD']))
+      .min(1)
+      .max(2)
+      .optional(),
+  })
+  .strict();
+
+export type DecideAccessRequestInput = z.infer<typeof DecideAccessRequestSchema>;
+
+export const ListAccessRequestsSchema = z
+  .object({
+    scope: z.enum(['my', 'incoming', 'all']).default('my'),
+    status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'EXPIRED']).optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(50).default(20),
+  })
+  .strict();
+
+export type ListAccessRequestsInput = z.infer<typeof ListAccessRequestsSchema>;
 
 // --- Controlled Document Delivery & Access Session Schemas (Prompt 13) ---
 
@@ -531,3 +572,44 @@ export const QueryNotificationsSchema = z
   .strict();
 
 export type QueryNotificationsInput = z.infer<typeof QueryNotificationsSchema>;
+
+// --- WebAuthn / FIDO2 MFA Schemas ---
+
+export const WebAuthnRegistrationOptionsRequestSchema = z
+  .object({
+    label: z.string().trim().min(1).max(80).optional(),
+  })
+  .strict();
+
+export type WebAuthnRegistrationOptionsRequest = z.infer<
+  typeof WebAuthnRegistrationOptionsRequestSchema
+>;
+
+export const WebAuthnVerifyRegistrationRequestSchema = z
+  .object({
+    challengeToken: z.string().min(1),
+    response: z.record(z.unknown()),
+    label: z.string().trim().min(1).max(80).optional(),
+  })
+  .strict();
+
+export type WebAuthnVerifyRegistrationRequest = z.infer<
+  typeof WebAuthnVerifyRegistrationRequestSchema
+>;
+
+export const WebAuthnAuthOptionsRequestSchema = z
+  .object({
+    username: z.string().trim().min(1).max(255).optional(),
+  })
+  .strict();
+
+export type WebAuthnAuthOptionsRequest = z.infer<typeof WebAuthnAuthOptionsRequestSchema>;
+
+export const WebAuthnVerifyAuthRequestSchema = z
+  .object({
+    challengeToken: z.string().min(1),
+    response: z.record(z.unknown()),
+  })
+  .strict();
+
+export type WebAuthnVerifyAuthRequest = z.infer<typeof WebAuthnVerifyAuthRequestSchema>;

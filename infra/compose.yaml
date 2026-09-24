@@ -179,6 +179,26 @@ services:
     mem_reservation: 512m
     pids_limit: 256
 
+  gotenberg:
+    <<: *service-defaults
+    image: gotenberg/gotenberg:8.17.0
+    ports:
+      - 127.0.0.1:3003:3000
+    environment:
+      LOG_LEVEL: info
+      LIBREOFFICE_AUTO_RESTART: 'true'
+      LIBREOFFICE_RESTART_AFTER: 10
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:3000/health]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    cpus: 1.0
+    mem_limit: 1g
+    mem_reservation: 256m
+    pids_limit: 128
+
   mailpit-data-init:
     image: axllent/mailpit:v1.30.6
     user: root

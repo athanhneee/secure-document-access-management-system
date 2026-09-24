@@ -9,7 +9,11 @@ export type GrantAuditAction =
   | 'GRANT_EXTENDED'
   | 'GRANT_REVOKED'
   | 'GRANT_EXPIRED'
-  | 'GRANT_SESSIONS_TERMINATED';
+  | 'GRANT_SESSIONS_TERMINATED'
+  | 'ACCESS_REQUEST_CREATED'
+  | 'ACCESS_REQUEST_APPROVED'
+  | 'ACCESS_REQUEST_REJECTED'
+  | 'ACCESS_REQUEST_CANCELLED';
 
 export interface GrantAuditEvent {
   action: GrantAuditAction;

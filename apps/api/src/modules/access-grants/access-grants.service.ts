@@ -21,6 +21,7 @@ import { AuthorizationCache } from '../rbac/authorization-cache.js';
 import { AbacService } from '../abac/abac.service.js';
 import { AppConfigService } from '../../config/config.service.js';
 import { AccessGrantAuditService } from './access-grant-audit.service.js';
+import { RedlockService } from '../concurrency/redlock.service.js';
 
 export interface GrantDetail {
   id: string;
@@ -64,6 +65,7 @@ export class AccessGrantsService {
     private readonly abac: AbacService,
     private readonly config: AppConfigService,
     @Optional() databaseClient?: PrismaClient,
+    @Optional() private readonly redlock?: RedlockService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -280,75 +282,156 @@ export class AccessGrantsService {
     let resultGrant: GrantDetail;
     let wasExtended = false;
 
-    await this.database.$transaction(
-      async (tx) => {
-        // Lock the document row for grant manipulation
-        await tx.$executeRawUnsafe(
-          'SELECT id FROM documents WHERE id = $1::uuid FOR UPDATE',
-          input.documentId,
-        );
+    const executeGrantTx = async () => {
+      await this.database.$transaction(
+        async (tx) => {
+          // Lock the document row for grant manipulation
+          await tx.$executeRawUnsafe(
+            'SELECT id FROM documents WHERE id = $1::uuid FOR UPDATE',
+            input.documentId,
+          );
 
-        // Check for existing ACTIVE grant with same document + principal
-        const existingGrant = await tx.accessGrant.findFirst({
-          where: {
-            document_id: input.documentId,
-            principal_type: input.principalType,
-            principal_user_id:
-              input.principalType === 'USER' ? (input.principalUserId ?? null) : null,
-            principal_role_id:
-              input.principalType === 'ROLE' ? (input.principalRoleId ?? null) : null,
-            status: 'ACTIVE',
-          },
-          include: {
-            access_grant_permissions: true,
-          },
-        });
+          // Check for existing ACTIVE grant with same document + principal
+          const existingGrant = await tx.accessGrant.findFirst({
+            where: {
+              document_id: input.documentId,
+              principal_type: input.principalType,
+              principal_user_id:
+                input.principalType === 'USER' ? (input.principalUserId ?? null) : null,
+              principal_role_id:
+                input.principalType === 'ROLE' ? (input.principalRoleId ?? null) : null,
+              status: 'ACTIVE',
+            },
+            include: {
+              access_grant_permissions: true,
+            },
+          });
 
-        if (existingGrant) {
-          const existingPerms = existingGrant.access_grant_permissions.map((p) => p.permission);
-          const requestedPerms = [...new Set(input.permissions)].sort();
-          const samePerms = existingPerms.sort().join(',') === requestedPerms.join(',');
+          if (existingGrant) {
+            const existingPerms = existingGrant.access_grant_permissions.map((p) => p.permission);
+            const requestedPerms = [...new Set(input.permissions)].sort();
+            const samePerms = existingPerms.sort().join(',') === requestedPerms.join(',');
 
-          if (samePerms) {
-            // Same permissions → extend the existing grant's valid_until
-            const newValidUntil =
-              validUntil > existingGrant.valid_until ? validUntil : existingGrant.valid_until;
-            const newValidFrom =
-              validFrom < existingGrant.valid_from ? validFrom : existingGrant.valid_from;
+            if (samePerms) {
+              // Same permissions → extend the existing grant's valid_until
+              const newValidUntil =
+                validUntil > existingGrant.valid_until ? validUntil : existingGrant.valid_until;
+              const newValidFrom =
+                validFrom < existingGrant.valid_from ? validFrom : existingGrant.valid_from;
 
-            // Security hardening: extended grant cannot exceed maxDurationDays from now
-            const extensionDurationMs = newValidUntil.getTime() - now.getTime();
-            if (extensionDurationMs > maxMs) {
-              throw new BadRequestException({
-                errorCode: AppErrorCode.GRANT_DURATION_EXCEEDED,
-                message: `Extended grant duration cannot exceed ${this.maxDurationDays} days from now.`,
+              // Security hardening: extended grant cannot exceed maxDurationDays from now
+              const extensionDurationMs = newValidUntil.getTime() - now.getTime();
+              if (extensionDurationMs > maxMs) {
+                throw new BadRequestException({
+                  errorCode: AppErrorCode.GRANT_DURATION_EXCEEDED,
+                  message: `Extended grant duration cannot exceed ${this.maxDurationDays} days from now.`,
+                });
+              }
+
+              await tx.accessGrant.update({
+                where: { id: existingGrant.id },
+                data: {
+                  valid_from: newValidFrom,
+                  valid_until: newValidUntil,
+                  version: { increment: 1 },
+                },
+              });
+
+              wasExtended = true;
+
+              await this.audit.record(
+                {
+                  action: 'GRANT_EXTENDED',
+                  outcome: 'SUCCESS',
+                  objectId: existingGrant.id,
+                  documentId: input.documentId,
+                  details: {
+                    principalType: input.principalType,
+                    principalId:
+                      (input.principalUserId ?? input.principalRoleId)?.toString() ?? null,
+                    previousValidUntil: existingGrant.valid_until.toISOString(),
+                    newValidUntil: newValidUntil.toISOString(),
+                    previousValidFrom: existingGrant.valid_from.toISOString(),
+                    newValidFrom: newValidFrom.toISOString(),
+                  },
+                },
+                principal,
+                context,
+                tx,
+              );
+
+              if (input.accessRequestId) {
+                await tx.accessRequest.update({
+                  where: { id: input.accessRequestId },
+                  data: { status: 'APPROVED', updated_at: now },
+                });
+                await tx.accessRequestDecision.create({
+                  data: {
+                    access_request_id: input.accessRequestId,
+                    decision: 'APPROVED',
+                    decided_by: principal.userId,
+                    approved_from: newValidFrom,
+                    approved_until: newValidUntil,
+                    decided_at: now,
+                  },
+                });
+              }
+
+              const updated = await tx.accessGrant.findUnique({
+                where: { id: existingGrant.id },
+                include: { access_grant_permissions: true },
+              });
+              resultGrant = this.toGrantDetail(updated!);
+            } else {
+              // Different permissions overlap → reject
+              throw new ConflictException({
+                errorCode: AppErrorCode.GRANT_OVERLAP_EXISTS,
+                message:
+                  'An active grant with different permissions already exists for this document and principal. Revoke the existing grant first.',
               });
             }
-
-            await tx.accessGrant.update({
-              where: { id: existingGrant.id },
+          } else {
+            // No overlap: create new grant
+            const created = await tx.accessGrant.create({
               data: {
-                valid_from: newValidFrom,
-                valid_until: newValidUntil,
-                version: { increment: 1 },
+                id: grantId,
+                document_id: input.documentId,
+                principal_type: input.principalType,
+                principal_user_id: input.principalUserId ?? null,
+                principal_role_id: input.principalRoleId ?? null,
+                source: input.accessRequestId ? 'ACCESS_REQUEST' : 'DIRECT',
+                access_request_id: input.accessRequestId ?? null,
+                valid_from: validFrom,
+                valid_until: validUntil,
+                status: 'ACTIVE',
+                granted_by: principal.userId,
+                granted_at: now,
+                version: 0,
+                access_grant_permissions: {
+                  createMany: {
+                    data: [...new Set(input.permissions)].map((p) => ({
+                      permission: p,
+                    })),
+                  },
+                },
               },
+              include: { access_grant_permissions: true },
             });
-
-            wasExtended = true;
 
             await this.audit.record(
               {
-                action: 'GRANT_EXTENDED',
+                action: 'GRANT_CREATED',
                 outcome: 'SUCCESS',
-                objectId: existingGrant.id,
+                objectId: grantId,
                 documentId: input.documentId,
                 details: {
                   principalType: input.principalType,
                   principalId: (input.principalUserId ?? input.principalRoleId)?.toString() ?? null,
-                  previousValidUntil: existingGrant.valid_until.toISOString(),
-                  newValidUntil: newValidUntil.toISOString(),
-                  previousValidFrom: existingGrant.valid_from.toISOString(),
-                  newValidFrom: newValidFrom.toISOString(),
+                  permissions: input.permissions.join(','),
+                  validFrom: validFrom.toISOString(),
+                  validUntil: validUntil.toISOString(),
+                  source: input.accessRequestId ? 'ACCESS_REQUEST' : 'DIRECT',
+                  accessRequestId: input.accessRequestId ?? null,
                 },
               },
               principal,
@@ -356,84 +439,52 @@ export class AccessGrantsService {
               tx,
             );
 
-            const updated = await tx.accessGrant.findUnique({
-              where: { id: existingGrant.id },
-              include: { access_grant_permissions: true },
-            });
-            resultGrant = this.toGrantDetail(updated!);
-          } else {
-            // Different permissions overlap → reject
-            throw new ConflictException({
-              errorCode: AppErrorCode.GRANT_OVERLAP_EXISTS,
-              message:
-                'An active grant with different permissions already exists for this document and principal. Revoke the existing grant first.',
-            });
-          }
-        } else {
-          // No overlap: create new grant
-          const created = await tx.accessGrant.create({
-            data: {
-              id: grantId,
-              document_id: input.documentId,
-              principal_type: input.principalType,
-              principal_user_id: input.principalUserId ?? null,
-              principal_role_id: input.principalRoleId ?? null,
-              source: 'DIRECT',
-              valid_from: validFrom,
-              valid_until: validUntil,
-              status: 'ACTIVE',
-              granted_by: principal.userId,
-              granted_at: now,
-              version: 0,
-              access_grant_permissions: {
-                createMany: {
-                  data: [...new Set(input.permissions)].map((p) => ({
-                    permission: p,
-                  })),
+            if (input.accessRequestId) {
+              await tx.accessRequest.update({
+                where: { id: input.accessRequestId },
+                data: { status: 'APPROVED', updated_at: now },
+              });
+              await tx.accessRequestDecision.create({
+                data: {
+                  access_request_id: input.accessRequestId,
+                  decision: 'APPROVED',
+                  decided_by: principal.userId,
+                  approved_from: validFrom,
+                  approved_until: validUntil,
+                  decided_at: now,
                 },
-              },
-            },
-            include: { access_grant_permissions: true },
-          });
+              });
+            }
 
-          await this.audit.record(
-            {
-              action: 'GRANT_CREATED',
-              outcome: 'SUCCESS',
-              objectId: grantId,
-              documentId: input.documentId,
-              details: {
-                principalType: input.principalType,
-                principalId: (input.principalUserId ?? input.principalRoleId)?.toString() ?? null,
-                permissions: input.permissions.join(','),
-                validFrom: validFrom.toISOString(),
-                validUntil: validUntil.toISOString(),
-                source: 'DIRECT',
-              },
-            },
-            principal,
-            context,
-            tx,
-          );
-
-          resultGrant = this.toGrantDetail(created);
-        }
-      },
-      { isolationLevel: 'Serializable' },
-    );
-
-    // Fire notification async (D-BR20: don't rollback grant on notification failure)
-    this.fireNotificationAsync(
-      wasExtended ? 'GRANT_EXTENDED' : 'GRANT_CREATED',
-      input,
-      principal,
-    ).catch((err: unknown) => {
-      this.logger.warn(
-        `Notification for grant ${wasExtended ? 'extension' : 'creation'} failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+            resultGrant = this.toGrantDetail(created);
+          }
+        },
+        { isolationLevel: 'Serializable' },
       );
-    });
+
+      // Fire notification async (D-BR20: don't rollback grant on notification failure)
+      this.fireNotificationAsync(
+        wasExtended ? 'GRANT_EXTENDED' : 'GRANT_CREATED',
+        input,
+        principal,
+      ).catch((err: unknown) => {
+        this.logger.warn(
+          `Notification for grant ${wasExtended ? 'extension' : 'creation'} failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
+    };
+
+    const principalId =
+      input.principalType === 'USER' ? input.principalUserId : input.principalRoleId;
+    const lockResource = `access-grant:${input.documentId}:${input.principalType}:${principalId}`;
+
+    if (this.redlock) {
+      await this.redlock.withLock(lockResource, 5000, executeGrantTx);
+    } else {
+      await executeGrantTx();
+    }
 
     return resultGrant!;
   }

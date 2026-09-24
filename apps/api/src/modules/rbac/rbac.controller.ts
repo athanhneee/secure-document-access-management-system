@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -11,6 +10,7 @@ import {
   Post,
   Put,
   Req,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -181,7 +181,7 @@ export class RbacController {
   }
 
   private principal(request: FastifyRequest): AuthPrincipal {
-    if (!request.auth) throw new ForbiddenException('Authentication required.');
+    if (!request.auth) throw new UnauthorizedException('Authentication required.');
     return request.auth;
   }
   private context(request: FastifyRequest): RequestContext {

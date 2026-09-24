@@ -625,3 +625,112 @@ test('assertGrantValidForAccess [SECURITY] — role grant rejects when user does
     },
   );
 });
+
+test('createGrant — when extending existing grant with accessRequestId, updates request to APPROVED and records decision', async () => {
+  const docId = randomUUID();
+  const grantId = randomUUID();
+  const reqId = randomUUID();
+  const userId = 50n;
+  const now = new Date();
+
+  let updatedRequestStatus = '';
+  let createdDecision = null;
+
+  const existingGrant = {
+    id: grantId,
+    document_id: docId,
+    principal_type: 'USER',
+    principal_user_id: userId,
+    principal_role_id: null,
+    source: 'DIRECT',
+    access_request_id: null,
+    valid_from: now,
+    valid_until: new Date(now.getTime() + 7 * 86400000),
+    status: 'ACTIVE',
+    granted_by: 1n,
+    granted_at: now,
+    revoked_by: null,
+    revoked_at: null,
+    revoke_reason: null,
+    version: 0,
+    access_grant_permissions: [{ permission: 'VIEW' }],
+  };
+
+  const mockDb = {
+    document: {
+      findUnique: async () => ({
+        id: docId,
+        owner_id: 1n,
+        department_id: 10n,
+        status: 'ACTIVE',
+        classification_history: [
+          {
+            classification_levels: { rank: 2, allow_download: true },
+          },
+        ],
+      }),
+    },
+    user: {
+      findUnique: async () => ({ id: userId, status: 'ACTIVE' }),
+    },
+    userAttributeAssignment: {
+      findFirst: async () => ({
+        attribute_options: { numeric_rank: 3 },
+      }),
+    },
+    accessGrant: {
+      findFirst: async () => existingGrant,
+      update: async () => existingGrant,
+      findUnique: async () => existingGrant,
+    },
+    accessRequest: {
+      update: async ({ data }) => {
+        updatedRequestStatus = data.status;
+      },
+    },
+    accessRequestDecision: {
+      create: async ({ data }) => {
+        createdDecision = data;
+      },
+    },
+    $executeRawUnsafe: async () => {},
+    $transaction: async (fn) => fn(mockDb),
+  };
+
+  const mockAudit = { record: async () => {} };
+  const mockAuth = { hasPermission: async () => true };
+  const mockCache = { invalidateUser: () => {} };
+  const mockAbac = { evaluate: async () => ({ decision: 'PERMIT' }) };
+  const mockConfig = { get: () => 365 };
+
+  const service = new AccessGrantsService(
+    mockAudit,
+    mockAuth,
+    mockCache,
+    mockAbac,
+    mockConfig,
+    mockDb,
+  );
+
+  const principal = { userId: 1n, username: 'owner1', roles: ['DOCUMENT_OWNER'], mfa: true };
+  const context = { ip: '127.0.0.1' };
+
+  await service.createGrant(
+    {
+      documentId: docId,
+      principalType: 'USER',
+      principalUserId: userId,
+      permissions: ['VIEW'],
+      validFrom: now.toISOString(),
+      validUntil: new Date(now.getTime() + 14 * 86400000).toISOString(),
+      accessRequestId: reqId,
+    },
+    principal,
+    context,
+  );
+
+  assert.equal(updatedRequestStatus, 'APPROVED');
+  assert.ok(createdDecision);
+  assert.equal(createdDecision.access_request_id, reqId);
+  assert.equal(createdDecision.decision, 'APPROVED');
+});

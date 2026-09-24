@@ -141,6 +141,8 @@ services:
       STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY}
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
+      GOTENBERG_URL: http://gotenberg:3000
+      GOTENBERG_ENABLED: 'true'
       JWT_PRIVATE_KEY: '${JWT_PRIVATE_KEY:?Required: Ed25519 PKCS8 or Secret}'
       JWT_PUBLIC_KEY: '${JWT_PUBLIC_KEY:?Required: Ed25519 SPKI or Secret}'
       COOKIE_SECRET: '${COOKIE_SECRET:?Required: 32-byte secret}'
@@ -270,6 +272,26 @@ services:
       retries: 3
     cpus: 0.5
     mem_limit: 512m
+
+  # =========================================================================
+  # 9. DOCUMENT CONVERTER: Gotenberg / LibreOffice Headless
+  # =========================================================================
+  gotenberg:
+    <<: *service-defaults
+    image: gotenberg/gotenberg:8.17.0
+    environment:
+      LOG_LEVEL: info
+      LIBREOFFICE_AUTO_RESTART: 'true'
+      LIBREOFFICE_RESTART_AFTER: 10
+    healthcheck:
+      test: ['CMD', 'curl', '--fail', '--silent', 'http://localhost:3000/health']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    cpus: 1.0
+    mem_limit: 1g
+    mem_reservation: 256m
 
 networks:
   internal_backend:

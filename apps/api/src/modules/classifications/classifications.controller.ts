@@ -11,14 +11,14 @@ export class ClassificationsController {
   @Get('levels')
   @ApiOperation({ summary: 'List security classification levels' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Classification levels list' })
-  listClassificationLevels(): { data: unknown[] } {
+  async listClassificationLevels(): Promise<{ data: unknown[] }> {
     return this.classificationsService.listClassificationLevels();
   }
 
   @Get('categories')
   @ApiOperation({ summary: 'List business categories' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Business categories list' })
-  listBusinessCategories(): { data: unknown[] } {
+  async listBusinessCategories(): Promise<{ data: unknown[] }> {
     return this.classificationsService.listBusinessCategories();
   }
 }

@@ -7,13 +7,14 @@ import {
   Req,
   Res,
   HttpStatus,
-  ForbiddenException,
+  UnauthorizedException,
   BadRequestException,
   Header,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { CreateExportJobSchema } from '@sda/contracts';
+import { CsrfService } from '../auth/csrf.service.js';
 import { RequirePermission } from '../rbac/require-permission.js';
 import { ExportJobService } from './export-job.service.js';
 
@@ -21,14 +22,18 @@ import { ExportJobService } from './export-job.service.js';
 @ApiBearerAuth()
 @Controller('reports')
 export class ReportsController {
-  constructor(private readonly exportJobService: ExportJobService) {}
+  constructor(
+    private readonly exportJobService: ExportJobService,
+    private readonly csrf: CsrfService,
+  ) {}
 
   @Post('export')
   @RequirePermission('AUDIT_LOG', 'EXPORT')
   @ApiOperation({ summary: 'Initiate an asynchronous report export job with 24h TTL' })
   @ApiResponse({ status: HttpStatus.ACCEPTED, description: 'Export job initiated' })
   async createExportJob(@Body() body: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = CreateExportJobSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.exportJobService.createExportJob(parsed.data, req.auth, req.correlationId);
@@ -39,7 +44,7 @@ export class ReportsController {
   @ApiOperation({ summary: 'Check status and metadata of an export job' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Export job details' })
   async getExportJob(@Param('jobId') jobId: string, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     return this.exportJobService.getExportJob(jobId, req.auth);
   }
 
@@ -54,7 +59,7 @@ export class ReportsController {
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
   ) {
-    if (!req.auth) throw new ForbiddenException('Authentication required.');
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const result = await this.exportJobService.downloadExportJob(jobId, req.auth);
 
     reply

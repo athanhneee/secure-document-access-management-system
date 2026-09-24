@@ -1,4 +1,13 @@
-import { Body, Controller, ForbiddenException, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
@@ -84,7 +93,7 @@ export class DepartmentsController {
   }
 
   private principal(request: FastifyRequest): AuthPrincipal {
-    if (!request.auth) throw new ForbiddenException('Authentication required.');
+    if (!request.auth) throw new UnauthorizedException('Authentication required.');
     return request.auth;
   }
   private context(request: FastifyRequest): RequestContext {

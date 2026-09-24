@@ -11,6 +11,7 @@ import { DepartmentsModule } from './modules/departments/departments.module.js';
 import { AbacModule } from './modules/abac/abac.module.js';
 import { DocumentsModule } from './modules/documents/documents.module.js';
 import { AccessGrantsModule } from './modules/access-grants/access-grants.module.js';
+import { AccessRequestsModule } from './modules/access-requests/access-requests.module.js';
 import { AccessSessionsModule } from './modules/access-sessions/access-sessions.module.js';
 import { WatermarksModule } from './modules/watermarks/watermarks.module.js';
 import { AuditModule } from './modules/audit/audit.module.js';
@@ -18,9 +19,12 @@ import { SecurityOperationsModule } from './modules/security-operations/security
 import { ReportsModule } from './modules/reports/reports.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 
+import { ConcurrencyModule } from './modules/concurrency/concurrency.module.js';
+
 @Module({
   imports: [
     AppConfigModule,
+    ConcurrencyModule,
     AuthModule,
     RbacModule,
     AbacModule,
@@ -28,6 +32,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     DepartmentsModule,
     DocumentsModule,
     AccessGrantsModule,
+    AccessRequestsModule,
     AccessSessionsModule,
     WatermarksModule,
     AuditModule,

@@ -279,6 +279,14 @@ export class UsersService {
           where: { user_id: id, status: 'ACTIVE' },
           data: { status: 'REVOKED', revoked_at: now, revocation_reason: action },
         });
+        await transaction.accessSession.updateMany({
+          where: { user_id: id, status: 'ACTIVE' },
+          data: {
+            status: 'TERMINATED',
+            ended_at: now,
+            terminated_reason: `User ${status.toLowerCase()}: ${action}`,
+          },
+        });
       }
       const after = await transaction.user.findUniqueOrThrow({ where: { id } });
       await this.audit.record(

@@ -141,6 +141,8 @@ export class DocumentPepService {
         action,
         now,
         documentRank,
+        document.owner_id === principal.userId,
+        classAllowDownload,
       );
       if (!effectiveGrantId) {
         await this.recordDenyAudit(
@@ -295,6 +297,8 @@ export class DocumentPepService {
     action: 'VIEW' | 'DOWNLOAD',
     now: Date,
     documentRank: number,
+    isOwner = false,
+    classAllowDownload = true,
   ): Promise<string | null> {
     // 1. Direct USER grant
     const directGrant = await this.database.accessGrant.findFirst({
@@ -353,6 +357,60 @@ export class DocumentPepService {
       }
     }
 
+    // 3. Document Owner access (UC20 & UC21: Owner can view/download own document with clearance)
+    if (isOwner) {
+      const hasClearance = await this.checkUserClearance(userId, documentRank, now);
+      if (!hasClearance) return null;
+      if (action === 'DOWNLOAD' && !classAllowDownload) return null;
+
+      const existingOwnerGrant = await this.database.accessGrant.findFirst({
+        where: {
+          document_id: documentId,
+          principal_type: 'USER',
+          principal_user_id: userId,
+          status: 'ACTIVE',
+          valid_from: { lte: now },
+          valid_until: { gt: now },
+        },
+        include: { access_grant_permissions: true },
+      });
+
+      if (existingOwnerGrant) {
+        const perms = existingOwnerGrant.access_grant_permissions.map((p) => p.permission);
+        if (!perms.includes(action)) {
+          await this.database.accessGrantPermission.create({
+            data: { access_grant_id: existingOwnerGrant.id, permission: action },
+          });
+        }
+        return existingOwnerGrant.id;
+      }
+
+      const grantId = randomUUID();
+      const validUntil = new Date(now.getTime() + 365 * 86400000);
+      const permissions: ('VIEW' | 'DOWNLOAD')[] = ['VIEW'];
+      if (classAllowDownload) permissions.push('DOWNLOAD');
+
+      await this.database.accessGrant.create({
+        data: {
+          id: grantId,
+          document_id: documentId,
+          principal_type: 'USER',
+          principal_user_id: userId,
+          source: 'DIRECT',
+          status: 'ACTIVE',
+          valid_from: now,
+          valid_until: validUntil,
+          granted_by: userId,
+          access_grant_permissions: {
+            createMany: {
+              data: permissions.map((p) => ({ permission: p })),
+            },
+          },
+        },
+      });
+      return grantId;
+    }
+
     return null;
   }
 
@@ -385,7 +443,7 @@ export class DocumentPepService {
     employmentStatus: string | null;
     projects: string[];
   }> {
-    const user = await this.database.user.findUnique({
+    const user = await this.database.user?.findUnique?.({
       where: { id: userId },
       select: { department_id: true, status: true },
     });

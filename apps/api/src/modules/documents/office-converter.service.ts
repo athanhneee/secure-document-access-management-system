@@ -1,7 +1,14 @@
-import { Injectable, Logger, BadRequestException, GatewayTimeoutException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  GatewayTimeoutException,
+  Optional,
+} from '@nestjs/common';
 import yauzl from 'yauzl';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { AppErrorCode } from '@sda/contracts';
+import { AppConfigService } from '../../config/config.service.js';
 
 export interface OfficeConversionOptions {
   timeoutMs?: number;
@@ -11,14 +18,27 @@ export interface OfficeConversionOptions {
 @Injectable()
 export class OfficeConverterService {
   private readonly logger = new Logger(OfficeConverterService.name);
+  private readonly gotenbergUrl: string;
+  private readonly gotenbergEnabled: boolean;
+
+  constructor(@Optional() config?: AppConfigService) {
+    if (config) {
+      this.gotenbergUrl = config.get('GOTENBERG_URL');
+      this.gotenbergEnabled = config.get('GOTENBERG_ENABLED') ?? true;
+    } else {
+      this.gotenbergUrl = process.env['GOTENBERG_URL'] ?? 'http://127.0.0.1:3003';
+      this.gotenbergEnabled = process.env['GOTENBERG_ENABLED'] !== 'false';
+    }
+  }
 
   /**
    * Safely inspects an Office OpenXML file (.docx, .xlsx, .pptx) and converts it to PDF.
    * Enforces:
    * 1. No VBA macros (vbaProject.bin, etc.) -> OFFICE_MACRO_BLOCKED
-   * 2. No external link execution or embedded objects
-   * 3. Timeout enforcement (default 10,000ms) -> OFFICE_CONVERSION_TIMEOUT
-   * 4. Corrupt file detection -> OFFICE_CONVERSION_FAILED
+   * 2. No external link execution or embedded objects (SSRF/NTLM leak protection)
+   * 3. Headless LibreOffice conversion via Gotenberg container (with seamless fallback)
+   * 4. Timeout enforcement (default 10,000ms) -> OFFICE_CONVERSION_TIMEOUT
+   * 5. Corrupt file detection -> OFFICE_CONVERSION_FAILED
    */
   async convertOfficeToPdf(
     officeBuffer: Buffer,
@@ -89,7 +109,16 @@ export class OfficeConverterService {
       }
     }
 
-    // 3. Extract text content based on file type
+    // 3. Attempt high-fidelity conversion via Gotenberg container (LibreOffice headless)
+    const timeoutMs = options.timeoutMs ?? 10_000;
+    const gotenbergPdf = await this.convertWithGotenberg(officeBuffer, filename, timeoutMs);
+    if (gotenbergPdf) {
+      this.logger.log(`Rendered ${filename} to PDF using Gotenberg/LibreOffice headless engine.`);
+      return gotenbergPdf;
+    }
+
+    // 4. Fallback: Extract text content and render safely into standardized PDF
+    this.logger.log(`Rendering ${filename} via built-in safe text-to-PDF fallback engine.`);
     const ext = filename.split('.').pop()?.toLowerCase();
     let extractedText = '';
 
@@ -103,8 +132,69 @@ export class OfficeConverterService {
       extractedText = `Document: ${filename}\nFormat: Office OpenXML`;
     }
 
-    // 4. Render extracted content safely into a standardized PDF
+    // 5. Render extracted content safely into a standardized PDF
     return await this.renderTextToPdf(filename, extractedText, options.maxPages ?? 50);
+  }
+
+  /**
+   * Attempts headless Office-to-PDF conversion using the Gotenberg container.
+   * Returns converted PDF buffer or null if Gotenberg is unavailable or returns an error.
+   */
+  private async convertWithGotenberg(
+    officeBuffer: Buffer,
+    filename: string,
+    timeoutMs: number,
+  ): Promise<Buffer | null> {
+    if (!this.gotenbergEnabled || !this.gotenbergUrl) {
+      return null;
+    }
+
+    try {
+      const endpoint = `${this.gotenbergUrl.replace(/\/+$/, '')}/forms/libreoffice/convert`;
+      const formData = new FormData();
+      const arrayBuffer = officeBuffer.buffer.slice(
+        officeBuffer.byteOffset,
+        officeBuffer.byteOffset + officeBuffer.byteLength,
+      ) as ArrayBuffer;
+      const blob = new Blob([arrayBuffer]);
+      formData.append('files', blob, filename);
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, 8_000));
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          this.logger.warn(
+            `Gotenberg conversion returned HTTP ${response.status} for ${filename}. Falling back to internal engine.`,
+          );
+          return null;
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const pdfBuffer = Buffer.from(arrayBuffer);
+
+        if (pdfBuffer.length < 4 || pdfBuffer.subarray(0, 4).toString('ascii') !== '%PDF') {
+          this.logger.warn(`Gotenberg response for ${filename} is not a valid PDF.`);
+          return null;
+        }
+
+        return pdfBuffer;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.debug(
+        `Gotenberg conversion unavailable for ${filename} (${msg}). Falling back to internal engine.`,
+      );
+      return null;
+    }
   }
 
   /**

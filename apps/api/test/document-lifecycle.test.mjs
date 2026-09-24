@@ -221,12 +221,30 @@ function createInMemoryDatabase(initialState = {}) {
       findUnique: async ({ where }) => users.get(where.id) ?? null,
     },
     accessGrant: {
+      findFirst: async ({ where }) => {
+        return (
+          Array.from(accessGrants.values()).find((g) => {
+            if (where.document_id && g.document_id !== where.document_id) return false;
+            if (where.principal_type && g.principal_type !== where.principal_type) return false;
+            if (where.principal_user_id && g.principal_user_id !== where.principal_user_id)
+              return false;
+            if (where.status && g.status !== where.status) return false;
+            return true;
+          }) ?? null
+        );
+      },
       findMany: async ({ where }) => {
         return Array.from(accessGrants.values()).filter((g) => {
           if (where.document_id && g.document_id !== where.document_id) return false;
           if (where.status && g.status !== where.status) return false;
           return true;
         });
+      },
+      create: async ({ data }) => {
+        const id = data.id || `grant-${++autoId}`;
+        const record = { id, ...data };
+        accessGrants.set(id, record);
+        return record;
       },
       update: async ({ where, data }) => {
         const grant = accessGrants.get(where.id);
@@ -1101,4 +1119,142 @@ test('Document Lifecycle: transfer document owner updates owner and records audi
   assert.ok(transferAudit);
   assert.equal(transferAudit.details.previousOwnerId, '1');
   assert.equal(transferAudit.details.newOwnerId, '2');
+});
+
+test('Document Lifecycle: transferOwner rejects transfer when new owner clearance is lower than classification rank', async () => {
+  const docId = randomUUID();
+  const { db } = createInMemoryDatabase({
+    documents: [
+      [
+        docId,
+        {
+          id: docId,
+          document_code: 'DOC-SECRET-TRANSFER',
+          title: 'Top Secret document',
+          owner_id: 1n,
+          department_id: 100n,
+          status: 'ACTIVE',
+        },
+      ],
+    ],
+    classifications: [
+      [
+        1n,
+        {
+          id: 1n,
+          document_id: docId,
+          classification_level_id: 4n,
+          effective_to: null,
+          classification_levels: { id: 4n, rank: 4, code: 'SECRET', name: 'Mật' },
+        },
+      ],
+    ],
+    userAttributeAssignments: [
+      [
+        1n,
+        {
+          id: 1n,
+          user_id: 2n,
+          attribute_definitions: { code: 'CLEARANCE_LEVEL' },
+          attribute_options: { numeric_rank: 2 },
+          valid_from: new Date(2020, 1, 1),
+          valid_to: null,
+        },
+      ],
+    ],
+  });
+
+  const mockAudit = createMockAudit();
+  const mockAuth = createMockAuthorization();
+  const cache = new AuthorizationCache();
+  const service = new DocumentsService(mockAudit, mockAuth, cache, db);
+  const principal = { userId: 1n, username: 'owner_user', roles: ['DOCUMENT_OWNER'], mfa: true };
+  const context = { ip: '127.0.0.1', correlationId: randomUUID() };
+
+  await assert.rejects(
+    service.transferOwner(
+      docId,
+      { newOwnerId: 2n, reason: 'Unauthorized transfer' },
+      principal,
+      context,
+    ),
+    (err) => err.response?.errorCode === 'GRANT_CLEARANCE_INSUFFICIENT',
+  );
+});
+
+test('Document Lifecycle: activateDocument auto-provisions active access grant for document owner', async () => {
+  const docId = randomUUID();
+  const versionId = 999n;
+  const { db, accessGrants } = createInMemoryDatabase({
+    users: [[10n, { id: 10n, username: 'owner10', status: 'ACTIVE' }]],
+    documents: [
+      [
+        docId,
+        {
+          id: docId,
+          document_code: 'DOC-ACTIVATE-GRANT',
+          title: 'Auto grant activation test',
+          owner_id: 10n,
+          department_id: 100n,
+          status: 'DRAFT',
+          current_version_id: versionId,
+          retention_until: null,
+        },
+      ],
+    ],
+    versions: [
+      [
+        versionId,
+        {
+          id: versionId,
+          document_id: docId,
+          version_no: 1,
+          scan_status: 'CLEAN',
+          file_size_bytes: 1024n,
+          sha256_hash: 'abc123hash',
+          original_filename: 'test.pdf',
+          mime_type: 'application/pdf',
+        },
+      ],
+    ],
+    classifications: [
+      [
+        1n,
+        {
+          id: 1n,
+          document_id: docId,
+          classification_level_id: 2n,
+          business_category_id: 10n,
+          effective_to: null,
+          classified_by: 10n,
+          reason: 'Initial classification',
+          effective_from: new Date(),
+          classification_levels: {
+            id: 2n,
+            rank: 2,
+            code: 'RESTRICTED',
+            name: 'Nội bộ',
+            allow_download: true,
+          },
+          business_categories: { id: 10n, code: 'GENERAL', name: 'Chung' },
+        },
+      ],
+    ],
+  });
+
+  const mockAudit = createMockAudit();
+  const mockAuth = createMockAuthorization();
+  const cache = new AuthorizationCache();
+  const service = new DocumentsService(mockAudit, mockAuth, cache, db);
+  const principal = { userId: 10n, username: 'owner10', roles: ['DOCUMENT_OWNER'], mfa: true };
+  const context = { ip: '127.0.0.1', correlationId: randomUUID() };
+
+  await service.activateDocument(docId, principal, context);
+
+  const grants = Array.from(accessGrants.values()).filter(
+    (g) => g.document_id === docId && g.principal_user_id === 10n && g.status === 'ACTIVE',
+  );
+  assert.equal(grants.length, 1);
+  assert.equal(grants[0].source, 'DIRECT');
+  assert.equal(grants[0].granted_by, 10n);
 });

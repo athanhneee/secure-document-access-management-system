@@ -21,6 +21,7 @@ import {
 } from '../watermarks/watermark-engine.service.js';
 import { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
+import { PDFDocument } from 'pdf-lib';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -41,6 +42,7 @@ export interface DeliveryFileResult {
   fileSizeBytes: number;
   outputSha256Hash: string;
   watermarkToken?: string | undefined;
+  totalPages?: number | undefined;
 }
 
 @Injectable()
@@ -282,6 +284,14 @@ export class DocumentDeliveryService {
       }
     }
 
+    let totalPages = 1;
+    try {
+      const parsedDoc = await PDFDocument.load(finalPdfBuffer, { ignoreEncryption: true });
+      totalPages = Math.max(1, parsedDoc.getPageCount());
+    } catch {
+      totalPages = 1;
+    }
+
     // 7. Page extraction if pageNumber specified
     if (pageNumber !== undefined) {
       finalPdfBuffer = await this.watermarkEngine.extractPdfPage(finalPdfBuffer, pageNumber);
@@ -312,6 +322,7 @@ export class DocumentDeliveryService {
       fileSizeBytes: finalPdfBuffer.length,
       outputSha256Hash,
       watermarkToken,
+      totalPages,
     };
   }
 

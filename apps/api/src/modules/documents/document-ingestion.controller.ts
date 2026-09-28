@@ -55,6 +55,18 @@ export class DocumentIngestionController {
     const documentId = getFieldValue('documentId');
     const documentCode = getFieldValue('documentCode');
     const changeNote = getFieldValue('changeNote');
+    const description = getFieldValue('description');
+    const rawClassificationLevelId = getFieldValue('classificationLevelId');
+    const classificationLevelId =
+      rawClassificationLevelId && /^\d+$/u.test(rawClassificationLevelId)
+        ? BigInt(rawClassificationLevelId)
+        : undefined;
+    const rawBusinessCategoryId = getFieldValue('businessCategoryId');
+    const businessCategoryId =
+      rawBusinessCategoryId && /^\d+$/u.test(rawBusinessCategoryId)
+        ? BigInt(rawBusinessCategoryId)
+        : undefined;
+    const retentionUntil = getFieldValue('retentionUntil');
 
     return this.ingestion.ingestDocument({
       fileStream: part.file,
@@ -64,6 +76,10 @@ export class DocumentIngestionController {
       departmentId,
       documentId,
       documentCode,
+      description,
+      classificationLevelId,
+      businessCategoryId,
+      retentionUntil,
       changeNote,
       principal: this.principal(request),
       context: this.context(request),

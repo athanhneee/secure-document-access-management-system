@@ -690,3 +690,119 @@ test('Audit log details do not log DEK, IV, or plaintext file contents', async (
     assert.equal(serialized.includes('"dek"'), false, 'DEK must not appear in audit log');
   }
 });
+
+test('DocumentIngestionService: saves description, retention date, classification history, and sets current_version_id on document', async () => {
+  const config = createMockConfig();
+  const fileValidation = new FileValidationService();
+  const zipBombGuard = new ZipBombGuardService(config);
+  const storage = new ObjectStorageService(config);
+  const antivirus = new AntivirusScannerService(config);
+  const kms = new LocalKmsService(config);
+  const encryption = new DocumentEncryptionService(kms);
+  const compensation = new OrphanCompensationService(storage);
+
+  let createdDocument = null;
+  let updatedDocument = null;
+  let createdVersion = null;
+  let createdClassification = null;
+
+  const mockDb = {
+    $transaction: async (fn) =>
+      fn({
+        document: {
+          findUnique: async () => null,
+          create: async ({ data }) => {
+            createdDocument = data;
+            return { id: data.id, ...data };
+          },
+          update: async ({ where, data }) => {
+            updatedDocument = { where, data };
+            return { id: where.id, ...data };
+          },
+        },
+        documentVersion: {
+          create: async ({ data }) => {
+            createdVersion = data;
+            return { id: 'ver-123', ...data };
+          },
+        },
+        documentClassificationHistory: {
+          create: async ({ data }) => {
+            createdClassification = data;
+            return { id: 1n, ...data };
+          },
+        },
+      }),
+  };
+
+  const mockAudit = {
+    record: async () => {},
+  };
+
+  const ingestion = new DocumentIngestionService(
+    config,
+    fileValidation,
+    zipBombGuard,
+    storage,
+    antivirus,
+    encryption,
+    mockAudit,
+    compensation,
+    mockDb,
+  );
+
+  const cleanPdf = createSamplePdfBuffer('Metadata and Classification Test Content');
+  const stream = Readable.from([cleanPdf]);
+  const principal = {
+    userId: 201n,
+    sessionId: 'session-metadata-test',
+    username: 'uploader_user',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  };
+  const context = { ip: '127.0.0.1', correlationId: crypto.randomUUID() };
+
+  const output = await ingestion.ingestDocument({
+    fileStream: stream,
+    rawFilename: 'test_report.pdf',
+    declaredMime: 'application/pdf',
+    title: 'Financial Audit 2026',
+    departmentId: 5n,
+    documentCode: 'DOC-FIN-001',
+    description: 'Internal financial audit report',
+    classificationLevelId: 3n,
+    businessCategoryId: 1n,
+    retentionUntil: '2027-12-31',
+    changeNote: 'Initial upload',
+    principal,
+    context,
+  });
+
+  assert.equal(output.scanStatus, 'CLEAN');
+  assert.equal(output.status, 'DRAFT');
+  assert.equal(output.versionNo, 1);
+
+  // Verify created document metadata
+  assert.ok(createdDocument);
+  assert.equal(createdDocument.title, 'Financial Audit 2026');
+  assert.equal(createdDocument.document_code, 'DOC-FIN-001');
+  assert.equal(createdDocument.description, 'Internal financial audit report');
+  assert.equal(createdDocument.department_id, 5n);
+  assert.equal(createdDocument.owner_id, 201n);
+  assert.equal(createdDocument.retention_until?.toISOString(), '2027-12-31T00:00:00.000Z');
+
+  // Verify document version
+  assert.ok(createdVersion);
+  assert.equal(createdVersion.scan_status, 'CLEAN');
+  assert.equal(createdVersion.version_no, 1);
+
+  // Verify current_version_id was set on the document
+  assert.ok(updatedDocument);
+  assert.equal(updatedDocument.data.current_version_id, 'ver-123');
+
+  // Verify classification history was recorded
+  assert.ok(createdClassification);
+  assert.equal(createdClassification.classification_level_id, 3n);
+  assert.equal(createdClassification.business_category_id, 1n);
+  assert.equal(createdClassification.classified_by, 201n);
+});

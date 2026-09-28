@@ -76,7 +76,9 @@ export async function apiClient<T>(endpoint: string, options: RequestInit = {}):
   return response.json() as Promise<T>;
 }
 
-export async function apiDownload(endpoint: string): Promise<Blob> {
+export type DownloadBlob = Blob & { totalPages?: number };
+
+export async function apiDownload(endpoint: string): Promise<DownloadBlob> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
   const csrf = getCsrfToken();
 
@@ -98,5 +100,15 @@ export async function apiDownload(endpoint: string): Promise<Blob> {
     throw new ApiError(response.status, errorData);
   }
 
-  return response.blob();
+  const rawBlob = await response.blob();
+  const downloadBlob = rawBlob as DownloadBlob;
+  const totalPagesHeader = response.headers.get('x-total-pages');
+  if (totalPagesHeader) {
+    const parsed = parseInt(totalPagesHeader, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      downloadBlob.totalPages = parsed;
+    }
+  }
+
+  return downloadBlob;
 }

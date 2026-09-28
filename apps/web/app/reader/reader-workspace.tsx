@@ -75,6 +75,9 @@ interface MyRequestItem {
   requestedAction: 'VIEW' | 'DOWNLOAD';
   status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
   createdAt: string;
+  requestedFrom?: string;
+  requestedUntil?: string;
+  reason?: string;
 }
 
 interface ReaderDocumentApiDto {
@@ -119,6 +122,10 @@ export function ReaderWorkspace() {
   const [targetDoc, setTargetDoc] = useState<DiscoverableDoc | null>(null);
   const [requestedAction, setRequestedAction] = useState<'VIEW' | 'DOWNLOAD'>('VIEW');
   const [justification, setJustification] = useState('');
+  const [requestDurationDays, setRequestDurationDays] = useState(7);
+  const [isCustomDuration, setIsCustomDuration] = useState(false);
+  const [customRequestedFrom, setCustomRequestedFrom] = useState('');
+  const [customRequestedUntil, setCustomRequestedUntil] = useState('');
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
 
   // Sandbox Preview Modal
@@ -127,7 +134,7 @@ export function ReaderWorkspace() {
   const [previewSessionId, setPreviewSessionId] = useState<string | null>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
   const [previewPage, setPreviewPage] = useState(1);
-  const previewTotalPages = 3;
+  const [previewTotalPages, setPreviewTotalPages] = useState(1);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   // Download Flow State
@@ -140,52 +147,54 @@ export function ReaderWorkspace() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const [docsRes, myGrantsRes, requestsRes] = await Promise.all([
-        apiClient<{ data: ReaderDocumentApiDto[] }>('/documents?pageSize=50').catch(() => ({
-          data: [],
-        })),
-        apiClient<{ data: ReaderGrantApiDto[] }>('/documents/my-grants?pageSize=50').catch(() => ({
-          data: [],
-        })),
-        apiClient<{ data: MyRequestItem[] }>('/access-requests?scope=my').catch(() => ({
-          data: [],
-        })),
+      const [docsResult, myGrantsResult, requestsResult] = await Promise.allSettled([
+        apiClient<{ data: ReaderDocumentApiDto[] }>('/documents?pageSize=50'),
+        apiClient<{ data: ReaderGrantApiDto[] }>('/documents/my-grants?pageSize=50'),
+        apiClient<{ data: MyRequestItem[] }>('/access-requests?scope=my'),
       ]);
 
-      const mappedDiscover: DiscoverableDoc[] = (docsRes.data || []).map((d) => ({
-        id: d.id,
-        title: d.title || 'Tài liệu không tên',
-        documentCode: d.documentCode || d.document_code,
-        classificationCode: (d.classification?.code ||
-          d.classificationCode ||
-          'CONFIDENTIAL') as ClassificationCode,
-        classificationRank: d.classification?.rank ?? 3,
-        departmentName: d.department?.name || 'Phòng Kỹ thuật',
-        allowDownload: d.allowDownload ?? true,
-        hasAccess: false,
-      }));
-      setDiscoverDocs(mappedDiscover);
+      if (docsResult.status === 'fulfilled') {
+        const mappedDiscover: DiscoverableDoc[] = (docsResult.value.data || []).map((d) => ({
+          id: d.id,
+          title: d.title || 'Tài liệu không tên',
+          documentCode: d.documentCode || d.document_code,
+          classificationCode: (d.classification?.code ||
+            d.classificationCode ||
+            'UNCLASSIFIED') as ClassificationCode,
+          classificationRank: d.classification?.rank ?? 1,
+          departmentName: d.department?.name || '—',
+          allowDownload: d.allowDownload ?? false,
+          hasAccess: false,
+        }));
+        setDiscoverDocs(mappedDiscover);
+      } else {
+        setErrorMessage('Không thể tải danh sách tài liệu từ máy chủ.');
+      }
 
-      const mappedMy: MyGrantedDoc[] = (myGrantsRes.data || []).map((g) => ({
-        id: g.id || g.documentId || 'grant-id',
-        documentId: g.documentId || g.id || 'doc-id',
-        title: g.title || g.document?.title || 'Tài liệu mật đã cấp quyền',
-        documentCode: g.documentCode || g.document?.documentCode,
-        classificationCode: (g.classificationCode ||
-          g.document?.classificationCode ||
-          'RESTRICTED') as ClassificationCode,
-        permissions: g.permissions || ['VIEW'],
-        validUntil: g.validUntil || new Date(Date.now() + 7 * 86400000).toISOString(),
-        allowDownload: g.allowDownload ?? true,
-      }));
+      if (myGrantsResult.status === 'fulfilled') {
+        const mappedMy: MyGrantedDoc[] = (myGrantsResult.value.data || []).map((g) => ({
+          id: g.id || g.documentId || 'grant-id',
+          documentId: g.documentId || g.id || 'doc-id',
+          title: g.title || g.document?.title || 'Tài liệu đã cấp quyền',
+          documentCode: g.documentCode || g.document?.documentCode,
+          classificationCode: (g.classificationCode ||
+            g.document?.classificationCode ||
+            'UNCLASSIFIED') as ClassificationCode,
+          permissions: g.permissions || ['VIEW'],
+          validUntil: g.validUntil || '—',
+          allowDownload: g.allowDownload ?? false,
+        }));
+        setMyDocs(mappedMy);
+      }
 
-      setMyDocs(mappedMy);
-      setMyRequests(requestsRes.data || []);
+      if (requestsResult.status === 'fulfilled') {
+        setMyRequests(requestsResult.value.data || []);
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(err.message);
       } else {
-        setErrorMessage('Không thể tải danh mục tài liệu khám phá.');
+        setErrorMessage('Không thể tải dữ liệu danh mục.');
       }
     } finally {
       setIsLoading(false);
@@ -246,6 +255,11 @@ export function ReaderWorkspace() {
         const pdfBlob = await apiDownload(
           `/documents/${doc.documentId}/preview?sessionId=${sessionResult.sessionId}`,
         );
+        if (pdfBlob.totalPages && pdfBlob.totalPages > 0) {
+          setPreviewTotalPages(pdfBlob.totalPages);
+        } else {
+          setPreviewTotalPages(1);
+        }
         const objectUrl = URL.createObjectURL(pdfBlob);
         setPreviewPdfUrl(objectUrl);
       } catch (streamErr) {
@@ -260,6 +274,24 @@ export function ReaderWorkspace() {
       } else {
         setErrorMessage('Không thể tạo phiên xem trước tài liệu.');
       }
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  }
+
+  // Handle switching preview page
+  async function handlePageChange(newPage: number) {
+    if (newPage < 1 || newPage > previewTotalPages || !previewDoc || !previewSessionId) return;
+    setIsLoadingPreview(true);
+    try {
+      const pdfBlob = await apiDownload(
+        `/documents/${previewDoc.documentId}/preview/page/${newPage}?sessionId=${previewSessionId}`,
+      );
+      setPreviewPage(newPage);
+      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
+      setPreviewPdfUrl(URL.createObjectURL(pdfBlob));
+    } catch (err) {
+      console.warn('Page preview error:', err);
     } finally {
       setIsLoadingPreview(false);
     }
@@ -319,7 +351,7 @@ export function ReaderWorkspace() {
     }
   }
 
-  // Submit Access Request
+  // Submit Access Request with explicit duration
   async function handleSubmitRequest(e: FormEvent) {
     e.preventDefault();
     if (!targetDoc) return;
@@ -333,12 +365,26 @@ export function ReaderWorkspace() {
     setErrorMessage(null);
 
     try {
+      const now = new Date();
+      let fromIso: string;
+      let untilIso: string;
+
+      if (isCustomDuration && customRequestedFrom && customRequestedUntil) {
+        fromIso = new Date(customRequestedFrom).toISOString();
+        untilIso = new Date(customRequestedUntil).toISOString();
+      } else {
+        fromIso = now.toISOString();
+        untilIso = new Date(now.getTime() + requestDurationDays * 86400000).toISOString();
+      }
+
       const created = await apiClient<MyRequestItem>('/access-requests', {
         method: 'POST',
         body: JSON.stringify({
           documentId: targetDoc.id,
           requestedAction,
           reason: justification.trim(),
+          requestedFrom: fromIso,
+          requestedUntil: untilIso,
         }),
       });
 
@@ -348,6 +394,9 @@ export function ReaderWorkspace() {
       setRequestModalOpen(false);
       setTargetDoc(null);
       setJustification('');
+      setIsCustomDuration(false);
+      setCustomRequestedFrom('');
+      setCustomRequestedUntil('');
       setMyRequests((prev) => [created, ...prev]);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -747,6 +796,9 @@ export function ReaderWorkspace() {
                             Tài liệu mục tiêu
                           </TableHead>
                           <TableHead className="text-xs text-[#717171]">Quyền yêu cầu</TableHead>
+                          <TableHead className="text-xs text-[#717171]">
+                            Thời gian yêu cầu
+                          </TableHead>
                           <TableHead className="text-xs text-[#717171]">Thời gian gửi</TableHead>
                           <TableHead className="text-xs text-[#717171]">Trạng thái xử lý</TableHead>
                           <TableHead className="text-xs text-[#717171] text-right">
@@ -758,7 +810,7 @@ export function ReaderWorkspace() {
                         {myRequests.length === 0 ? (
                           <TableRow>
                             <TableCell
-                              colSpan={5}
+                              colSpan={6}
                               className="text-center py-8 text-[#717171] text-xs"
                             >
                               Bạn chưa gửi yêu cầu cấp quyền nào
@@ -775,6 +827,31 @@ export function ReaderWorkspace() {
                               </TableCell>
                               <TableCell>
                                 <Badge variant="secondary">{req.requestedAction}</Badge>
+                              </TableCell>
+                              <TableCell className="text-xs text-[#222222]">
+                                {req.requestedFrom && req.requestedUntil ? (
+                                  <div className="flex flex-col text-[11px]">
+                                    <span className="font-medium text-[#222222]">
+                                      {new Date(req.requestedFrom).toLocaleDateString('vi-VN')}{' '}
+                                      &rarr;{' '}
+                                      {new Date(req.requestedUntil).toLocaleDateString('vi-VN')}
+                                    </span>
+                                    <span className="text-[10px] text-[#717171]">
+                                      (
+                                      {Math.max(
+                                        1,
+                                        Math.round(
+                                          (new Date(req.requestedUntil).getTime() -
+                                            new Date(req.requestedFrom).getTime()) /
+                                            86400000,
+                                        ),
+                                      )}{' '}
+                                      ngày)
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="text-[#717171]">7 ngày (mặc định)</span>
+                                )}
                               </TableCell>
                               <TableCell className="text-xs text-[#717171] font-bold">
                                 {new Date(req.createdAt).toLocaleDateString('vi-VN')}
@@ -868,6 +945,83 @@ export function ReaderWorkspace() {
                       <span>Xem & Tải bản sao</span>
                     </button>
                   </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <span className="font-medium text-[#222222] block">
+                    Thời gian sử dụng mong muốn:
+                  </span>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[
+                      { days: 3, label: '3 ngày' },
+                      { days: 7, label: '7 ngày (Chuẩn)' },
+                      { days: 14, label: '14 ngày' },
+                      { days: 30, label: '30 ngày' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.days}
+                        type="button"
+                        onClick={() => {
+                          setRequestDurationDays(opt.days);
+                          setIsCustomDuration(false);
+                        }}
+                        className={`px-2.5 py-1.5 rounded-[12px] border text-[11px] font-semibold transition-all cursor-pointer ${
+                          !isCustomDuration && requestDurationDays === opt.days
+                            ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#FF385C]'
+                            : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsCustomDuration(!isCustomDuration)}
+                      className="text-[11px] text-[#008489] hover:underline font-medium cursor-pointer"
+                    >
+                      {isCustomDuration
+                        ? '← Chọn thời hạn nhanh'
+                        : 'Tùy chọn khoảng thời gian cụ thể (Từ ngày - Đến ngày) →'}
+                    </button>
+                  </div>
+
+                  {isCustomDuration && (
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div>
+                        <label
+                          htmlFor="custom-requested-from"
+                          className="text-[10px] text-[#717171] block mb-0.5"
+                        >
+                          Từ ngày:
+                        </label>
+                        <input
+                          id="custom-requested-from"
+                          type="datetime-local"
+                          value={customRequestedFrom}
+                          onChange={(e) => setCustomRequestedFrom(e.target.value)}
+                          className="w-full text-[11px] p-1.5 rounded-lg border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor="custom-requested-until"
+                          className="text-[10px] text-[#717171] block mb-0.5"
+                        >
+                          Đến ngày:
+                        </label>
+                        <input
+                          id="custom-requested-until"
+                          type="datetime-local"
+                          value={customRequestedUntil}
+                          onChange={(e) => setCustomRequestedUntil(e.target.value)}
+                          className="w-full text-[11px] p-1.5 rounded-lg border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-1">
@@ -1017,8 +1171,8 @@ export function ReaderWorkspace() {
                     variant="secondary"
                     text="Trang trước"
                     icon={<ChevronLeft size={16} />}
-                    disabled={previewPage <= 1}
-                    onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                    disabled={previewPage <= 1 || isLoadingPreview}
+                    onClick={() => void handlePageChange(previewPage - 1)}
                   />
                   <span className="text-xs font-bold text-[#717171]">
                     Trang {previewPage} / {previewTotalPages}
@@ -1028,8 +1182,8 @@ export function ReaderWorkspace() {
                     variant="secondary"
                     text="Trang sau"
                     icon={<ChevronRight size={16} />}
-                    disabled={previewPage >= previewTotalPages}
-                    onClick={() => setPreviewPage((p) => Math.min(previewTotalPages, p + 1))}
+                    disabled={previewPage >= previewTotalPages || isLoadingPreview}
+                    onClick={() => void handlePageChange(previewPage + 1)}
                   />
                 </div>
 

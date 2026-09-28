@@ -344,6 +344,8 @@ export class DocumentsController {
       .type(result.mimeType)
       .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
       .header('Pragma', 'no-cache')
+      .header('X-Total-Pages', (result.totalPages ?? 1).toString())
+      .header('Access-Control-Expose-Headers', 'X-Total-Pages, Content-Disposition')
       .header('Content-Disposition', `inline; filename="${result.filename}"`)
       .send(result.buffer);
   }
@@ -379,6 +381,8 @@ export class DocumentsController {
       .type(result.mimeType)
       .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
       .header('Pragma', 'no-cache')
+      .header('X-Total-Pages', (result.totalPages ?? 1).toString())
+      .header('Access-Control-Expose-Headers', 'X-Total-Pages, Content-Disposition')
       .header('Content-Disposition', `inline; filename="${result.filename}"`)
       .send(result.buffer);
   }

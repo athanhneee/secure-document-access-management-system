@@ -32,6 +32,10 @@ export interface IngestDocumentInput {
   departmentId?: bigint | undefined;
   documentCode?: string | undefined;
   documentId?: string | undefined;
+  description?: string | undefined;
+  classificationLevelId?: bigint | undefined;
+  businessCategoryId?: bigint | undefined;
+  retentionUntil?: string | undefined;
   changeNote?: string | undefined;
   principal: AuthPrincipal;
   context: RequestContext;
@@ -357,6 +361,14 @@ export class DocumentIngestionService {
       const title = input.title ?? validatedInfo.sanitizedFilename;
       const docCode = input.documentCode ?? `DOC-${randomUUID().substring(0, 8).toUpperCase()}`;
 
+      let retentionDate: Date | null = null;
+      if (input.retentionUntil) {
+        retentionDate = new Date(`${input.retentionUntil}T00:00:00.000Z`);
+        if (Number.isNaN(retentionDate.getTime())) {
+          retentionDate = null;
+        }
+      }
+
       const persistVersionMetadata = async () => {
         await this.database.$transaction(async (tx) => {
           // Concurrency control: Lock document row FOR UPDATE in PostgreSQL
@@ -377,7 +389,10 @@ export class DocumentIngestionService {
           // Check if document already exists
           const existingDoc = await tx.document.findUnique({
             where: { id: targetDocId },
-            include: { versions: { select: { version_no: true } } },
+            include: {
+              versions: { select: { version_no: true } },
+              classification_history: { where: { effective_to: null }, select: { id: true } },
+            },
           });
 
           if (
@@ -397,10 +412,12 @@ export class DocumentIngestionService {
                 id: targetDocId,
                 document_code: docCode,
                 title,
+                description: input.description ?? null,
                 owner_id: input.principal.userId,
                 department_id: deptId,
                 status: 'DRAFT',
                 discoverable: true,
+                retention_until: retentionDate,
               },
             });
             finalVersionNo = 1;
@@ -414,7 +431,7 @@ export class DocumentIngestionService {
           }
 
           // Insert new document version
-          await tx.documentVersion.create({
+          const newVersion = await tx.documentVersion.create({
             data: {
               document_id: targetDocId,
               version_no: finalVersionNo,
@@ -429,6 +446,39 @@ export class DocumentIngestionService {
               uploaded_by: input.principal.userId,
             },
           });
+
+          // Set current_version_id if newly created or current_version_id is null
+          if (
+            typeof tx.document?.update === 'function' &&
+            newVersion?.id &&
+            (!existingDoc || !existingDoc.current_version_id)
+          ) {
+            await tx.document.update({
+              where: { id: targetDocId },
+              data: {
+                current_version_id: newVersion.id,
+              },
+            });
+          }
+
+          // Record classification history if classificationLevelId is provided and no active classification exists
+          if (
+            input.classificationLevelId &&
+            typeof tx.documentClassificationHistory?.create === 'function' &&
+            (!existingDoc || !existingDoc.classification_history?.length)
+          ) {
+            await tx.documentClassificationHistory.create({
+              data: {
+                document_id: targetDocId,
+                classification_level_id: input.classificationLevelId,
+                business_category_id: input.businessCategoryId ?? 1n,
+                reason: input.changeNote ?? 'Initial upload classification',
+                classified_by: input.principal.userId,
+                effective_from: new Date(),
+                effective_to: null,
+              },
+            });
+          }
         });
       };
 

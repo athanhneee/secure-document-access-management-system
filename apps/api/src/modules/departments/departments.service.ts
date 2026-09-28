@@ -27,6 +27,21 @@ export class DepartmentsService {
     return { data: departments.map((department) => this.present(department)) };
   }
 
+  async lookup() {
+    const departments = await this.database.department.findMany({
+      where: { is_active: true },
+      orderBy: [{ code: 'asc' }, { id: 'asc' }],
+      select: { id: true, code: true, name: true },
+    });
+    return {
+      data: departments.map((d) => ({
+        id: d.id.toString(),
+        code: d.code,
+        name: d.name,
+      })),
+    };
+  }
+
   async get(principal: AuthPrincipal, id: bigint) {
     const department = await this.database.department.findUnique({
       where: { id },

@@ -76,6 +76,11 @@ export class RbacController {
     return this.rbac.listRoles();
   }
 
+  @Get('roles/lookup')
+  lookupRoles() {
+    return this.rbac.lookupRoles();
+  }
+
   @Get('roles/:id')
   @RequirePermission('ROLE', 'MANAGE', true)
   getRole(@Param('id') id: string) {

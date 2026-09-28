@@ -27,6 +27,22 @@ export class RbacService {
     return { data: roles.map((role) => this.presentRole(role)) };
   }
 
+  async lookupRoles() {
+    const roles = await this.database.role.findMany({
+      where: { is_active: true },
+      orderBy: { code: 'asc' },
+      select: { id: true, code: true, name: true, description: true },
+    });
+    return {
+      data: roles.map((r) => ({
+        id: r.id.toString(),
+        code: r.code,
+        name: r.name,
+        description: r.description,
+      })),
+    };
+  }
+
   async getRole(id: bigint) {
     const role = await this.database.role.findUnique({
       where: { id },

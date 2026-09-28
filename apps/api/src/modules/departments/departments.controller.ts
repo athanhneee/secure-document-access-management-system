@@ -51,6 +51,11 @@ export class DepartmentsController {
     return this.departments.list(this.principal(request));
   }
 
+  @Get('lookup')
+  lookup() {
+    return this.departments.lookup();
+  }
+
   @Get(':id')
   @RequirePermission('DEPARTMENT', 'MANAGE')
   get(@Param('id') id: string, @Req() request: FastifyRequest) {

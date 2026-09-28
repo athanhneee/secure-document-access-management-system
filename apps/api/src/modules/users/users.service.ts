@@ -48,14 +48,59 @@ export class UsersService {
         department_id: true,
         status: true,
         version: true,
+        departments: { select: { id: true, name: true } },
       },
     });
     if (!user) throw new NotFoundException('User not found.');
     const grants = await this.authorization.effectiveGrants(principal.userId);
+    const { departments, ...userFields } = user;
     return {
-      ...this.present(user),
+      ...this.present(userFields),
+      departmentName: departments?.name ?? null,
       roles: [...new Set(grants.map((grant) => grant.roleCode))].sort(),
       permissions: [...new Set(grants.map((grant) => `${grant.resource}:${grant.action}`))].sort(),
+    };
+  }
+
+  async lookup() {
+    const now = new Date();
+    const users = await this.database.user.findMany({
+      where: { status: 'ACTIVE' },
+      orderBy: { username: 'asc' },
+      select: {
+        id: true,
+        username: true,
+        full_name: true,
+        department_id: true,
+        departments: { select: { id: true, name: true } },
+        user_attribute_assignments_user_attribute_assignments_user_idTousers: {
+          where: {
+            attribute_definitions: { code: 'CLEARANCE_LEVEL' },
+            valid_from: { lte: now },
+            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          },
+          include: { attribute_options: true },
+          orderBy: { attribute_options: { numeric_rank: 'desc' } },
+          take: 1,
+        },
+      },
+    });
+
+    return {
+      data: users.map((u) => {
+        const clearanceAttr =
+          u.user_attribute_assignments_user_attribute_assignments_user_idTousers[0];
+        return {
+          id: u.id.toString(),
+          username: u.username,
+          fullName: u.full_name,
+          departmentId: u.department_id?.toString() ?? null,
+          departmentName: u.departments?.name ?? null,
+          clearanceRank: clearanceAttr?.attribute_options?.numeric_rank ?? 0,
+          clearanceCode: clearanceAttr?.attribute_options?.value_code ?? 'UNCLASSIFIED',
+          clearanceName: clearanceAttr?.attribute_options?.display_name ?? 'Chưa phân loại',
+        };
+      }),
     };
   }
 

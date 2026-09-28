@@ -55,6 +55,11 @@ export class UsersController {
     return this.users.currentUser(this.principal(request));
   }
 
+  @Get('lookup')
+  lookup() {
+    return this.users.lookup();
+  }
+
   @Get()
   @RequirePermission('USER', 'MANAGE')
   list(@Req() request: FastifyRequest) {

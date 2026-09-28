@@ -1,6 +1,8 @@
 import {
   Controller,
   Get,
+  Patch,
+  Body,
   HttpStatus,
   Param,
   Req,
@@ -10,6 +12,7 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 import { WatermarkTokenParamSchema } from '@sda/contracts';
+import { CsrfService } from '../auth/csrf.service.js';
 import { RequirePermission } from '../rbac/require-permission.js';
 import { WatermarksService, type WatermarkVerificationResult } from './watermarks.service.js';
 
@@ -17,7 +20,10 @@ import { WatermarksService, type WatermarkVerificationResult } from './watermark
 @ApiBearerAuth()
 @Controller('watermarks')
 export class WatermarksController {
-  constructor(private readonly watermarksService: WatermarksService) {}
+  constructor(
+    private readonly watermarksService: WatermarksService,
+    private readonly csrf: CsrfService,
+  ) {}
 
   @Get('configs')
   @ApiOperation({ summary: 'List active watermark templates and configurations' })
@@ -25,6 +31,21 @@ export class WatermarksController {
   async listConfigs(@Req() request: FastifyRequest): Promise<{ data: unknown[] }> {
     if (!request.auth) throw new UnauthorizedException('Authentication required.');
     return this.watermarksService.listConfigs();
+  }
+
+  @Patch('configs/:id')
+  @RequirePermission('WATERMARK_CONFIG', 'MANAGE', true)
+  @ApiOperation({ summary: 'Update watermark configuration' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Updated watermark configuration' })
+  async updateConfig(
+    @Param('id') id: string,
+    @Body() body: Parameters<WatermarksService['updateConfig']>[1],
+    @Req() request: FastifyRequest,
+  ): Promise<Record<string, unknown>> {
+    if (!request.auth) throw new UnauthorizedException('Authentication required.');
+    this.csrf.assertRequest(request);
+    const idBigInt = BigInt(id);
+    return this.watermarksService.updateConfig(idBigInt, body);
   }
 
   @Get('verify/:token')

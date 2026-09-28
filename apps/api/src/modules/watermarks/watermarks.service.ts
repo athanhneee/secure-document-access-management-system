@@ -89,6 +89,60 @@ export class WatermarksService {
   }
 
   /**
+   * Update a watermark configuration (opacity, font size, QR, etc.)
+   */
+  async updateConfig(
+    id: bigint,
+    input: {
+      opacityPercent?: number;
+      fontSize?: number;
+      includeQrCode?: boolean;
+      colorHex?: string;
+      rotationDegrees?: number;
+      templateText?: string;
+      isVisible?: boolean;
+    },
+  ): Promise<Record<string, unknown>> {
+    const existing = await this.database.watermarkConfig.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Watermark configuration not found.');
+    }
+
+    const updated = await this.database.watermarkConfig.update({
+      where: { id },
+      data: {
+        ...(input.opacityPercent !== undefined
+          ? { opacity_percent: Math.round(input.opacityPercent) }
+          : {}),
+        ...(input.fontSize !== undefined ? { font_size: Math.round(input.fontSize) } : {}),
+        ...(input.includeQrCode !== undefined ? { include_qr_code: input.includeQrCode } : {}),
+        ...(input.colorHex !== undefined ? { color_hex: input.colorHex } : {}),
+        ...(input.rotationDegrees !== undefined
+          ? { rotation_degrees: Math.round(input.rotationDegrees) }
+          : {}),
+        ...(input.templateText !== undefined ? { template_text: input.templateText } : {}),
+        ...(input.isVisible !== undefined ? { is_visible: input.isVisible } : {}),
+        updated_at: new Date(),
+      },
+    });
+
+    return {
+      id: updated.id.toString(),
+      name: updated.name,
+      opacityPercent: updated.opacity_percent,
+      fontSize: updated.font_size,
+      includeQrCode: updated.include_qr_code,
+      colorHex: updated.color_hex,
+      rotationDegrees: updated.rotation_degrees,
+      templateText: updated.template_text,
+      isVisible: updated.is_visible,
+      updatedAt: updated.updated_at.toISOString(),
+    };
+  }
+
+  /**
    * UC28: Trace a watermark token to verify the user, session, document, version, and generation time.
    * Essential for forensic investigation of document leaks.
    */

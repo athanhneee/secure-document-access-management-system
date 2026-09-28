@@ -19,6 +19,7 @@ import {
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import { generateCsv } from './csv-formula-sanitizer.js';
+import { generatePdfTable, generateExcelTable, type ExportColumn } from './export-formatter.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -212,12 +213,29 @@ export class ExportJobService {
       });
     }
 
-    const ext = job.format.toLowerCase();
-    const filename = `${job.export_type.toLowerCase()}-${job.id.slice(0, 8)}.${ext === 'excel' ? 'csv' : ext}`;
+    const format = job.format.toUpperCase();
+    let ext = 'csv';
+    let mimeType = job.mime_type;
+
+    if (format === 'EXCEL') {
+      ext = 'xlsx';
+      mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    } else if (format === 'PDF') {
+      ext = 'pdf';
+      mimeType = 'application/pdf';
+    } else if (format === 'JSON') {
+      ext = 'json';
+      mimeType = 'application/json';
+    } else {
+      ext = 'csv';
+      mimeType = 'text/csv; charset=utf-8';
+    }
+
+    const filename = `${job.export_type.toLowerCase()}-${job.id.slice(0, 8)}.${ext}`;
 
     return {
       buffer,
-      mimeType: job.mime_type ?? 'application/octet-stream',
+      mimeType: mimeType ?? 'application/octet-stream',
       filename,
     };
   }
@@ -246,143 +264,153 @@ export class ExportJobService {
       let mimeType = 'text/plain';
       let rowCount = 0;
 
+      let reportTitle = 'Audit Report';
+      let rawRecords: unknown[] = [];
+      let columns: ExportColumn[] = [];
+      let rows: Record<string, string>[] = [];
+
       switch (input.exportType) {
         case 'AUDIT_LOGS': {
+          reportTitle = 'Secure Document Access - Audit Trail Report';
           const logs = await this.database.auditLog.findMany({
             take: 1000,
             orderBy: { occurred_at: 'desc' },
           });
-          rowCount = logs.length;
-
-          if (input.format === 'JSON') {
-            mimeType = 'application/json';
-            contentBuffer = Buffer.from(JSON.stringify(logs, null, 2), 'utf-8');
-          } else {
-            // CSV / EXCEL with Formula Injection Sanitization!
-            mimeType = 'text/csv; charset=utf-8';
-            const rows = logs.map((l) => ({
-              id: l.id.toString(),
-              occurred_at: l.occurred_at.toISOString(),
-              actor_username: l.actor_username ?? '',
-              action: l.action,
-              object_type: l.object_type,
-              object_id: l.object_id ?? '',
-              outcome: l.outcome,
-              ip_address: l.ip_address ?? '',
-              chain_partition: l.chain_partition,
-              chain_sequence: l.chain_sequence.toString(),
-              entry_hash: l.entry_hash,
-            }));
-            const columns = [
-              { key: 'id' as const, header: 'Log ID' },
-              { key: 'occurred_at' as const, header: 'Timestamp (UTC)' },
-              { key: 'actor_username' as const, header: 'Actor' },
-              { key: 'action' as const, header: 'Action' },
-              { key: 'object_type' as const, header: 'Resource Type' },
-              { key: 'object_id' as const, header: 'Resource ID' },
-              { key: 'outcome' as const, header: 'Outcome' },
-              { key: 'ip_address' as const, header: 'IP Address' },
-              { key: 'chain_partition' as const, header: 'Partition' },
-              { key: 'chain_sequence' as const, header: 'Sequence' },
-              { key: 'entry_hash' as const, header: 'HMAC Hash' },
-            ];
-            const csvData = generateCsv(rows, columns);
-            // Prefix UTF-8 BOM if Excel requested
-            const prefix = input.format === 'EXCEL' ? '\uFEFF' : '';
-            contentBuffer = Buffer.from(prefix + csvData, 'utf-8');
-          }
+          rawRecords = logs;
+          columns = [
+            { key: 'id', header: 'Log ID' },
+            { key: 'occurred_at', header: 'Timestamp (UTC)' },
+            { key: 'actor_username', header: 'Actor' },
+            { key: 'action', header: 'Action' },
+            { key: 'object_type', header: 'Resource Type' },
+            { key: 'object_id', header: 'Resource ID' },
+            { key: 'outcome', header: 'Outcome' },
+            { key: 'ip_address', header: 'IP Address' },
+            { key: 'chain_partition', header: 'Partition' },
+            { key: 'chain_sequence', header: 'Sequence' },
+            { key: 'entry_hash', header: 'HMAC Hash' },
+          ];
+          rows = logs.map((l) => ({
+            id: l.id.toString(),
+            occurred_at: l.occurred_at.toISOString(),
+            actor_username: l.actor_username ?? '',
+            action: l.action,
+            object_type: l.object_type,
+            object_id: l.object_id ?? '',
+            outcome: l.outcome,
+            ip_address: l.ip_address ?? '',
+            chain_partition: l.chain_partition,
+            chain_sequence: l.chain_sequence.toString(),
+            entry_hash: l.entry_hash,
+          }));
           break;
         }
 
         case 'SECURITY_ALERTS': {
+          reportTitle = 'Security Operations - Alert Incident Report';
           const alerts = await this.database.securityAlert.findMany({
             take: 1000,
             orderBy: { detected_at: 'desc' },
           });
-          rowCount = alerts.length;
-
-          if (input.format === 'JSON') {
-            mimeType = 'application/json';
-            contentBuffer = Buffer.from(JSON.stringify(alerts, null, 2), 'utf-8');
-          } else {
-            mimeType = 'text/csv; charset=utf-8';
-            const rows = alerts.map((a) => ({
-              id: a.id,
-              alert_type: a.alert_type,
-              severity: a.severity,
-              status: a.status,
-              title: a.title,
-              description: a.description,
-              detected_at: a.detected_at.toISOString(),
-              resolved_at: a.resolved_at?.toISOString() ?? '',
-              resolution_note: a.resolution_note ?? '',
-            }));
-            const columns = [
-              { key: 'id' as const, header: 'Alert ID' },
-              { key: 'alert_type' as const, header: 'Alert Type' },
-              { key: 'severity' as const, header: 'Severity' },
-              { key: 'status' as const, header: 'Status' },
-              { key: 'title' as const, header: 'Title' },
-              { key: 'description' as const, header: 'Description' },
-              { key: 'detected_at' as const, header: 'Detected At (UTC)' },
-              { key: 'resolved_at' as const, header: 'Resolved At' },
-              { key: 'resolution_note' as const, header: 'Resolution Note' },
-            ];
-            const csvData = generateCsv(rows, columns);
-            contentBuffer = Buffer.from(csvData, 'utf-8');
-          }
+          rawRecords = alerts;
+          columns = [
+            { key: 'id', header: 'Alert ID' },
+            { key: 'alert_type', header: 'Alert Type' },
+            { key: 'severity', header: 'Severity' },
+            { key: 'status', header: 'Status' },
+            { key: 'title', header: 'Title' },
+            { key: 'description', header: 'Description' },
+            { key: 'detected_at', header: 'Detected At (UTC)' },
+            { key: 'resolved_at', header: 'Resolved At' },
+            { key: 'resolution_note', header: 'Resolution Note' },
+          ];
+          rows = alerts.map((a) => ({
+            id: a.id,
+            alert_type: a.alert_type,
+            severity: a.severity,
+            status: a.status,
+            title: a.title,
+            description: a.description,
+            detected_at: a.detected_at.toISOString(),
+            resolved_at: a.resolved_at?.toISOString() ?? '',
+            resolution_note: a.resolution_note ?? '',
+          }));
           break;
         }
 
         case 'INCIDENT_REPORTS': {
+          reportTitle = 'Security Operations - Incident Summary Report';
           const incidents = await this.database.incidentReport.findMany({
             take: 1000,
             orderBy: { created_at: 'desc' },
           });
-          rowCount = incidents.length;
-
-          if (input.format === 'JSON') {
-            mimeType = 'application/json';
-            contentBuffer = Buffer.from(JSON.stringify(incidents, null, 2), 'utf-8');
-          } else {
-            mimeType = 'text/csv; charset=utf-8';
-            const rows = incidents.map((i) => ({
-              id: i.id,
-              incident_code: i.incident_code,
-              status: i.status,
-              title: i.title,
-              summary: i.summary,
-              created_at: i.created_at.toISOString(),
-              submitted_at: i.submitted_at?.toISOString() ?? '',
-              closed_at: i.closed_at?.toISOString() ?? '',
-            }));
-            const columns = [
-              { key: 'id' as const, header: 'ID' },
-              { key: 'incident_code' as const, header: 'Incident Code' },
-              { key: 'status' as const, header: 'Status' },
-              { key: 'title' as const, header: 'Title' },
-              { key: 'summary' as const, header: 'Summary' },
-              { key: 'created_at' as const, header: 'Created At' },
-              { key: 'submitted_at' as const, header: 'Submitted At' },
-              { key: 'closed_at' as const, header: 'Closed At' },
-            ];
-            const csvData = generateCsv(rows, columns);
-            contentBuffer = Buffer.from(csvData, 'utf-8');
-          }
+          rawRecords = incidents;
+          columns = [
+            { key: 'id', header: 'ID' },
+            { key: 'incident_code', header: 'Incident Code' },
+            { key: 'status', header: 'Status' },
+            { key: 'title', header: 'Title' },
+            { key: 'summary', header: 'Summary' },
+            { key: 'created_at', header: 'Created At' },
+            { key: 'submitted_at', header: 'Submitted At' },
+            { key: 'closed_at', header: 'Closed At' },
+          ];
+          rows = incidents.map((i) => ({
+            id: i.id,
+            incident_code: i.incident_code,
+            status: i.status,
+            title: i.title,
+            summary: i.summary,
+            created_at: i.created_at.toISOString(),
+            submitted_at: i.submitted_at?.toISOString() ?? '',
+            closed_at: i.closed_at?.toISOString() ?? '',
+          }));
           break;
         }
 
         default: {
-          // SYSTEM_REPORT
+          reportTitle = 'System Health Diagnostic Snapshot Report';
           const snapshots = await this.database.systemHealthSnapshot.findMany({
             take: 50,
             orderBy: { captured_at: 'desc' },
           });
-          rowCount = snapshots.length;
-          mimeType = 'application/json';
-          contentBuffer = Buffer.from(JSON.stringify(snapshots, null, 2), 'utf-8');
+          rawRecords = snapshots;
+          columns = [
+            { key: 'id', header: 'ID' },
+            { key: 'service_name', header: 'Service' },
+            { key: 'status', header: 'Status' },
+            { key: 'response_time_ms', header: 'Latency (ms)' },
+            { key: 'error_count', header: 'Errors' },
+            { key: 'captured_at', header: 'Captured At' },
+          ];
+          rows = snapshots.map((s) => ({
+            id: s.id.toString(),
+            service_name: s.service_name,
+            status: s.status,
+            response_time_ms: s.response_time_ms !== null ? s.response_time_ms.toString() : '0',
+            error_count: s.error_count.toString(),
+            captured_at: s.captured_at.toISOString(),
+          }));
           break;
         }
+      }
+
+      rowCount = rows.length;
+
+      if (input.format === 'JSON') {
+        mimeType = 'application/json';
+        contentBuffer = Buffer.from(JSON.stringify(rawRecords, null, 2), 'utf-8');
+      } else if (input.format === 'PDF') {
+        mimeType = 'application/pdf';
+        contentBuffer = await generatePdfTable(reportTitle, columns, rows);
+      } else if (input.format === 'EXCEL') {
+        mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        contentBuffer = await generateExcelTable(reportTitle, columns, rows);
+      } else {
+        // CSV with formula injection sanitization
+        mimeType = 'text/csv; charset=utf-8';
+        const csvData = generateCsv(rows, columns);
+        contentBuffer = Buffer.from(csvData, 'utf-8');
       }
 
       // Compute hash and size

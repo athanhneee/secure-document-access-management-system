@@ -90,7 +90,7 @@ interface ChainVerificationReport {
 interface ExportJobItem {
   id: string;
   exportType: string;
-  format: 'CSV' | 'JSON' | 'PDF';
+  format: 'CSV' | 'JSON' | 'PDF' | 'EXCEL';
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
   createdAt: string;
 }
@@ -115,7 +115,7 @@ export function AuditorWorkspace() {
 
   // Export Job Modal State
   const [exportModalOpen, setExportModalOpen] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'CSV' | 'JSON' | 'PDF'>('CSV');
+  const [exportFormat, setExportFormat] = useState<'CSV' | 'JSON' | 'PDF' | 'EXCEL'>('CSV');
   const [isExporting, setIsExporting] = useState(false);
 
   // Verifying Chain State
@@ -247,7 +247,7 @@ export function AuditorWorkspace() {
         {
           id: newJob.id,
           exportType: newJob.exportType || 'AUDIT_LOGS',
-          format: (newJob.format as 'CSV' | 'JSON' | 'PDF') || exportFormat,
+          format: (newJob.format as 'CSV' | 'JSON' | 'PDF' | 'EXCEL') || exportFormat,
           status: newJob.status || 'PENDING',
           createdAt: newJob.createdAt || new Date().toISOString(),
         },
@@ -273,7 +273,7 @@ export function AuditorWorkspace() {
     setErrorMessage(null);
     try {
       const blob = await apiDownload(`/reports/export/${job.id}/download`);
-      const ext = job.format.toLowerCase() === 'csv' ? 'csv' : 'json';
+      const ext = job.format.toLowerCase() === 'excel' ? 'xlsx' : job.format.toLowerCase();
       const filename = `audit_export_${job.id.slice(0, 8)}.${ext}`;
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -690,7 +690,7 @@ export function AuditorWorkspace() {
               <form onSubmit={handleTriggerExport} className="space-y-4 py-2 text-xs">
                 <div className="space-y-1">
                   <span className="font-medium text-[#222222] block">Chọn định dạng tệp:</span>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <button
                       type="button"
                       onClick={() => setExportFormat('CSV')}
@@ -702,6 +702,18 @@ export function AuditorWorkspace() {
                     >
                       <FileSpreadsheet className="h-5 w-5 mb-1 text-[#FF385C]" />
                       <span>CSV</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportFormat('EXCEL')}
+                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
+                        exportFormat === 'EXCEL'
+                          ? 'border-[#008A05] bg-[#008A05]/15 text-[#008A05]'
+                          : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
+                      }`}
+                    >
+                      <FileSpreadsheet className="h-5 w-5 mb-1 text-[#008A05]" />
+                      <span>Excel (.xlsx)</span>
                     </button>
                     <button
                       type="button"
@@ -720,7 +732,7 @@ export function AuditorWorkspace() {
                       onClick={() => setExportFormat('PDF')}
                       className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                         exportFormat === 'PDF'
-                          ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#FF385C]'
+                          ? 'border-[#C13515] bg-[#C13515]/15 text-[#C13515]'
                           : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
                       }`}
                     >

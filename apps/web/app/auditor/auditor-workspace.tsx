@@ -196,7 +196,7 @@ export function AuditorWorkspace() {
 
       const partitions = Object.values(res || {});
       const totalChecked = partitions.reduce((acc, p) => acc + (p.totalChecked || 0), 0);
-      const isAllValid = partitions.length > 0 ? partitions.every((p) => p.valid) : true;
+      const isAllValid = partitions.length > 0 && partitions.every((p) => p.valid);
       const allViolations = partitions.flatMap((p) =>
         (p.violations || []).map((v) => `${p.partition}: ${v.message || v.code}`),
       );
@@ -551,30 +551,70 @@ export function AuditorWorkspace() {
                   </CardHeader>
                   <CardContent className="flex-1 flex flex-col justify-center text-xs">
                     {verificationReport ? (
-                      <div className="space-y-3 rounded-[24px] border border-[#008A05]/20 bg-[#008A05]/5 p-4">
-                        <div className="flex items-center gap-2 text-[#008A05] font-semibold border-b border-[#008A05]/15 pb-2">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span>Chuỗi băm toàn vẹn · Không phát hiện giả mạo</span>
+                      verificationReport.isChainValid ? (
+                        <div className="space-y-3 rounded-[24px] border border-[#008A05]/20 bg-[#008A05]/5 p-4">
+                          <div className="flex items-center gap-2 text-[#008A05] font-semibold border-b border-[#008A05]/15 pb-2">
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span>Chuỗi băm toàn vẹn · Không phát hiện giả mạo</span>
+                          </div>
+                          <div className="space-y-1.5 text-[#222222]">
+                            <div className="flex justify-between">
+                              <span className="text-[#717171]">Số bản ghi đã duyệt:</span>
+                              <span className="font-bold text-[#222222]">
+                                {verificationReport.totalEntriesChecked} entries
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#717171]">Hành vi chỉnh sửa/xóa:</span>
+                              <span className="text-[#008A05] font-semibold">0 (Không có)</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#717171]">Thời điểm xác minh:</span>
+                              <span className="font-bold text-[#222222]">
+                                {new Date(verificationReport.verifiedAt).toLocaleTimeString(
+                                  'vi-VN',
+                                )}
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="space-y-1.5 text-[#222222]">
-                          <div className="flex justify-between">
-                            <span className="text-[#717171]">Số bản ghi đã duyệt:</span>
-                            <span className="font-bold text-[#222222]">
-                              {verificationReport.totalEntriesChecked} entries
-                            </span>
+                      ) : (
+                        <div className="space-y-3 rounded-[24px] border border-[#C13515]/30 bg-[#C13515]/5 p-4">
+                          <div className="flex items-center gap-2 text-[#C13515] font-semibold border-b border-[#C13515]/20 pb-2">
+                            <AlertTriangle className="h-4 w-4 shrink-0" />
+                            <span>Cảnh báo: Phát hiện sai lệch / giả mạo chuỗi băm!</span>
                           </div>
-                          <div className="flex justify-between">
-                            <span className="text-[#717171]">Hành vi chỉnh sửa/xóa:</span>
-                            <span className="text-[#008A05] font-semibold">0 (Không có)</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-[#717171]">Thời điểm xác minh:</span>
-                            <span className="font-bold text-[#222222]">
-                              {new Date(verificationReport.verifiedAt).toLocaleTimeString('vi-VN')}
-                            </span>
+                          <div className="space-y-1.5 text-[#222222]">
+                            <div className="flex justify-between">
+                              <span className="text-[#717171]">Số bản ghi đã duyệt:</span>
+                              <span className="font-bold text-[#222222]">
+                                {verificationReport.totalEntriesChecked} entries
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#717171]">Số điểm đứt gãy / sai lệch:</span>
+                              <span className="text-[#C13515] font-bold">
+                                {verificationReport.brokenSequences.length} vi phạm
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#717171]">Thời điểm xác minh:</span>
+                              <span className="font-bold text-[#222222]">
+                                {new Date(verificationReport.verifiedAt).toLocaleTimeString(
+                                  'vi-VN',
+                                )}
+                              </span>
+                            </div>
+                            {verificationReport.brokenSequences.length > 0 && (
+                              <ul className="mt-2 max-h-28 overflow-y-auto space-y-1 border-t border-[#C13515]/15 pt-2 text-[11px] text-[#C13515]">
+                                {verificationReport.brokenSequences.map((violation, idx) => (
+                                  <li key={idx}>• {String(violation)}</li>
+                                ))}
+                              </ul>
+                            )}
                           </div>
                         </div>
-                      </div>
+                      )
                     ) : (
                       <div className="flex flex-col items-center justify-center text-center p-8 text-[#717171] space-y-2">
                         <Shield className="h-10 w-10 text-[#b0b0b0]" />

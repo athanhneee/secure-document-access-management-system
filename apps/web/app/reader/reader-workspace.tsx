@@ -18,7 +18,7 @@ import {
   ChevronRight,
   FileType,
 } from 'lucide-react';
-import { apiClient, apiDownload, ApiError } from '@/lib/api-client';
+import { apiClient, apiDownload, ApiError, verifyPdfMagicBytes } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { AuthGuard } from '@/components/auth-guard';
@@ -255,6 +255,9 @@ export function ReaderWorkspace() {
         const pdfBlob = await apiDownload(
           `/documents/${doc.documentId}/preview?sessionId=${sessionResult.sessionId}`,
         );
+        if (!(await verifyPdfMagicBytes(pdfBlob))) {
+          throw new Error('Invalid PDF stream header.');
+        }
         if (pdfBlob.totalPages && pdfBlob.totalPages > 0) {
           setPreviewTotalPages(pdfBlob.totalPages);
         } else {
@@ -287,6 +290,9 @@ export function ReaderWorkspace() {
       const pdfBlob = await apiDownload(
         `/documents/${previewDoc.documentId}/preview/page/${newPage}?sessionId=${previewSessionId}`,
       );
+      if (!(await verifyPdfMagicBytes(pdfBlob))) {
+        throw new Error('Invalid PDF stream header.');
+      }
       setPreviewPage(newPage);
       if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
       setPreviewPdfUrl(URL.createObjectURL(pdfBlob));

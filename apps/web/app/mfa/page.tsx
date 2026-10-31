@@ -9,7 +9,7 @@ import {
   startAuthentication,
   type PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
-import { apiClient, ApiError } from '@/lib/api-client';
+import { apiClient, ApiError, sanitizeRedirectPath } from '@/lib/api-client';
 import { useAuth, type AuthUser } from '@/lib/auth-context';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Input } from '@/components/ui/input';
@@ -26,7 +26,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 function MfaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTarget = searchParams.get('redirect') ?? '/';
+  const redirectTarget = sanitizeRedirectPath(searchParams.get('redirect'));
   const { refreshUser } = useAuth();
 
   const [isRecoveryMode, setIsRecoveryMode] = useState(false);

@@ -388,8 +388,8 @@ export function VisualPolicyBuilder({
               <Badge variant="info">No-Code DNF Engine</Badge>
             </div>
             <p className="text-xs text-[#717171]">
-              Kéo thả khối điều kiện logic phân cấp (Disjunctive Normal Form: OR groups
-              $\rightarrow$ AND conditions).
+              Kéo thả khối điều kiện logic phân cấp (Disjunctive Normal Form: OR groups → AND
+              conditions).
             </p>
           </div>
         </div>
@@ -755,9 +755,7 @@ export function VisualPolicyBuilder({
                   {/* OR Connector between groups */}
                   {groupIdx > 0 && (
                     <div className="flex items-center justify-center my-2">
-                      <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#E07912]/10 border border-[#E07912]/30 text-[#E07912] text-xs font-bold shadow-xs">
-                        <span>HOẶC (OR) - Chỉ cần 1 nhóm điều kiện thỏa mãn</span>
-                      </div>
+                      <Badge variant="warning">HOẶC (OR) - Chỉ cần 1 nhóm điều kiện thỏa mãn</Badge>
                     </div>
                   )}
 

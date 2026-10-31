@@ -552,19 +552,13 @@ export function PolicySimulatorDialog({
                 <span className="text-[11px] font-semibold text-[#222222] block mb-1.5">
                   Nghĩa vụ đi kèm (Obligations):
                 </span>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-3">
                   {result.obligations.map((ob, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#008489] bg-white border border-[#ebebeb] px-2.5 py-1 rounded-full"
-                    >
-                      <CheckCircle2 className="h-3 w-3 text-[#008A05]" />
-                      <span>
-                        {ob.type === 'MAX_SESSION_MINUTES'
-                          ? `Giới hạn phiên: ${ob.minutes} phút`
-                          : ob.type}
-                      </span>
-                    </span>
+                    <Badge key={idx} variant="info">
+                      {ob.type === 'MAX_SESSION_MINUTES'
+                        ? `Giới hạn phiên: ${ob.minutes} phút`
+                        : ob.type}
+                    </Badge>
                   ))}
                 </div>
               </div>

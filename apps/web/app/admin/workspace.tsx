@@ -539,6 +539,10 @@ export function AdminWorkspace() {
   // Handle Activate Policy Rule
   async function handleActivatePolicy(policyId: string) {
     setErrorMessage(null);
+    if (!/^\d+$/u.test(policyId)) {
+      setErrorMessage('Quy tắc nháp cục bộ chưa được đồng bộ lên máy chủ PDP.');
+      return;
+    }
     try {
       await apiClient(`/abac/policies/${policyId}/activate`, {
         method: 'POST',
@@ -1014,7 +1018,7 @@ export function AdminWorkspace() {
                         initialRule={selectedRuleForBuilder}
                         onSaveRule={(savedRule) => {
                           setMessage(
-                            `Đã cập nhật quy tắc chính sách [${savedRule.code}] thành công.`,
+                            `Đã lưu bản nháp mô phỏng cục bộ [${savedRule.code}] (Nháp mô phỏng cục bộ — chưa kích hoạt trên PDP).`,
                           );
                           setPolicies((prev) => {
                             const existing = prev.find(
@@ -1039,7 +1043,7 @@ export function AdminWorkspace() {
                                 name: savedRule.name,
                                 description: savedRule.description,
                                 effect: savedRule.effect,
-                                isActive: true,
+                                isActive: false,
                               },
                             ];
                           });

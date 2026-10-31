@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, Suspense, type FormEvent } from 'react';
+import { useState, useEffect, Suspense, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -28,7 +28,16 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 function ResetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const token = searchParams.get('token');
+  const queryToken = searchParams.get('token');
+  const [initialToken] = useState<string | null>(() => queryToken);
+  const token = queryToken ?? initialToken;
+
+  useEffect(() => {
+    if (queryToken && typeof window !== 'undefined' && window.location.search.includes('token=')) {
+      // Scrub one-time reset token from browser URL bar & history to prevent Referer/history leakage
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, [queryToken]);
 
   const [identifier, setIdentifier] = useState('');
   const [newPassword, setNewPassword] = useState('');

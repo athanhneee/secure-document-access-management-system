@@ -39,7 +39,13 @@ export default defineConfig({
       url: `${apiUrl}/api/v1/health/live`,
       timeout: 60_000,
       reuseExistingServer: false,
-      env: { NODE_ENV: 'test', PORT: String(apiPort), HOST: '127.0.0.1' },
+      env: {
+        NODE_ENV: 'test',
+        PORT: String(apiPort),
+        API_PORT: String(apiPort),
+        HOST: '127.0.0.1',
+        API_HOST: '127.0.0.1',
+      },
     },
   ],
 });

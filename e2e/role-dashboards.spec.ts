@@ -34,9 +34,13 @@ test.describe('Authentication Pages Smoke Tests', () => {
 });
 
 test.describe('Role Workspace Smoke Tests', () => {
-  test('Admin workspace renders heading and protects mutation actions', async ({ page }) => {
+  test('Admin workspace enforces authentication guard and protects mutation actions', async ({
+    page,
+  }) => {
     await page.goto('/admin');
-    await expect(page.getByRole('heading', { name: 'Users · Departments · RBAC' })).toBeVisible();
+    await expect(page).toHaveURL(/\/login\?redirect=%2Fadmin/);
+    await expect(page.getByRole('heading', { name: 'Đăng nhập tài khoản' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tạo tài khoản' })).toHaveCount(0);
   });
 
   test('Owner workspace renders header and navigation tabs', async ({ page }) => {

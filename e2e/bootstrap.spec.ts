@@ -7,9 +7,14 @@ test('Vietnamese landing renders without browser errors', async ({ page }) => {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
   await expect(
-    page.getByRole('heading', { name: 'Hệ thống truy cập tài liệu mật', level: 1 }),
+    page.getByRole('heading', {
+      name: /Bảo vệ tài liệu tối mật với kiến trúc phân quyền đa tầng/i,
+      level: 1,
+    }),
   ).toBeVisible();
-  await expect(page.getByText('Kiểm soát truy cập sẵn sàng', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('KIỂM SOÁT TRUY CẬP TÀI LIỆU MẬT TỔ CHỨC', { exact: true }),
+  ).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('lang', 'vi');
   expect(errors).toEqual([]);
 });
@@ -21,11 +26,12 @@ test('HTTP liveness contains only public health information', async ({ request }
   expect(response.headers()['set-cookie']).toBeUndefined();
 });
 
-test('RBAC administration workspace renders and does not expose actions before authorization', async ({
+test('RBAC administration workspace enforces authentication before exposing actions', async ({
   page,
 }) => {
   await page.goto('/admin');
-  await expect(page.getByRole('heading', { name: 'Users · Departments · RBAC' })).toBeVisible();
+  await expect(page).toHaveURL(/\/login\?redirect=%2Fadmin/);
+  await expect(page.getByRole('heading', { name: 'Đăng nhập tài khoản' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Tạo tài khoản' })).toHaveCount(0);
 });
 

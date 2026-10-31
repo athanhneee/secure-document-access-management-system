@@ -6,6 +6,7 @@ import { AppConfigService } from '../../config/config.service.js';
 import type { RequestContext } from '../auth/auth.types.js';
 import { AuditRedactionService } from './audit-redaction.service.js';
 import { canonicalizeJson } from './audit-canonicalizer.js';
+import { resolveAuditHmacKey } from './audit-chain-helper.js';
 
 export interface AuditWriteEvent {
   action: string;
@@ -53,14 +54,16 @@ export class AuditWriterService {
     } catch {
       this.database = (databaseClient ?? null) as unknown as PrismaClient;
     }
-    const primaryKey =
-      this.config.get('AUDIT_INTEGRITY_KEY') ||
-      this.config.get('DOCUMENT_AUDIT_HMAC_KEY') ||
-      'local-only-audit-integrity-hmac-key-0000000000000000';
+    const primaryKey = resolveAuditHmacKey(this.config);
     this.defaultHmacKey = primaryKey;
     this.keyRotationMap.set(1, primaryKey);
 
-    const rotationJson = this.config.get('AUDIT_KEY_ROTATION_JSON');
+    let rotationJson: string | undefined;
+    try {
+      rotationJson = this.config.get('AUDIT_KEY_ROTATION_JSON') ?? undefined;
+    } catch {
+      rotationJson = undefined;
+    }
     if (rotationJson) {
       try {
         const parsed = JSON.parse(rotationJson) as Record<string, string>;

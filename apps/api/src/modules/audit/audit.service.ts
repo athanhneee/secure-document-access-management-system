@@ -168,32 +168,14 @@ export class AuditService {
     input: ExportAuditLogsInput,
   ): Promise<{ format: 'CSV' | 'JSON'; data: string; count: number }> {
     const isAuditor = principal.roles.includes('AUDITOR');
-    const isDocumentOwner = principal.roles.includes('DOCUMENT_OWNER');
 
-    if (!isAuditor && !isDocumentOwner) {
+    if (!isAuditor) {
       throw new ForbiddenException('Insufficient permissions to export audit logs');
     }
 
     const where: Prisma.AuditLogWhereInput = {};
 
-    if (!isAuditor && isDocumentOwner) {
-      if (input.documentId) {
-        const doc = await this.database.document.findUnique({
-          where: { id: input.documentId },
-          select: { owner_id: true },
-        });
-        if (!doc || doc.owner_id !== principal.userId) {
-          throw new ForbiddenException('Access to audit logs for this document is denied');
-        }
-        where.document_id = input.documentId;
-      } else {
-        const ownedDocs = await this.database.document.findMany({
-          where: { owner_id: principal.userId },
-          select: { id: true },
-        });
-        where.document_id = { in: ownedDocs.map((d) => d.id) };
-      }
-    } else if (input.documentId) {
+    if (input.documentId) {
       where.document_id = input.documentId;
     }
 
@@ -310,9 +292,9 @@ export class AuditService {
     signature: string;
     anchoredAt: string;
   }> {
-    const isPrivileged = principal.roles.some((r) => r === 'SECURITY_OFFICER' || r === 'AUDITOR');
-    if (!isPrivileged) {
-      throw new ForbiddenException('Only Security Officer or Auditor can create audit anchors');
+    const isSecurityOfficer = principal.roles.includes('SECURITY_OFFICER');
+    if (!isSecurityOfficer) {
+      throw new ForbiddenException('Only Security Officer can create audit anchors');
     }
 
     // Find the latest audit log in this partition

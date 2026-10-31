@@ -27,7 +27,11 @@ export const CreateDocumentDraftSchema = z
     title: z.string().trim().min(1).max(255),
     departmentId: z.coerce.bigint().positive(),
     description: z.string().max(2000).optional(),
-    documentCode: z.string().min(1).max(60).optional(),
+    documentCode: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,59}$/, 'Invalid documentCode format')
+      .optional(),
     retentionUntil: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, 'Retention date must be in YYYY-MM-DD format')
@@ -523,7 +527,7 @@ export const UpdateDetectionRuleConfigSchema = z
     threshold: z.number().int().min(1).max(1000).optional(),
     windowMinutes: z.number().int().min(1).max(1440).optional(),
     cooldownMinutes: z.number().int().min(1).max(1440).optional(),
-    parameters: z.record(z.unknown()).optional(),
+    parameters: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -555,7 +559,7 @@ export const CreateExportJobSchema = z
   .object({
     exportType: ExportTypeSchema,
     format: ExportFormatSchema.default('CSV'),
-    filterParams: z.record(z.unknown()).default({}),
+    filterParams: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();
 
@@ -588,7 +592,7 @@ export type WebAuthnRegistrationOptionsRequest = z.infer<
 export const WebAuthnVerifyRegistrationRequestSchema = z
   .object({
     challengeToken: z.string().min(1),
-    response: z.record(z.unknown()),
+    response: z.record(z.string(), z.unknown()),
     label: z.string().trim().min(1).max(80).optional(),
   })
   .strict();
@@ -608,7 +612,7 @@ export type WebAuthnAuthOptionsRequest = z.infer<typeof WebAuthnAuthOptionsReque
 export const WebAuthnVerifyAuthRequestSchema = z
   .object({
     challengeToken: z.string().min(1),
-    response: z.record(z.unknown()),
+    response: z.record(z.string(), z.unknown()),
   })
   .strict();
 

@@ -4,6 +4,7 @@ import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import { AuditWriterService } from './audit-writer.service.js';
 import { canonicalizeJson } from './audit-canonicalizer.js';
+import { safeTimingEqualString } from './audit-chain-helper.js';
 
 export interface AuditViolation {
   code: string;
@@ -51,25 +52,9 @@ export class AuditVerifierService {
   ): Promise<PartitionVerificationResult> {
     const violations: AuditViolation[] = [];
 
-    // Query audit logs in ascending sequence order
-    const where: {
-      chain_partition: string;
-      chain_sequence?: { gte?: bigint; lte?: bigint };
-    } = {
-      chain_partition: partition,
-    };
-    if (options?.fromSequence !== undefined || options?.toSequence !== undefined) {
-      where.chain_sequence = {};
-      if (options.fromSequence !== undefined) where.chain_sequence.gte = options.fromSequence;
-      if (options.toSequence !== undefined) where.chain_sequence.lte = options.toSequence;
-    }
-
-    const logs = await this.database.auditLog.findMany({
-      where,
-      orderBy: {
-        chain_sequence: 'asc',
-      },
-    });
+    const VERIFY_BATCH_SIZE = 1000;
+    const logHashBySequence = new Map<bigint, { id: bigint; entry_hash: string }>();
+    let totalChecked = 0;
 
     let previousHash: string | null = null;
     let expectedSequence: bigint | null = options?.fromSequence ?? null;
@@ -87,94 +72,133 @@ export class AuditVerifierService {
       }
     }
 
-    for (let i = 0; i < logs.length; i++) {
-      const log = logs[i]!;
+    let cursorSequence: bigint | undefined =
+      options?.fromSequence !== undefined ? options.fromSequence - 1n : undefined;
 
-      // 1. Check sequence gap
-      if (expectedSequence === null) {
-        expectedSequence = log.chain_sequence;
+    while (true) {
+      const batchWhere: {
+        chain_partition: string;
+        chain_sequence?: { gt?: bigint; gte?: bigint; lte?: bigint };
+      } = {
+        chain_partition: partition,
+      };
+      if (cursorSequence !== undefined || options?.toSequence !== undefined) {
+        batchWhere.chain_sequence = {};
+        if (cursorSequence !== undefined) batchWhere.chain_sequence.gt = cursorSequence;
+        if (options?.toSequence !== undefined) batchWhere.chain_sequence.lte = options.toSequence;
       }
 
-      if (log.chain_sequence !== expectedSequence) {
-        violations.push({
-          code: AppErrorCode.AUDIT_SEQUENCE_GAP,
-          partition,
-          sequence: log.chain_sequence,
-          logId: log.id,
-          expected: expectedSequence.toString(),
-          actual: log.chain_sequence.toString(),
-          message: `Sequence gap detected in partition ${partition}: expected ${expectedSequence}, found ${log.chain_sequence}`,
-        });
-        expectedSequence = log.chain_sequence;
+      const logs = await this.database.auditLog.findMany({
+        where: batchWhere,
+        orderBy: {
+          chain_sequence: 'asc',
+        },
+        take: VERIFY_BATCH_SIZE,
+      });
+
+      if (logs.length === 0) {
+        break;
       }
 
-      // 2. Check previous hash continuity
-      if (log.chain_sequence === 1n && !options?.fromSequence) {
-        if (log.previous_hash !== null) {
+      for (let i = 0; i < logs.length; i++) {
+        const log = logs[i]!;
+        totalChecked += 1;
+        logHashBySequence.set(log.chain_sequence, { id: log.id, entry_hash: log.entry_hash });
+
+        // 1. Check sequence gap
+        if (expectedSequence === null) {
+          expectedSequence = log.chain_sequence;
+        }
+
+        if (log.chain_sequence !== expectedSequence) {
+          violations.push({
+            code: AppErrorCode.AUDIT_SEQUENCE_GAP,
+            partition,
+            sequence: log.chain_sequence,
+            logId: log.id,
+            expected: expectedSequence.toString(),
+            actual: log.chain_sequence.toString(),
+            message: `Sequence gap detected in partition ${partition}: expected ${expectedSequence}, found ${log.chain_sequence}`,
+          });
+          expectedSequence = log.chain_sequence;
+        }
+
+        // 2. Check previous hash continuity
+        if (log.chain_sequence === 1n && !options?.fromSequence) {
+          if (log.previous_hash !== null) {
+            violations.push({
+              code: AppErrorCode.AUDIT_CHAIN_BROKEN,
+              partition,
+              sequence: log.chain_sequence,
+              logId: log.id,
+              expected: 'null',
+              actual: log.previous_hash,
+              message: `First entry in partition ${partition} must have null previous_hash`,
+            });
+          }
+        } else if (
+          previousHash !== null &&
+          !safeTimingEqualString(log.previous_hash, previousHash)
+        ) {
           violations.push({
             code: AppErrorCode.AUDIT_CHAIN_BROKEN,
             partition,
             sequence: log.chain_sequence,
             logId: log.id,
-            expected: 'null',
-            actual: log.previous_hash,
-            message: `First entry in partition ${partition} must have null previous_hash`,
+            expected: previousHash,
+            actual: log.previous_hash ?? 'null',
+            message: `Hash chain broken in partition ${partition} at sequence ${log.chain_sequence}`,
           });
         }
-      } else if (previousHash !== null && log.previous_hash !== previousHash) {
-        violations.push({
-          code: AppErrorCode.AUDIT_CHAIN_BROKEN,
-          partition,
-          sequence: log.chain_sequence,
-          logId: log.id,
-          expected: previousHash,
-          actual: log.previous_hash ?? 'null',
-          message: `Hash chain broken in partition ${partition} at sequence ${log.chain_sequence}`,
-        });
+
+        // 3. Recalculate HMAC-SHA-256 over canonicalized payload
+        const hmacKey = this.writerService.getHmacKey(log.hmac_key_version);
+        const canonicalPayload = {
+          action: log.action,
+          actorUserId: log.actor_user_id ? log.actor_user_id.toString() : null,
+          actorUsername: log.actor_username,
+          chainAlgorithm: log.chain_algorithm,
+          chainPartition: log.chain_partition,
+          chainSequence: log.chain_sequence.toString(),
+          correlationId: log.correlation_id,
+          details: log.details as Record<string, unknown>,
+          documentId: log.document_id,
+          accessSessionId: log.access_session_id,
+          ipAddress: log.ip_address,
+          objectType: log.object_type,
+          objectId: log.object_id,
+          occurredAt: log.occurred_at.toISOString(),
+          outcome: log.outcome,
+          previousHash: log.previous_hash,
+          reasonCode: log.reason_code,
+          userAgent: log.user_agent,
+        };
+
+        const canonicalString = canonicalizeJson(canonicalPayload);
+        const computedHash = createHmac('sha256', hmacKey)
+          .update(canonicalString, 'utf8')
+          .digest('hex');
+
+        if (!safeTimingEqualString(computedHash, log.entry_hash)) {
+          violations.push({
+            code: AppErrorCode.AUDIT_LOG_TAMPERED,
+            partition,
+            sequence: log.chain_sequence,
+            logId: log.id,
+            expected: computedHash,
+            actual: log.entry_hash,
+            message: `HMAC verification failed for partition ${partition} at sequence ${log.chain_sequence}: data was tampered`,
+          });
+        }
+
+        previousHash = log.entry_hash;
+        expectedSequence = log.chain_sequence + 1n;
+        cursorSequence = log.chain_sequence;
       }
 
-      // 3. Recalculate HMAC-SHA-256 over canonicalized payload
-      const hmacKey = this.writerService.getHmacKey(log.hmac_key_version);
-      const canonicalPayload = {
-        action: log.action,
-        actorUserId: log.actor_user_id ? log.actor_user_id.toString() : null,
-        actorUsername: log.actor_username,
-        chainAlgorithm: log.chain_algorithm,
-        chainPartition: log.chain_partition,
-        chainSequence: log.chain_sequence.toString(),
-        correlationId: log.correlation_id,
-        details: log.details as Record<string, unknown>,
-        documentId: log.document_id,
-        accessSessionId: log.access_session_id,
-        ipAddress: log.ip_address,
-        objectType: log.object_type,
-        objectId: log.object_id,
-        occurredAt: log.occurred_at.toISOString(),
-        outcome: log.outcome,
-        previousHash: log.previous_hash,
-        reasonCode: log.reason_code,
-        userAgent: log.user_agent,
-      };
-
-      const canonicalString = canonicalizeJson(canonicalPayload);
-      const computedHash = createHmac('sha256', hmacKey)
-        .update(canonicalString, 'utf8')
-        .digest('hex');
-
-      if (computedHash !== log.entry_hash) {
-        violations.push({
-          code: AppErrorCode.AUDIT_LOG_TAMPERED,
-          partition,
-          sequence: log.chain_sequence,
-          logId: log.id,
-          expected: computedHash,
-          actual: log.entry_hash,
-          message: `HMAC verification failed for partition ${partition} at sequence ${log.chain_sequence}: data was tampered`,
-        });
+      if (logs.length < VERIFY_BATCH_SIZE) {
+        break;
       }
-
-      previousHash = log.entry_hash;
-      expectedSequence = log.chain_sequence + 1n;
     }
 
     // 4. Verify against audit_anchors
@@ -200,7 +224,7 @@ export class AuditVerifierService {
 
     for (const anchor of anchors) {
       // Find matching log
-      const targetLog = logs.find((l) => l.chain_sequence === anchor.anchor_sequence);
+      const targetLog = logHashBySequence.get(anchor.anchor_sequence);
       if (!targetLog) {
         violations.push({
           code: AppErrorCode.AUDIT_ANCHOR_MISMATCH,
@@ -213,7 +237,7 @@ export class AuditVerifierService {
         continue;
       }
 
-      if (targetLog.entry_hash !== anchor.entry_hash) {
+      if (!safeTimingEqualString(targetLog.entry_hash, anchor.entry_hash)) {
         violations.push({
           code: AppErrorCode.AUDIT_ANCHOR_MISMATCH,
           partition,
@@ -231,7 +255,7 @@ export class AuditVerifierService {
         .update(`${anchor.chain_partition}:${anchor.anchor_sequence}:${anchor.entry_hash}`)
         .digest('hex');
 
-      if (anchor.signature !== expectedSignature) {
+      if (!safeTimingEqualString(anchor.signature, expectedSignature)) {
         violations.push({
           code: AppErrorCode.AUDIT_ANCHOR_MISMATCH,
           partition,
@@ -253,7 +277,7 @@ export class AuditVerifierService {
     return {
       partition,
       valid: violations.length === 0,
-      totalChecked: logs.length,
+      totalChecked,
       anchorsChecked: anchors.length,
       violations,
       alertId,
@@ -299,7 +323,23 @@ export class AuditVerifierService {
       // Fallback
     }
 
+    let resolvedAlertId: string = alertId;
     await this.database.$transaction(async (tx) => {
+      if (typeof tx.securityAlert?.findFirst === 'function') {
+        const existingOpen = await tx.securityAlert.findFirst({
+          where: {
+            alert_type: 'AUDIT_INTEGRITY_COMPROMISED',
+            status: 'OPEN',
+            title: { contains: `partition ${partition} ` },
+          },
+          select: { id: true },
+        });
+        if (existingOpen) {
+          resolvedAlertId = existingOpen.id;
+          return;
+        }
+      }
+
       await tx.securityAlert.create({
         data: {
           id: alertId,
@@ -334,6 +374,6 @@ export class AuditVerifierService {
       }
     });
 
-    return alertId;
+    return resolvedAlertId;
   }
 }

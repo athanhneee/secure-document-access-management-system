@@ -67,7 +67,7 @@ export class AuditController {
    */
   @Post('export')
   @HttpCode(HttpStatus.OK)
-  @RequirePermission('AUDIT_LOG', 'VIEW')
+  @RequirePermission('AUDIT_LOG', 'EXPORT')
   @ApiOperation({ summary: 'Export audit logs in CSV or JSON format' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Audit export payload' })
   @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Insufficient permissions' })

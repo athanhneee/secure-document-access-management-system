@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 
-const repositoryRoot = fileURLToPath(new URL('./', import.meta.url));
+const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const webPort = parsePort(process.env['E2E_WEB_PORT'], 3100);
 const apiPort = parsePort(process.env['E2E_API_PORT'], 3101);
 const webUrl = `http://127.0.0.1:${webPort}`;
@@ -16,7 +16,7 @@ function parsePort(value: string | undefined, fallback: number): number {
 }
 
 export default defineConfig({
-  testDir: './e2e',
+  testDir: './',
   fullyParallel: true,
   forbidOnly: Boolean(process.env['CI']),
   retries: 0,

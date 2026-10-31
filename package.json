@@ -16,12 +16,12 @@
     "build": "turbo run build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "oxlint --deny-warnings scripts test e2e playwright.config.ts && turbo run lint",
+    "lint": "oxlint --deny-warnings scripts test e2e && turbo run lint",
     "typecheck": "tsc --project tsconfig.json --noEmit && turbo run typecheck",
     "test": "node --test test/unit/*.test.mjs && turbo run test",
     "test:unit": "node --test test/unit/*.test.mjs && turbo run test",
     "test:integration": "turbo run test:integration",
-    "test:e2e": "turbo run build && playwright test",
+    "test:e2e": "turbo run build && playwright test --config e2e/playwright.config.ts",
     "test:infra": "node scripts/run-infra-tests.mjs",
     "db:migrate": "pnpm --filter @sda/database prisma:migrate",
     "db:seed": "pnpm --filter @sda/database prisma:seed",
@@ -51,5 +51,43 @@
     "prettier": "3.9.6",
     "turbo": "2.10.12",
     "typescript": "7.0.2"
+  },
+  "prettier": {
+    "singleQuote": true,
+    "trailingComma": "all",
+    "printWidth": 100,
+    "endOfLine": "lf"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,cjs}": [
+      "oxlint --deny-warnings",
+      "prettier --check"
+    ],
+    "*.{json,yaml,yml,md,css}": "prettier --check --ignore-unknown"
+  },
+  "commitlint": {
+    "extends": [
+      "@commitlint/config-conventional"
+    ],
+    "rules": {
+      "type-enum": [
+        2,
+        "always",
+        [
+          "build",
+          "chore",
+          "ci",
+          "docs",
+          "feat",
+          "fix",
+          "perf",
+          "refactor",
+          "revert",
+          "style",
+          "test",
+          "security"
+        ]
+      ]
+    }
   }
 }

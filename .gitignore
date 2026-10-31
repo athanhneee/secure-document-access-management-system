@@ -1,26 +1,41 @@
 # =========================================================================
-# 1. Dependencies and local toolchains
+# 1. Dependencies, local toolchains & cloud CLIs
 # =========================================================================
 node_modules/
+**/node_modules/
 .pnpm-store/
 .tools/
 .local/
+**/.local/
 !.local.example/
-
+.supabase/
+.wrangler/
+docs 
 # =========================================================================
 # 2. Build, framework, caches and test artifacts
 # =========================================================================
 dist/
+**/dist/
 build/
+**/build/
 .next/
+**/.next/
 out/
+**/out/
 .turbo/
+**/.turbo/
 coverage/
+**/coverage/
 test-results/
 playwright-report/
 blob-report/
 *.tsbuildinfo
+**/*.tsbuildinfo
 next-env.d.ts
+**/next-env.d.ts
+*.sarif
+sbom.spdx.json
+junit.xml
 .cache/
 .temp/
 .tmp/
@@ -33,6 +48,7 @@ temp/
 # 3. Logs and report output
 # =========================================================================
 *.log
+**/*.log
 .logs/
 .reports/
 npm-debug.log*
@@ -163,7 +179,7 @@ desktop.ini
 .gemini/
 
 # =========================================================================
-# 9. Docker mounts and volume data
+# 9. Docker mounts, volumes and Git hooks internal state
 # =========================================================================
 **/docker-data/
 **/docker-volumes/

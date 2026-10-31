@@ -9,6 +9,8 @@ test-results
 playwright-report
 pnpm-lock.yaml
 next-env.d.ts
-docs/reference
 .reports
 .logs
+.agents
+.gemini
+.local

@@ -41,6 +41,7 @@ export function buildDevelopmentEnvironment() {
     'GRAFANA_ADMIN_USER=sda-local-admin',
     `GRAFANA_ADMIN_PASSWORD=${grafanaPassword}`,
     `APP_ENCRYPTION_MASTER_KEY=${randomBytes(32).toString('hex')}`,
+    `AUDIT_INTEGRITY_KEY=${randomBytes(32).toString('hex')}`,
     '',
   ].join('\n');
 }

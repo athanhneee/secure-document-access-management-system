@@ -2,9 +2,6 @@
 
 ## Secure Document Access & Governance System (SDA v1.0.0)
 
-> 📘 **TÀI LIỆU MÔN HỌC CHUẨN**: Vui lòng tham khảo bản đặc tả chuẩn môn **Phân tích và Thiết kế Hệ thống Thông tin (PTTKHT - PTIT)** tại [README.md gốc của dự án](file:///D:/PTVTKHT/README.md).  
-> 📊 **BÁO CÁO HIỆN TRẠNG ĐỒ ÁN**: Đọc báo cáo chi tiết các nội dung ĐÃ LÀM ĐƯỢC và CHƯA LÀM ĐƯỢC tại [docs/BAO_CAO_DANH_GIA_DU_AN_PTTKHT.md](file:///D:/PTVTKHT/secure-document-access-system/docs/BAO_CAO_DANH_GIA_DU_AN_PTTKHT.md).
-
 Hệ thống Quản Lý Truy Cập Tài Liệu Mật Trong Tổ Chức (SDA) là nền tảng an ninh doanh nghiệp cấp cao (Enterprise B2B Security & Governance Platform), được thiết kế chuyên biệt để bảo vệ, phân loại, kiểm soát truy cập và kiểm toán vòng đời các tài liệu tối mật theo kiến trúc Zero Trust, nguyên tắc quyền tối thiểu (Least Privilege) và phân tách trách nhiệm tuyệt đối (Separation of Duties - SoD).
 
 ---
@@ -121,14 +118,14 @@ secure-document-access-system/
 │   └── worker/                  # Background Worker (Xử lý quét mã độc, dọn dẹp phiên, kiểm toán)
 ├── packages/
 │   ├── contracts/               # DTOs, Zod Schemas, Error Codes, Phân loại mật dùng chung
-│   ├── database/                # 31 bảng PostgreSQL schema vật lý, Prisma client, Migrations
+│   ├── database/                # 39 bảng PostgreSQL vật lý, Prisma client, 9 Migrations
 │   ├── security/                # Policy engine, Zero-Trust guards, Data redaction filters
 │   ├── testing/                 # Test utilities, PGlite WASM test harness, Mocks
 │   └── config/                  # Cấu hình TypeScript base dùng chung
-├── docs/                        # Toàn bộ tài liệu đặc tả, kiến trúc, vận hành và kiểm toán
+├── supabase/                    # Bộ kịch bản SQL đầy đủ cho Supabase (RLS + Triggers + Seed)
+├── e2e/                         # Kiểm thử đầu-cuối (Playwright E2E)
 ├── scripts/                     # Scripts tự động hóa: Secrets generation, Infra, Validation, Backup
-├── docker-compose.prod.yaml     # Manifest triển khai production chuẩn hóa bảo mật cao
-└── infra/                       # Cấu hình Docker Compose môi trường phát triển & Observability
+└── infra/                       # Docker Compose môi trường phát triển, Production & Observability
 ```
 
 ---
@@ -210,9 +207,9 @@ pnpm dev
 ```
 
 - **Web App**: `http://localhost:3000`
-- **REST API**: `http://localhost:4000/api/v1`
-- **Tài liệu OpenAPI / Swagger**: `http://localhost:4000/api/docs`
-- **MinIO Console**: `http://localhost:9001` (Tài khoản: xem trong tệp `.env`)
+- **REST API**: `http://localhost:3001/api/v1`
+- **Tài liệu OpenAPI / Swagger**: `http://localhost:3001/api/docs`
+- **MinIO Console (Local)**: `http://localhost:9001` (hoặc dùng Cloudflare R2 / Supabase Storage qua `.env`)
 
 ---
 
@@ -265,48 +262,21 @@ pnpm build
 
 ---
 
-## 9. TRIỂN KHAI MÔI TRƯỜNG SẢN XUẤT (PRODUCTION DEPLOYMENT)
+## 9. TRIỂN KHAI MÔI TRƯỜNG SẢN XUẤT & CLOUD (SUPABASE + CLOUDFLARE R2 + DOCKER)
 
-Để triển khai ứng dụng trên môi trường máy chủ sản xuất với cấu hình bảo mật container tối đa:
+1. **Cơ sở dữ liệu Supabase**: Chạy kịch bản SQL trọn gói tại [supabase/01_supabase_full_schema_and_seed.sql](./supabase/01_supabase_full_schema_and_seed.sql) và xem hướng dẫn chi tiết tại [supabase/README.md](./supabase/README.md).
+2. **Lưu trữ S3 / Cloudflare R2**: Cấu hình `STORAGE_ENDPOINT`, `STORAGE_REGION=auto`, `STORAGE_USE_SSL=true` và khóa S3 API trong `.env`.
+3. **Triển khai Container Hardened Production**:
 
 ```bash
-# 1. Chuẩn bị tệp cấu hình sản xuất
-cp docker-compose.production.example.yaml docker-compose.prod.yaml
-
-# 2. Sinh biến môi trường sản xuất (Non-Root, Hardened Keys)
-node scripts/generate-dev-secrets.mjs --prod > .env.production
-chmod 600 .env.production
-
-# 3. Khởi động các container hạ tầng nền tảng
-docker compose --env-file .env.production -f docker-compose.prod.yaml up -d postgres redis minio clamav
-
-# 4. Thực thi migration database
-docker compose --env-file .env.production -f docker-compose.prod.yaml run --rm api pnpm db:migrate
-
-# 5. Khởi động toàn bộ cụm dịch vụ ứng dụng
-docker compose --env-file .env.production -f docker-compose.prod.yaml up -d
+# Khởi chạy cụm container sản xuất (Non-Root, Read-Only FS, Dropped Capabilities)
+docker compose --env-file .env.production -f infra/compose.prod.yaml up -d
 ```
 
 ---
 
-## 10. BẢN ĐỒ TÀI LIỆU DỰ ÁN (DOCUMENTATION MAP)
+## 10. TÀI LIỆU HƯỚNG DẪN TRONG KHO MÃ NGUỒN
 
-Để tìm hiểu chi tiết từng khía cạnh kỹ thuật, vui lòng tham khảo các tài liệu chuyên sâu trong thư mục `docs/`:
-
-- [docs/01-requirements.md](file:///D:/PTVTKHT/secure-document-access-system/docs/01-requirements.md): Đặc tả yêu cầu chức năng (FR01-FR20) và phi chức năng (NFR).
-- [docs/03-business-rules.md](file:///D:/PTVTKHT/secure-document-access-system/docs/03-business-rules.md): Quy tắc nghiệp vụ chi tiết (BR01-BR20) và quy tắc dữ liệu (D-BR01-D-BR20).
-- [docs/06-api-contract.md](file:///D:/PTVTKHT/secure-document-access-system/docs/06-api-contract.md): Hợp đồng giao tiếp REST API, mã lỗi và định dạng lỗi chuẩn.
-- [docs/ARCHITECTURE.md](file:///D:/PTVTKHT/secure-document-access-system/docs/ARCHITECTURE.md): Tài liệu thiết kế kiến trúc hệ thống, ranh giới module và luồng dữ liệu.
-- [docs/DEPLOYMENT.md](file:///D:/PTVTKHT/secure-document-access-system/docs/DEPLOYMENT.md): Hướng dẫn chi tiết triển khai máy chủ sản xuất và cấu hình bảo mật.
-- [docs/USER_GUIDE.md](file:///D:/PTVTKHT/secure-document-access-system/docs/USER_GUIDE.md): Cẩm nang hướng dẫn sử dụng chi tiết cho từng vai trò người dùng.
-- [docs/DEMO_SCRIPT.md](file:///D:/PTVTKHT/secure-document-access-system/docs/DEMO_SCRIPT.md): Kịch bản trình diễn tương tác 10-15 phút minh họa luồng nghiệp vụ.
-- [docs/BACKUP_RESTORE.md](file:///D:/PTVTKHT/secure-document-access-system/docs/BACKUP_RESTORE.md): Quy trình sao lưu, diễn tập phục hồi thảm họa và kiểm toán toàn vẹn.
-- [docs/KEY_ROTATION.md](file:///D:/PTVTKHT/secure-document-access-system/docs/KEY_ROTATION.md): Quy trình luân chuyển khóa mã hóa KMS, JWT Token và Audit HMAC.
-- [docs/INCIDENT_RESPONSE.md](file:///D:/PTVTKHT/secure-document-access-system/docs/INCIDENT_RESPONSE.md): Quy trình ứng phó sự cố an ninh thông tin và điều tra forensic.
-- [docs/UI_DESIGN_SYSTEM.md](file:///D:/PTVTKHT/secure-document-access-system/docs/UI_DESIGN_SYSTEM.md): Quy chuẩn thiết kế giao diện, typography Inter và phong cách "staff-001".
-- [docs/TRACEABILITY_MATRIX.md](file:///D:/PTVTKHT/secure-document-access-system/docs/TRACEABILITY_MATRIX.md): Ma trận đối chiếu yêu cầu nghiệp vụ với các bộ kiểm thử tự động.
-- [docs/decision-log.md](file:///D:/PTVTKHT/secure-document-access-system/docs/decision-log.md): Nhật ký các quyết định kiến trúc, bảo mật và logic nghiệp vụ (DEC-001 đến DEC-013).
-- [docs/BUG_FIX_REPORT.md](file:///D:/PTVTKHT/secure-document-access-system/docs/BUG_FIX_REPORT.md): Báo cáo tổng hợp kiểm toán, khắc phục các sai lệch kiến trúc và củng cố hệ thống.
-- [docs/BAO_CAO_DANH_GIA_DU_AN_PTTKHT.md](file:///D:/PTVTKHT/secure-document-access-system/docs/BAO_CAO_DANH_GIA_DU_AN_PTTKHT.md): Báo cáo đánh giá toàn diện những thứ đã làm được và chưa làm được của dự án.
-- [README.md gốc (Chuẩn môn PTTKHT PTIT)](file:///D:/PTVTKHT/README.md): Bản đặc tả đồ án chuẩn mực theo giáo trình Phân tích & Thiết kế Hệ thống Thông tin.
-- [RELEASE_CHECKLIST.md](file:///D:/PTVTKHT/secure-document-access-system/RELEASE_CHECKLIST.md): Danh mục kiểm tra điều kiện phát hành phiên bản chính thức v1.0.0.
+- [supabase/README.md](./supabase/README.md): Hướng dẫn khởi tạo cơ sở dữ liệu PostgreSQL, Row Level Security (RLS), Triggers và kích hoạt tài khoản trên Supabase.
+- [infra/README.md](./infra/README.md): Hướng dẫn vận hành hạ tầng Docker Compose cục bộ và Observability (Prometheus / Grafana).
+- [.github/workflows/](./.github/workflows): Hệ thống CI/CD tự động hóa kiểm thử, quét bảo mật DevSecOps (CodeQL, Semgrep, Gitleaks, Trivy, SBOM) và phát hành image lên GHCR.

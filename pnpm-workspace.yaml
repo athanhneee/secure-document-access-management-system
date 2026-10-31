@@ -4,9 +4,15 @@ packages:
 
 autoInstallPeers: false
 strictPeerDependencies: true
+peerDependencyRules:
+  allowedVersions:
+    typescript: '7'
 overrides:
   deepmerge-ts: 8.0.0
+  fastify: 5.12.4
   mysql2: 3.23.1
+  sharp: 0.35.5
+  source-map-js: 1.2.2
 onlyBuiltDependencies:
   - sharp
 allowBuilds:

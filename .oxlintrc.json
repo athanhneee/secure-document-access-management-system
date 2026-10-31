@@ -7,8 +7,10 @@
     "**/dist/**",
     "**/.next/**",
     "**/node_modules/**",
-    "docs/reference/**",
     ".tools/**",
-    ".pnpm-store/**"
+    ".pnpm-store/**",
+    ".agents/**",
+    ".gemini/**",
+    ".local/**"
   ]
 }

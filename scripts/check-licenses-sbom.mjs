@@ -4,7 +4,7 @@
  * against permissive allowlist, and generates CycloneDX/SPDX metadata inventory.
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -154,7 +154,9 @@ async function main() {
     })),
   };
 
-  const sbomPath = path.join(rootDir, 'docs', 'sbom-inventory.json');
+  const reportsDir = path.join(rootDir, '.reports');
+  await mkdir(reportsDir, { recursive: true });
+  const sbomPath = path.join(reportsDir, 'sbom-inventory.json');
   await writeFile(sbomPath, JSON.stringify(sbomDocument, null, 2), 'utf-8');
 
   console.log(`Audited ${allDependencies.size} production runtime dependencies:`);
@@ -168,7 +170,7 @@ async function main() {
   );
   console.log(`... and ${sbomComponents.length - 15} more audited.`);
 
-  console.log(`\nSBOM exported successfully to: docs/sbom-inventory.json`);
+  console.log(`\nSBOM exported successfully to: .reports/sbom-inventory.json`);
 
   if (violations > 0) {
     console.error(`\nFAILED: Found ${violations} dependencies with non-permissive licenses.`);

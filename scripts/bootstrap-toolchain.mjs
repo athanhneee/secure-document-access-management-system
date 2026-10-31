@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 
 if (process.platform !== 'win32' || process.arch !== 'x64') {
   throw new Error(
-    'This optional portable bootstrap supports Windows x64. Other platforms: install the Node version in .node-version and enable Corepack.',
+    'This optional portable bootstrap supports Windows x64. Other platforms: install the Node version in package.json engines and enable Corepack.',
   );
 }
 const nodeVersion = '24.21.0';

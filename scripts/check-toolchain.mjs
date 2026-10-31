@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-const expectedNode = (await readFile(new URL('../.node-version', import.meta.url), 'utf8')).trim();
+const expectedNode = /(\d+\.\d+\.\d+)/.exec(manifest.engines?.node ?? '')?.[1] ?? '24.14.0';
 const parts = process.versions.node.split('.').map(Number);
 const minimum = expectedNode.split('.').map(Number);
 if (

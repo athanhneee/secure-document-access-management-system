@@ -8,6 +8,5 @@ Ba bucket MinIO được bootstrap idempotent, private và bật versioning. Cá
 được giữ lại khi chạy `pnpm infra:down`; chỉ `pnpm infra:reset-safe` có thể xóa chúng
 sau xác nhận chính xác.
 
-Hướng dẫn vận hành, port và xử lý lỗi: [LOCAL_DEVELOPMENT.md](../docs/LOCAL_DEVELOPMENT.md).
-`pnpm db:validate` vẫn chạy SQL tham chiếu nguyên bản độc lập bằng PGlite; test hạ tầng
-không thay đổi database schema nguồn.
+Hướng dẫn khởi chạy và cấu hình cổng dịch vụ: xem tại [README.md gốc](../README.md).
+`pnpm db:validate` kiểm chứng lược đồ cơ sở dữ liệu nền tảng bằng PGlite WASM độc lập.

@@ -120,7 +120,7 @@ async function main() {
             'redis-data-init',
             'redis',
             'minio',
-            'minio-provisioner',
+            'minio-bootstrap',
             'gotenberg',
             'mailpit',
           ]

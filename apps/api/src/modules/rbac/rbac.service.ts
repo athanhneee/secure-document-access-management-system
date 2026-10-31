@@ -115,6 +115,9 @@ export class RbacService {
     const role = await withSerializableTransaction(async (transaction) => {
       const before = await transaction.role.findUnique({ where: { id } });
       if (!before) throw new NotFoundException('Role not found.');
+      if (await this.actorHoldsRole(principal.userId, id)) {
+        throw new ForbiddenException('Administrators cannot change a role they hold.');
+      }
       if (before.is_system_role && (input.code !== undefined || input.name !== undefined)) {
         throw new ForbiddenException('System role code and name are immutable.');
       }
@@ -329,8 +332,10 @@ export class RbacService {
             roles: {
               code: { in: [...PRIVILEGED_SEPARATION_ROLES].filter((code) => code !== role.code) },
             },
-            valid_from: { lte: new Date() },
-            OR: [{ valid_to: null }, { valid_to: { gt: new Date() } }],
+            AND: [
+              { OR: [{ valid_to: null }, { valid_to: { gt: input.validFrom } }] },
+              ...(input.validTo !== null ? [{ valid_from: { lt: input.validTo } }] : []),
+            ],
           },
         });
         if (incompatible) throw new ConflictException('Privileged roles are mutually exclusive.');
@@ -374,12 +379,23 @@ export class RbacService {
     await withSerializableTransaction(async (transaction) => {
       const assignment = await transaction.userRole.findFirst({
         where: { id: assignmentId, user_id: userId },
+        include: { roles: { include: { role_permissions: true } } },
       });
       if (!assignment) throw new NotFoundException('Role assignment not found.');
       const user = await transaction.user.findUniqueOrThrow({ where: { id: userId } });
       await this.authorization.assertPermission(principal, 'USER', 'MANAGE', {
         targetDepartmentId: user.department_id,
       });
+      await this.authorization.assertPermission(principal, 'USER', 'MANAGE', {
+        targetDepartmentId: assignment.scope_department_id,
+      });
+      if (assignment.roles?.role_permissions) {
+        await this.authorization.assertCanDelegate(
+          principal,
+          assignment.roles.role_permissions.map((mapping) => mapping.permission_id),
+          assignment.scope_department_id,
+        );
+      }
       const now = new Date();
       if (assignment.valid_to !== null && assignment.valid_to <= now)
         throw new ConflictException('Role assignment is already inactive.');

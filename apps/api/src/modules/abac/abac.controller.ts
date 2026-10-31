@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import {
   Body,
   Controller,
@@ -30,7 +31,10 @@ const SimulationSchema = z
           .datetime({ offset: true })
           .transform((value) => new Date(value))
           .optional(),
-        ip: z.string().ip().optional(),
+        ip: z
+          .string()
+          .refine((val) => isIP(val) !== 0, 'Invalid IP address')
+          .optional(),
         deviceTrust: z.boolean().optional(),
         mfa: z.boolean().optional(),
         riskScore: z.number().min(0).max(100).optional(),

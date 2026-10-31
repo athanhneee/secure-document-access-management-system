@@ -235,9 +235,15 @@ function cidrMatchesAny(ip: string, expected: ExpectedValue): boolean {
 export function cidrMatch(ip: string, cidr: string): boolean {
   const [networkText, prefixText, extra] = cidr.split('/');
   if (!networkText || extra !== undefined) return false;
-  const address = parseAddress(ip);
-  const network = parseAddress(networkText);
-  if (!address || !network || address.bits !== network.bits) return false;
+  let address = parseAddress(ip);
+  let network = parseAddress(networkText);
+  if (!address || !network) return false;
+  if (address.bits === 128 && network.bits === 32 && address.value >> 32n === 0xffffn) {
+    address = { value: address.value & 0xffffffffn, bits: 32 };
+  } else if (network.bits === 128 && address.bits === 32 && network.value >> 32n === 0xffffn) {
+    address = { value: (0xffffn << 32n) | address.value, bits: 128 };
+  }
+  if (address.bits !== network.bits) return false;
   const prefix = prefixText === undefined ? address.bits : Number(prefixText);
   if (!Number.isInteger(prefix) || prefix < 0 || prefix > address.bits) return false;
   const shift = BigInt(address.bits - prefix);
@@ -245,7 +251,7 @@ export function cidrMatch(ip: string, cidr: string): boolean {
 }
 
 function parseAddress(value: string): { value: bigint; bits: 32 | 128 } | null {
-  const normalized = value.toLowerCase().split('%')[0]!;
+  const normalized = value.trim().toLowerCase().split('%')[0]!;
   if (normalized.includes(':')) return parseIpv6(normalized);
   const parts = normalized.split('.');
   if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/u.test(part) || Number(part) > 255)) {

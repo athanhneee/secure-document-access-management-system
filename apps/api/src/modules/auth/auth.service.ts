@@ -88,7 +88,8 @@ export class AuthService {
 
     this.rateLimit.clearAccount(accountKey);
     await this.repository.recordLoginSuccess(user.id);
-    const mfaRequired = user.roles.some((role) => MFA_REQUIRED_ROLES.has(role));
+    const mfaRequired =
+      Boolean(user.mfaMethod) || user.roles.some((role) => MFA_REQUIRED_ROLES.has(role));
     const artifacts = await this.startSession(user.id, context, !mfaRequired, mfaRequired);
     await this.audit.record(
       {
@@ -207,6 +208,9 @@ export class AuthService {
   async forgotPassword(identifier: string, context: RequestContext): Promise<{ message: string }> {
     const startedAt = Date.now();
     const normalized = identifier.normalize('NFKC').trim().toLowerCase();
+    const rateKey = `reset:${normalized}`;
+    this.rateLimit.assertAllowed(context.ip, rateKey);
+    this.rateLimit.recordFailure(context.ip, rateKey);
     await this.passwords.burnEquivalentWork(normalized);
     const user = await this.repository.findUserByIdentifier(normalized);
     if (user?.status === 'ACTIVE') {
@@ -264,6 +268,7 @@ export class AuthService {
     label: string | undefined,
     context: RequestContext,
   ): Promise<{ secret: string; uri: string }> {
+    await this.assertEnrollmentAllowed(principal, context);
     const enrollment = this.mfa.createEnrollment(principal.username);
     await this.repository.createMfaEnrollment(principal.userId, enrollment.encryptedSecret, label);
     await this.audit.record(
@@ -278,10 +283,15 @@ export class AuthService {
     code: string,
     context: RequestContext,
   ): Promise<SessionArtifacts & { recoveryCodes: string[] }> {
+    const rateKey = `mfa-enroll:${principal.userId}`;
+    this.rateLimit.assertAllowed(context.ip, rateKey);
+    await this.assertEnrollmentAllowed(principal, context);
     const pending = await this.repository.pendingMfaMethod(principal.userId);
     if (!pending || !this.mfa.verifyTotp(pending.encryptedSecret, code)) {
+      this.rateLimit.recordFailure(context.ip, rateKey);
       throw new UnauthorizedException('MFA verification failed.');
     }
+    this.rateLimit.clearAccount(rateKey);
     const recovery = this.mfa.createRecoveryCodes();
     await this.repository.enableMfa(pending.id, principal.userId, recovery.hashes);
     const artifacts = await this.activateMfaSession(principal);
@@ -297,6 +307,7 @@ export class AuthService {
     label: string | undefined,
     context: RequestContext,
   ) {
+    await this.assertEnrollmentAllowed(principal, context);
     const existing = await this.repository.getActiveMfaMethods(principal.userId);
     const existingCreds = existing
       .map((m) => this.webauthn.parseStoredCredential(m.encryptedSecret))
@@ -329,6 +340,7 @@ export class AuthService {
     label: string | undefined,
     context: RequestContext,
   ): Promise<SessionArtifacts & { recoveryCodes: string[] }> {
+    await this.assertEnrollmentAllowed(principal, context);
     const verification = await this.webauthn.verifyRegistration(
       response,
       challengeToken,
@@ -341,6 +353,7 @@ export class AuthService {
       principal.userId,
       verification.encryptedSecret,
       label ?? 'FIDO2 / WebAuthn Key',
+      'WEBAUTHN',
     );
     await this.repository.enableMfa(methodId, principal.userId, recovery.hashes);
 
@@ -370,12 +383,20 @@ export class AuthService {
     context: RequestContext,
   ) {
     let userId: bigint | undefined = principal?.userId;
-    if (!userId && username) {
-      const user = await this.repository.findUserByIdentifier(username.trim().toLowerCase());
-      if (user) userId = user.id;
+    const normalizedUsername = username?.normalize('NFKC').trim().toLowerCase();
+    if (!userId && normalizedUsername) {
+      this.rateLimit.assertAllowed(context.ip, `webauthn-opt:${normalizedUsername}`);
+      const user = await this.repository.findUserByIdentifier(normalizedUsername);
+      if (user && user.status === 'ACTIVE') userId = user.id;
     }
 
     if (!userId) {
+      if (!principal && normalizedUsername) {
+        this.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
+        throw new BadRequestException(
+          'Unable to initiate WebAuthn authentication for the supplied identifier.',
+        );
+      }
       throw new BadRequestException('User identification is required for WebAuthn authentication.');
     }
 
@@ -385,6 +406,12 @@ export class AuthService {
       .filter((c): c is StoredWebAuthnCredential => c !== null);
 
     if (webauthnCreds.length === 0) {
+      if (!principal && normalizedUsername) {
+        this.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
+        throw new BadRequestException(
+          'Unable to initiate WebAuthn authentication for the supplied identifier.',
+        );
+      }
       throw new BadRequestException('No WebAuthn security keys found for this account.');
     }
 
@@ -411,6 +438,8 @@ export class AuthService {
     challengeToken: string,
     context: RequestContext,
   ): Promise<SessionArtifacts> {
+    const rateKey = `webauthn:${principal.userId}`;
+    this.rateLimit.assertAllowed(context.ip, rateKey);
     const activeMethods = await this.repository.getActiveMfaMethods(principal.userId);
     let matchedMethod: (typeof activeMethods)[number] | null = null;
     let matchedCred: StoredWebAuthnCredential | null = null;
@@ -425,6 +454,7 @@ export class AuthService {
     }
 
     if (!matchedMethod || !matchedCred) {
+      this.rateLimit.recordFailure(context.ip, rateKey);
       await this.audit.record(
         {
           action: 'MFA_WEBAUTHN_VERIFY',
@@ -437,14 +467,21 @@ export class AuthService {
       throw new UnauthorizedException('Security key credential was not recognized for this user.');
     }
 
-    const result = await this.webauthn.verifyAuthentication(
-      response,
-      challengeToken,
-      matchedCred,
-      principal.userId,
-    );
+    let result: Awaited<ReturnType<WebAuthnService['verifyAuthentication']>>;
+    try {
+      result = await this.webauthn.verifyAuthentication(
+        response,
+        challengeToken,
+        matchedCred,
+        principal.userId,
+      );
+    } catch (error) {
+      this.rateLimit.recordFailure(context.ip, rateKey);
+      throw error;
+    }
 
     if (result.cloneDetected) {
+      this.rateLimit.recordFailure(context.ip, rateKey);
       await this.repository.recordSecurityAlert({
         alertType: 'WEBAUTHN_CLONE_DETECTED',
         severity: 'CRITICAL',
@@ -467,6 +504,7 @@ export class AuthService {
       throw new UnauthorizedException('Security key cloning or replay attack detected.');
     }
 
+    this.rateLimit.clearAccount(rateKey);
     await this.repository.updateMfaSecret(matchedMethod.id, result.updatedEncryptedSecret);
 
     const artifacts = await this.activateMfaSession(principal);
@@ -494,6 +532,8 @@ export class AuthService {
     recoveryCode: string | undefined,
     context: RequestContext,
   ): Promise<SessionArtifacts> {
+    const rateKey = `mfa:${principal.userId}`;
+    this.rateLimit.assertAllowed(context.ip, rateKey);
     const activeMethods = await this.repository.getActiveMfaMethods(principal.userId);
     if (activeMethods.length === 0) throw new UnauthorizedException('MFA verification failed.');
 
@@ -523,12 +563,14 @@ export class AuthService {
     }
 
     if (!valid) {
+      this.rateLimit.recordFailure(context.ip, rateKey);
       await this.audit.record(
         { action: 'MFA_VERIFY', outcome: 'DENIED', actorUserId: principal.userId },
         context,
       );
       throw new UnauthorizedException('MFA verification failed.');
     }
+    this.rateLimit.clearAccount(rateKey);
     const artifacts = await this.activateMfaSession(principal);
     await this.audit.record(
       { action: 'MFA_VERIFY', outcome: 'SUCCESS', actorUserId: principal.userId },
@@ -549,6 +591,32 @@ export class AuthService {
 
   jwks(): ReturnType<TokenService['jwks']> {
     return this.tokens.jwks();
+  }
+
+  private async assertEnrollmentAllowed(
+    principal: AuthPrincipal,
+    context: RequestContext,
+  ): Promise<void> {
+    if (principal.mfa) return;
+    const activeMethods =
+      typeof this.repository.getActiveMfaMethods === 'function'
+        ? await this.repository.getActiveMfaMethods(principal.userId)
+        : [];
+    if (activeMethods.length > 0) {
+      await this.audit.record(
+        {
+          action: 'MFA_ENROLLMENT_BLOCKED',
+          outcome: 'DENIED',
+          actorUserId: principal.userId,
+          actorUsername: principal.username,
+          reasonCode: 'STEP_UP_MFA_REQUIRED',
+        },
+        context,
+      );
+      throw new ForbiddenException(
+        'Step-up MFA verification is required to enroll or modify MFA factors.',
+      );
+    }
   }
 
   private async startSession(

@@ -19,6 +19,7 @@ import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
 import { AuthorizationCache } from '../rbac/authorization-cache.js';
 import { AbacService } from '../abac/abac.service.js';
+import { cidrMatch } from '../abac/policy-engine.js';
 import { AppConfigService } from '../../config/config.service.js';
 import { AccessGrantAuditService } from './access-grant-audit.service.js';
 import { RedlockService } from '../concurrency/redlock.service.js';
@@ -115,7 +116,7 @@ export class AccessGrantsService {
       include: {
         classification_history: {
           where: { effective_to: null },
-          include: { classification_levels: true },
+          include: { classification_levels: true, business_categories: true },
         },
       },
     });
@@ -182,6 +183,32 @@ export class AccessGrantsService {
           message: 'Target user account is not active.',
         });
       }
+      if (typeof this.database.userRole?.findMany === 'function') {
+        const recipientRoles = await this.database.userRole.findMany({
+          where: {
+            user_id: input.principalUserId,
+            valid_from: { lte: now },
+            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+            roles: { is_active: true },
+          },
+          include: { roles: { select: { code: true } } },
+        });
+        const roleCodes = recipientRoles
+          .map((r) => (r as { roles?: { code?: string } }).roles?.code)
+          .filter((c): c is string => typeof c === 'string');
+        const hasRestricted = roleCodes.includes('SYSTEM_ADMIN') || roleCodes.includes('AUDITOR');
+        const hasBusiness =
+          roleCodes.includes('DOCUMENT_OWNER') ||
+          roleCodes.includes('DOCUMENT_READER') ||
+          roleCodes.includes('DEPARTMENT_ADMIN');
+        if (hasRestricted && !hasBusiness) {
+          throw new ForbiddenException({
+            errorCode: AppErrorCode.FORBIDDEN,
+            message:
+              'Separation of duties: cannot grant document content access to technical admin or auditor roles.',
+          });
+        }
+      }
     } else if (input.principalType === 'ROLE') {
       if (!input.principalRoleId) {
         throw new BadRequestException({
@@ -191,7 +218,7 @@ export class AccessGrantsService {
       }
       const targetRole = await this.database.role.findUnique({
         where: { id: input.principalRoleId },
-        select: { id: true, is_active: true },
+        select: { id: true, code: true, is_active: true },
       });
       if (!targetRole) {
         throw new NotFoundException({
@@ -203,6 +230,38 @@ export class AccessGrantsService {
         throw new BadRequestException({
           errorCode: AppErrorCode.ROLE_NOT_ACTIVE,
           message: 'Target role is not active.',
+        });
+      }
+      if (targetRole.code === 'SYSTEM_ADMIN' || targetRole.code === 'AUDITOR') {
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.FORBIDDEN,
+          message:
+            'Separation of duties: cannot grant document content access to SYSTEM_ADMIN or AUDITOR role.',
+        });
+      }
+    }
+
+    if (input.accessRequestId && typeof this.database.accessRequest?.findUnique === 'function') {
+      const linkedRequest = await this.database.accessRequest.findUnique({
+        where: { id: input.accessRequestId },
+        select: {
+          id: true,
+          document_id: true,
+          requester_id: true,
+          status: true,
+        },
+      });
+      if (
+        !linkedRequest ||
+        linkedRequest.document_id !== input.documentId ||
+        linkedRequest.status !== 'PENDING' ||
+        input.principalType !== 'USER' ||
+        linkedRequest.requester_id !== input.principalUserId
+      ) {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.VALIDATION_FAILED,
+          message:
+            'Linked accessRequestId must be a PENDING request for the same document and recipient user.',
         });
       }
     }
@@ -253,6 +312,19 @@ export class AccessGrantsService {
     const subjectAttributes = await this.buildSubjectAttributes(subjectUserId);
     const resourceAttributes = this.buildResourceAttributes(document, currentClassification);
 
+    const rawTrustedCidrs =
+      typeof this.config?.get === 'function'
+        ? this.config.get('ABAC_TRUSTED_NETWORK_CIDRS')
+        : undefined;
+    const trustedNetwork =
+      typeof rawTrustedCidrs === 'string' && rawTrustedCidrs.length > 0
+        ? rawTrustedCidrs
+            .split(',')
+            .map((c) => c.trim())
+            .filter(Boolean)
+            .some((cidr) => cidrMatch(context.ip, cidr))
+        : false;
+
     for (const permission of input.permissions) {
       const abacResult = await this.abac.evaluate({
         resourceType: 'DOCUMENT',
@@ -262,7 +334,7 @@ export class AccessGrantsService {
         environment: {
           currentTime: now.toISOString(),
           ip: context.ip,
-          trustedNetwork: false,
+          trustedNetwork,
           deviceTrust: false,
           mfa: principal.mfa,
           riskScore: 0,
@@ -810,6 +882,7 @@ export class AccessGrantsService {
     userId: bigint,
     requestedAction: 'VIEW' | 'DOWNLOAD',
     now: Date = new Date(),
+    expectedDocumentId?: string,
   ): Promise<{
     grant: { id: string; document_id: string; principal_type: string };
     documentRank: number;
@@ -833,6 +906,13 @@ export class AccessGrantsService {
       throw new ForbiddenException({
         errorCode: AppErrorCode.GRANT_NOT_FOUND,
         message: 'Access grant was not found.',
+      });
+    }
+
+    if (expectedDocumentId && grant.document_id !== expectedDocumentId) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Access grant does not belong to the requested document.',
       });
     }
 
@@ -1097,11 +1177,36 @@ export class AccessGrantsService {
       orderBy: { attribute_options: { numeric_rank: 'desc' } },
     });
 
+    let projects: string[] = [];
+    if (typeof this.database.userAttributeAssignment?.findMany === 'function') {
+      const projectAssignments = await this.database.userAttributeAssignment.findMany({
+        where: {
+          user_id: userId,
+          attribute_definitions: { code: 'PROJECT', is_active: true },
+          valid_from: { lte: now },
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+        },
+        include: { attribute_options: true },
+      });
+      projects = projectAssignments
+        .map(
+          (a) =>
+            (
+              a as {
+                attribute_options?: { value_code?: string } | null;
+                value_text?: string | null;
+              }
+            ).attribute_options?.value_code ?? (a as { value_text?: string | null }).value_text,
+        )
+        .filter((v): v is string => typeof v === 'string' && v.length > 0)
+        .sort();
+    }
+
     return {
       clearanceRank: clearance?.attribute_options?.numeric_rank ?? null,
       departmentId: user?.department_id?.toString() ?? null,
       employmentStatus: user?.status ?? null,
-      projects: [],
+      projects,
     };
   }
 

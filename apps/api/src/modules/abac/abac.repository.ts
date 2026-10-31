@@ -26,12 +26,18 @@ export class AbacRepository {
     return rows[0]?.version ?? 0n;
   }
 
-  async loadPolicySource(options: { includeInactiveRuleId?: bigint } = {}): Promise<{
+  async loadPolicySource(
+    options: {
+      includeInactiveRuleId?: bigint;
+      client?: Pick<ReturnType<typeof getDatabaseClient>, 'attributeDefinition' | 'policyRule'>;
+    } = {},
+  ): Promise<{
     definitions: StoredDefinition[];
     rules: StoredRule[];
   }> {
+    const db = options.client ?? this.database;
     const [definitions, rules] = await Promise.all([
-      this.database.attributeDefinition.findMany({
+      db.attributeDefinition.findMany({
         where: { is_active: true },
         orderBy: { code: 'asc' },
         select: {
@@ -46,7 +52,7 @@ export class AbacRepository {
           },
         },
       }),
-      this.database.policyRule.findMany({
+      db.policyRule.findMany({
         where:
           options.includeInactiveRuleId === undefined
             ? { is_active: true }

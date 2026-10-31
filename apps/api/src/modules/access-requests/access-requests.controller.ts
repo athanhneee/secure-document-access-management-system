@@ -12,6 +12,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { randomUUID } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import {
   CreateAccessRequestSchema,
@@ -43,9 +44,11 @@ export class AccessRequestsController {
 
   private context(request: FastifyRequest): RequestContext {
     return {
-      ip: (request.headers['x-forwarded-for'] as string) || request.ip || '127.0.0.1',
-      userAgent: (request.headers['user-agent'] as string) || undefined,
-      correlationId: (request.headers['x-correlation-id'] as string) || 'default-correlation-id',
+      ip: request.ip || '127.0.0.1',
+      ...(request.headers['user-agent']
+        ? { userAgent: String(request.headers['user-agent']) }
+        : {}),
+      correlationId: request.correlationId ?? randomUUID(),
     };
   }
 
@@ -78,6 +81,7 @@ export class AccessRequestsController {
    * UC13 & UC15: List user access requests (scope: 'my' or 'incoming').
    */
   @Get()
+  @RequirePermission('ACCESS_REQUEST', 'VIEW_OWN')
   @ApiOperation({ summary: 'List user access requests' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Access requests list' })
   async listRequests(

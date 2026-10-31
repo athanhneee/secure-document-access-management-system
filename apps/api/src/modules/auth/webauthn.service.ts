@@ -35,6 +35,7 @@ export class WebAuthnService {
   private readonly rpId: string;
   private readonly origins: string[];
   private readonly challengeSigningKey: Buffer;
+  private readonly consumedChallenges = new Map<string, number>();
 
   constructor(
     private readonly mfa: MfaService,
@@ -115,7 +116,8 @@ export class WebAuthnService {
     }
 
     // Enforce 5-minute maximum lifetime
-    if (Date.now() - payload.timestamp > 300_000) {
+    const now = Date.now();
+    if (now - payload.timestamp > 300_000 || payload.timestamp > now + 30_000) {
       throw new BadRequestException('Challenge token has expired.');
     }
 
@@ -127,7 +129,29 @@ export class WebAuthnService {
       throw new BadRequestException('Challenge token is bound to a different user.');
     }
 
+    this.pruneConsumedChallenges(now);
+    const replayKey = createHash('sha256').update(token).digest('hex');
+    const consumedExpiry = this.consumedChallenges.get(replayKey);
+    if (consumedExpiry && consumedExpiry > now) {
+      throw new BadRequestException('Challenge token has already been used.');
+    }
+    this.consumedChallenges.set(replayKey, payload.timestamp + 300_000);
+
     return payload.challenge;
+  }
+
+  private pruneConsumedChallenges(now: number): void {
+    if (this.consumedChallenges.size < 4_096) return;
+    for (const [key, expiresAt] of this.consumedChallenges) {
+      if (expiresAt <= now) {
+        this.consumedChallenges.delete(key);
+      }
+    }
+    while (this.consumedChallenges.size >= 8_192) {
+      const oldest = this.consumedChallenges.keys().next().value;
+      if (!oldest) break;
+      this.consumedChallenges.delete(oldest);
+    }
   }
 
   /**

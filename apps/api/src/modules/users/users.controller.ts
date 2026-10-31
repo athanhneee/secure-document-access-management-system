@@ -56,8 +56,8 @@ export class UsersController {
   }
 
   @Get('lookup')
-  lookup() {
-    return this.users.lookup();
+  lookup(@Req() request: FastifyRequest) {
+    return this.users.lookup(this.principal(request));
   }
 
   @Get()

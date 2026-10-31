@@ -346,26 +346,41 @@ export class AuthRepository {
     userId: bigint,
     encryptedSecret: string,
     label?: string,
+    methodType: 'TOTP' | 'WEBAUTHN' = 'TOTP',
   ): Promise<string> {
-    const existing = await this.database.mfaMethod.findFirst({
-      where: { user_id: userId, disabled_at: null },
-    });
-    if (existing) {
-      await this.database.mfaMethod.update({
-        where: { id: existing.id },
-        data: {
-          secret_encrypted: encryptedSecret,
-          label: label ?? null,
-          verified_at: null,
+    if (methodType === 'TOTP') {
+      const existing = await this.database.mfaMethod.findFirst({
+        where: {
+          user_id: userId,
+          method_type: 'TOTP',
           enabled_at: null,
-          recovery_code_hashes: [],
+          verified_at: null,
+          disabled_at: null,
         },
       });
-      return existing.id;
+      if (existing) {
+        await this.database.mfaMethod.update({
+          where: { id: existing.id },
+          data: {
+            secret_encrypted: encryptedSecret,
+            label: label ?? null,
+            verified_at: null,
+            enabled_at: null,
+            recovery_code_hashes: [],
+          },
+        });
+        return existing.id;
+      }
     }
     const id = randomUUID();
     await this.database.mfaMethod.create({
-      data: { id, user_id: userId, secret_encrypted: encryptedSecret, label: label ?? null },
+      data: {
+        id,
+        user_id: userId,
+        method_type: methodType,
+        secret_encrypted: encryptedSecret,
+        label: label ?? null,
+      },
     });
     return id;
   }

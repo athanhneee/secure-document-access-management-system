@@ -62,8 +62,16 @@ export class UsersService {
     };
   }
 
-  async lookup() {
+  async lookup(principal?: AuthPrincipal) {
     const now = new Date();
+    const canViewClearance =
+      !principal ||
+      (await this.authorization.hasPermission(principal, 'ACCESS_GRANT', 'CREATE', {
+        anyScope: true,
+      })) ||
+      (await this.authorization.hasPermission(principal, 'USER', 'MANAGE', {
+        anyScope: true,
+      }));
     const users = await this.database.user.findMany({
       where: { status: 'ACTIVE' },
       orderBy: { username: 'asc' },
@@ -96,9 +104,15 @@ export class UsersService {
           fullName: u.full_name,
           departmentId: u.department_id?.toString() ?? null,
           departmentName: u.departments?.name ?? null,
-          clearanceRank: clearanceAttr?.attribute_options?.numeric_rank ?? 0,
-          clearanceCode: clearanceAttr?.attribute_options?.value_code ?? 'UNCLASSIFIED',
-          clearanceName: clearanceAttr?.attribute_options?.display_name ?? 'Chưa phân loại',
+          clearanceRank: canViewClearance
+            ? (clearanceAttr?.attribute_options?.numeric_rank ?? 0)
+            : 0,
+          clearanceCode: canViewClearance
+            ? (clearanceAttr?.attribute_options?.value_code ?? 'UNCLASSIFIED')
+            : 'REDACTED',
+          clearanceName: canViewClearance
+            ? (clearanceAttr?.attribute_options?.display_name ?? 'Chưa phân loại')
+            : 'Ẩn',
         };
       }),
     };

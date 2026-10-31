@@ -78,6 +78,17 @@ export class AccessRequestsService {
       });
     }
 
+    if (
+      principal.roles?.some(
+        (role) => role === 'SYSTEM_ADMIN' || role === 'AUDITOR' || role === 'SECURITY_OFFICER',
+      )
+    ) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Separated privileged roles cannot request document access.',
+      });
+    }
+
     // 1. Verify document exists and is ACTIVE
     const document = await this.database.document.findUnique({
       where: { id: input.documentId },
@@ -96,6 +107,14 @@ export class AccessRequestsService {
       });
     }
 
+    // D-BR11 anti-enumeration: non-discoverable documents must return 404 to non-owners
+    if (document.discoverable === false && document.owner_id !== principal.userId) {
+      throw new NotFoundException({
+        errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+        message: 'Document was not found.',
+      });
+    }
+
     if (document.status !== 'ACTIVE') {
       throw new BadRequestException({
         errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
@@ -103,8 +122,32 @@ export class AccessRequestsService {
       });
     }
 
-    // 2. If DOWNLOAD requested, verify classification allows download
+    // 2. Verify requester security clearance & download allowance
     const currentClassification = document.classification_history[0];
+    const requiredRank = currentClassification?.classification_levels?.rank ?? 0;
+    if (
+      requiredRank > 0 &&
+      typeof this.database?.userAttributeAssignment?.findFirst === 'function'
+    ) {
+      const clearanceAssignment = await this.database.userAttributeAssignment.findFirst({
+        where: {
+          user_id: principal.userId,
+          attribute_definitions: { code: 'CLEARANCE_LEVEL' },
+          valid_from: { lte: now },
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+        },
+        include: { attribute_options: true },
+        orderBy: { attribute_options: { numeric_rank: 'desc' } },
+      });
+      const userRank = clearanceAssignment?.attribute_options?.numeric_rank ?? 0;
+      if (userRank < requiredRank) {
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.CLEARANCE_INSUFFICIENT,
+          message: 'Insufficient security clearance to request access to this document.',
+        });
+      }
+    }
+
     if (input.requestedAction === 'DOWNLOAD') {
       if (currentClassification && !currentClassification.classification_levels.allow_download) {
         throw new ForbiddenException({

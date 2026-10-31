@@ -8,6 +8,7 @@ import { AuthorizationGuard } from './modules/rbac/authorization.guard.js';
 import { RbacModule } from './modules/rbac/rbac.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { DepartmentsModule } from './modules/departments/departments.module.js';
+import { ClassificationsModule } from './modules/classifications/classifications.module.js';
 import { AbacModule } from './modules/abac/abac.module.js';
 import { DocumentsModule } from './modules/documents/documents.module.js';
 import { AccessGrantsModule } from './modules/access-grants/access-grants.module.js';
@@ -30,6 +31,7 @@ import { ConcurrencyModule } from './modules/concurrency/concurrency.module.js';
     AbacModule,
     UsersModule,
     DepartmentsModule,
+    ClassificationsModule,
     DocumentsModule,
     AccessGrantsModule,
     AccessRequestsModule,

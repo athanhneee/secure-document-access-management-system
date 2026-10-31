@@ -76,19 +76,18 @@ export class OpenTelemetryTracer {
     const traceparent = typeof rawTraceparent === 'string' ? rawTraceparent.trim() : undefined;
 
     const rawCorrId = headers['x-correlation-id'] ?? headers['x-request-id'];
-    const headerCorrId = typeof rawCorrId === 'string' ? rawCorrId.trim() : undefined;
+    const trimmedCorrId = typeof rawCorrId === 'string' ? rawCorrId.trim() : undefined;
+    const headerCorrId =
+      trimmedCorrId && /^[a-zA-Z0-9._:-]{1,128}$/.test(trimmedCorrId) ? trimmedCorrId : undefined;
 
     if (traceparent) {
-      const parts = traceparent.split('-');
-      if (
-        parts.length === 4 &&
-        parts[0] === '00' &&
-        parts[1]?.length === 32 &&
-        parts[2]?.length === 16
-      ) {
-        const traceId = parts[1];
-        const parentSpanId = parts[2];
-        const sampled = parts[3] === '01';
+      const match = /^00-(?!0{32})([0-9a-f]{32})-(?!0{16})([0-9a-f]{16})-([0-9a-f]{2})$/.exec(
+        traceparent,
+      );
+      if (match && match[1] && match[2] && match[3]) {
+        const traceId = match[1];
+        const parentSpanId = match[2];
+        const sampled = (Number.parseInt(match[3], 16) & 0x01) === 0x01;
         return {
           traceId,
           spanId: this.generateSpanId(),

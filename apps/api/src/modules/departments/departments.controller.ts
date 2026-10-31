@@ -52,7 +52,8 @@ export class DepartmentsController {
   }
 
   @Get('lookup')
-  lookup() {
+  lookup(@Req() request: FastifyRequest) {
+    this.principal(request);
     return this.departments.lookup();
   }
 

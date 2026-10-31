@@ -169,6 +169,27 @@ export class AbacService {
           select: { is_active: true, version: true },
         });
         if (!before) throw new NotFoundException('Policy rule was not found.');
+        if (
+          typeof transaction.attributeDefinition?.findMany === 'function' &&
+          typeof transaction.policyRule?.findMany === 'function'
+        ) {
+          const lockedSource = await this.repository.loadPolicySource({
+            includeInactiveRuleId: ruleId,
+            client: transaction,
+          });
+          try {
+            compilePolicy(oldVersion, lockedSource.definitions, lockedSource.rules);
+          } catch (error) {
+            if (error instanceof PolicyCompilationError) {
+              throw new BadRequestException({
+                errorCode: 'INVALID_POLICY',
+                message: 'Policy cannot be activated.',
+                issues: error.issueCodes,
+              });
+            }
+            throw error;
+          }
+        }
         const after = await transaction.policyRule.update({
           where: { id: ruleId },
           data: { is_active: true },

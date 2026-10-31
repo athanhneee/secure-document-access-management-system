@@ -77,7 +77,8 @@ export class RbacController {
   }
 
   @Get('roles/lookup')
-  lookupRoles() {
+  lookupRoles(@Req() request: FastifyRequest) {
+    this.principal(request);
     return this.rbac.lookupRoles();
   }
 

@@ -7,8 +7,11 @@ import {
 } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { ZodError } from 'zod';
 import { AppErrorCode, type ErrorEnvelope } from '@sda/contracts';
 import { JsonLoggerService } from '../logger/json-logger.service.js';
+
+const SAFE_CORRELATION_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -19,10 +22,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const reply = ctx.getResponse<FastifyReply>();
     const request = ctx.getRequest<FastifyRequest>();
 
+    const rawHeaderCorrId =
+      typeof request.headers['x-correlation-id'] === 'string'
+        ? request.headers['x-correlation-id'].trim()
+        : undefined;
     const correlationId =
       request.correlationId ??
-      (typeof request.headers['x-correlation-id'] === 'string'
-        ? request.headers['x-correlation-id']
+      (rawHeaderCorrId && SAFE_CORRELATION_ID_RE.test(rawHeaderCorrId)
+        ? rawHeaderCorrId
         : randomUUID());
 
     let statusCode = HttpStatus.INTERNAL_SERVER_ERROR;
@@ -79,6 +86,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
             break;
         }
       }
+    } else if (exception instanceof ZodError) {
+      statusCode = HttpStatus.BAD_REQUEST;
+      errorCode = AppErrorCode.VALIDATION_FAILED;
+      message = 'Validation failed for one or more fields.';
+      details = exception.issues.map((issue) => ({
+        path: issue.path.join('.'),
+        message: issue.message,
+      }));
     } else {
       // Unhandled error: log internally with correlation ID, never leak internal error to client
       const errorMsg = exception instanceof Error ? exception.message : String(exception);

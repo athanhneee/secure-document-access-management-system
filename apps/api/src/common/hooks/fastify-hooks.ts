@@ -11,6 +11,37 @@ declare module 'fastify' {
   }
 }
 
+const SENSITIVE_QUERY_KEYS = new Set([
+  'token',
+  'ticket',
+  'sessionid',
+  'session_id',
+  'code',
+  'secret',
+  'password',
+  'key',
+  'access_token',
+  'refresh_token',
+]);
+
+export function sanitizeLoggedUrl(rawUrl: string): string {
+  const [rawPath = '/', rawQuery] = rawUrl.split('?', 2);
+  const sanitizedPath = rawPath
+    .replace(/DT-[0-9a-fA-F]+/g, 'DT-[REDACTED]')
+    .replace(/WM-[0-9a-fA-F]+/g, 'WM-[REDACTED]');
+  if (!rawQuery) {
+    return sanitizedPath;
+  }
+  const params = new URLSearchParams(rawQuery);
+  for (const key of Array.from(params.keys())) {
+    if (SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) {
+      params.set(key, '[REDACTED]');
+    }
+  }
+  const serialized = params.toString();
+  return serialized ? `${sanitizedPath}?${serialized}` : sanitizedPath;
+}
+
 export function registerFastifyHooks(fastify: FastifyInstance): void {
   fastify.addHook('onRequest', async (request, reply) => {
     request.startTime = performance.now();
@@ -40,26 +71,29 @@ export function registerFastifyHooks(fastify: FastifyInstance): void {
   });
 
   fastify.addHook('onResponse', async (request, reply) => {
-    const url = request.url;
+    const rawUrl = request.url;
+    const safeUrl = sanitizeLoggedUrl(rawUrl);
+    const metricRoute =
+      request.routeOptions?.url || (reply.statusCode === 404 ? '/unmatched' : rawUrl);
     const durationMs = request.startTime ? performance.now() - request.startTime : 0;
     const durationSeconds = durationMs / 1000;
 
     // Record low-cardinality Prometheus metrics
     MetricsService.getInstance().recordHttpRequest(
       request.method,
-      url,
+      metricRoute,
       reply.statusCode,
       durationSeconds,
     );
 
-    const isSilentCheck = url.endsWith('/health/live') || url.endsWith('/health/metrics');
+    const isSilentCheck = rawUrl.endsWith('/health/live') || rawUrl.endsWith('/health/metrics');
     if (!isSilentCheck) {
       const logData = {
         level: 'info',
         time: new Date().toISOString(),
-        msg: `HTTP ${request.method} ${url} ${reply.statusCode}`,
+        msg: `HTTP ${request.method} ${safeUrl} ${reply.statusCode}`,
         method: request.method,
-        url,
+        url: safeUrl,
         statusCode: reply.statusCode,
         durationMs: Math.round(durationMs * 100) / 100,
         correlationId: request.correlationId ?? 'unknown',

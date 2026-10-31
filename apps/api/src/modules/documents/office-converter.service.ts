@@ -71,39 +71,68 @@ export class OfficeConverterService {
     // 1. Inspect ZIP archive entries
     const entries = await this.readZipEntries(officeBuffer);
 
-    // 2. Security Check: Detect and block prohibited VBA macros
+    // 2. Security Check: Detect and block prohibited VBA macros & ActiveX
     for (const entry of entries) {
       const lower = entry.fileName.toLowerCase();
       if (
         lower.includes('vbaproject.bin') ||
         lower.includes('vbadirection') ||
         lower.includes('vbadata') ||
-        (lower.endsWith('.bin') && lower.includes('vba'))
+        (lower.endsWith('.bin') && lower.includes('vba')) ||
+        lower.includes('/activex/')
       ) {
         throw new BadRequestException({
           errorCode: AppErrorCode.OFFICE_MACRO_BLOCKED,
           message: 'Office document contains prohibited executable VBA macros.',
         });
       }
+      if (lower === 'xl/connections.xml' || lower.endsWith('/externallink1.xml')) {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
+          message: 'Office document contains prohibited external data connections.',
+        });
+      }
     }
 
-    // 2b. Security Check: Detect and block prohibited external relationships (SSRF / NTLM leak protection)
+    // 2b. Security Check: Detect and block prohibited external relationships & XXE
     for (const entry of entries) {
-      if (entry.fileName.toLowerCase().endsWith('.rels')) {
+      const lowerFileName = entry.fileName.toLowerCase();
+      if (lowerFileName.endsWith('.rels') || lowerFileName.endsWith('.xml')) {
         const content = await this.extractEntryContent(officeBuffer, entry.fileName);
         if (content) {
-          const lowerContent = content.toLowerCase();
-          if (
-            lowerContent.includes('targetmode="external"') ||
-            lowerContent.includes("targetmode='external'") ||
-            /target\s*=\s*["'](?:https?|ftp|file|gopher|ldap):/i.test(content) ||
-            /target\s*=\s*["']\\\\[^"']+/i.test(content)
-          ) {
+          if (/<!doctype\b|<!entity\b/iu.test(content)) {
             throw new BadRequestException({
               errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
               message:
-                'Office document contains prohibited external relationships or SSRF attack vectors.',
+                'Office XML contains prohibited DOCTYPE or ENTITY declarations (XXE protection).',
             });
+          }
+
+          if (lowerFileName.endsWith('.rels')) {
+            const decoded = content
+              .replace(/&#x([0-9a-f]+);/giu, (_, hex: string) =>
+                String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff)),
+              )
+              .replace(/&#(\d+);/gu, (_, dec: string) =>
+                String.fromCodePoint(Math.min(parseInt(dec, 10), 0x10ffff)),
+              )
+              .replace(/&quot;/giu, '"')
+              .replace(/&apos;/giu, "'")
+              .replace(/&amp;/giu, '&');
+
+            if (
+              /targetmode\s*=\s*["']\s*external\s*["']/iu.test(decoded) ||
+              /target\s*=\s*["']\s*(?:https?|ftp|file|gopher|ldap|jar|netdoc|smb|mailto|mhtml):/iu.test(
+                decoded,
+              ) ||
+              /target\s*=\s*["']\s*(?:\\\\|\/\/)/iu.test(decoded)
+            ) {
+              throw new BadRequestException({
+                errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
+                message:
+                  'Office document contains prohibited external relationships or SSRF attack vectors.',
+              });
+            }
           }
         }
       }
@@ -202,7 +231,7 @@ export class OfficeConverterService {
    */
   private readZipEntries(buffer: Buffer): Promise<yauzl.Entry[]> {
     return new Promise((resolve, reject) => {
-      yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zipfile) => {
+      yauzl.fromBuffer(buffer, { lazyEntries: true, autoClose: false }, (err, zipfile) => {
         if (err || !zipfile) {
           return reject(
             new BadRequestException({
@@ -212,6 +241,14 @@ export class OfficeConverterService {
           );
         }
 
+        const safeClose = (): void => {
+          try {
+            zipfile.close();
+          } catch {
+            // Ignore
+          }
+        };
+
         const entries: yauzl.Entry[] = [];
         zipfile.readEntry();
 
@@ -220,44 +257,71 @@ export class OfficeConverterService {
           zipfile.readEntry();
         });
 
-        zipfile.on('end', () => resolve(entries));
-        zipfile.on('error', (zipErr) =>
+        zipfile.on('end', () => {
+          safeClose();
+          resolve(entries);
+        });
+        zipfile.on('error', (zipErr) => {
+          safeClose();
           reject(
             new BadRequestException({
               errorCode: AppErrorCode.OFFICE_CONVERSION_FAILED,
               message: `Corrupt zip archive: ${zipErr.message}`,
             }),
-          ),
-        );
+          );
+        });
       });
     });
   }
 
   /**
-   * Extracts entry content as string.
+   * Extracts entry content as string (capped at 5MB to prevent memory exhaustion).
    */
   private extractEntryContent(buffer: Buffer, entryPath: string): Promise<string | null> {
+    const maxExtractBytes = 5 * 1024 * 1024;
     return new Promise((resolve) => {
-      yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zipfile) => {
+      yauzl.fromBuffer(buffer, { lazyEntries: true, autoClose: false }, (err, zipfile) => {
         if (err || !zipfile) return resolve(null);
+
+        let settled = false;
+        const finish = (val: string | null): void => {
+          if (settled) return;
+          settled = true;
+          try {
+            zipfile.close();
+          } catch {
+            // Ignore
+          }
+          resolve(val);
+        };
 
         zipfile.readEntry();
         zipfile.on('entry', (entry) => {
+          if (settled) return;
           if (entry.fileName === entryPath) {
             zipfile.openReadStream(entry, (streamErr, readStream) => {
-              if (streamErr || !readStream) return resolve(null);
+              if (streamErr || !readStream) return finish(null);
               const chunks: Buffer[] = [];
-              readStream.on('data', (c) => chunks.push(c));
-              readStream.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-              readStream.on('error', () => resolve(null));
+              let total = 0;
+              readStream.on('data', (c: Buffer) => {
+                total += c.length;
+                if (total > maxExtractBytes) {
+                  readStream.destroy();
+                  finish(null);
+                  return;
+                }
+                chunks.push(c);
+              });
+              readStream.on('end', () => finish(Buffer.concat(chunks).toString('utf-8')));
+              readStream.on('error', () => finish(null));
             });
           } else {
             zipfile.readEntry();
           }
         });
 
-        zipfile.on('end', () => resolve(null));
-        zipfile.on('error', () => resolve(null));
+        zipfile.on('end', () => finish(null));
+        zipfile.on('error', () => finish(null));
       });
     });
   }
@@ -303,6 +367,15 @@ export class OfficeConverterService {
       .join('\n');
   }
 
+  private toWinAnsiSafeText(input: string): string {
+    return input
+      .replace(/Đ/gu, 'D')
+      .replace(/đ/gu, 'd')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/gu, '')
+      .replace(/[^\x20-\x7E\xA0-\xFF]/gu, '?');
+  }
+
   /**
    * Renders sanitized text into a standardized multi-page PDF.
    */
@@ -314,6 +387,7 @@ export class OfficeConverterService {
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const safeTitle = this.toWinAnsiSafeText(title);
 
     const lines = content.split('\n');
     const linesPerPage = 42;
@@ -327,7 +401,7 @@ export class OfficeConverterService {
 
       // Header on first page
       if (pageCount === 1) {
-        page.drawText(`Converted Document: ${title}`, {
+        page.drawText(`Converted Document: ${safeTitle}`, {
           x: 40,
           y: height - 40,
           size: 14,
@@ -349,7 +423,9 @@ export class OfficeConverterService {
       for (let i = lineIdx; i < endLine; i++) {
         const rawLine = lines[i] ?? '';
         // Truncate line if too long for A4 width
-        const truncated = rawLine.length > 95 ? `${rawLine.substring(0, 92)}...` : rawLine;
+        const truncated = this.toWinAnsiSafeText(
+          rawLine.length > 95 ? `${rawLine.substring(0, 92)}...` : rawLine,
+        );
         page.drawText(truncated, {
           x: 40,
           y: yPos,
@@ -374,7 +450,7 @@ export class OfficeConverterService {
 
     if (lines.length === 0 || pageCount === 0) {
       const page = pdfDoc.addPage([595.28, 841.89]);
-      page.drawText(`Converted Document: ${title}`, {
+      page.drawText(`Converted Document: ${safeTitle}`, {
         x: 40,
         y: 800,
         size: 14,

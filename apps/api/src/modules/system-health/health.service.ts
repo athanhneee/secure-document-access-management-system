@@ -86,10 +86,30 @@ export class HealthService {
     return tracer.withSpan('storage.probe', { 'rpc.system': 's3' }, async () => {
       const start = Date.now();
       try {
-        const host = this.configService.get('STORAGE_ENDPOINT');
+        if (process.env['STORAGE_MOCK'] === 'true') {
+          return { status: 'up', latencyMs: 1 };
+        }
+        const rawEndpoint = this.configService.get('STORAGE_ENDPOINT').trim();
+        if (
+          rawEndpoint.includes('.supabase.co') ||
+          rawEndpoint.includes('.r2.cloudflarestorage.com') ||
+          rawEndpoint.startsWith('http://') ||
+          rawEndpoint.startsWith('https://')
+        ) {
+          const parsed = new URL(
+            rawEndpoint.startsWith('http') ? rawEndpoint : `https://${rawEndpoint}`,
+          );
+          const targetPort = parsed.port
+            ? Number(parsed.port)
+            : parsed.protocol === 'https:'
+              ? 443
+              : 80;
+          await this.tcpPing(parsed.hostname, targetPort, timeoutMs);
+          return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
+        }
         const port = this.configService.get('STORAGE_PORT');
         const protocol = this.configService.get('STORAGE_USE_SSL') ? 'https' : 'http';
-        const response = await fetch(`${protocol}://${host}:${port}/minio/health/ready`, {
+        const response = await fetch(`${protocol}://${rawEndpoint}:${port}/minio/health/ready`, {
           signal: AbortSignal.timeout(timeoutMs),
         });
         await response.body?.cancel();

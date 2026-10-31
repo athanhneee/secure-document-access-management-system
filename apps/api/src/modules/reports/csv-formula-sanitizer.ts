@@ -8,7 +8,8 @@
  * by prepending a single quote (').
  */
 
-const DANGEROUS_PREFIXES = new Set(['=', '+', '-', '@', '\t', '\r']);
+const DANGEROUS_PREFIXES = new Set(['=', '+', '-', '@', '|', '\t', '\r', '\n']);
+const LEADING_WHITESPACE_FORMULA_RE = /^[\s\u00A0]+[=+\-@|]/u;
 
 export function sanitizeCsvCell(value: unknown): string {
   if (value === null || value === undefined) {
@@ -16,7 +17,10 @@ export function sanitizeCsvCell(value: unknown): string {
   }
 
   const str = String(value);
-  if (str.length > 0 && DANGEROUS_PREFIXES.has(str[0]!)) {
+  if (
+    str.length > 0 &&
+    (DANGEROUS_PREFIXES.has(str[0]!) || LEADING_WHITESPACE_FORMULA_RE.test(str))
+  ) {
     return `'${str}`;
   }
 

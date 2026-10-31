@@ -114,13 +114,13 @@ export class DocumentsController {
   @Get(':id')
   async getDocumentDetail(
     @Param() params: unknown,
-    @Req() _request: FastifyRequest,
+    @Req() request: FastifyRequest,
   ): Promise<DocumentDetail> {
     const parsed = UuidParamSchema.safeParse(params);
     if (!parsed.success) {
       throw new BadRequestException('Invalid document UUID.');
     }
-    return this.documentsService.getDocumentById(parsed.data.id);
+    return this.documentsService.getDocumentById(parsed.data.id, this.principal(request));
   }
 
   @Patch(':id')
@@ -268,21 +268,27 @@ export class DocumentsController {
   }
 
   @Get(':id/classification-history')
-  async getClassificationHistory(@Param() params: unknown): Promise<unknown[]> {
+  async getClassificationHistory(
+    @Param() params: unknown,
+    @Req() request: FastifyRequest,
+  ): Promise<unknown[]> {
     const parsed = UuidParamSchema.safeParse(params);
     if (!parsed.success) {
       throw new BadRequestException('Invalid document UUID.');
     }
-    return this.documentsService.getClassificationHistory(parsed.data.id);
+    return this.documentsService.getClassificationHistory(parsed.data.id, this.principal(request));
   }
 
   @Get(':id/versions')
-  async getDocumentVersions(@Param() params: unknown): Promise<unknown[]> {
+  async getDocumentVersions(
+    @Param() params: unknown,
+    @Req() request: FastifyRequest,
+  ): Promise<unknown[]> {
     const parsed = UuidParamSchema.safeParse(params);
     if (!parsed.success) {
       throw new BadRequestException('Invalid document UUID.');
     }
-    return this.documentsService.getDocumentVersions(parsed.data.id);
+    return this.documentsService.getDocumentVersions(parsed.data.id, this.principal(request));
   }
 
   @Post('retention/check')
@@ -290,13 +296,18 @@ export class DocumentsController {
   @RequirePermission('DOCUMENT', 'CLASSIFY')
   async checkRetention(@Req() request: FastifyRequest): Promise<unknown> {
     this.csrf.assertRequest(request);
-    return this.documentsService.checkRetentionWarnings();
+    return this.documentsService.checkRetentionWarnings(
+      30,
+      request.auth,
+      request.auth ? this.context(request) : undefined,
+    );
   }
 
   // ── Controlled Distribution & Delivery Endpoints (Prompt 13) ───────────────
 
   @Post(':id/sessions')
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('DOCUMENT', 'VIEW')
   async createAccessSession(
     @Param() params: unknown,
     @Body() body: unknown,
@@ -317,6 +328,7 @@ export class DocumentsController {
   }
 
   @Get(':id/preview')
+  @RequirePermission('DOCUMENT', 'VIEW')
   async previewDocument(
     @Param() params: unknown,
     @Query('sessionId') sessionId: string | undefined,
@@ -339,6 +351,7 @@ export class DocumentsController {
       this.principal(request),
       this.context(request),
     );
+    const safeFilename = this.sanitizeHeaderFilename(result.filename);
 
     reply
       .type(result.mimeType)
@@ -346,11 +359,12 @@ export class DocumentsController {
       .header('Pragma', 'no-cache')
       .header('X-Total-Pages', (result.totalPages ?? 1).toString())
       .header('Access-Control-Expose-Headers', 'X-Total-Pages, Content-Disposition')
-      .header('Content-Disposition', `inline; filename="${result.filename}"`)
+      .header('Content-Disposition', `inline; filename="${safeFilename}"`)
       .send(result.buffer);
   }
 
   @Get(':id/preview/page/:pageNumber')
+  @RequirePermission('DOCUMENT', 'VIEW')
   async previewDocumentPage(
     @Param() params: unknown,
     @Query('sessionId') sessionId: string | undefined,
@@ -376,6 +390,7 @@ export class DocumentsController {
       this.principal(request),
       this.context(request),
     );
+    const safeFilename = this.sanitizeHeaderFilename(result.filename);
 
     reply
       .type(result.mimeType)
@@ -383,11 +398,12 @@ export class DocumentsController {
       .header('Pragma', 'no-cache')
       .header('X-Total-Pages', (result.totalPages ?? 1).toString())
       .header('Access-Control-Expose-Headers', 'X-Total-Pages, Content-Disposition')
-      .header('Content-Disposition', `inline; filename="${result.filename}"`)
+      .header('Content-Disposition', `inline; filename="${safeFilename}"`)
       .send(result.buffer);
   }
 
   @Get(':id/download')
+  @RequirePermission('DOCUMENT', 'DOWNLOAD')
   async downloadDocument(
     @Param() params: unknown,
     @Query('sessionId') sessionId: string | undefined,
@@ -409,17 +425,19 @@ export class DocumentsController {
       this.principal(request),
       this.context(request),
     );
+    const safeFilename = this.sanitizeHeaderFilename(result.filename);
 
     reply
       .type(result.mimeType)
       .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
       .header('Pragma', 'no-cache')
-      .header('Content-Disposition', `attachment; filename="${result.filename}"`)
+      .header('Content-Disposition', `attachment; filename="${safeFilename}"`)
       .send(result.buffer);
   }
 
   @Post(':id/download-ticket')
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('DOCUMENT', 'DOWNLOAD')
   async createDownloadTicket(
     @Param() params: unknown,
     @Body('sessionId') sessionId: string | undefined,
@@ -452,13 +470,18 @@ export class DocumentsController {
       parsed.data.ticket,
       this.context(request),
     );
+    const safeFilename = this.sanitizeHeaderFilename(result.filename);
 
     reply
       .type(result.mimeType)
       .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
       .header('Pragma', 'no-cache')
-      .header('Content-Disposition', `attachment; filename="${result.filename}"`)
+      .header('Content-Disposition', `attachment; filename="${safeFilename}"`)
       .send(result.buffer);
+  }
+
+  private sanitizeHeaderFilename(filename: string): string {
+    return filename.replace(/["\r\n\\]/g, '_').replace(/[^\x20-\x7E]/g, '_');
   }
 
   private principal(request: FastifyRequest): AuthPrincipal {

@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, Logger, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
@@ -74,7 +80,14 @@ export class WatermarksService {
         id: c.id.toString(),
         name: c.name,
         classificationLevelId: c.classification_level_id?.toString() ?? null,
-        classificationLevel: c.classification_levels,
+        classificationLevel: c.classification_levels
+          ? {
+              id: Number(c.classification_levels.id),
+              code: c.classification_levels.code,
+              name: c.classification_levels.name,
+              rank: c.classification_levels.rank,
+            }
+          : null,
         isDefault: c.is_default,
         isVisible: c.is_visible,
         templateText: c.template_text,
@@ -102,7 +115,18 @@ export class WatermarksService {
       templateText?: string;
       isVisible?: boolean;
     },
+    actor?: AuthPrincipal,
   ): Promise<Record<string, unknown>> {
+    if (input.isVisible === false) {
+      throw new BadRequestException('Disabling visible forensic watermarks is prohibited.');
+    }
+    if (
+      input.opacityPercent !== undefined &&
+      (input.opacityPercent < 10 || input.opacityPercent > 90)
+    ) {
+      throw new BadRequestException('Watermark opacity must be between 10% and 90%.');
+    }
+
     const existing = await this.database.watermarkConfig.findUnique({
       where: { id },
     });
@@ -128,6 +152,26 @@ export class WatermarksService {
       },
     });
 
+    if (this.auditWriter && actor) {
+      await this.auditWriter.writeLog({
+        actorUserId: actor.userId,
+        actorUsername: actor.username,
+        action: 'WATERMARK_CONFIG_UPDATED',
+        objectType: 'WATERMARK_CONFIG',
+        objectId: updated.id.toString(),
+        outcome: 'SUCCESS',
+        chainPartition: 'RBAC',
+        details: {
+          opacityPercent: updated.opacity_percent,
+          fontSize: updated.font_size,
+          includeQrCode: updated.include_qr_code,
+          colorHex: updated.color_hex,
+          rotationDegrees: updated.rotation_degrees,
+          isVisible: updated.is_visible,
+        },
+      });
+    }
+
     return {
       id: updated.id.toString(),
       name: updated.name,
@@ -150,7 +194,7 @@ export class WatermarksService {
     token: string,
     actor?: AuthPrincipal,
   ): Promise<WatermarkVerificationResult> {
-    this.logger.log(`Verifying watermark token: ${token}`);
+    this.logger.log(`Verifying watermark token: ${token.slice(0, 11)}...`);
     const instance = await this.database.watermarkInstance.findUnique({
       where: { watermark_token: token },
       include: {

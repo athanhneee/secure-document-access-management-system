@@ -99,6 +99,8 @@ export class MetricsService {
         .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':id')
         // Replace watermark tokens
         .replace(/WM-[0-9a-fA-F]+/g, ':token')
+        // Replace one-time download tickets
+        .replace(/DT-[0-9a-fA-F]+/g, ':ticket')
         // Replace numeric segments
         .replace(/\/\d+(?=\/|$)/g, '/:id')
         // Replace long hex/hash strings (16+ chars)

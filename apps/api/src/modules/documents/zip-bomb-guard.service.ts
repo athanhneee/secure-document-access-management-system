@@ -45,8 +45,30 @@ export class ZipBombGuardService {
     const zipFile = await this.openZip(source);
 
     return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const safeClose = (): void => {
+        try {
+          zipFile.close();
+        } catch {
+          // Ignore close errors on already-closed handles
+        }
+      };
+      const finishResolve = (): void => {
+        if (settled) return;
+        settled = true;
+        safeClose();
+        resolve();
+      };
+      const finishReject = (err: Error): void => {
+        if (settled) return;
+        settled = true;
+        safeClose();
+        reject(err);
+      };
+
       let entryCount = 0;
-      let totalUncompressedSize = 0;
+      let totalDeclaredUncompressedSize = 0;
+      let actualTotalUncompressedSize = 0;
       let totalCompressedSize = 0;
       let hasContentTypes = false;
       let hasOfficeSpecificDir = false;
@@ -54,12 +76,12 @@ export class ZipBombGuardService {
       const requiredDir = extension === '.docx' ? 'word/' : extension === '.xlsx' ? 'xl/' : 'ppt/';
 
       zipFile.on('entry', (entry: Entry) => {
+        if (settled) return;
         entryCount++;
 
         // 1. Entry count check
         if (entryCount > maxEntries) {
-          zipFile.close();
-          return reject(
+          return finishReject(
             new BadRequestException({
               errorCode: AppErrorCode.VALIDATION_FAILED,
               message: `Zip archive contains too many entries (exceeds limit of ${maxEntries}).`,
@@ -76,8 +98,7 @@ export class ZipBombGuardService {
           fileName.startsWith('\\') ||
           /^[a-zA-Z]:/u.test(fileName)
         ) {
-          zipFile.close();
-          return reject(
+          return finishReject(
             new BadRequestException({
               errorCode: AppErrorCode.INVALID_FILE_TYPE,
               message: 'Zip archive contains dangerous path traversal entry names.',
@@ -91,8 +112,7 @@ export class ZipBombGuardService {
           ? segments.length
           : Math.max(0, segments.length - 1);
         if (depth > maxDepth) {
-          zipFile.close();
-          return reject(
+          return finishReject(
             new BadRequestException({
               errorCode: AppErrorCode.VALIDATION_FAILED,
               message: `Zip archive exceeds directory nesting depth limit of ${maxDepth}.`,
@@ -100,13 +120,12 @@ export class ZipBombGuardService {
           );
         }
 
-        // 4. Cumulative uncompressed size check
-        totalUncompressedSize += entry.uncompressedSize;
+        // 4. Declared header size & ratio pre-check
+        totalDeclaredUncompressedSize += entry.uncompressedSize;
         totalCompressedSize += entry.compressedSize;
 
-        if (totalUncompressedSize > maxTotalUncompressedSize) {
-          zipFile.close();
-          return reject(
+        if (totalDeclaredUncompressedSize > maxTotalUncompressedSize) {
+          return finishReject(
             new BadRequestException({
               errorCode: AppErrorCode.VALIDATION_FAILED,
               message: `Zip archive uncompressed size exceeds limit of ${maxTotalUncompressedSize} bytes.`,
@@ -114,12 +133,10 @@ export class ZipBombGuardService {
           );
         }
 
-        // 5. Compression ratio check (for entries with non-trivial size)
         if (entry.compressedSize > 64) {
           const entryRatio = entry.uncompressedSize / entry.compressedSize;
           if (entryRatio > maxCompressionRatio) {
-            zipFile.close();
-            return reject(
+            return finishReject(
               new BadRequestException({
                 errorCode: AppErrorCode.VALIDATION_FAILED,
                 message: `Zip archive contains suspicious compression ratio (${entryRatio.toFixed(1)} > ${maxCompressionRatio}).`,
@@ -128,8 +145,33 @@ export class ZipBombGuardService {
           }
         }
 
-        // 6. Check Office internal package requirements
+        // 5. Block prohibited VBA macros / ActiveX / external workbook connections at ingestion
         const lowerName = fileName.toLowerCase();
+        if (
+          lowerName.includes('vbaproject.bin') ||
+          lowerName.includes('vbadirection') ||
+          lowerName.includes('vbadata') ||
+          (lowerName.endsWith('.bin') && lowerName.includes('vba')) ||
+          lowerName.includes('/activex/')
+        ) {
+          return finishReject(
+            new BadRequestException({
+              errorCode: AppErrorCode.OFFICE_MACRO_BLOCKED,
+              message: 'Office document contains prohibited executable macros or ActiveX controls.',
+            }),
+          );
+        }
+
+        if (lowerName === 'xl/connections.xml' || lowerName.endsWith('/externalallink1.xml')) {
+          return finishReject(
+            new BadRequestException({
+              errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
+              message: 'Office document contains prohibited external data connections.',
+            }),
+          );
+        }
+
+        // 6. Check Office internal package requirements
         if (lowerName === '[content_types].xml') {
           hasContentTypes = true;
         }
@@ -137,15 +179,101 @@ export class ZipBombGuardService {
           hasOfficeSpecificDir = true;
         }
 
-        zipFile.readEntry();
+        if (fileName.endsWith('/')) {
+          zipFile.readEntry();
+          return;
+        }
+
+        // 7. Stream-inflate entry to defeat spoofed 32-bit ZIP header sizes & inspect XML/RELS
+        const shouldInspectXml = lowerName.endsWith('.xml') || lowerName.endsWith('.rels');
+        const maxXmlInspectBytes = 2 * 1024 * 1024;
+        const xmlChunks: Buffer[] = [];
+        let entryActualBytes = 0;
+
+        zipFile.openReadStream(entry, (streamErr, readStream) => {
+          if (settled) return;
+          if (streamErr || !readStream) {
+            return finishReject(
+              new BadRequestException({
+                errorCode: AppErrorCode.INVALID_FILE_TYPE,
+                message: `Failed to read zip entry ${fileName}: ${streamErr?.message ?? 'corrupt stream'}`,
+              }),
+            );
+          }
+
+          readStream.on('data', (chunk: Buffer) => {
+            if (settled) {
+              readStream.destroy();
+              return;
+            }
+            entryActualBytes += chunk.length;
+            actualTotalUncompressedSize += chunk.length;
+
+            if (actualTotalUncompressedSize > maxTotalUncompressedSize) {
+              readStream.destroy();
+              return finishReject(
+                new BadRequestException({
+                  errorCode: AppErrorCode.VALIDATION_FAILED,
+                  message: `Zip archive actual inflated size exceeds limit of ${maxTotalUncompressedSize} bytes.`,
+                }),
+              );
+            }
+
+            if (entry.compressedSize > 64) {
+              const actualRatio = entryActualBytes / entry.compressedSize;
+              if (actualRatio > maxCompressionRatio) {
+                readStream.destroy();
+                return finishReject(
+                  new BadRequestException({
+                    errorCode: AppErrorCode.VALIDATION_FAILED,
+                    message: `Zip archive actual compression ratio (${actualRatio.toFixed(1)}) exceeds limit of ${maxCompressionRatio}.`,
+                  }),
+                );
+              }
+            }
+
+            if (shouldInspectXml && entryActualBytes <= maxXmlInspectBytes) {
+              xmlChunks.push(chunk);
+            }
+          });
+
+          readStream.on('error', (err) => {
+            finishReject(
+              new BadRequestException({
+                errorCode: AppErrorCode.INVALID_FILE_TYPE,
+                message: `Corrupt compressed stream in zip archive: ${err.message}`,
+              }),
+            );
+          });
+
+          readStream.on('end', () => {
+            if (settled) return;
+            if (
+              shouldInspectXml &&
+              xmlChunks.length > 0 &&
+              entryActualBytes <= maxXmlInspectBytes
+            ) {
+              const xmlText = Buffer.concat(xmlChunks).toString('utf8');
+              const xmlIssue = this.detectMaliciousXmlOrRels(xmlText, lowerName.endsWith('.rels'));
+              if (xmlIssue) {
+                return finishReject(xmlIssue);
+              }
+            }
+            zipFile.readEntry();
+          });
+        });
       });
 
       zipFile.on('end', () => {
-        // Overall compression ratio check
+        if (settled) return;
+        const effectiveUncompressed = Math.max(
+          totalDeclaredUncompressedSize,
+          actualTotalUncompressedSize,
+        );
         if (totalCompressedSize > 512) {
-          const overallRatio = totalUncompressedSize / totalCompressedSize;
+          const overallRatio = effectiveUncompressed / totalCompressedSize;
           if (overallRatio > maxCompressionRatio) {
-            return reject(
+            return finishReject(
               new BadRequestException({
                 errorCode: AppErrorCode.VALIDATION_FAILED,
                 message: `Zip archive total compression ratio exceeds safe limit of ${maxCompressionRatio}.`,
@@ -154,9 +282,8 @@ export class ZipBombGuardService {
           }
         }
 
-        // Validate Office structure
         if (!hasContentTypes) {
-          return reject(
+          return finishReject(
             new BadRequestException({
               errorCode: AppErrorCode.INVALID_FILE_TYPE,
               message: `Invalid Office OpenXML file: missing [Content_Types].xml for ${extension}.`,
@@ -165,7 +292,7 @@ export class ZipBombGuardService {
         }
 
         if (!hasOfficeSpecificDir) {
-          return reject(
+          return finishReject(
             new BadRequestException({
               errorCode: AppErrorCode.INVALID_FILE_TYPE,
               message: `Invalid Office OpenXML file: missing ${requiredDir} package structure for ${extension}.`,
@@ -173,11 +300,11 @@ export class ZipBombGuardService {
           );
         }
 
-        resolve();
+        finishResolve();
       });
 
       zipFile.on('error', (err) => {
-        reject(
+        finishReject(
           new BadRequestException({
             errorCode: AppErrorCode.INVALID_FILE_TYPE,
             message: `Failed to parse zip archive: ${err.message}`,
@@ -187,6 +314,44 @@ export class ZipBombGuardService {
 
       zipFile.readEntry();
     });
+  }
+
+  private detectMaliciousXmlOrRels(xml: string, isRels: boolean): BadRequestException | null {
+    if (/<!doctype\b|<!entity\b/iu.test(xml)) {
+      return new BadRequestException({
+        errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
+        message: 'Office XML contains prohibited DOCTYPE or ENTITY declarations (XXE protection).',
+      });
+    }
+
+    if (!isRels) return null;
+
+    const decoded = xml
+      .replace(/&#x([0-9a-f]+);/giu, (_, hex: string) =>
+        String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff)),
+      )
+      .replace(/&#(\d+);/gu, (_, dec: string) =>
+        String.fromCodePoint(Math.min(parseInt(dec, 10), 0x10ffff)),
+      )
+      .replace(/&quot;/giu, '"')
+      .replace(/&apos;/giu, "'")
+      .replace(/&amp;/giu, '&');
+
+    if (
+      /targetmode\s*=\s*["']\s*external\s*["']/iu.test(decoded) ||
+      /target\s*=\s*["']\s*(?:https?|ftp|file|gopher|ldap|jar|netdoc|smb|mailto|mhtml):/iu.test(
+        decoded,
+      ) ||
+      /target\s*=\s*["']\s*(?:\\\\|\/\/)/iu.test(decoded)
+    ) {
+      return new BadRequestException({
+        errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
+        message:
+          'Office document contains prohibited external relationships or SSRF/NTLM leak vectors.',
+      });
+    }
+
+    return null;
   }
 
   private openZip(source: Buffer | string): Promise<ZipFile> {

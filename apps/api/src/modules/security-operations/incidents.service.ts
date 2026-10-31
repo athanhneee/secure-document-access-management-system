@@ -515,6 +515,7 @@ export class IncidentsService {
     actionId: bigint,
     input: CompleteIncidentActionInput,
     actor: AuthPrincipal,
+    expectedIncidentId?: string,
   ): Promise<IncidentActionDetail> {
     this.assertCanMutate(actor);
 
@@ -522,11 +523,33 @@ export class IncidentsService {
       where: { id: actionId },
     });
 
-    if (!action) {
+    if (
+      !action ||
+      (expectedIncidentId !== undefined && action.incident_report_id !== expectedIncidentId)
+    ) {
       throw new NotFoundException({
         errorCode: AppErrorCode.INCIDENT_ACTION_NOT_FOUND,
         message: `Incident action ${actionId} was not found.`,
       });
+    }
+
+    if (action.completed_at !== null && action.completed_at !== undefined) {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.INCIDENT_INVALID_TRANSITION,
+        message: 'Incident action has already been completed.',
+      });
+    }
+
+    if (typeof this.database?.incidentReport?.findUnique === 'function') {
+      const parentReport = await this.database.incidentReport.findUnique({
+        where: { id: action.incident_report_id },
+      });
+      if (parentReport && parentReport.status === 'CLOSED') {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.INCIDENT_INVALID_TRANSITION,
+          message: 'Cannot complete actions on a closed incident report.',
+        });
+      }
     }
 
     if (!input.completionNote || input.completionNote.trim().length < 5) {

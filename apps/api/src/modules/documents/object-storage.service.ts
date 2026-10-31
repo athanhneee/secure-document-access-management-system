@@ -30,15 +30,33 @@ export class ObjectStorageService implements OnModuleInit {
     this.isMock = process.env['STORAGE_MOCK'] === 'true' || config.get('NODE_ENV') === 'test';
 
     if (!this.isMock) {
-      const endpoint = `${config.get('STORAGE_USE_SSL') ? 'https' : 'http'}://${config.get('STORAGE_ENDPOINT')}:${config.get('STORAGE_PORT')}`;
+      const rawEndpoint = config.get('STORAGE_ENDPOINT').trim();
+      const isR2 = rawEndpoint.includes('.r2.cloudflarestorage.com');
+      let endpoint: string;
+      if (rawEndpoint.startsWith('http://') || rawEndpoint.startsWith('https://')) {
+        endpoint = isR2 ? new URL(rawEndpoint).origin : rawEndpoint.replace(/\/+$/, '');
+      } else if (rawEndpoint.endsWith('.storage.supabase.co')) {
+        endpoint = `https://${rawEndpoint}/storage/v1/s3`;
+      } else if (isR2) {
+        endpoint = `https://${rawEndpoint.replace(/\/+$/, '')}`;
+      } else {
+        endpoint = `${config.get('STORAGE_USE_SSL') ? 'https' : 'http'}://${rawEndpoint}:${config.get('STORAGE_PORT')}`;
+      }
+      const configuredRegion = config.get('STORAGE_REGION');
+      const region =
+        isR2 && (!configuredRegion || configuredRegion === 'us-east-1')
+          ? 'auto'
+          : configuredRegion || 'us-east-1';
       this.s3Client = new S3Client({
         endpoint,
-        region: 'us-east-1',
+        region,
         credentials: {
           accessKeyId: config.get('STORAGE_ACCESS_KEY'),
           secretAccessKey: config.get('STORAGE_SECRET_KEY'),
         },
         forcePathStyle: true,
+        requestChecksumCalculation: 'WHEN_REQUIRED',
+        responseChecksumValidation: 'WHEN_REQUIRED',
       });
     } else {
       this.s3Client = null;
@@ -47,14 +65,35 @@ export class ObjectStorageService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     if (!this.isMock && this.s3Client) {
-      await this.ensureBucket(this.quarantineBucket).catch(() => {});
-      await this.ensureBucket(this.documentsBucket).catch(() => {});
-      await this.ensureBucket(this.derivativesBucket).catch(() => {});
+      const uniqueBuckets = new Set([
+        this.resolveTarget(this.quarantineBucket, '').bucket,
+        this.resolveTarget(this.documentsBucket, '').bucket,
+        this.resolveTarget(this.derivativesBucket, '').bucket,
+      ]);
+      for (const bucketName of uniqueBuckets) {
+        await this.ensureBucket(bucketName).catch(() => {});
+      }
     }
   }
 
+  private resolveTarget(bucketSpec: string, key: string): { bucket: string; key: string } {
+    const trimmed = bucketSpec.trim().replace(/^\/+|\/+$/g, '');
+    const slashIndex = trimmed.indexOf('/');
+    if (slashIndex === -1) {
+      return { bucket: trimmed, key };
+    }
+    const bucket = trimmed.slice(0, slashIndex);
+    const prefix = trimmed.slice(slashIndex + 1).replace(/^\/+|\/+$/g, '');
+    const cleanKey = key.replace(/^\/+/, '');
+    return {
+      bucket,
+      key: cleanKey ? `${prefix}/${cleanKey}` : prefix,
+    };
+  }
+
   private storageKey(bucket: string, key: string): string {
-    return `${bucket}:::${key}`;
+    const target = this.resolveTarget(bucket, key);
+    return `${target.bucket}:::${target.key}`;
   }
 
   async putObject(
@@ -70,11 +109,12 @@ export class ObjectStorageService implements OnModuleInit {
       return;
     }
 
+    const target = this.resolveTarget(bucket, key);
     try {
       const payload = body instanceof Buffer ? body : await this.streamToBuffer(body);
       const command = new PutObjectCommand({
-        Bucket: bucket,
-        Key: key,
+        Bucket: target.bucket,
+        Key: target.key,
         Body: payload,
         ContentType: contentType ?? 'application/octet-stream',
         Metadata: metadata,
@@ -82,7 +122,9 @@ export class ObjectStorageService implements OnModuleInit {
       await this.s3Client.send(command);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to put object in bucket ${bucket}, key ${key}: ${msg}`);
+      this.logger.error(
+        `Failed to put object in bucket ${target.bucket}, key ${target.key}: ${msg}`,
+      );
       throw new Error(`Storage operation failed: putObject`);
     }
   }
@@ -96,19 +138,22 @@ export class ObjectStorageService implements OnModuleInit {
       return Buffer.from(stored);
     }
 
+    const target = this.resolveTarget(bucket, key);
     try {
       const command = new GetObjectCommand({
-        Bucket: bucket,
-        Key: key,
+        Bucket: target.bucket,
+        Key: target.key,
       });
       const response = await this.s3Client.send(command);
       if (!response.Body) {
-        throw new Error(`Empty response body for object: ${bucket}/${key}`);
+        throw new Error(`Empty response body for object: ${target.bucket}/${target.key}`);
       }
       return await this.streamToBuffer(response.Body as Readable);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to get object from bucket ${bucket}, key ${key}: ${msg}`);
+      this.logger.error(
+        `Failed to get object from bucket ${target.bucket}, key ${target.key}: ${msg}`,
+      );
       throw new Error(`Storage operation failed: getObject`);
     }
   }
@@ -119,15 +164,18 @@ export class ObjectStorageService implements OnModuleInit {
       return;
     }
 
+    const target = this.resolveTarget(bucket, key);
     try {
       const command = new DeleteObjectCommand({
-        Bucket: bucket,
-        Key: key,
+        Bucket: target.bucket,
+        Key: target.key,
       });
       await this.s3Client.send(command);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`Failed to delete object from bucket ${bucket}, key ${key}: ${msg}`);
+      this.logger.warn(
+        `Failed to delete object from bucket ${target.bucket}, key ${target.key}: ${msg}`,
+      );
     }
   }
 
@@ -136,10 +184,11 @@ export class ObjectStorageService implements OnModuleInit {
       return this.inMemoryStorage.has(this.storageKey(bucket, key));
     }
 
+    const target = this.resolveTarget(bucket, key);
     try {
       const command = new HeadObjectCommand({
-        Bucket: bucket,
-        Key: key,
+        Bucket: target.bucket,
+        Key: target.key,
       });
       await this.s3Client.send(command);
       return true;

@@ -305,10 +305,22 @@ export class SecurityDetectionService {
       }
 
       case 'OFF_HOURS_ACCESS': {
-        // Access attempted during off-hours (e.g., weekend or late night)
+        // Access attempted during off-hours (e.g., weekend or outside configured UTC business window)
+        const rawStart = Number(rule.parameters?.['startHourUtc'] ?? 0);
+        const rawEnd = Number(rule.parameters?.['endHourUtc'] ?? 11);
+        const startHourUtc = Number.isFinite(rawStart) ? Math.min(Math.max(rawStart, 0), 23) : 0;
+        const endHourUtc = Number.isFinite(rawEnd) ? Math.min(Math.max(rawEnd, 0), 23) : 11;
+
         const logs = await this.database.auditLog.findMany({
           where: {
-            action: { in: ['DOCUMENT_DOWNLOADED', 'DOCUMENT_VIEWED', 'ACCESS_PERMITTED'] },
+            action: {
+              in: [
+                'DOCUMENT_DOWNLOADED',
+                'DOCUMENT_VIEWED',
+                'DOCUMENT_PREVIEWED',
+                'ACCESS_PERMITTED',
+              ],
+            },
             occurred_at: { gte: windowStart },
             actor_user_id: { not: null },
           },
@@ -320,10 +332,12 @@ export class SecurityDetectionService {
           const d = new Date(log.occurred_at);
           const day = d.getUTCDay(); // 0 = Sun, 6 = Sat
           const hour = d.getUTCHours();
-          // Weekend OR outside 00:00 - 12:00 UTC (sample business day window)
           const isWeekend = day === 0 || day === 6;
-          const isNight = hour < 0 || hour >= 12; // configurable
-          return isWeekend || isNight;
+          const isOutsideBusinessHours =
+            startHourUtc <= endHourUtc
+              ? hour < startHourUtc || hour > endHourUtc
+              : hour < startHourUtc && hour > endHourUtc;
+          return isWeekend || isOutsideBusinessHours;
         });
 
         const logsByUser = new Map<string, typeof logs>();

@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { CsrfService } from '../auth/csrf.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { RequirePermission } from '../rbac/require-permission.js';
+import { UuidParamSchema } from '@sda/contracts';
 import {
   DocumentIngestionService,
   type IngestDocumentOutput,
@@ -49,24 +50,47 @@ export class DocumentIngestionController {
       return typeof field?.value === 'string' ? field.value.trim() : undefined;
     };
 
+    const abortPartAndThrow = (message: string): never => {
+      part.file.destroy();
+      throw new BadRequestException(message);
+    };
+
     const title = getFieldValue('title');
     const rawDeptId = getFieldValue('departmentId');
-    const departmentId = rawDeptId && /^\d+$/u.test(rawDeptId) ? BigInt(rawDeptId) : undefined;
+    if (rawDeptId && !/^\d+$/u.test(rawDeptId)) {
+      abortPartAndThrow('Invalid departmentId format.');
+    }
+    const departmentId = rawDeptId ? BigInt(rawDeptId) : undefined;
+
     const documentId = getFieldValue('documentId');
+    if (documentId && !UuidParamSchema.safeParse({ id: documentId }).success) {
+      abortPartAndThrow('Invalid documentId UUID format.');
+    }
+
     const documentCode = getFieldValue('documentCode');
+    if (documentCode && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,59}$/u.test(documentCode)) {
+      abortPartAndThrow('Invalid documentCode format.');
+    }
+
     const changeNote = getFieldValue('changeNote');
     const description = getFieldValue('description');
     const rawClassificationLevelId = getFieldValue('classificationLevelId');
-    const classificationLevelId =
-      rawClassificationLevelId && /^\d+$/u.test(rawClassificationLevelId)
-        ? BigInt(rawClassificationLevelId)
-        : undefined;
+    if (rawClassificationLevelId && !/^\d+$/u.test(rawClassificationLevelId)) {
+      abortPartAndThrow('Invalid classificationLevelId format.');
+    }
+    const classificationLevelId = rawClassificationLevelId
+      ? BigInt(rawClassificationLevelId)
+      : undefined;
+
     const rawBusinessCategoryId = getFieldValue('businessCategoryId');
-    const businessCategoryId =
-      rawBusinessCategoryId && /^\d+$/u.test(rawBusinessCategoryId)
-        ? BigInt(rawBusinessCategoryId)
-        : undefined;
+    if (rawBusinessCategoryId && !/^\d+$/u.test(rawBusinessCategoryId)) {
+      abortPartAndThrow('Invalid businessCategoryId format.');
+    }
+    const businessCategoryId = rawBusinessCategoryId ? BigInt(rawBusinessCategoryId) : undefined;
     const retentionUntil = getFieldValue('retentionUntil');
+    if (retentionUntil && !/^\d{4}-\d{2}-\d{2}$/u.test(retentionUntil)) {
+      abortPartAndThrow('Invalid retentionUntil date format (expected YYYY-MM-DD).');
+    }
 
     return this.ingestion.ingestDocument({
       fileStream: part.file,

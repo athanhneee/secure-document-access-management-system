@@ -117,6 +117,146 @@ export class DocumentsService {
     });
   }
 
+  private isPureTechnicalOrAuditRole(principal?: AuthPrincipal): boolean {
+    const roles = principal?.roles ?? [];
+    const hasRestricted = roles.includes('SYSTEM_ADMIN') || roles.includes('AUDITOR');
+    if (!hasRestricted) return false;
+    const hasBusinessRole =
+      roles.includes('DOCUMENT_OWNER') ||
+      roles.includes('DOCUMENT_READER') ||
+      roles.includes('DEPARTMENT_ADMIN');
+    return !hasBusinessRole;
+  }
+
+  private async getUserClearanceRank(userId: bigint, now: Date): Promise<number> {
+    if (typeof this.database?.userAttributeAssignment?.findFirst !== 'function') {
+      return 0;
+    }
+    const clearance = await this.database.userAttributeAssignment.findFirst({
+      where: {
+        user_id: userId,
+        attribute_definitions: { code: 'CLEARANCE_LEVEL' },
+        valid_from: { lte: now },
+        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+      },
+      include: { attribute_options: true },
+      orderBy: { attribute_options: { numeric_rank: 'desc' } },
+    });
+    return clearance?.attribute_options?.numeric_rank ?? 0;
+  }
+
+  private async assertDocumentReadAccess(
+    doc: {
+      id: string;
+      owner_id: bigint;
+      department_id: bigint;
+      status: string;
+      discoverable: boolean;
+      classification_history?: Array<{
+        classification_levels?: { rank?: number } | null;
+      }>;
+    },
+    principal?: AuthPrincipal,
+    allowDiscoverable = false,
+  ): Promise<void> {
+    if (!principal) return;
+
+    if (this.isPureTechnicalOrAuditRole(principal)) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Technical administrator and auditor accounts cannot access business documents.',
+      });
+    }
+
+    if (doc.owner_id === principal.userId) {
+      return;
+    }
+
+    const [hasClassify, hasManage, hasArchive] = await Promise.all([
+      this.authorization.hasPermission(principal, 'DOCUMENT', 'CLASSIFY', {
+        targetDepartmentId: doc.department_id,
+      }),
+      this.authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', {
+        targetDepartmentId: doc.department_id,
+      }),
+      this.authorization.hasPermission(principal, 'DOCUMENT', 'ARCHIVE', {
+        targetDepartmentId: doc.department_id,
+      }),
+    ]);
+    if (hasClassify || hasManage || hasArchive) {
+      return;
+    }
+
+    const now = new Date();
+    const documentRank = doc.classification_history?.[0]?.classification_levels?.rank ?? 0;
+    const userRank = await this.getUserClearanceRank(principal.userId, now);
+
+    if (userRank >= documentRank && typeof this.database?.accessGrant?.findFirst === 'function') {
+      const directGrant = await this.database.accessGrant.findFirst({
+        where: {
+          document_id: doc.id,
+          principal_type: 'USER',
+          principal_user_id: principal.userId,
+          status: 'ACTIVE',
+          valid_from: { lte: now },
+          valid_until: { gt: now },
+        },
+      });
+      if (directGrant) return;
+
+      if (typeof this.database?.userRole?.findMany === 'function') {
+        const activeRoles = await this.database.userRole.findMany({
+          where: {
+            user_id: principal.userId,
+            valid_from: { lte: now },
+            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+            roles: { is_active: true },
+          },
+          select: { role_id: true },
+        });
+        const roleIds = activeRoles.map((r) => r.role_id);
+        if (roleIds.length > 0) {
+          const roleGrant = await this.database.accessGrant.findFirst({
+            where: {
+              document_id: doc.id,
+              principal_type: 'ROLE',
+              principal_role_id: { in: roleIds },
+              status: 'ACTIVE',
+              valid_from: { lte: now },
+              valid_until: { gt: now },
+            },
+          });
+          if (roleGrant) return;
+        }
+      }
+    }
+
+    if (
+      allowDiscoverable &&
+      doc.discoverable &&
+      doc.status === 'ACTIVE' &&
+      userRank >= documentRank
+    ) {
+      const hasDiscover = await this.authorization.hasPermission(
+        principal,
+        'DOCUMENT',
+        'DISCOVER',
+        {
+          targetDepartmentId: doc.department_id,
+        },
+      );
+      if (hasDiscover) {
+        return;
+      }
+    }
+
+    // D-BR11: Do not leak existence or classification details to unauthorized callers
+    throw new NotFoundException({
+      errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+      message: 'Document not found.',
+    });
+  }
+
   /**
    * Requirement 1: Create document in DRAFT status.
    */
@@ -125,6 +265,23 @@ export class DocumentsService {
     principal: AuthPrincipal,
     context: RequestContext,
   ): Promise<DocumentDetail> {
+    if (this.isPureTechnicalOrAuditRole(principal)) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
+        message: 'Technical administrator and auditor accounts cannot own business documents.',
+      });
+    }
+
+    if (
+      input.documentCode !== undefined &&
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,59}$/.test(input.documentCode)
+    ) {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: 'Invalid documentCode format.',
+      });
+    }
+
     const trimmedTitle = input.title.trim();
     if (!trimmedTitle) {
       throw new BadRequestException({
@@ -641,6 +798,28 @@ export class DocumentsService {
           }
         }
       }
+      // If target classification forbids download, strip DOWNLOAD permission from active grants
+      if (
+        targetLevel.allow_download === false &&
+        typeof (tx as { accessGrantPermission?: { deleteMany?: unknown } }).accessGrantPermission
+          ?.deleteMany === 'function'
+      ) {
+        const remainingActiveGrants = await tx.accessGrant.findMany({
+          where: {
+            document_id: documentId,
+            status: 'ACTIVE',
+          },
+        });
+        const grantIds = remainingActiveGrants.map((g) => g.id);
+        if (grantIds.length > 0) {
+          await tx.accessGrantPermission.deleteMany({
+            where: {
+              access_grant_id: { in: grantIds },
+              permission: 'DOWNLOAD',
+            },
+          });
+        }
+      }
       // Requirement 6: If confidentiality level decreased (newRank < oldRank),
       // we do NOT automatically restore or expand past grants. They remain as-is.
     });
@@ -984,6 +1163,31 @@ export class DocumentsService {
     const documentRank = currentClassification?.classification_levels?.rank ?? 0;
 
     const now = new Date();
+    if (typeof this.database.userRole?.findMany === 'function') {
+      const targetUserRoles = await this.database.userRole.findMany({
+        where: {
+          user_id: input.newOwnerId,
+          valid_from: { lte: now },
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          roles: { is_active: true },
+        },
+        include: { roles: { select: { code: true } } },
+      });
+      const roleCodes = targetUserRoles
+        .map((r) => (r as { roles?: { code?: string } }).roles?.code)
+        .filter((c): c is string => typeof c === 'string');
+      const hasRestricted = roleCodes.includes('SYSTEM_ADMIN') || roleCodes.includes('AUDITOR');
+      const hasBusiness =
+        roleCodes.includes('DOCUMENT_OWNER') || roleCodes.includes('DEPARTMENT_ADMIN');
+      if (hasRestricted && !hasBusiness) {
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
+          message:
+            'Separation of duties: cannot transfer document ownership to technical administrator or auditor.',
+        });
+      }
+    }
+
     const clearanceAssignment = await this.database.userAttributeAssignment.findFirst({
       where: {
         user_id: input.newOwnerId,
@@ -1011,6 +1215,40 @@ export class DocumentsService {
         version: { increment: 1 },
       },
     });
+
+    if (
+      previousOwnerId !== input.newOwnerId &&
+      typeof this.database.accessGrant?.findMany === 'function' &&
+      typeof this.database.accessGrant?.update === 'function'
+    ) {
+      const activeGrants = await this.database.accessGrant.findMany({
+        where: { document_id: documentId, status: 'ACTIVE' },
+      });
+      for (const grant of activeGrants) {
+        if (grant.principal_type === 'USER' && grant.principal_user_id === previousOwnerId) {
+          await this.database.accessGrant.update({
+            where: { id: grant.id },
+            data: {
+              status: 'REVOKED',
+              revoked_by: principal.userId,
+              revoked_at: now,
+              revoke_reason: 'Document ownership transferred',
+              version: { increment: 1 },
+            },
+          });
+          if (typeof this.database.accessSession?.updateMany === 'function') {
+            await this.database.accessSession.updateMany({
+              where: { access_grant_id: grant.id, status: 'ACTIVE' },
+              data: {
+                status: 'TERMINATED',
+                ended_at: now,
+                terminated_reason: 'Document ownership transferred',
+              },
+            });
+          }
+        }
+      }
+    }
 
     await this.audit.record(
       {
@@ -1040,7 +1278,11 @@ export class DocumentsService {
    * Generates notifications and security alerts.
    * CRITICAL: MUST NEVER automatically delete files without approval policy!
    */
-  async checkRetentionWarnings(daysThreshold = 30): Promise<{
+  async checkRetentionWarnings(
+    daysThreshold = 30,
+    principal?: AuthPrincipal,
+    context?: RequestContext,
+  ): Promise<{
     processedCount: number;
     warningCount: number;
     warnings: Array<{
@@ -1053,7 +1295,7 @@ export class DocumentsService {
     const now = new Date();
     const thresholdDate = new Date(now.getTime() + daysThreshold * 86400 * 1000);
 
-    const expiringDocuments = await this.database.document.findMany({
+    const allExpiringDocuments = await this.database.document.findMany({
       where: {
         status: { notIn: ['DELETED'] },
         retention_until: {
@@ -1065,6 +1307,27 @@ export class DocumentsService {
         users: { select: { id: true, username: true } },
       },
     });
+
+    const expiringDocuments: typeof allExpiringDocuments = [];
+    if (principal) {
+      for (const doc of allExpiringDocuments) {
+        if (doc.owner_id === principal.userId) {
+          expiringDocuments.push(doc);
+          continue;
+        }
+        const canClassifyDept = await this.authorization.hasPermission(
+          principal,
+          'DOCUMENT',
+          'CLASSIFY',
+          { targetDepartmentId: doc.department_id },
+        );
+        if (canClassifyDept) {
+          expiringDocuments.push(doc);
+        }
+      }
+    } else {
+      expiringDocuments.push(...allExpiringDocuments);
+    }
 
     const warnings: Array<{
       documentId: string;
@@ -1116,8 +1379,8 @@ export class DocumentsService {
         {
           action: 'DOCUMENT_RETENTION_WARNING',
           outcome: 'SUCCESS',
-          actorUserId: doc.owner_id,
-          actorUsername: doc.users?.username ?? 'system',
+          actorUserId: principal?.userId ?? doc.owner_id,
+          actorUsername: principal?.username ?? doc.users?.username ?? 'system',
           documentId: doc.id,
           details: {
             documentCode: doc.document_code,
@@ -1125,7 +1388,7 @@ export class DocumentsService {
             daysRemaining,
           },
         },
-        {
+        context ?? {
           ip: '127.0.0.1',
           correlationId: randomUUID(),
           userAgent: 'sda-retention-job/1.0',
@@ -1150,7 +1413,7 @@ export class DocumentsService {
   /**
    * Fetch single document detail.
    */
-  async getDocumentById(id: string): Promise<DocumentDetail> {
+  async getDocumentById(id: string, principal?: AuthPrincipal): Promise<DocumentDetail> {
     const doc = await this.database.document.findUnique({
       where: { id },
       include: {
@@ -1173,6 +1436,8 @@ export class DocumentsService {
         message: 'Document not found.',
       });
     }
+
+    await this.assertDocumentReadAccess(doc, principal, true);
 
     const activeClassification = doc.classification_history?.[0];
 
@@ -1237,7 +1502,10 @@ export class DocumentsService {
   /**
    * Requirement 4: List full SCD Type 2 classification history for auditability.
    */
-  async getClassificationHistory(documentId: string): Promise<
+  async getClassificationHistory(
+    documentId: string,
+    principal?: AuthPrincipal,
+  ): Promise<
     Array<{
       id: string;
       classificationLevelId: string;
@@ -1253,6 +1521,25 @@ export class DocumentsService {
       effectiveTo: string | null;
     }>
   > {
+    if (principal) {
+      const doc = await this.database.document.findUnique({
+        where: { id: documentId },
+        include: {
+          classification_history: {
+            where: { effective_to: null },
+            include: { classification_levels: true },
+          },
+        },
+      });
+      if (!doc) {
+        throw new NotFoundException({
+          errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+          message: 'Document not found.',
+        });
+      }
+      await this.assertDocumentReadAccess(doc, principal, false);
+    }
+
     const history = await this.database.documentClassificationHistory.findMany({
       where: { document_id: documentId },
       include: {
@@ -1281,7 +1568,10 @@ export class DocumentsService {
   /**
    * List all versions of a document.
    */
-  async getDocumentVersions(documentId: string): Promise<
+  async getDocumentVersions(
+    documentId: string,
+    principal?: AuthPrincipal,
+  ): Promise<
     Array<{
       id: string;
       versionNo: number;
@@ -1295,6 +1585,25 @@ export class DocumentsService {
       createdAt: string;
     }>
   > {
+    if (principal) {
+      const doc = await this.database.document.findUnique({
+        where: { id: documentId },
+        include: {
+          classification_history: {
+            where: { effective_to: null },
+            include: { classification_levels: true },
+          },
+        },
+      });
+      if (!doc) {
+        throw new NotFoundException({
+          errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+          message: 'Document not found.',
+        });
+      }
+      await this.assertDocumentReadAccess(doc, principal, false);
+    }
+
     const versions = await this.database.documentVersion.findMany({
       where: { document_id: documentId },
       orderBy: { version_no: 'desc' },

@@ -235,12 +235,15 @@ export class VaultTransitKmsService implements KmsService {
   readonly keyName: string;
   readonly transitMount: string;
   private readonly fallbackKek: Buffer;
+  private readonly allowDevFallback: boolean;
 
   constructor(config: AppConfigService) {
     this.vaultAddr = config.get('VAULT_ADDR') ?? 'http://127.0.0.1:8200';
     this.vaultToken = config.get('VAULT_TOKEN') ?? 'dev-mock-vault-token';
     this.keyName = config.get('VAULT_KEY_NAME') ?? 'sda-document-kek';
     this.transitMount = config.get('VAULT_TRANSIT_MOUNT') ?? 'transit';
+    this.allowDevFallback =
+      config.get('NODE_ENV') !== 'production' && this.vaultToken === 'dev-mock-vault-token';
 
     const masterKey = config.get('APP_ENCRYPTION_MASTER_KEY');
     this.fallbackKek = Buffer.from(
@@ -297,11 +300,21 @@ export class VaultTransitKmsService implements KmsService {
             };
           }
         }
+        if (!this.allowDevFallback) {
+          throw new Error(
+            `Vault Transit KMS wrapKey failed with HTTP ${response.status} — refusing insecure software fallback.`,
+          );
+        }
       } finally {
         clearTimeout(timer);
       }
-    } catch {
-      // Fallback to Vault-compatible transit encryption emulation
+    } catch (err) {
+      if (!this.allowDevFallback) {
+        throw err instanceof Error
+          ? err
+          : new Error('Vault Transit KMS wrapKey failed — refusing insecure software fallback.');
+      }
+      // Explicit local dev mock mode only
     }
 
     const iv = crypto.randomBytes(12);
@@ -352,12 +365,23 @@ export class VaultTransitKmsService implements KmsService {
               return Buffer.from(json.data.plaintext, 'base64');
             }
           }
+          throw new Error(
+            `Vault Transit KMS unwrapKey failed with HTTP ${response.status} — refusing local fallback.`,
+          );
         } finally {
           clearTimeout(timer);
         }
-      } catch {
-        // Fall through
+      } catch (err) {
+        throw err instanceof Error
+          ? err
+          : new Error('Vault Transit KMS unwrapKey failed — refusing local fallback.');
       }
+    }
+
+    if (!this.allowDevFallback) {
+      throw new Error(
+        'Vault Transit KMS refused software-emulated wrapped DEK in non-mock configuration.',
+      );
     }
 
     if (payload.length < 28) {

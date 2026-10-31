@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   Optional,
@@ -15,6 +16,7 @@ import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import { AuthorizationService } from '../rbac/authorization.service.js';
 import { FileValidationService, type ValidatedFileInfo } from './file-validation.service.js';
 import { ZipBombGuardService } from './zip-bomb-guard.service.js';
 import { ObjectStorageService } from './object-storage.service.js';
@@ -69,6 +71,7 @@ export class DocumentIngestionService {
     private readonly compensation: OrphanCompensationService,
     @Optional() databaseClient?: ReturnType<typeof getDatabaseClient> | undefined,
     @Optional() private readonly redlock?: RedlockService,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {
     this.maxFileSize = config.get('UPLOAD_MAX_FILE_SIZE_BYTES');
     try {
@@ -85,6 +88,78 @@ export class DocumentIngestionService {
    * database transaction metadata persistence, and compensation rollback if aborted.
    */
   async ingestDocument(input: IngestDocumentInput): Promise<IngestDocumentOutput> {
+    const callerRoles = input.principal.roles ?? [];
+    const hasRestrictedRole =
+      callerRoles.includes('SYSTEM_ADMIN') || callerRoles.includes('AUDITOR');
+    const hasBusinessRole =
+      callerRoles.includes('DOCUMENT_OWNER') || callerRoles.includes('DEPARTMENT_ADMIN');
+    if (hasRestrictedRole && !hasBusinessRole) {
+      input.fileStream.destroy();
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
+        message: 'Technical administrator and auditor accounts cannot upload business documents.',
+      });
+    }
+
+    if (
+      input.documentId !== undefined &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(input.documentId)
+    ) {
+      input.fileStream.destroy();
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: 'Invalid documentId UUID format.',
+      });
+    }
+
+    if (
+      input.documentCode !== undefined &&
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,59}$/u.test(input.documentCode)
+    ) {
+      input.fileStream.destroy();
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: 'Invalid documentCode format.',
+      });
+    }
+
+    if (input.documentId && typeof this.database?.document?.findUnique === 'function') {
+      const targetDoc = await this.database.document.findUnique({
+        where: { id: input.documentId },
+        select: { id: true, owner_id: true, department_id: true, status: true },
+      });
+      if (targetDoc) {
+        if (targetDoc.status === 'ARCHIVED' || targetDoc.status === 'DELETED') {
+          input.fileStream.destroy();
+          throw new BadRequestException({
+            errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
+            message: 'Cannot upload new version to an archived or deleted document.',
+          });
+        }
+        if (targetDoc.owner_id !== input.principal.userId) {
+          const canCreateVersion = this.authorization
+            ? (await this.authorization.hasPermission(
+                input.principal,
+                'DOCUMENT_VERSION',
+                'CREATE',
+                { targetDepartmentId: targetDoc.department_id },
+              )) ||
+              (await this.authorization.hasPermission(input.principal, 'DOCUMENT', 'CLASSIFY', {
+                targetDepartmentId: targetDoc.department_id,
+              }))
+            : false;
+          if (!canCreateVersion) {
+            input.fileStream.destroy();
+            throw new ForbiddenException({
+              errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+              message:
+                'Only the document owner or authorized department administrator can upload a new version.',
+            });
+          }
+        }
+      }
+    }
+
     const session = this.compensation.createSession();
     const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sda-upload-'));
     session.tempFilesToDelete.push(tempDir);
@@ -405,6 +480,31 @@ export class DocumentIngestionService {
             });
           }
 
+          if (
+            existingDoc &&
+            existingDoc.owner_id !== undefined &&
+            existingDoc.owner_id !== input.principal.userId
+          ) {
+            const canCreateVersion = this.authorization
+              ? (await this.authorization.hasPermission(
+                  input.principal,
+                  'DOCUMENT_VERSION',
+                  'CREATE',
+                  { targetDepartmentId: existingDoc.department_id },
+                )) ||
+                (await this.authorization.hasPermission(input.principal, 'DOCUMENT', 'CLASSIFY', {
+                  targetDepartmentId: existingDoc.department_id,
+                }))
+              : false;
+            if (!canCreateVersion) {
+              throw new ForbiddenException({
+                errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+                message:
+                  'Only the document owner or authorized department administrator can upload a new version.',
+              });
+            }
+          }
+
           if (!existingDoc) {
             // New document created in DRAFT status (Prompt 09 will handle ACTIVE transition)
             await tx.document.create({
@@ -561,7 +661,11 @@ export class DocumentIngestionService {
   ): Promise<void> {
     try {
       await this.database.$transaction(async (tx) => {
-        const existing = await tx.document.findUnique({ where: { id: documentId } });
+        const existing = await tx.document.findUnique({
+          where: { id: documentId },
+          include: { versions: { select: { version_no: true } } },
+        });
+        let nextInfectedVersionNo = 1;
         if (!existing) {
           await tx.document.create({
             data: {
@@ -574,12 +678,20 @@ export class DocumentIngestionService {
               discoverable: false,
             },
           });
+        } else if (
+          Array.isArray((existing as { versions?: Array<{ version_no: number }> }).versions)
+        ) {
+          const maxV = (existing as { versions: Array<{ version_no: number }> }).versions.reduce(
+            (m, v) => (v.version_no > m ? v.version_no : m),
+            0,
+          );
+          nextInfectedVersionNo = maxV + 1;
         }
 
         await tx.documentVersion.create({
           data: {
             document_id: documentId,
-            version_no: 1,
+            version_no: nextInfectedVersionNo,
             original_filename: filename,
             storage_key: quarantineKey,
             mime_type: mimeType,

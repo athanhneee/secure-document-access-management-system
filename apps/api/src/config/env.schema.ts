@@ -22,6 +22,7 @@ export const EnvSchema = z
     ABAC_TRUSTED_NETWORK_CIDRS: z.string().default('127.0.0.0/8,::1/128'),
     STORAGE_ENDPOINT: z.string().default('127.0.0.1'),
     STORAGE_PORT: z.coerce.number().int().min(1).max(65535).default(9000),
+    STORAGE_REGION: z.string().default('us-east-1'),
     STORAGE_ACCESS_KEY: z.string().default('local-placeholder-access-key'),
     STORAGE_SECRET_KEY: z.string().default('local-placeholder-not-a-secret'),
     STORAGE_BUCKET_DOCUMENTS: z.string().default('secure-documents'),
@@ -88,16 +89,61 @@ export const EnvSchema = z
     WEBAUTHN_RP_NAME: z.string().default('Secure Document Access'),
     WEBAUTHN_RP_ID: z.string().default('localhost'),
     WEBAUTHN_ORIGINS: z.string().default('http://localhost:3000,http://127.0.0.1:3000'),
+    METRICS_SCRAPE_TOKEN: z.string().min(16).optional(),
   })
   .superRefine((value, context) => {
-    if (
-      value.NODE_ENV === 'production' &&
-      (!value.AUTH_SIGNING_PRIVATE_KEY_PEM || !value.AUTH_SIGNING_PUBLIC_KEYS_JSON)
-    ) {
+    if (value.NODE_ENV !== 'production') {
+      return;
+    }
+
+    if (!value.AUTH_SIGNING_PRIVATE_KEY_PEM || !value.AUTH_SIGNING_PUBLIC_KEYS_JSON) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['AUTH_SIGNING_PRIVATE_KEY_PEM'],
         message: 'Production requires externally managed Ed25519 signing keys.',
+      });
+    }
+
+    const forbiddenProductionDefaults: Array<[keyof typeof value, string]> = [
+      [
+        'APP_ENCRYPTION_MASTER_KEY',
+        'local-placeholder-not-for-real-encryption-000000000000000000000000',
+      ],
+      ['DOCUMENT_AUDIT_HMAC_KEY', 'local-only-document-audit-hmac-key-0000000000000000'],
+      ['AUTH_AUDIT_HMAC_KEY', 'local-only-audit-hmac-key-not-for-production'],
+      ['AUDIT_INTEGRITY_KEY', 'local-only-audit-integrity-hmac-key-0000000000000000'],
+      ['STORAGE_ACCESS_KEY', 'local-placeholder-access-key'],
+      ['STORAGE_SECRET_KEY', 'local-placeholder-not-a-secret'],
+    ];
+
+    for (const [field, placeholder] of forbiddenProductionDefaults) {
+      const current = String(value[field] ?? '');
+      if (
+        current === placeholder ||
+        current.startsWith('local-only-') ||
+        current.startsWith('local-placeholder-')
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `${String(field)} cannot use development placeholder secrets in production.`,
+        });
+      }
+    }
+
+    if (value.KMS_PROVIDER === 'hsm-pkcs11' || value.KMS_PROVIDER === 'aws-kms') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['KMS_PROVIDER'],
+        message: `KMS_PROVIDER="${value.KMS_PROVIDER}" is a simulated adapter and cannot be used in production; use "vault" or externally managed "local" master key.`,
+      });
+    }
+
+    if (value.KMS_PROVIDER === 'vault' && value.VAULT_TOKEN === 'dev-mock-vault-token') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['VAULT_TOKEN'],
+        message: 'Production Vault KMS requires a non-placeholder VAULT_TOKEN.',
       });
     }
   });
@@ -106,6 +152,12 @@ export type EnvConfig = z.infer<typeof EnvSchema>;
 
 export function validateEnv(rawEnv: Record<string, unknown> = process.env): EnvConfig {
   const normalizedEnv: Record<string, unknown> = { ...rawEnv };
+  if (!normalizedEnv['HOST'] && normalizedEnv['API_HOST']) {
+    normalizedEnv['HOST'] = normalizedEnv['API_HOST'];
+  }
+  if (normalizedEnv['API_PORT']) {
+    normalizedEnv['PORT'] = normalizedEnv['API_PORT'];
+  }
   if (!normalizedEnv['AUTH_SIGNING_PRIVATE_KEY_PEM'] && normalizedEnv['JWT_PRIVATE_KEY']) {
     normalizedEnv['AUTH_SIGNING_PRIVATE_KEY_PEM'] = normalizedEnv['JWT_PRIVATE_KEY'];
   }

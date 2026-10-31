@@ -68,6 +68,19 @@ export class WatermarkEngineService {
   }
 
   /**
+   * Transliterates UTF-8 (including Vietnamese diacritics) to WinAnsi-safe ASCII
+   * so pdf-lib StandardFonts (Helvetica) never throws encoding exceptions.
+   */
+  private toWinAnsiSafeText(text: string): string {
+    return text
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/gu, '')
+      .replace(/đ/gu, 'd')
+      .replace(/Đ/gu, 'D')
+      .replace(/[^\x20-\x7E]/gu, '?');
+  }
+
+  /**
    * Parse hex color string (e.g. #808080) to pdf-lib RGB values (0..1).
    */
   private parseHexColor(hex: string): { r: number; g: number; b: number } {
@@ -166,7 +179,8 @@ export class WatermarkEngineService {
       const color = rgb(r, g, b);
       const opacity = Math.min(Math.max(config.opacity_percent / 100, 0.05), 1.0);
       const rotation = degrees(config.rotation_degrees);
-      const fontSize = Math.min(Math.max(config.font_size, 8), 24);
+      const fontSize = Math.min(Math.max(config.font_size, 8), 72);
+      const safeRenderedText = this.toWinAnsiSafeText(renderedText);
 
       // QR Code generation if enabled
       let qrImage: Awaited<ReturnType<typeof pdfDoc.embedPng>> | null = null;
@@ -196,7 +210,7 @@ export class WatermarkEngineService {
 
           for (let x = width * 0.1; x < width * 0.9; x += diagonalStepX) {
             for (let y = height * 0.15; y < height * 0.85; y += diagonalStepY) {
-              page.drawText(renderedText, {
+              page.drawText(safeRenderedText, {
                 x,
                 y,
                 size: fontSize,
@@ -209,7 +223,7 @@ export class WatermarkEngineService {
           }
 
           // 2. Fixed security banner at top and bottom of page
-          const bannerText = `[SECURE-DOC] ${renderedText}`;
+          const bannerText = `[SECURE-DOC] ${safeRenderedText}`;
           page.drawText(bannerText, {
             x: 20,
             y: height - 15,

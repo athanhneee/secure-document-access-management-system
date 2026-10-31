@@ -10,6 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import { AbacService } from '../abac/abac.service.js';
+import { cidrMatch } from '../abac/policy-engine.js';
+import { AppConfigService } from '../../config/config.service.js';
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
 import { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
@@ -37,22 +39,34 @@ export interface PepEvaluationResult {
   obligations: string[];
 }
 
+export interface ActiveSessionPolicy {
+  grantedAction: 'VIEW' | 'DOWNLOAD';
+  forbidDownload: boolean;
+  expiresAtMs: number | null;
+}
+
 @Injectable()
 export class DocumentPepService {
   private readonly logger = new Logger(DocumentPepService.name);
   private readonly database: PrismaClient;
+  private readonly sessionPolicies = new Map<string, ActiveSessionPolicy>();
 
   constructor(
     private readonly abac: AbacService,
     private readonly grantsService: AccessGrantsService,
     private readonly audit: DocumentDeliveryAuditService,
     @Optional() databaseClient?: PrismaClient,
+    @Optional() private readonly config?: AppConfigService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
     } catch {
       this.database = (databaseClient ?? null) as unknown as PrismaClient;
     }
+  }
+
+  getSessionPolicy(sessionId: string): ActiveSessionPolicy | undefined {
+    return this.sessionPolicies.get(sessionId);
   }
 
   /**
@@ -73,13 +87,34 @@ export class DocumentPepService {
     const now = pepContext.now ?? new Date();
     const action = pepContext.action;
 
+    const roles = principal.roles ?? [];
+    const hasRestrictedRole = roles.includes('SYSTEM_ADMIN') || roles.includes('AUDITOR');
+    const hasBusinessRole =
+      roles.includes('DOCUMENT_OWNER') ||
+      roles.includes('DOCUMENT_READER') ||
+      roles.includes('DEPARTMENT_ADMIN');
+    if (hasRestrictedRole && !hasBusinessRole) {
+      await this.recordDenyAudit(
+        documentId,
+        pepContext.grantId ?? null,
+        AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        'Separation of duties: technical admin and auditor roles cannot access document content.',
+        principal,
+        context,
+      );
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Technical administrator and auditor accounts cannot access document content.',
+      });
+    }
+
     // 1. Load document with classification and current version
     const document = await this.database.document.findUnique({
       where: { id: documentId },
       include: {
         classification_history: {
           where: { effective_to: null },
-          include: { classification_levels: true },
+          include: { classification_levels: true, business_categories: true },
         },
         current_version: true,
       },
@@ -126,13 +161,28 @@ export class DocumentPepService {
     let effectiveGrantId: string | null = pepContext.grantId ?? null;
 
     if (effectiveGrantId) {
-      // Validate provided grant
-      await this.grantsService.assertGrantValidForAccess(
+      // Validate provided grant and bind to requested documentId (anti-BOLA)
+      const validated = await this.grantsService.assertGrantValidForAccess(
         effectiveGrantId,
         principal.userId,
         action,
         now,
+        documentId,
       );
+      if (validated && validated.grant.document_id !== documentId) {
+        await this.recordDenyAudit(
+          documentId,
+          effectiveGrantId,
+          AppErrorCode.DOCUMENT_ACCESS_DENIED,
+          'Provided grantId belongs to a different document.',
+          principal,
+          context,
+        );
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+          message: 'Access grant does not belong to the requested document.',
+        });
+      }
     } else {
       // Find eligible grant for user or user's active roles
       effectiveGrantId = await this.resolveEligibleGrant(
@@ -178,14 +228,30 @@ export class DocumentPepService {
 
     // 4. Run PDP (ABAC) Evaluation
     const subjectAttributes = await this.buildSubjectAttributes(principal.userId, now);
+    const categoryCode =
+      (currentClassification as { business_categories?: { code?: string } | null } | undefined)
+        ?.business_categories?.code ?? null;
     const resourceAttributes = {
       classificationRank: documentRank,
       departmentId: document.department_id?.toString() ?? null,
       documentStatus: document.status,
       ownerId: document.owner_id.toString(),
-      category: null,
+      category: categoryCode,
       status: document.status,
     };
+
+    const rawTrustedCidrs =
+      typeof this.config?.get === 'function'
+        ? this.config.get('ABAC_TRUSTED_NETWORK_CIDRS')
+        : undefined;
+    const trustedNetwork =
+      typeof rawTrustedCidrs === 'string' && rawTrustedCidrs.length > 0
+        ? rawTrustedCidrs
+            .split(',')
+            .map((c) => c.trim())
+            .filter(Boolean)
+            .some((cidr) => cidrMatch(context.ip, cidr))
+        : false;
 
     const abacResult = await this.abac.evaluate({
       resourceType: 'DOCUMENT',
@@ -195,7 +261,7 @@ export class DocumentPepService {
       environment: {
         currentTime: now.toISOString(),
         ip: context.ip,
-        trustedNetwork: false,
+        trustedNetwork,
         deviceTrust: false,
         mfa: principal.mfa,
         riskScore: 0,
@@ -219,7 +285,23 @@ export class DocumentPepService {
 
     // 5. Enforce Obligations
     const obligations = abacResult.obligations ?? [];
-    if (action === 'DOWNLOAD' && obligations.some((o) => o.type === 'FORBID_DOWNLOAD')) {
+    if (obligations.some((o) => o.type === 'REQUIRE_MFA') && !principal.mfa) {
+      await this.recordDenyAudit(
+        documentId,
+        effectiveGrantId,
+        AppErrorCode.STEP_UP_MFA_REQUIRED,
+        'Policy obligation requires multi-factor authentication.',
+        principal,
+        context,
+      );
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.STEP_UP_MFA_REQUIRED,
+        message: 'Policy obligation requires multi-factor authentication.',
+      });
+    }
+
+    const forbidDownloadObligation = obligations.some((o) => o.type === 'FORBID_DOWNLOAD');
+    if (action === 'DOWNLOAD' && forbidDownloadObligation) {
       await this.recordDenyAudit(
         documentId,
         effectiveGrantId,
@@ -237,6 +319,15 @@ export class DocumentPepService {
     const watermarkRequired =
       classRequireWatermark || obligations.some((o) => o.type === 'REQUIRE_WATERMARK');
 
+    const maxSessionObligation = obligations.find(
+      (o): o is Extract<(typeof obligations)[number], { type: 'MAX_SESSION_MINUTES' }> =>
+        o.type === 'MAX_SESSION_MINUTES',
+    );
+    const expiresAtMs =
+      maxSessionObligation && typeof maxSessionObligation.minutes === 'number'
+        ? now.getTime() + maxSessionObligation.minutes * 60_000
+        : null;
+
     // 6. Create AccessSession when PERMIT
     const sessionId = randomUUID();
     await this.database.accessSession.create({
@@ -252,6 +343,16 @@ export class DocumentPepService {
         started_at: now,
         last_activity_at: now,
       },
+    });
+
+    if (this.sessionPolicies.size >= 10_000) {
+      const oldestKey = this.sessionPolicies.keys().next().value;
+      if (oldestKey) this.sessionPolicies.delete(oldestKey);
+    }
+    this.sessionPolicies.set(sessionId, {
+      grantedAction: action,
+      forbidDownload: forbidDownloadObligation,
+      expiresAtMs,
     });
 
     // 7. Audit log ACCESS_PERMITTED
@@ -282,7 +383,7 @@ export class DocumentPepService {
       versionNo: currentVersion.version_no,
       grantId: effectiveGrantId,
       watermarkRequired,
-      allowDownload: classAllowDownload,
+      allowDownload: classAllowDownload && !forbidDownloadObligation,
       classificationRank: documentRank,
       obligations: obligations.map((o) => o.type),
     };
@@ -459,11 +560,36 @@ export class DocumentPepService {
       orderBy: { attribute_options: { numeric_rank: 'desc' } },
     });
 
+    let projects: string[] = [];
+    if (typeof this.database?.userAttributeAssignment?.findMany === 'function') {
+      const projectAssignments = await this.database.userAttributeAssignment.findMany({
+        where: {
+          user_id: userId,
+          attribute_definitions: { code: 'PROJECT', is_active: true },
+          valid_from: { lte: now },
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+        },
+        include: { attribute_options: true },
+      });
+      projects = projectAssignments
+        .map(
+          (a) =>
+            (
+              a as {
+                attribute_options?: { value_code?: string } | null;
+                value_text?: string | null;
+              }
+            ).attribute_options?.value_code ?? (a as { value_text?: string | null }).value_text,
+        )
+        .filter((v): v is string => typeof v === 'string' && v.length > 0)
+        .sort();
+    }
+
     return {
       clearanceRank: clearance?.attribute_options?.numeric_rank ?? null,
       departmentId: user?.department_id?.toString() ?? null,
       employmentStatus: user?.status ?? null,
-      projects: [],
+      projects,
     };
   }
 
@@ -490,6 +616,9 @@ export class DocumentPepService {
       );
     } catch (auditErr) {
       this.logger.error(`Failed to record access deny audit: ${auditErr}`);
+      if (process.env['NODE_ENV'] === 'production') {
+        throw auditErr;
+      }
     }
   }
 }

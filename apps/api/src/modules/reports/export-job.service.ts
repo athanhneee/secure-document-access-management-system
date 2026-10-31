@@ -184,8 +184,22 @@ export class ExportJobService {
     }
 
     let buffer: Buffer | null = this.memoryStorage.get(id) ?? null;
-    if (!buffer && job.file_path && fs.existsSync(job.file_path)) {
-      buffer = fs.readFileSync(job.file_path);
+    if (!buffer && job.file_path) {
+      const resolvedBase = path.resolve(this.exportDir);
+      const resolvedTarget = path.resolve(job.file_path);
+      if (
+        !resolvedTarget.startsWith(`${resolvedBase}${path.sep}`) &&
+        resolvedTarget !== resolvedBase
+      ) {
+        this.logger.error(`Blocked out-of-bounds export file_path read for job ${id}`);
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
+          message: 'Export artifact path is invalid.',
+        });
+      }
+      if (fs.existsSync(resolvedTarget) && !fs.lstatSync(resolvedTarget).isSymbolicLink()) {
+        buffer = fs.readFileSync(resolvedTarget);
+      }
     }
 
     if (!buffer) {
@@ -399,7 +413,14 @@ export class ExportJobService {
 
       if (input.format === 'JSON') {
         mimeType = 'application/json';
-        contentBuffer = Buffer.from(JSON.stringify(rawRecords, null, 2), 'utf-8');
+        contentBuffer = Buffer.from(
+          JSON.stringify(
+            rawRecords,
+            (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+            2,
+          ),
+          'utf-8',
+        );
       } else if (input.format === 'PDF') {
         mimeType = 'application/pdf';
         contentBuffer = await generatePdfTable(reportTitle, columns, rows);
@@ -417,7 +438,13 @@ export class ExportJobService {
       const sha256Hash = createHash('sha256').update(contentBuffer).digest('hex');
       const fileSizeBytes = BigInt(contentBuffer.length);
 
-      // Store in memory
+      // Store in bounded in-memory cache (max 50 artifacts to prevent heap exhaustion)
+      if (this.memoryStorage.size >= 50) {
+        const oldestKey = this.memoryStorage.keys().next().value;
+        if (oldestKey !== undefined) {
+          this.memoryStorage.delete(oldestKey);
+        }
+      }
       this.memoryStorage.set(jobId, contentBuffer);
 
       // Store on disk if export directory is available

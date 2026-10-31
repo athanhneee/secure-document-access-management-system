@@ -147,12 +147,24 @@ export class DocumentDeliveryService {
       });
     }
 
+    const previewPolicy =
+      typeof this.pep?.getSessionPolicy === 'function'
+        ? this.pep.getSessionPolicy(sessionId)
+        : undefined;
+    if (previewPolicy?.expiresAtMs && now.getTime() > previewPolicy.expiresAtMs) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.SESSION_EXPIRED,
+        message: 'Access session exceeded maximum policy duration.',
+      });
+    }
+
     // 2. Real-time grant verification (Zero Trust: independent of worker)
     await this.grantsService.assertGrantValidForAccess(
       session.access_grant_id,
       principal.userId,
       'VIEW',
       now,
+      documentId,
     );
 
     // Update session last activity
@@ -386,12 +398,33 @@ export class DocumentDeliveryService {
       });
     }
 
+    const downloadPolicy =
+      typeof this.pep?.getSessionPolicy === 'function'
+        ? this.pep.getSessionPolicy(sessionId)
+        : undefined;
+    if (downloadPolicy?.expiresAtMs && now.getTime() > downloadPolicy.expiresAtMs) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.SESSION_EXPIRED,
+        message: 'Access session exceeded maximum policy duration.',
+      });
+    }
+    if (
+      downloadPolicy &&
+      (downloadPolicy.forbidDownload || downloadPolicy.grantedAction !== 'DOWNLOAD')
+    ) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
+        message: 'Session does not permit downloading this document.',
+      });
+    }
+
     // 2. Strict DOWNLOAD permission check at runtime
     await this.grantsService.assertGrantValidForAccess(
       session.access_grant_id,
       principal.userId,
       'DOWNLOAD',
       now,
+      documentId,
     );
 
     const docVersion = session.document_versions;
@@ -555,9 +588,33 @@ export class DocumentDeliveryService {
     principal: AuthPrincipal,
     _context: RequestContext,
   ): Promise<{ ticket: string; expiresAt: string; ttlSeconds: number }> {
-    // Verify session belongs to user and is ACTIVE
+    const nowDate = new Date();
+    const now = nowDate.getTime();
+
+    // Prune expired tickets to prevent unbounded memory growth
+    for (const [key, existing] of this.downloadTickets.entries()) {
+      if (now > existing.expiresAt) {
+        this.downloadTickets.delete(key);
+      }
+    }
+
+    // Verify session belongs to user, is ACTIVE, and matches documentId
     const session = await this.database.accessSession.findUnique({
       where: { id: sessionId },
+      include: {
+        document_versions: {
+          include: {
+            document: {
+              include: {
+                classification_history: {
+                  where: { effective_to: null },
+                  include: { classification_levels: true },
+                },
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!session || session.status !== 'ACTIVE' || session.user_id !== principal.userId) {
@@ -567,8 +624,52 @@ export class DocumentDeliveryService {
       });
     }
 
+    if (session.document_versions && session.document_versions.document_id !== documentId) {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Session is not associated with this document.',
+      });
+    }
+
+    const sessionPolicy =
+      typeof this.pep?.getSessionPolicy === 'function'
+        ? this.pep.getSessionPolicy(sessionId)
+        : undefined;
+    if (sessionPolicy?.expiresAtMs && now > sessionPolicy.expiresAtMs) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.SESSION_EXPIRED,
+        message: 'Access session exceeded maximum policy duration.',
+      });
+    }
+    if (
+      sessionPolicy &&
+      (sessionPolicy.forbidDownload || sessionPolicy.grantedAction !== 'DOWNLOAD')
+    ) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
+        message: 'Session does not permit downloading this document.',
+      });
+    }
+
+    const currentClassification = session.document_versions?.document?.classification_history?.[0];
+    if (currentClassification?.classification_levels?.allow_download === false) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
+        message: 'Document classification level does not allow downloads.',
+      });
+    }
+
+    if (typeof this.grantsService?.assertGrantValidForAccess === 'function') {
+      await this.grantsService.assertGrantValidForAccess(
+        session.access_grant_id,
+        principal.userId,
+        'DOWNLOAD',
+        nowDate,
+        documentId,
+      );
+    }
+
     const ticket = `DT-${crypto.randomBytes(32).toString('hex')}`;
-    const now = Date.now();
     const expiresAtMs = now + this.ticketTtlSeconds * 1000;
 
     this.downloadTickets.set(ticket, {

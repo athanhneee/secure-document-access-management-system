@@ -105,6 +105,27 @@ export class DocumentSearchService {
     const userRoles = await this.authorization.effectiveGrants(userId);
     const roleIds = [...new Set(userRoles.map((g) => g.roleId))];
 
+    // Bell-LaPadula clearance rank enforcement (D-BR04 / D-BR11)
+    let userClearanceRank: number | null = null;
+    if (typeof this.database?.userAttributeAssignment?.findFirst === 'function') {
+      const now = new Date();
+      const clearance = await this.database.userAttributeAssignment.findFirst({
+        where: {
+          user_id: userId,
+          attribute_definitions: { code: 'CLEARANCE_LEVEL' },
+          valid_from: { lte: now },
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+        },
+        include: { attribute_options: true },
+        orderBy: { attribute_options: { numeric_rank: 'desc' } },
+      });
+      userClearanceRank = clearance?.attribute_options?.numeric_rank ?? 0;
+    }
+    const clearanceSql =
+      userClearanceRank !== null
+        ? Prisma.sql` AND (cl."rank" IS NULL OR cl."rank" <= ${userClearanceRank})`
+        : Prisma.empty;
+
     // Build WHERE conditions as parameterized fragments
     const conditions: Prisma.Sql[] = [];
     const visibilityConditions: Prisma.Sql[] = [];
@@ -112,18 +133,20 @@ export class DocumentSearchService {
     // 1. Owner always sees their documents
     visibilityConditions.push(Prisma.sql`d."owner_id" = ${userId}`);
 
-    // 2. DISCOVER permission + discoverable + ACTIVE
+    // 2. DISCOVER permission + discoverable + ACTIVE + sufficient clearance
     if (hasGlobalDiscover) {
-      visibilityConditions.push(Prisma.sql`(d."discoverable" = true AND d."status" = 'ACTIVE')`);
+      visibilityConditions.push(
+        Prisma.sql`(d."discoverable" = true AND d."status" = 'ACTIVE'${clearanceSql})`,
+      );
     } else if (discoverableDeptIds && discoverableDeptIds.length > 0) {
       visibilityConditions.push(
-        Prisma.sql`(d."discoverable" = true AND d."status" = 'ACTIVE' AND d."department_id" = ANY(${discoverableDeptIds}))`,
+        Prisma.sql`(d."discoverable" = true AND d."status" = 'ACTIVE' AND d."department_id" = ANY(${discoverableDeptIds})${clearanceSql})`,
       );
     }
 
-    // 3. Active grant (direct USER grant)
+    // 3. Active grant (direct USER grant) + sufficient clearance
     visibilityConditions.push(
-      Prisma.sql`EXISTS (
+      Prisma.sql`(EXISTS (
         SELECT 1 FROM access_grants ag
         WHERE ag.document_id = d.id
           AND ag.principal_type = 'USER'
@@ -131,13 +154,13 @@ export class DocumentSearchService {
           AND ag.status = 'ACTIVE'
           AND ag.valid_from <= now()
           AND ag.valid_until > now()
-      )`,
+      )${clearanceSql})`,
     );
 
-    // 4. Active grant via ROLE
+    // 4. Active grant via ROLE + sufficient clearance
     if (roleIds.length > 0) {
       visibilityConditions.push(
-        Prisma.sql`EXISTS (
+        Prisma.sql`(EXISTS (
           SELECT 1 FROM access_grants ag
           WHERE ag.document_id = d.id
             AND ag.principal_type = 'ROLE'
@@ -145,7 +168,7 @@ export class DocumentSearchService {
             AND ag.status = 'ACTIVE'
             AND ag.valid_from <= now()
             AND ag.valid_until > now()
-        )`,
+        )${clearanceSql})`,
       );
     }
 
@@ -287,6 +310,23 @@ export class DocumentSearchService {
     const userRoles = await this.authorization.effectiveGrants(userId);
     const roleIds = [...new Set(userRoles.map((g) => g.roleId))];
 
+    let grantClearanceFilter: Prisma.Sql = Prisma.empty;
+    if (typeof this.database?.userAttributeAssignment?.findFirst === 'function') {
+      const now = new Date();
+      const clearance = await this.database.userAttributeAssignment.findFirst({
+        where: {
+          user_id: userId,
+          attribute_definitions: { code: 'CLEARANCE_LEVEL' },
+          valid_from: { lte: now },
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+        },
+        include: { attribute_options: true },
+        orderBy: { attribute_options: { numeric_rank: 'desc' } },
+      });
+      const userClearanceRank = clearance?.attribute_options?.numeric_rank ?? 0;
+      grantClearanceFilter = Prisma.sql`AND (cl."rank" IS NULL OR cl."rank" <= ${userClearanceRank})`;
+    }
+
     // Build grant visibility: direct USER grants OR grants via user's active roles
     const grantVisibility: Prisma.Sql[] = [
       Prisma.sql`(ag.principal_type = 'USER' AND ag.principal_user_id = ${userId})`,
@@ -331,6 +371,7 @@ export class DocumentSearchService {
           ON cl.id = dch.classification_level_id
         WHERE (${Prisma.join(grantVisibility, ' OR ')})
           AND d."status" != 'DELETED'
+          ${grantClearanceFilter}
         ORDER BY ${sortColumn} ${orderDir}, ag."id" ASC
         LIMIT ${limit}
         OFFSET ${offset}

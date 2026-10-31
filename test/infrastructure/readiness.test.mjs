@@ -16,7 +16,14 @@ async function readiness() {
 before(async () => {
   api = spawn(process.execPath, ['apps/api/dist/main.js'], {
     cwd: repositoryRoot,
-    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'development' },
+    env: {
+      ...process.env,
+      HOST: '127.0.0.1',
+      API_HOST: '127.0.0.1',
+      PORT: String(port),
+      API_PORT: String(port),
+      NODE_ENV: 'development',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   await waitFor(async () => {

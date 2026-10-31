@@ -112,19 +112,9 @@ async function main() {
     case 'up': {
       run('docker', [...composeBase, 'config', '--quiet']);
       const isCi = process.env['CI'] === 'true';
-      // In CI environments, start core integration services and skip heavy ClamAV daemon
+      // In CI environments, start core long-running daemon services and skip heavy ClamAV daemon
       // (which has in-memory mock socket fallback in tests) and monitoring stack.
-      const targetServices = isCi
-        ? [
-            'postgres',
-            'redis-data-init',
-            'redis',
-            'minio',
-            'minio-bootstrap',
-            'gotenberg',
-            'mailpit',
-          ]
-        : [];
+      const targetServices = isCi ? ['postgres', 'redis', 'minio', 'gotenberg', 'mailpit'] : [];
       run('docker', [
         ...composeBase,
         'up',
@@ -134,6 +124,9 @@ async function main() {
         '360',
         ...targetServices,
       ]);
+      if (isCi) {
+        run('docker', [...composeBase, 'run', '--rm', '--no-deps', 'minio-bootstrap']);
+      }
       run('docker', [...composeBase, 'ps']);
       break;
     }

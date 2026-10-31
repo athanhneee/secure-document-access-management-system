@@ -78,7 +78,7 @@ services:
     pids_limit: 128
 
   minio-data-init:
-    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    image: redis:8.2.9-alpine
     user: root
     restart: 'no'
     entrypoint: [/bin/sh, -ec]
@@ -95,7 +95,7 @@ services:
 
   minio:
     <<: *service-defaults
-    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z
     user: '1000:1000'
     depends_on:
       minio-data-init:
@@ -123,7 +123,7 @@ services:
     pids_limit: 256
 
   minio-bootstrap:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z
     user: '1000:1000'
     restart: 'no'
     init: true

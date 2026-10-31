@@ -9,7 +9,9 @@ import pg from 'pg';
 
 loadEnvironment({ path: new URL('../../../.local/dev.env', import.meta.url), quiet: true });
 
-const sourceUrl = new URL(process.env['DATABASE_URL']);
+const sourceUrl = new URL(
+  process.env['DATABASE_URL'] ?? 'postgresql://127.0.0.1:5432/secure_docs?schema=public',
+);
 const adminUrl = new URL(sourceUrl);
 adminUrl.pathname = '/postgres';
 adminUrl.search = '';
@@ -140,7 +142,7 @@ function runPrisma(args, targetUrl) {
   const result = spawnSync(process.execPath, [prismaCli, ...args, '--config', 'prisma.config.ts'], {
     cwd: fileURLToPath(new URL('../', import.meta.url)),
     encoding: 'utf8',
-    env: { ...process.env, DATABASE_URL: targetUrl, NODE_ENV: 'test' },
+    env: { ...process.env, DATABASE_URL: targetUrl, DIRECT_URL: targetUrl, NODE_ENV: 'test' },
     shell: false,
   });
   if (result.error) throw result.error;

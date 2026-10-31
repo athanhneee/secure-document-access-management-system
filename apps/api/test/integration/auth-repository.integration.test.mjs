@@ -1,20 +1,22 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
-for (const line of readFileSync(
-  new URL('../../../../.local/dev.env', import.meta.url),
-  'utf8',
-).split(/\r?\n/u)) {
-  const separator = line.indexOf('=');
-  if (separator > 0) process.env[line.slice(0, separator)] ??= line.slice(separator + 1);
+const devEnvUrl = new URL('../../../../.local/dev.env', import.meta.url);
+if (existsSync(devEnvUrl)) {
+  for (const line of readFileSync(devEnvUrl, 'utf8').split(/\r?\n/u)) {
+    const separator = line.indexOf('=');
+    if (separator > 0) process.env[line.slice(0, separator)] ??= line.slice(separator + 1);
+  }
 }
 
-const sourceUrl = new URL(process.env.DATABASE_URL);
+const sourceUrl = new URL(
+  process.env.DATABASE_URL ?? 'postgresql://127.0.0.1:5432/secure_docs?schema=public',
+);
 const adminUrl = new URL(sourceUrl);
 adminUrl.pathname = '/postgres';
 adminUrl.search = '';
@@ -67,12 +69,18 @@ before(async () => {
     {
       cwd: fileURLToPath(new URL('../../../../packages/database/', import.meta.url)),
       encoding: 'utf8',
-      env: { ...process.env, DATABASE_URL: targetUrl.toString(), NODE_ENV: 'test' },
+      env: {
+        ...process.env,
+        DATABASE_URL: targetUrl.toString(),
+        DIRECT_URL: targetUrl.toString(),
+        NODE_ENV: 'test',
+      },
       shell: false,
     },
   );
   assert.equal(migration.status, 0, 'auth integration migrations must apply');
   process.env.DATABASE_URL = targetUrl.toString();
+  process.env.DIRECT_URL = targetUrl.toString();
   const authModule = await import('../../dist/modules/auth/auth.repository.js');
   ({ disconnectDatabase } = await import('@sda/database'));
   repository = new authModule.AuthRepository();

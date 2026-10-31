@@ -17,6 +17,44 @@ import { createHmac, randomUUID } from 'node:crypto';
 
 const BATCH_SIZE = 100;
 
+function canonicalizeJson(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 'null';
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'bigint') return JSON.stringify(value.toString());
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (value instanceof Date) return JSON.stringify(value.toISOString());
+  if (Array.isArray(value)) {
+    const serialized = value.map((el) => {
+      if (typeof el === 'undefined' || typeof el === 'symbol' || typeof el === 'function') {
+        return 'null';
+      }
+      return canonicalizeJson(el);
+    });
+    return `[${serialized.join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    if (typeof (value as { toJSON?: () => unknown }).toJSON === 'function') {
+      return canonicalizeJson((value as { toJSON: () => unknown }).toJSON());
+    }
+    const obj = value as Record<string, unknown>;
+    const sortedKeys = Object.keys(obj).sort();
+    const parts: string[] = [];
+    for (const key of sortedKeys) {
+      const val = obj[key];
+      if (typeof val === 'undefined' || typeof val === 'symbol' || typeof val === 'function') {
+        continue;
+      }
+      parts.push(`${JSON.stringify(key)}:${canonicalizeJson(val)}`);
+    }
+    return `{${parts.join(',')}}`;
+  }
+  return 'null';
+}
+
 interface ExpiredGrantRow {
   id: string;
   document_id: string;
@@ -68,7 +106,7 @@ export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
           access_grant_id: { in: ids },
           status: 'ACTIVE',
         },
-        select: { id: true, user_id: true },
+        select: { id: true, user_id: true, access_grant_id: true },
       });
 
       if (activeSessions.length > 0) {
@@ -96,10 +134,12 @@ export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
         );
         const prior = previous[0] as AuditChainRow | undefined;
         const sequence = (prior?.chain_sequence ?? 0n) + 1n;
+        const previousHash = prior?.entry_hash ?? null;
         const correlationId = randomUUID();
+        const occurredAt = new Date();
 
         const sessionCount = activeSessions.filter(
-          (_session) => true, // all sessions in this batch relate to these grants
+          (session) => session.access_grant_id === grant.id,
         ).length;
 
         const details: Record<string, string | number | boolean | null> = {
@@ -110,40 +150,52 @@ export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
           batchExpiry: true,
         };
 
-        const canonical = JSON.stringify({
+        const canonicalPayload = {
           action: 'GRANT_EXPIRED',
           actorUserId: null,
           actorUsername: 'SYSTEM_WORKER',
+          chainAlgorithm: 'HMAC-SHA-256',
+          chainPartition: partition,
+          chainSequence: sequence.toString(),
           correlationId,
           details,
           documentId: grant.document_id,
+          accessSessionId: null,
+          ipAddress: '127.0.0.1',
+          objectType: 'ACCESS_GRANT',
           objectId: grant.id,
+          occurredAt: occurredAt.toISOString(),
           outcome: 'SUCCESS',
-          previousHash: prior?.entry_hash ?? null,
+          previousHash,
           reasonCode: 'GRANT_VALIDITY_EXPIRED',
-          sequence: sequence.toString(),
-        });
+          userAgent: null,
+        };
 
-        const entryHash = createHmac('sha256', hmacKey).update(canonical).digest('hex');
+        const canonical = canonicalizeJson(canonicalPayload);
+        const entryHash = createHmac('sha256', hmacKey).update(canonical, 'utf8').digest('hex');
 
         await tx.auditLog.create({
           data: {
+            occurred_at: occurredAt,
             actor_user_id: null,
             actor_username: 'SYSTEM_WORKER',
             action: 'GRANT_EXPIRED',
             object_type: 'ACCESS_GRANT',
             object_id: grant.id,
             document_id: grant.document_id,
+            access_session_id: null,
             outcome: 'SUCCESS',
             reason_code: 'GRANT_VALIDITY_EXPIRED',
             ip_address: '127.0.0.1',
+            user_agent: null,
             correlation_id: correlationId,
             details,
-            previous_hash: prior?.entry_hash ?? null,
+            previous_hash: previousHash,
             entry_hash: entryHash,
             chain_partition: partition,
             chain_sequence: sequence,
             hmac_key_version: 1,
+            chain_algorithm: 'HMAC-SHA-256',
           },
         });
       }
@@ -162,7 +214,10 @@ export function startGrantExpiryJob(
   hmacKey: string,
   signal: AbortSignal,
 ): void {
+  let isRunning = false;
   const tick = async (): Promise<void> => {
+    if (isRunning || signal.aborted) return;
+    isRunning = true;
     try {
       const count = await runGrantExpiryBatch(hmacKey);
       if (count > 0) {
@@ -170,6 +225,8 @@ export function startGrantExpiryJob(
       }
     } catch (err: unknown) {
       console.error('Grant expiry worker error:', err instanceof Error ? err.message : String(err));
+    } finally {
+      isRunning = false;
     }
   };
 

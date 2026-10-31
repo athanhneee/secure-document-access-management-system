@@ -252,11 +252,20 @@ export async function runDetectionCycle(options?: {
           }
         }
       } else if (rule.ruleCode === 'OFF_HOURS_ACCESS') {
-        const startHour = (rule.parameters['startHourUtc'] as number) ?? 0;
-        const endHour = (rule.parameters['endHourUtc'] as number) ?? 12;
+        const startHour = Number(rule.parameters['startHourUtc'] ?? 0);
+        const endHour = Number(rule.parameters['endHourUtc'] ?? 12);
 
         const logs = await database.auditLog.findMany({
           where: {
+            action: {
+              in: [
+                'DOCUMENT_DOWNLOADED',
+                'DOCUMENT_CONTENT_DOWNLOADED',
+                'DOCUMENT_VIEWED',
+                'DOCUMENT_PREVIEWED',
+                'ACCESS_PERMITTED',
+              ],
+            },
             occurred_at: { gte: windowStart, lte: now },
             actor_user_id: { not: null },
           },
@@ -264,8 +273,10 @@ export async function runDetectionCycle(options?: {
         });
 
         const offHoursLogs = logs.filter((l) => {
+          const day = l.occurred_at.getUTCDay();
           const hours = l.occurred_at.getUTCHours();
-          return hours < startHour || hours >= endHour;
+          const isWeekend = day === 0 || day === 6;
+          return isWeekend || hours < startHour || hours >= endHour;
         });
 
         const userGroups = new Map<string, typeof offHoursLogs>();
@@ -371,7 +382,9 @@ export async function runDetectionCycle(options?: {
       } else if (rule.ruleCode === 'REFRESH_TOKEN_REUSE') {
         const logs = await database.auditLog.findMany({
           where: {
-            action: { in: ['REFRESH_TOKEN_REUSED', 'TOKEN_REVOCATION_TRIGGERED'] },
+            action: {
+              in: ['REFRESH_REUSE', 'REFRESH_TOKEN_REUSED', 'TOKEN_REVOCATION_TRIGGERED'],
+            },
             occurred_at: { gte: windowStart, lte: now },
           },
           select: { id: true, actor_user_id: true, occurred_at: true },
@@ -479,11 +492,14 @@ export async function runDetectionCycle(options?: {
 export function startSecurityDetectionJob(intervalMs: number, signal: AbortSignal): void {
   if (signal.aborted) return;
 
+  let isRunning = false;
   const timer = setInterval(async () => {
     if (signal.aborted) {
       clearInterval(timer);
       return;
     }
+    if (isRunning) return;
+    isRunning = true;
 
     try {
       const result = await runDetectionCycle();
@@ -492,6 +508,8 @@ export function startSecurityDetectionJob(intervalMs: number, signal: AbortSigna
       }
     } catch (err) {
       console.error(`Security detection cycle failed: ${err}`);
+    } finally {
+      isRunning = false;
     }
   }, intervalMs);
 

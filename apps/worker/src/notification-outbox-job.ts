@@ -62,7 +62,14 @@ export async function processOutboxBatch(options?: {
     }
 
     try {
-      if (item.channel === 'IN_APP') {
+      const wantsInApp = item.channel === 'IN_APP' || item.channel === 'BOTH';
+      const wantsEmail = item.channel === 'EMAIL' || item.channel === 'BOTH';
+
+      if (!wantsInApp && !wantsEmail) {
+        throw new Error(`Unsupported channel: ${item.channel}`);
+      }
+
+      if (wantsInApp && typeof database.notification?.create === 'function') {
         const payload = (item.payload as Record<string, unknown>) ?? {};
         const relatedObjectType = payload['relatedObjectType']
           ? String(payload['relatedObjectType'])
@@ -73,7 +80,11 @@ export async function processOutboxBatch(options?: {
 
         // Idempotency: verify if already inserted into notifications
         let alreadyDelivered = false;
-        if (relatedObjectType && relatedObjectId) {
+        if (
+          relatedObjectType &&
+          relatedObjectId &&
+          typeof database.notification.findFirst === 'function'
+        ) {
           const existing = await database.notification.findFirst({
             where: {
               recipient_id: item.recipient_id,
@@ -101,40 +112,30 @@ export async function processOutboxBatch(options?: {
             },
           });
         }
+      }
 
-        await database.notificationOutbox.update({
-          where: { id: item.id },
-          data: {
-            status: 'SENT',
-            processed_at: now,
-            last_error: null,
-          },
-        });
-        result.sent++;
-      } else if (item.channel === 'EMAIL' || item.channel === 'BOTH') {
+      if (wantsEmail) {
         // Send email via provider or injected sender
         if (options?.emailSender) {
           const success = await options.emailSender(item.recipient_id, item.title, item.body);
           if (!success) throw new Error('External email delivery returned failure.');
         } else {
-          // Standard simulated delivery
+          // Standard simulated delivery (avoid logging message body/title PII)
           console.info(
-            `[Email Dispatch] To recipient ID: ${item.recipient_id} | Title: ${item.title}`,
+            `[Email Dispatch] To recipient ID: ${item.recipient_id} | Type: ${item.notification_type}`,
           );
         }
-
-        await database.notificationOutbox.update({
-          where: { id: item.id },
-          data: {
-            status: 'SENT',
-            processed_at: now,
-            last_error: null,
-          },
-        });
-        result.sent++;
-      } else {
-        throw new Error(`Unsupported channel: ${item.channel}`);
       }
+
+      await database.notificationOutbox.update({
+        where: { id: item.id },
+        data: {
+          status: 'SENT',
+          processed_at: now,
+          last_error: null,
+        },
+      });
+      result.sent++;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       const newAttemptCount = item.attempt_count + 1;
@@ -177,11 +178,14 @@ export async function processOutboxBatch(options?: {
 export function startNotificationOutboxJob(intervalMs: number, signal: AbortSignal): void {
   if (signal.aborted) return;
 
+  let isRunning = false;
   const timer = setInterval(async () => {
     if (signal.aborted) {
       clearInterval(timer);
       return;
     }
+    if (isRunning) return;
+    isRunning = true;
 
     try {
       const result = await processOutboxBatch();
@@ -192,6 +196,8 @@ export function startNotificationOutboxJob(intervalMs: number, signal: AbortSign
       }
     } catch (err) {
       console.error(`Notification outbox cycle failed: ${err}`);
+    } finally {
+      isRunning = false;
     }
   }, intervalMs);
 

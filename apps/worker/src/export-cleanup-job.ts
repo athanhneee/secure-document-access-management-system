@@ -1,5 +1,6 @@
 import { getDatabaseClient } from '@sda/database';
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -14,9 +15,13 @@ export interface ExportCleanupResult {
 export async function cleanExpiredExportJobs(options?: {
   databaseClient?: PrismaClient;
   now?: Date;
+  exportBaseDir?: string;
 }): Promise<ExportCleanupResult> {
   const database = options?.databaseClient ?? getDatabaseClient();
   const now = options?.now ?? new Date();
+  const resolvedBaseDir = path.resolve(
+    options?.exportBaseDir ?? path.join(process.cwd(), '.local', 'exports'),
+  );
 
   let expiredJobsCleaned = 0;
   let filesDeleted = 0;
@@ -34,11 +39,21 @@ export async function cleanExpiredExportJobs(options?: {
 
     for (const job of expiredJobs) {
       if (job.file_path) {
-        try {
-          await fsp.unlink(job.file_path);
-          filesDeleted++;
-        } catch {
-          // File might already have been unlinked or not exist
+        const resolvedTarget = path.resolve(job.file_path);
+        if (resolvedTarget.startsWith(`${resolvedBaseDir}${path.sep}`)) {
+          try {
+            const stat = await fsp.lstat(resolvedTarget);
+            if (stat.isFile()) {
+              await fsp.unlink(resolvedTarget);
+              filesDeleted++;
+            }
+          } catch {
+            // File might already have been unlinked or not exist
+          }
+        } else {
+          console.warn(
+            `Export cleanup refused to unlink out-of-bounds file_path for job ${job.id}`,
+          );
         }
       }
 
@@ -60,11 +75,14 @@ export async function cleanExpiredExportJobs(options?: {
 export function startExportCleanupJob(intervalMs: number, signal: AbortSignal): void {
   if (signal.aborted) return;
 
+  let isRunning = false;
   const timer = setInterval(async () => {
     if (signal.aborted) {
       clearInterval(timer);
       return;
     }
+    if (isRunning) return;
+    isRunning = true;
 
     try {
       const result = await cleanExpiredExportJobs();
@@ -75,6 +93,8 @@ export function startExportCleanupJob(intervalMs: number, signal: AbortSignal): 
       }
     } catch (err) {
       console.error(`Export cleanup cycle failed: ${err}`);
+    } finally {
+      isRunning = false;
     }
   }, intervalMs);
 

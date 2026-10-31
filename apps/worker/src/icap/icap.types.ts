@@ -51,6 +51,9 @@ export interface IcapRequest {
   httpStatusMessage?: string | undefined;
   body: Buffer;
   isComplete: boolean;
+  isPreview?: boolean | undefined;
+  isPreviewIof?: boolean | undefined;
+  continuedAfterPreview?: boolean | undefined;
 }
 
 export interface IcapServerConfig {

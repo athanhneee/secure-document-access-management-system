@@ -21,19 +21,23 @@ export async function cleanStaleTempFiles(
   const now = Date.now();
 
   try {
-    const files = await fsp.readdir(tempBaseDir).catch(() => []);
+    const resolvedBase = path.resolve(tempBaseDir);
+    const files = await fsp.readdir(resolvedBase).catch(() => []);
 
     for (const file of files) {
       if (file.startsWith('sda-')) {
-        const fullPath = path.join(tempBaseDir, file);
+        const fullPath = path.resolve(resolvedBase, file);
+        if (!fullPath.startsWith(`${resolvedBase}${path.sep}`)) {
+          continue;
+        }
         try {
-          const stat = await fsp.stat(fullPath);
+          // Use lstat so symlinks in shared /tmp are NEVER followed into arbitrary directories
+          const stat = await fsp.lstat(fullPath);
           if (now - stat.mtimeMs > maxAgeMs) {
-            // Overwrite and remove
-            if (stat.isDirectory()) {
-              await fsp.rm(fullPath, { recursive: true, force: true }).catch(() => {});
-            } else {
+            if (stat.isSymbolicLink() || stat.isFile()) {
               await fsp.unlink(fullPath).catch(() => {});
+            } else if (stat.isDirectory()) {
+              await fsp.rm(fullPath, { recursive: true, force: true }).catch(() => {});
             }
             cleaned++;
           }
@@ -59,11 +63,14 @@ export function startDerivativeCleanupJob(
 ): void {
   if (signal.aborted) return;
 
+  let isRunning = false;
   const timer = setInterval(async () => {
     if (signal.aborted) {
       clearInterval(timer);
       return;
     }
+    if (isRunning) return;
+    isRunning = true;
 
     try {
       const cleaned = await cleanStaleTempFiles(ttlMinutes);
@@ -72,6 +79,8 @@ export function startDerivativeCleanupJob(
       }
     } catch (err) {
       console.error(`Derivative cleanup cycle failed: ${err}`);
+    } finally {
+      isRunning = false;
     }
   }, intervalMs);
 

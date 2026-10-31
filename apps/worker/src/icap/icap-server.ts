@@ -25,6 +25,10 @@ interface ResolvedIcapConfig {
   customKeywords: string[];
 }
 
+const MAX_ICAP_HEADER_BYTES = 16 * 1024;
+const MAX_ICAP_TOTAL_BYTES = 25 * 1024 * 1024;
+const MAX_CONNECTION_DURATION_MS = 60_000;
+
 export class IcapServer {
   private server: net.Server | null = null;
   private readonly activeSockets = new Set<net.Socket>();
@@ -47,7 +51,7 @@ export class IcapServer {
     this.config = {
       enabled: config?.enabled ?? true,
       port: config?.port ?? 1344,
-      host: config?.host ?? '0.0.0.0',
+      host: config?.host ?? '127.0.0.1',
       serviceName: config?.serviceName ?? 'sda-dlp',
       maxConnections: config?.maxConnections ?? 100,
       previewSize: config?.previewSize ?? 2048,
@@ -119,21 +123,59 @@ export class IcapServer {
     this.metrics.totalConnections++;
 
     let accumulatedBuffer = Buffer.alloc(0);
+    let isProcessing = false;
+    let continuedAfterPreview = false;
+
     socket.setTimeout(30_000); // 30 seconds idle timeout
+    const connectionDeadline = setTimeout(() => {
+      socket.destroy();
+    }, MAX_CONNECTION_DURATION_MS);
+    connectionDeadline.unref();
 
     socket.on('data', async (chunk) => {
+      if (isProcessing) {
+        return;
+      }
+
+      if (accumulatedBuffer.length + chunk.length > MAX_ICAP_TOTAL_BYTES) {
+        isProcessing = true;
+        const entityTooLarge = Buffer.from(
+          'ICAP/1.0 400 Bad Request\r\nConnection: close\r\n\r\n',
+          'utf-8',
+        );
+        socket.write(entityTooLarge, () => {
+          socket.end();
+        });
+        return;
+      }
+
       accumulatedBuffer = Buffer.concat([accumulatedBuffer, chunk]);
+
+      if (
+        accumulatedBuffer.indexOf('\r\n\r\n') === -1 &&
+        accumulatedBuffer.length > MAX_ICAP_HEADER_BYTES
+      ) {
+        isProcessing = true;
+        const headerTooLarge = Buffer.from(
+          'ICAP/1.0 400 Bad Request\r\nConnection: close\r\n\r\n',
+          'utf-8',
+        );
+        socket.write(headerTooLarge, () => {
+          socket.end();
+        });
+        return;
+      }
 
       try {
         const request = IcapParser.parseRequest(accumulatedBuffer);
         if (!request) {
-          // Waiting for more data to complete ICAP header
+          // Waiting for complete ICAP header (\r\n\r\n)
           return;
         }
 
-        this.metrics.totalRequests++;
-
         if (request.method === 'OPTIONS') {
+          isProcessing = true;
+          this.metrics.totalRequests++;
           this.metrics.optionsRequests++;
           const response = IcapParser.buildOptionsResponse(this.config);
           socket.write(response, () => {
@@ -143,24 +185,46 @@ export class IcapServer {
         }
 
         if (request.method === 'RESPMOD' || request.method === 'REQMOD') {
-          if (request.method === 'RESPMOD') {
-            this.metrics.respmodRequests++;
-          } else {
-            this.metrics.reqmodRequests++;
+          if (!request.isComplete) {
+            // Wait for all chunked body segments (0\r\n\r\n) before making final pass/block decision
+            return;
           }
 
-          // Scan body against DLP engine
+          // Scan accumulated body against DLP engine
           const scanResult = DlpEngine.scanPayload(request.body, {
             customKeywords: this.config.customKeywords,
             action: this.config.action,
           });
 
+          // RFC 3507 §4.5: If client sent an incomplete Preview (no ieof) and preview is clean so far,
+          // request the remainder of the body via 100 Continue so full payload is inspected.
+          if (
+            request.isPreview &&
+            !request.isPreviewIof &&
+            !continuedAfterPreview &&
+            scanResult.action !== 'BLOCK'
+          ) {
+            continuedAfterPreview = true;
+            socket.write(Buffer.from('ICAP/1.0 100 Continue\r\n\r\n', 'utf-8'));
+            return;
+          }
+
+          isProcessing = true;
+          socket.pause();
+
+          this.metrics.totalRequests++;
+          if (request.method === 'RESPMOD') {
+            this.metrics.respmodRequests++;
+          } else {
+            this.metrics.reqmodRequests++;
+          }
           this.metrics.scannedBytes += scanResult.scannedBytes;
 
           if (scanResult.action === 'BLOCK') {
             this.metrics.blockedViolations++;
+            const safeUri = request.uri.replace(/\p{Cc}/gu, '').slice(0, 200);
             console.warn(
-              `[ICAP Server] 🚨 DLP VIOLATION BLOCKED: ${scanResult.violations.map((v) => v.rule).join(', ')} (${request.method} ${request.uri})`,
+              `[ICAP Server] DLP VIOLATION BLOCKED: ${scanResult.violations.map((v) => v.rule).join(', ')} (${request.method} ${safeUri})`,
             );
 
             if (this.onViolationCallback) {
@@ -187,7 +251,7 @@ export class IcapServer {
           return;
         }
 
-        // Unknown method -> 405 Method Not Allowed
+        isProcessing = true;
         const errorResponse = Buffer.from(
           'ICAP/1.0 405 Method Not Allowed\r\nConnection: close\r\n\r\n',
           'utf-8',
@@ -196,6 +260,28 @@ export class IcapServer {
           socket.end();
         });
       } catch (err) {
+        isProcessing = true;
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.startsWith('ICAP_405:')) {
+          const methodNotAllowed = Buffer.from(
+            'ICAP/1.0 405 Method Not Allowed\r\nConnection: close\r\n\r\n',
+            'utf-8',
+          );
+          socket.write(methodNotAllowed, () => {
+            socket.end();
+          });
+          return;
+        }
+        if (message.startsWith('ICAP_400:')) {
+          const badRequest = Buffer.from(
+            'ICAP/1.0 400 Bad Request\r\nConnection: close\r\n\r\n',
+            'utf-8',
+          );
+          socket.write(badRequest, () => {
+            socket.end();
+          });
+          return;
+        }
         console.error('[ICAP Server] Error processing message:', err);
         const serverError = Buffer.from(
           'ICAP/1.0 500 Server Error\r\nConnection: close\r\n\r\n',
@@ -216,6 +302,7 @@ export class IcapServer {
     });
 
     socket.on('close', () => {
+      clearTimeout(connectionDeadline);
       this.activeSockets.delete(socket);
     });
   }

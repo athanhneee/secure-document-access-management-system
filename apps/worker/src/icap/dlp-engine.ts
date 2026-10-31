@@ -88,8 +88,8 @@ export class DlpEngine {
       }
     }
 
-    // Rule 2: Cryptographic Private Keys & API Credentials
-    const privateKeyRegex = /-----BEGIN\s+(?:RSA|EC|DSA|OPENSSH|PGP)?\s*PRIVATE\s+KEY-----/giu;
+    // Rule 2: Cryptographic Private Keys & API Credentials (non-backtracking quantifier order)
+    const privateKeyRegex = /-----BEGIN\s+(?:(?:RSA|EC|DSA|OPENSSH|PGP)\s+)?PRIVATE\s+KEY-----/giu;
     if ((match = privateKeyRegex.exec(text)) !== null) {
       violations.push({
         type: 'PRIVATE_KEY_CREDENTIAL',
@@ -169,12 +169,13 @@ export class DlpEngine {
       for (const kw of config.customKeywords) {
         const trimmed = kw.trim();
         if (trimmed && text.toLowerCase().includes(trimmed.toLowerCase())) {
+          const maskedKw = this.maskSnippet(trimmed);
           violations.push({
             type: 'CUSTOM_POLICY_KEYWORD',
             severity: 'HIGH',
             rule: 'RULE_CUSTOM_POLICY_KEYWORD_MATCH',
-            description: `Phát hiện từ khóa vi phạm chính sách nội bộ: "${trimmed}".`,
-            matchedSnippet: trimmed,
+            description: `Phát hiện từ khóa vi phạm chính sách nội bộ: "${maskedKw}".`,
+            matchedSnippet: maskedKw,
           });
           break;
         }

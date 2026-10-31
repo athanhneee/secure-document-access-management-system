@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 export function startIcapServerJob(options?: IcapServerConfig, signal?: AbortSignal): IcapServer {
   const enabled = options?.enabled ?? process.env['ICAP_SERVER_ENABLED'] !== 'false';
   const port = options?.port ?? Number(process.env['ICAP_SERVER_PORT'] ?? '1344');
-  const host = options?.host ?? process.env['ICAP_SERVER_HOST'] ?? '0.0.0.0';
+  const host = options?.host ?? process.env['ICAP_SERVER_HOST'] ?? '127.0.0.1';
   const action =
     options?.action ?? (process.env['ICAP_DLP_ACTION'] === 'AUDIT_ONLY' ? 'AUDIT_ONLY' : 'BLOCK');
   const customKeywords =
@@ -38,6 +38,7 @@ export function startIcapServerJob(options?: IcapServerConfig, signal?: AbortSig
         : 'HIGH';
 
       const alertId = randomUUID();
+      const safeUri = request.uri.replace(/\p{Cc}/gu, '').slice(0, 200);
       const violationSummary = scanResult.violations.map((v) => `[${v.type}] ${v.rule}`).join('; ');
 
       await db.securityAlert.create({
@@ -45,7 +46,7 @@ export function startIcapServerJob(options?: IcapServerConfig, signal?: AbortSig
           id: alertId,
           alert_type: 'NETWORK_DLP_VIOLATION',
           title: `[Network DLP] Phát hiện rò rỉ dữ liệu qua Gateway: ${scanResult.violations[0]?.type ?? 'UNKNOWN'}`,
-          description: `Giao thức ICAP phát hiện vi phạm chính sách phòng chống thất thoát dữ liệu (${request.method} ${request.uri}): ${violationSummary}. Chi tiết vi phạm: ${scanResult.violations.map((v) => `${v.rule} (${v.matchedSnippet})`).join(', ')}`,
+          description: `Giao thức ICAP phát hiện vi phạm chính sách phòng chống thất thoát dữ liệu (${request.method} ${safeUri}): ${violationSummary}. Chi tiết vi phạm: ${scanResult.violations.map((v) => `${v.rule} (${v.matchedSnippet})`).join(', ')}`,
           severity: highestSeverity,
           status: 'OPEN',
         },

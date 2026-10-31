@@ -253,3 +253,77 @@ test('IcapServer — live TCP socket handles OPTIONS, clean 204 and DLP Block', 
     await server.stop();
   }
 });
+
+test('IcapServer — buffers fragmented multi-chunk TCP streams, rejects malformed Encapsulated offsets/methods, and HTML-escapes block pages', async () => {
+  const htmlBlock = IcapParser.buildBlockResponse([
+    {
+      type: 'CUSTOM_RESTRICTED_KEYWORD',
+      severity: 'HIGH',
+      rule: 'RULE_<script>alert(1)</script>',
+      description: 'Blocked <img src=x onerror=alert(1)>',
+      matchedSnippet: '[REDACTED]',
+    },
+  ]).toString('utf-8');
+  assert.ok(!htmlBlock.includes('<script>alert(1)</script>'));
+  assert.ok(htmlBlock.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+
+  const server = new IcapServer({
+    enabled: true,
+    port: 0,
+    host: '127.0.0.1',
+    action: 'BLOCK',
+  });
+  const { port } = await server.start();
+
+  const sendRaw = (chunks) =>
+    new Promise((resolve, reject) => {
+      const socket = net.createConnection({ host: '127.0.0.1', port }, async () => {
+        for (const chunk of chunks) {
+          socket.write(chunk);
+          await new Promise((r) => setTimeout(r, 15));
+        }
+      });
+      let buf = Buffer.alloc(0);
+      socket.on('data', (c) => {
+        buf = Buffer.concat([buf, c]);
+      });
+      socket.on('end', () => resolve(buf.toString('utf-8')));
+      socket.on('error', reject);
+    });
+
+  try {
+    // 1. Unknown method -> 405 Method Not Allowed
+    const unknownRes = await sendRaw([
+      'FOOBAR icap://127.0.0.1/sda-dlp ICAP/1.0\r\nHost: 127.0.0.1\r\n\r\n',
+    ]);
+    assert.ok(unknownRes.includes('ICAP/1.0 405 Method Not Allowed'));
+
+    // 2. Negative Encapsulated offset -> 400 Bad Request
+    const badOffsetRes = await sendRaw([
+      'RESPMOD icap://127.0.0.1/sda-dlp ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: res-hdr=-5, res-body=10\r\n\r\nHTTP/1.1 200 OK\r\n\r\n',
+    ]);
+    assert.ok(badOffsetRes.includes('ICAP/1.0 400 Bad Request'));
+
+    // 3. Multi-packet TCP stream where sensitive keyword is split across packets
+    const leakHttp = 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n';
+    const leakBody = 'Trích xuất tài liệu NỘI DUNG TỐI MẬT QUỐC GIA qua nhiều gói tin TCP.';
+    const leakHex = Buffer.byteLength(leakBody, 'utf-8').toString(16);
+    const fullIcap = Buffer.from(
+      `RESPMOD icap://127.0.0.1/sda-dlp ICAP/1.0\r\n` +
+        `Host: 127.0.0.1\r\n` +
+        `Encapsulated: res-hdr=0, res-body=${Buffer.byteLength(leakHttp)}\r\n\r\n` +
+        leakHttp +
+        `${leakHex}\r\n${leakBody}\r\n0\r\n\r\n`,
+      'utf-8',
+    );
+    const part1 = fullIcap.subarray(0, 110);
+    const part2 = fullIcap.subarray(110, 175);
+    const part3 = fullIcap.subarray(175);
+
+    const fragmentedRes = await sendRaw([part1, part2, part3]);
+    assert.ok(fragmentedRes.includes('HTTP/1.1 403 Forbidden'));
+    assert.ok(fragmentedRes.includes('X-DLP-Status: BLOCKED'));
+  } finally {
+    await server.stop();
+  }
+});

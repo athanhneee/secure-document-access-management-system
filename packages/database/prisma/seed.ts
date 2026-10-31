@@ -1,5 +1,15 @@
+import { config as loadEnvironment } from 'dotenv';
+import path from 'node:path';
 import { createDatabaseClient } from '../src/client.js';
 import { withSerializableTransaction } from '../src/transaction.js';
+
+loadEnvironment({
+  path: [
+    path.resolve(import.meta.dirname, '../../../.env'),
+    path.resolve(import.meta.dirname, '../../../.local/dev.env'),
+  ],
+  quiet: true,
+});
 
 const client = createDatabaseClient();
 const fixedSeedTime = new Date('2026-01-01T00:00:00.000Z');

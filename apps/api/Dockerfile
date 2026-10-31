@@ -1,5 +1,5 @@
 # ── Stage 1: Build & Dependencies ─────────────────────────────────────────────
-FROM node:24-alpine AS builder
+FROM node:24.14.1-alpine3.23 AS builder
 
 WORKDIR /app
 
@@ -7,7 +7,7 @@ ENV CI=true \
     HUSKY=0
 
 RUN apk add --no-cache libc6-compat
-RUN corepack enable && corepack prepare pnpm@12.4.1 --activate
+RUN npm install -g pnpm@12.4.1 --no-fund --no-audit
 
 # Copy workspace configuration, preinstall check, and all workspace manifests
 COPY .npmrc pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json ./
@@ -36,10 +36,10 @@ RUN pnpm --filter @sda/database build
 RUN pnpm --filter @sda/api build
 
 # Prune devDependencies for minimal production bundle
-RUN pnpm prune --prod --no-optional --ignore-scripts --config.node-linker=hoisted
+RUN pnpm prune --prod --ignore-scripts --config.node-linker=hoisted
 
 # ── Stage 2: Production Hardened Minimal Runner ──────────────────────────────
-FROM node:24-alpine AS runner
+FROM node:24.14.1-alpine3.23 AS runner
 
 WORKDIR /app
 

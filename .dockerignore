@@ -40,9 +40,9 @@ blob-report
 *.log
 .logs
 .reports
-docs
-test
-e2e
+/docs
+/test
+/e2e
 uploads
 quarantine
 storage

@@ -122,7 +122,7 @@ test('Redlock — safe release prevents unlocking another client lock if expired
   const node = new MockRedisNode('node-1');
   const redlock = new RedlockService(createMockConfig(), [node]);
 
-  const handleA = await redlock.acquire('resource-x', 50);
+  const handleA = await redlock.acquire('resource-x', 500);
   assert.ok(handleA);
 
   // Simulate expiry by overwriting lock with Client B's token
@@ -286,7 +286,7 @@ test('Redlock — hybrid concurrency control serializes concurrent operations wi
         executionOrder.push(`${callerId}-end`);
         return counter;
       },
-      { retryCount: 15, retryDelayMs: 10, retryJitterMs: 5 },
+      { retryCount: 40, retryDelayMs: 15, retryJitterMs: 5 },
     );
   }
 

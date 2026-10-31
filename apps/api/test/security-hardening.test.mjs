@@ -1,34 +1,16 @@
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
 import { after, before, test } from 'node:test';
 import zlib from 'node:zlib';
 
-if (!process.env['DATABASE_URL']) {
-  const candidatePaths = [
-    path.resolve(process.cwd(), '.local/dev.env'),
-    path.resolve(process.cwd(), '../../.local/dev.env'),
-  ];
-  for (const candidate of candidatePaths) {
-    if (fs.existsSync(candidate)) {
-      try {
-        process.loadEnvFile(candidate);
-        break;
-      } catch {}
-    }
-  }
-}
-if (!process.env['DATABASE_URL']) {
-  process.env['DATABASE_URL'] = 'postgresql://127.0.0.1:5432/sda_dev';
-}
-if (!process.env['REDIS_URL']) {
-  process.env['REDIS_URL'] = 'redis://127.0.0.1:6379/0';
-}
-if (!process.env['APP_ENCRYPTION_MASTER_KEY']) {
-  process.env['APP_ENCRYPTION_MASTER_KEY'] = 'test-master-key-with-thirty-two-chars-min!!';
-}
+process.env['NODE_ENV'] = 'test';
+process.env['STORAGE_MOCK'] = 'true';
+process.env['GOTENBERG_ENABLED'] = 'false';
+process.env['DATABASE_URL'] = 'postgresql://127.0.0.1:1/isolated_security_hardening_test';
+process.env['REDIS_URL'] = 'redis://127.0.0.1:1/0';
+process.env['APP_ENCRYPTION_MASTER_KEY'] = 'test-master-key-with-thirty-two-chars-min!!';
 
+import { disconnectDatabase } from '@sda/database';
 import { createApplication } from '../dist/application.js';
 import { OfficeConverterService } from '../dist/modules/documents/office-converter.service.js';
 import { FileValidationService } from '../dist/modules/documents/file-validation.service.js';
@@ -118,6 +100,7 @@ before(async () => {
 
 after(async () => {
   await application?.close();
+  await disconnectDatabase();
 });
 
 // ── 1. Security Headers & CORS Tests ─────────────────────────────────────────

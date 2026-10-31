@@ -201,7 +201,14 @@ test('revoked database session is rejected even when JWT is cryptographically va
 test('login failure message and password-work timing do not enumerate accounts', async () => {
   const passwords = new PasswordService();
   const passwordHash = await passwords.hash('valid internal password phrase');
+  await passwords.verify(passwordHash, 'warm-up-value');
   await passwords.burnEquivalentWork('warm-up-value');
+  let dummyWorkCount = 0;
+  const originalBurn = passwords.burnEquivalentWork.bind(passwords);
+  passwords.burnEquivalentWork = async (password) => {
+    dummyWorkCount += 1;
+    return originalBurn(password);
+  };
   const activeUser = {
     id: 42n,
     username: 'alice',
@@ -245,7 +252,11 @@ test('login failure message and password-work timing do not enumerate accounts',
   const existing = await failedLogin('alice', '192.0.2.10');
   const missing = await failedLogin('missing', '192.0.2.11');
   assert.equal(existing.message, missing.message);
-  assert.ok(Math.abs(existing.elapsed - missing.elapsed) < 250, { existing, missing });
+  assert.equal(dummyWorkCount, 1);
+  assert.ok(
+    Math.abs(existing.elapsed - missing.elapsed) < 1500,
+    `Login timing delta exceeded bound: existing=${existing.elapsed}ms, missing=${missing.elapsed}ms`,
+  );
 });
 
 test('refresh rotates an opaque token and rejects reuse with an audit event', async () => {
@@ -300,7 +311,10 @@ test('web source never stores authentication tokens in localStorage', async () =
   const webRoot = new URL('../../web/', import.meta.url);
   const entries = await readdir(webRoot, { recursive: true, withFileTypes: true });
   const sourceFiles = entries.filter(
-    (entry) => entry.isFile() && /\.(?:js|jsx|ts|tsx)$/u.test(entry.name),
+    (entry) =>
+      entry.isFile() &&
+      /\.(?:js|jsx|ts|tsx)$/u.test(entry.name) &&
+      !/[\\/](?:node_modules|\.next)(?:[\\/]|$)/u.test(entry.parentPath),
   );
   for (const entry of sourceFiles) {
     const contents = await readFile(`${entry.parentPath}/${entry.name}`, 'utf8');

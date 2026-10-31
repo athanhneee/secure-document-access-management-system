@@ -9,7 +9,7 @@
     "start": "node dist/main.js",
     "lint": "oxlint src test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test --test-concurrency=2 test/*.test.mjs"
   },
   "dependencies": {
     "@sda/contracts": "workspace:*",

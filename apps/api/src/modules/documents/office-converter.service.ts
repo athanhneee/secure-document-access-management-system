@@ -27,7 +27,10 @@ export class OfficeConverterService {
       this.gotenbergEnabled = config.get('GOTENBERG_ENABLED') ?? true;
     } else {
       this.gotenbergUrl = process.env['GOTENBERG_URL'] ?? 'http://127.0.0.1:3003';
-      this.gotenbergEnabled = process.env['GOTENBERG_ENABLED'] !== 'false';
+      this.gotenbergEnabled =
+        process.env['NODE_ENV'] === 'test'
+          ? process.env['GOTENBERG_ENABLED'] === 'true'
+          : process.env['GOTENBERG_ENABLED'] !== 'false';
     }
   }
 

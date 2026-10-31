@@ -1,0 +1,52 @@
+# Git & Agent metadata
+.git
+.github
+.husky
+.agents
+.gemini
+.idea
+.vscode
+
+# Local secrets, certificates, and runtime state
+.local
+.env
+.env.*
+!.env.example
+secrets
+.secrets
+credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Dependencies, caches, and build outputs
+node_modules
+.pnpm-store
+.tools
+**/dist
+**/.next
+**/out
+.turbo
+coverage
+test-results
+playwright-report
+blob-report
+*.tsbuildinfo
+
+# Logs, reports, documentation, and test suites
+*.log
+.logs
+.reports
+docs
+test
+e2e
+uploads
+quarantine
+storage
+docker-data
+docker-volumes
+volumes
+

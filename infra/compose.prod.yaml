@@ -8,8 +8,6 @@ x-prod-defaults: &prod-defaults
   cap_drop:
     - ALL
   read_only: true
-  networks:
-    - backend_isolated
 
 services:
   api:
@@ -17,10 +15,13 @@ services:
     build:
       context: ../
       dockerfile: apps/api/Dockerfile
-    image: secure-document-access-api:latest
+    image: secure-document-access-api:1.0.0
     user: '10001:10001'
+    networks:
+      - edge_loopback
+      - backend_isolated
     tmpfs:
-      - /tmp:size=64m,noexec,nosuid
+      - /tmp:size=64m,noexec,nosuid,nodev
     ports:
       - '127.0.0.1:3001:3001'
     environment:
@@ -30,6 +31,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Database connection required}
       REDIS_URL: ${REDIS_URL:?Redis connection required}
       APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:?Master key required}
+      AUDIT_INTEGRITY_KEY: ${AUDIT_INTEGRITY_KEY:?Audit integrity key required}
+      DOCUMENT_AUDIT_HMAC_KEY: ${DOCUMENT_AUDIT_HMAC_KEY:?Document audit HMAC key required}
+      AUTH_AUDIT_HMAC_KEY: ${AUTH_AUDIT_HMAC_KEY:?Auth audit HMAC key required}
+      AUTH_SIGNING_PRIVATE_KEY_PEM: ${AUTH_SIGNING_PRIVATE_KEY_PEM:?Ed25519 private key required}
+      AUTH_SIGNING_PUBLIC_KEYS_JSON: ${AUTH_SIGNING_PUBLIC_KEYS_JSON:?Ed25519 public keys required}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?Object storage secret key required}
       GOTENBERG_URL: http://gotenberg:3000
     cpus: 2.0
     mem_limit: 1g
@@ -50,15 +57,44 @@ services:
       retries: 3
       start_period: 10s
 
+  worker:
+    <<: *prod-defaults
+    build:
+      context: ../
+      dockerfile: apps/worker/Dockerfile
+    image: secure-document-access-worker:1.0.0
+    user: '10001:10001'
+    networks:
+      - backend_isolated
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Database connection required}
+      REDIS_URL: ${REDIS_URL:?Redis connection required}
+      AUDIT_INTEGRITY_KEY: ${AUDIT_INTEGRITY_KEY:?Audit integrity key required}
+      ICAP_SERVER_HOST: '127.0.0.1'
+      ICAP_SERVER_PORT: '1344'
+    cpus: 1.0
+    mem_limit: 512m
+    mem_reservation: 128m
+    pids_limit: 128
+
   web:
     <<: *prod-defaults
     build:
       context: ../
       dockerfile: apps/web/Dockerfile
-    image: secure-document-access-web:latest
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api/v1}
+    image: secure-document-access-web:1.0.0
     user: '1000:1000'
+    networks:
+      - edge_loopback
+      - backend_isolated
     tmpfs:
-      - /tmp:size=64m,noexec,nosuid
+      - /tmp:size=64m,noexec,nosuid,nodev
+      - /app/apps/web/.next/cache:size=64m,noexec,nosuid,nodev
     ports:
       - '127.0.0.1:3000:3000'
     environment:
@@ -79,6 +115,11 @@ services:
   gotenberg:
     <<: *prod-defaults
     image: gotenberg/gotenberg:8.17.0
+    user: '1001:1001'
+    networks:
+      - backend_isolated
+    tmpfs:
+      - /tmp:size=256m,nosuid,nodev
     environment:
       LOG_LEVEL: info
     healthcheck:
@@ -93,6 +134,8 @@ services:
     pids_limit: 128
 
 networks:
+  edge_loopback:
+    name: sda-prod-edge-network
   backend_isolated:
     name: sda-prod-isolated-network
     internal: true

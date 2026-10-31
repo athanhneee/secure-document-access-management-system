@@ -1,0 +1,23 @@
+# Gitleaks Configuration for Secure Document Access System
+title = "Secure Document Access System - Gitleaks Rules & Allowlists"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Scoped allowlist for test suites, synthetic scanner fixtures, and example templates"
+paths = [
+  '''(?i)^\.agents/''',
+  '''(?i)(^|/)test/''',
+  '''(?i).*\.test\.[a-z]+$''',
+  '''(?i).*\.spec\.[a-z]+$''',
+  '''(?i)^scripts/scan-secrets\.mjs$''',
+  '''(?i)^apps/worker/src/icap/dlp-engine\.ts$''',
+  '''(?i)(^|/)\.env\.example$'''
+]
+regexes = [
+  '''AKIA[I]OSFODNN7EXAMPLE''',
+  '''root-development-token''',
+  '''doNotLeakThis'''
+]
+

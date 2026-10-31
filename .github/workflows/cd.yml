@@ -14,8 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  migrate-supabase:
-    name: Deploy Prisma Migrations to Supabase
+  migrate-database:
+    name: Deploy Database Migrations
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
@@ -27,7 +27,7 @@ jobs:
         run: |
           if [ -z "${DIRECT_URL}" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::DIRECT_URL secret not configured in GitHub Settings; skipping automatic Supabase migration."
+            echo "::notice::DIRECT_URL secret not configured in GitHub Settings; skipping automatic database migration."
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
@@ -53,7 +53,7 @@ jobs:
         if: steps.check_secret.outputs.configured == 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Apply pending Prisma migrations to Supabase
+      - name: Apply pending Prisma migrations
         if: steps.check_secret.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.DIRECT_URL }}
@@ -62,7 +62,7 @@ jobs:
 
   publish-containers:
     name: Build & Publish GHCR Images (${{ matrix.service }})
-    needs: [migrate-supabase]
+    needs: [migrate-database]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:

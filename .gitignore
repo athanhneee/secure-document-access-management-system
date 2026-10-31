@@ -9,6 +9,7 @@ node_modules/
 **/.local/
 !.local.example/
 .supabase/
+supabase/
 .wrangler/
 docs 
 # =========================================================================

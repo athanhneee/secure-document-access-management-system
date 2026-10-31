@@ -933,4 +933,5 @@ enum auth_session_status {
 
 enum mfa_method_type {
   TOTP
+  WEBAUTHN
 }

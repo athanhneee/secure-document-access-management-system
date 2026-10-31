@@ -167,6 +167,30 @@ async function seed(): Promise<void> {
         });
       }
 
+      const existingDefaultWatermark = await transaction.watermarkConfig.findFirst({
+        where: { is_default: true, classification_level_id: null },
+        select: { id: true },
+      });
+      if (!existingDefaultWatermark) {
+        await transaction.watermarkConfig.create({
+          data: {
+            name: 'Cấu hình đóng dấu mặc định toàn hệ thống',
+            classification_level_id: null,
+            is_default: true,
+            is_visible: true,
+            template_text:
+              'CONFIDENTIAL | {{username}} ({{email}}) | IP: {{ip}} | {{timestamp}} | {{token}}',
+            opacity_percent: 25,
+            rotation_degrees: -30,
+            font_size: 12,
+            color_hex: '#808080',
+            include_qr_code: true,
+            is_active: true,
+            created_by: seedActor.id,
+          },
+        });
+      }
+
       const roleByCode = new Map<string, bigint>();
       for (const [code, name] of systemRoles) {
         const role = await transaction.role.upsert({

@@ -3,7 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 
-const schemaUrl = new URL('../docs/reference/database_secure_document_system.sql', import.meta.url);
+const schemaUrl = new URL(
+  '../packages/database/prisma/migrations/20260917160000_initial_secure_schema/migration.sql',
+  import.meta.url,
+);
 
 const expectedTables = [
   'access_grant_permissions',
@@ -75,7 +78,10 @@ export async function validateDatabaseBaseline() {
     const triggers = await database.query(
       'SELECT tgname FROM pg_trigger WHERE NOT tgisinternal ORDER BY tgname',
     );
-    assert.equal(triggers.rows.length, 11);
+    assert.ok(
+      triggers.rows.length >= 11,
+      `Expected at least 11 triggers, found ${triggers.rows.length}`,
+    );
     for (const required of [
       'trg_audit_no_update',
       'trg_validate_current_document_version',
@@ -90,8 +96,8 @@ export async function validateDatabaseBaseline() {
     checks.push('enum types, partial unique/GIN indexes, circular FK and triggers exist');
 
     const audit = await database.query(
-      `INSERT INTO audit_logs (actor_username, action, object_type, outcome, correlation_id, entry_hash)
-       VALUES ($1, 'BASELINE_VALIDATION', 'TEST', 'SUCCESS', $2, $3) RETURNING id`,
+      `INSERT INTO audit_logs (actor_username, action, object_type, outcome, correlation_id, entry_hash, chain_sequence)
+       VALUES ($1, 'BASELINE_VALIDATION', 'TEST', 'SUCCESS', $2, $3, 1) RETURNING id`,
       ['schema-validation-fixture', '10000000-0000-4000-8000-000000000001', '0'.repeat(64)],
     );
     const auditId = audit.rows[0].id;

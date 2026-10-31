@@ -97,8 +97,8 @@ export class FileValidationService {
       })
       .join('');
 
-    // 5. Defend against path traversal: extract basename and strip directory separators
-    cleaned = path.basename(cleaned).replace(/[/\\?%*:|"<>]/gu, '_');
+    // 5. Defend against path traversal across both POSIX and Windows separators
+    cleaned = path.posix.basename(cleaned.replaceAll('\\', '/')).replace(/[/\\?%*:|"<>]/gu, '_');
 
     // 6. Check for double extensions with dangerous types
     const parts = cleaned.split('.');
@@ -125,7 +125,7 @@ export class FileValidationService {
     }
 
     const trimmed = cleaned.trim();
-    if (trimmed.length === 0 || trimmed === '.') {
+    if (trimmed.length === 0 || trimmed === '.' || trimmed === '..') {
       throw new BadRequestException({
         errorCode: AppErrorCode.INVALID_FILE_TYPE,
         message: 'Filename cannot be empty after sanitization.',

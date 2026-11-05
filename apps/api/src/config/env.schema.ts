@@ -5,11 +5,20 @@ export const EnvSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     HOST: z.string().default('127.0.0.1'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+    TRUST_PROXY: z.string().default('loopback'),
     CORS_ALLOWED_ORIGINS: z.string().default('http://localhost:3000,http://127.0.0.1:3000'),
     DATABASE_URL: z
       .string()
       .min(1, 'DATABASE_URL is required')
       .default('postgresql://localhost:5432/secure_docs?schema=public'),
+    DATABASE_SSL: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(false),
+    DATABASE_SSL_REJECT_UNAUTHORIZED: z
+      .preprocess(
+        (val) => (val === undefined ? true : val !== 'false' && val !== false),
+        z.boolean(),
+      )
+      .default(true),
+    DATABASE_CA_CERT: z.string().min(1).optional(),
     REDIS_URL: z.string().min(1, 'REDIS_URL is required').default('redis://localhost:6379/0'),
     REDLOCK_CLUSTER_NODES: z.string().optional(),
     REDLOCK_RETRY_COUNT: z.coerce.number().int().min(0).default(10),
@@ -91,6 +100,11 @@ export const EnvSchema = z
     WEBAUTHN_ORIGINS: z.string().default('http://localhost:3000,http://127.0.0.1:3000'),
     METRICS_SCRAPE_TOKEN: z.string().min(16).optional(),
   })
+  /**
+   * Thuật toán: Kiểm chứng bất biến bảo mật môi trường Production theo cơ chế Fail-Fast (`superRefine`).
+   * Cơ chế hoạt động: Bắt buộc khóa ký Ed25519 ngoại vi, cấm mọi giá trị khóa mặc định/placeholder phát triển,
+   * chặn adapter KMS mô phỏng, cấm tắt kiểm tra chứng chỉ TLS CWE-295 và cấm mã thông báo Vault mẫu.
+   */
   .superRefine((value, context) => {
     if (value.NODE_ENV !== 'production') {
       return;
@@ -139,6 +153,15 @@ export const EnvSchema = z
       });
     }
 
+    if (!value.DATABASE_SSL_REJECT_UNAUTHORIZED) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DATABASE_SSL_REJECT_UNAUTHORIZED'],
+        message:
+          'CWE-295: Disabling DATABASE_SSL_REJECT_UNAUTHORIZED is forbidden in production; configure DATABASE_CA_CERT instead.',
+      });
+    }
+
     if (value.KMS_PROVIDER === 'vault' && value.VAULT_TOKEN === 'dev-mock-vault-token') {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -146,10 +169,64 @@ export const EnvSchema = z
         message: 'Production Vault KMS requires a non-placeholder VAULT_TOKEN.',
       });
     }
+
+    if (value.TRUST_PROXY.trim().toLowerCase() === 'true') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TRUST_PROXY'],
+        message:
+          'Wildcard TRUST_PROXY=true is forbidden in production; configure "loopback", a hop count integer, or explicit reverse-proxy CIDRs.',
+      });
+    }
+
+    const trustedCidrs = value.ABAC_TRUSTED_NETWORK_CIDRS.split(',')
+      .map((cidr) => cidr.trim().toLowerCase())
+      .filter(Boolean);
+    if (
+      trustedCidrs.some(
+        (cidr) => cidr.startsWith('127.') || cidr === '::1' || cidr.startsWith('::1/'),
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ABAC_TRUSTED_NETWORK_CIDRS'],
+        message:
+          'Loopback CIDRs (127.0.0.0/8, ::1/128) are forbidden in ABAC_TRUSTED_NETWORK_CIDRS in production to prevent reverse-proxy trustedNetwork bypass.',
+      });
+    }
   });
 
 export type EnvConfig = z.infer<typeof EnvSchema>;
 
+/**
+ * Thuật toán: Phân giải cấu hình `trustProxy` cho Fastify từ chuỗi môi trường (`false`, `loopback`, số bước nhảy hoặc danh sách CIDR).
+ */
+export function resolveTrustProxyConfig(
+  raw?: string,
+): boolean | string[] | ((address: string, hop: number) => boolean) {
+  const normalized = (raw ?? 'loopback').trim().toLowerCase();
+  if (!normalized || normalized === 'false' || normalized === '0' || normalized === 'off') {
+    return false;
+  }
+  if (normalized === 'loopback') {
+    return ['127.0.0.0/8', '::1/128'];
+  }
+  if (normalized === 'true') {
+    return true;
+  }
+  if (/^\d+$/.test(normalized)) {
+    const maxHops = Number.parseInt(normalized, 10);
+    return (_address: string, hop: number) => hop <= maxHops;
+  }
+  return (raw ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Thuật toán: Chuẩn hóa bí danh biến môi trường tương thích ngược và thẩm định lược đồ Zod toàn cục.
+ */
 export function validateEnv(rawEnv: Record<string, unknown> = process.env): EnvConfig {
   const normalizedEnv: Record<string, unknown> = { ...rawEnv };
   if (!normalizedEnv['HOST'] && normalizedEnv['API_HOST']) {

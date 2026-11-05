@@ -6,6 +6,7 @@ import { AbacModule } from '../abac/abac.module.js';
 import { AccessGrantsModule } from '../access-grants/access-grants.module.js';
 import { WatermarksModule } from '../watermarks/watermarks.module.js';
 import { DocumentIngestionController } from './document-ingestion.controller.js';
+import { DocumentDeliveryController } from './document-delivery.controller.js';
 import { DocumentsController } from './documents.controller.js';
 import { DocumentIngestionService } from './document-ingestion.service.js';
 import { FileValidationService } from './file-validation.service.js';
@@ -38,7 +39,7 @@ import { DocumentDeliveryAuditService } from './document-delivery-audit.service.
     AccessGrantsModule,
     WatermarksModule,
   ],
-  controllers: [DocumentIngestionController, DocumentsController],
+  controllers: [DocumentIngestionController, DocumentDeliveryController, DocumentsController],
   providers: [
     FileValidationService,
     ZipBombGuardService,

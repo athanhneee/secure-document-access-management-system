@@ -1,21 +1,7 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Param,
-  Query,
-  Body,
-  Req,
-  HttpStatus,
-  UnauthorizedException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Query, Body, Req, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
-import { z } from 'zod';
 import {
-  UuidParamSchema,
   QuerySecurityAlertsSchema,
   UpdateAlertStatusSchema,
   AssignAlertSchema,
@@ -35,8 +21,14 @@ import { RequirePermission } from '../rbac/require-permission.js';
 import { SecurityAlertsService } from './security-alerts.service.js';
 import { IncidentsService } from './incidents.service.js';
 import { SecurityDetectionService } from './security-detection.service.js';
-
-const ActionIdParamSchema = z.string().regex(/^\d+$/u).transform(BigInt);
+import {
+  parseActionIdParam,
+  parseUuidParam,
+  parseZodPayload,
+  requireAuthenticatedPrincipal,
+  requireMutatingPrincipal,
+  toDetectionRulePatch,
+} from './security-operations-controller.helper.js';
 
 @ApiTags('security-operations')
 @ApiBearerAuth()
@@ -49,25 +41,13 @@ export class SecurityOperationsController {
     private readonly csrf: CsrfService,
   ) {}
 
-  private parseUuid(id: string, label: string): string {
-    const parsed = UuidParamSchema.safeParse({ id });
-    if (!parsed.success) {
-      throw new BadRequestException(`Invalid ${label} UUID.`);
-    }
-    return parsed.data.id;
-  }
-
-  // --- Security Alerts Endpoints ---
-
   @Get('security-alerts')
   @RequirePermission('SECURITY_ALERT', 'VIEW')
   @ApiOperation({ summary: 'List security alerts with filters and pagination' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Paginated security alerts list' })
   async listAlerts(@Query() query: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const parsed = QuerySecurityAlertsSchema.safeParse(query);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.alertsService.listAlerts(parsed.data);
+    requireAuthenticatedPrincipal(req);
+    return this.alertsService.listAlerts(parseZodPayload(QuerySecurityAlertsSchema, query));
   }
 
   @Get('security-alerts/:id')
@@ -77,8 +57,8 @@ export class SecurityOperationsController {
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Security alert details' })
   async getAlertById(@Param('id') id: string, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    return this.alertsService.getAlertById(this.parseUuid(id, 'alert'));
+    requireAuthenticatedPrincipal(req);
+    return this.alertsService.getAlertById(parseUuidParam(id, 'alert'));
   }
 
   @Patch('security-alerts/:id/status')
@@ -90,12 +70,12 @@ export class SecurityOperationsController {
     @Body() body: unknown,
     @Req() req: FastifyRequest,
   ) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const validId = this.parseUuid(id, 'alert');
-    const parsed = UpdateAlertStatusSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.alertsService.updateAlertStatus(validId, parsed.data, req.auth);
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    return this.alertsService.updateAlertStatus(
+      parseUuidParam(id, 'alert'),
+      parseZodPayload(UpdateAlertStatusSchema, body),
+      auth,
+    );
   }
 
   @Patch('security-alerts/:id/assign')
@@ -103,12 +83,9 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Assign security alert to an officer' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Assigned security alert' })
   async assignAlert(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const validId = this.parseUuid(id, 'alert');
-    const parsed = AssignAlertSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.alertsService.assignAlert(validId, parsed.data.assignedToUserId, req.auth);
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    const data = parseZodPayload(AssignAlertSchema, body);
+    return this.alertsService.assignAlert(parseUuidParam(id, 'alert'), data.assignedToUserId, auth);
   }
 
   @Post('security-alerts/:id/notes')
@@ -116,25 +93,20 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Add investigation note to security alert' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Updated security alert with note' })
   async addAlertNote(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const validId = this.parseUuid(id, 'alert');
-    const parsed = AddAlertNoteSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.alertsService.addAlertNote(validId, parsed.data.note, req.auth);
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    const data = parseZodPayload(AddAlertNoteSchema, body);
+    return this.alertsService.addAlertNote(parseUuidParam(id, 'alert'), data.note, auth);
   }
-
-  // --- Incident Reports Endpoints ---
 
   @Get('incidents')
   @RequirePermission('SECURITY_ALERT', 'VIEW')
   @ApiOperation({ summary: 'List incident reports with filters and pagination' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Paginated incident reports list' })
   async listIncidents(@Query() query: unknown, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const parsed = QueryIncidentReportsSchema.safeParse(query);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.incidentsService.listIncidentReports(parsed.data);
+    requireAuthenticatedPrincipal(req);
+    return this.incidentsService.listIncidentReports(
+      parseZodPayload(QueryIncidentReportsSchema, query),
+    );
   }
 
   @Get('incidents/:id')
@@ -142,8 +114,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Get incident report details by ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Incident report details' })
   async getIncidentById(@Param('id') id: string, @Req() req: FastifyRequest) {
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    return this.incidentsService.getIncidentReportById(this.parseUuid(id, 'incident'));
+    requireAuthenticatedPrincipal(req);
+    return this.incidentsService.getIncidentReportById(parseUuidParam(id, 'incident'));
   }
 
   @Post('incidents')
@@ -151,11 +123,11 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Create a new incident report in DRAFT status' })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Created incident report' })
   async createIncident(@Body() body: unknown, @Req() req: FastifyRequest) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const parsed = CreateIncidentReportSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.incidentsService.createIncidentReport(parsed.data, req.auth);
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    return this.incidentsService.createIncidentReport(
+      parseZodPayload(CreateIncidentReportSchema, body),
+      auth,
+    );
   }
 
   @Patch('incidents/:id')
@@ -163,12 +135,12 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Update incident report details' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Updated incident report' })
   async updateIncident(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const validId = this.parseUuid(id, 'incident');
-    const parsed = UpdateIncidentReportSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.incidentsService.updateIncidentReport(validId, parsed.data, req.auth);
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    return this.incidentsService.updateIncidentReport(
+      parseUuidParam(id, 'incident'),
+      parseZodPayload(UpdateIncidentReportSchema, body),
+      auth,
+    );
   }
 
   @Post('incidents/:id/submit')
@@ -176,12 +148,12 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Submit incident report to owner or administrator' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Submitted incident report' })
   async submitIncident(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const validId = this.parseUuid(id, 'incident');
-    const parsed = SubmitIncidentReportSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.incidentsService.submitIncidentReport(validId, parsed.data, req.auth);
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    return this.incidentsService.submitIncidentReport(
+      parseUuidParam(id, 'incident'),
+      parseZodPayload(SubmitIncidentReportSchema, body),
+      auth,
+    );
   }
 
   @Post('incidents/:id/close')
@@ -189,12 +161,12 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Close incident report' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Closed incident report' })
   async closeIncident(@Param('id') id: string, @Body() body: unknown, @Req() req: FastifyRequest) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const validId = this.parseUuid(id, 'incident');
-    const parsed = CloseIncidentReportSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.incidentsService.closeIncidentReport(validId, parsed.data, req.auth);
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    return this.incidentsService.closeIncidentReport(
+      parseUuidParam(id, 'incident'),
+      parseZodPayload(CloseIncidentReportSchema, body),
+      auth,
+    );
   }
 
   @Post('incidents/:id/actions')
@@ -206,12 +178,12 @@ export class SecurityOperationsController {
     @Body() body: unknown,
     @Req() req: FastifyRequest,
   ) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const validId = this.parseUuid(id, 'incident');
-    const parsed = CreateIncidentActionSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.incidentsService.addIncidentAction(validId, parsed.data, req.auth);
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    return this.incidentsService.addIncidentAction(
+      parseUuidParam(id, 'incident'),
+      parseZodPayload(CreateIncidentActionSchema, body),
+      auth,
+    );
   }
 
   @Patch('incidents/:id/actions/:actionId/complete')
@@ -224,31 +196,21 @@ export class SecurityOperationsController {
     @Req() req: FastifyRequest,
     @Param('id') incidentId?: string,
   ) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const parsedActionId = ActionIdParamSchema.safeParse(actionId);
-    if (!parsedActionId.success) {
-      throw new BadRequestException('Invalid incident action ID.');
-    }
-    const validIncidentId = incidentId ? this.parseUuid(incidentId, 'incident') : undefined;
-    const parsed = CompleteIncidentActionSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    const auth = requireMutatingPrincipal(this.csrf, req);
     return this.incidentsService.completeIncidentAction(
-      parsedActionId.data,
-      parsed.data,
-      req.auth,
-      validIncidentId,
+      parseActionIdParam(actionId),
+      parseZodPayload(CompleteIncidentActionSchema, body),
+      auth,
+      incidentId ? parseUuidParam(incidentId, 'incident') : undefined,
     );
   }
-
-  // --- Detection Rules Endpoints ---
 
   @Get('security-detection/rules')
   @RequirePermission('SECURITY_ALERT', 'VIEW')
   @ApiOperation({ summary: 'List configurable anomaly detection rules' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Detection rules list' })
   async getDetectionRules(@Req() req: FastifyRequest) {
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
+    requireAuthenticatedPrincipal(req);
     return this.detectionService.getRules();
   }
 
@@ -263,22 +225,9 @@ export class SecurityOperationsController {
     @Body() body: unknown,
     @Req() req: FastifyRequest,
   ) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const parsed = UpdateDetectionRuleConfigSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.flatten());
-    }
-    const updateData: Partial<import('./security-detection.service.js').DetectionRule> = {};
-    if (parsed.data.isEnabled !== undefined) updateData.isEnabled = parsed.data.isEnabled;
-    if (parsed.data.severity !== undefined) updateData.severity = parsed.data.severity;
-    if (parsed.data.threshold !== undefined) updateData.threshold = parsed.data.threshold;
-    if (parsed.data.windowMinutes !== undefined)
-      updateData.windowMinutes = parsed.data.windowMinutes;
-    if (parsed.data.cooldownMinutes !== undefined)
-      updateData.cooldownMinutes = parsed.data.cooldownMinutes;
-    if (parsed.data.parameters !== undefined) updateData.parameters = parsed.data.parameters;
-    return this.detectionService.updateRule(ruleCode, updateData, req.auth.userId);
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    const data = parseZodPayload(UpdateDetectionRuleConfigSchema, body);
+    return this.detectionService.updateRule(ruleCode, toDetectionRulePatch(data), auth.userId);
   }
 
   @Post('security-detection/run')
@@ -286,10 +235,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Manually trigger anomaly detection run' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Detection run results' })
   async runDetection(@Body() body: unknown, @Req() req: FastifyRequest) {
-    this.csrf.assertRequest(req);
-    if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const parsed = RunDetectionInputSchema.safeParse(body);
-    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.detectionService.runAllDetections(parsed.data.windowMinutes);
+    requireMutatingPrincipal(this.csrf, req);
+    const data = parseZodPayload(RunDetectionInputSchema, body);
+    return this.detectionService.runAllDetections(data.windowMinutes);
   }
 }

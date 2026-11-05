@@ -64,7 +64,7 @@ export function HomeHeader() {
               onClick={closeMenu}
             >
               <ShieldCheck
-                size={22}
+                size={24}
                 strokeWidth={1.75}
                 className="text-[#FF385C] shrink-0"
                 aria-hidden="true"
@@ -130,9 +130,9 @@ export function HomeHeader() {
               aria-expanded={mobileMenuOpen}
             >
               {mobileMenuOpen ? (
-                <X size={18} strokeWidth={2} />
+                <X size={20} strokeWidth={2} aria-hidden="true" />
               ) : (
-                <Menu size={18} strokeWidth={2} />
+                <Menu size={20} strokeWidth={2} aria-hidden="true" />
               )}
             </button>
           </div>
@@ -162,37 +162,67 @@ export function HomeHeader() {
               <a
                 href="#vai-tro"
                 onClick={closeMenu}
-                className="flex items-center justify-between rounded-[20px] px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
+                className="flex items-center justify-between rounded-full px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
               >
                 <span className="flex items-center gap-2.5">
-                  <FileText size={16} strokeWidth={1.75} className="text-[#008489]" />
+                  <FileText
+                    size={16}
+                    strokeWidth={1.75}
+                    className="text-[#008489]"
+                    aria-hidden="true"
+                  />
                   <span>Không gian làm việc theo vai trò</span>
                 </span>
-                <ArrowRight size={14} className="text-[#b0b0b0]" />
+                <ArrowRight
+                  size={16}
+                  strokeWidth={1.75}
+                  className="text-[#b0b0b0]"
+                  aria-hidden="true"
+                />
               </a>
 
               <a
                 href="#kien-truc"
                 onClick={closeMenu}
-                className="flex items-center justify-between rounded-[20px] px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
+                className="flex items-center justify-between rounded-full px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
               >
                 <span className="flex items-center gap-2.5">
-                  <Lock size={16} strokeWidth={1.75} className="text-[#FF385C]" />
+                  <Lock
+                    size={16}
+                    strokeWidth={1.75}
+                    className="text-[#FF385C]"
+                    aria-hidden="true"
+                  />
                   <span>Kiến trúc an ninh đa tầng</span>
                 </span>
-                <ArrowRight size={14} className="text-[#b0b0b0]" />
+                <ArrowRight
+                  size={16}
+                  strokeWidth={1.75}
+                  className="text-[#b0b0b0]"
+                  aria-hidden="true"
+                />
               </a>
 
               <a
                 href="#tieu-chuan"
                 onClick={closeMenu}
-                className="flex items-center justify-between rounded-[20px] px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
+                className="flex items-center justify-between rounded-full px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
               >
                 <span className="flex items-center gap-2.5">
-                  <CheckCircle2 size={16} strokeWidth={1.75} className="text-[#008A05]" />
+                  <CheckCircle2
+                    size={16}
+                    strokeWidth={1.75}
+                    className="text-[#008A05]"
+                    aria-hidden="true"
+                  />
                   <span>Tiêu chuẩn tuân thủ & pháp lý</span>
                 </span>
-                <ArrowRight size={14} className="text-[#b0b0b0]" />
+                <ArrowRight
+                  size={16}
+                  strokeWidth={1.75}
+                  className="text-[#b0b0b0]"
+                  aria-hidden="true"
+                />
               </a>
             </div>
 
@@ -209,9 +239,14 @@ export function HomeHeader() {
                       key={role.name}
                       href={role.href}
                       onClick={closeMenu}
-                      className="flex items-center gap-2 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] p-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
+                      className="flex items-center gap-2 rounded-full border border-[#ebebeb] bg-[#ffffff] px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
                     >
-                      <Icon size={16} strokeWidth={1.75} className={role.color} />
+                      <Icon
+                        size={16}
+                        strokeWidth={1.75}
+                        className={role.color}
+                        aria-hidden="true"
+                      />
                       <span className="truncate">{role.name}</span>
                     </Link>
                   );

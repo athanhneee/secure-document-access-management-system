@@ -91,7 +91,7 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
       >
         <div className="mb-3 px-2">
           <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-[#717171]">
-            <Shield className="h-3.5 w-3.5 text-[#FF385C]" aria-hidden="true" />
+            <Shield size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
             <span>Phân hệ theo vai trò</span>
           </div>
           <p className="mt-0.5 text-[11px] text-[#717171] leading-normal">
@@ -105,12 +105,13 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
             const hasAccess = user?.roles.includes(item.role);
             const Icon = item.icon;
 
+            // CONFLICT-RESOLVED: Chuyển bo góc mục điều hướng từ rounded-xl sang rounded-full chuẩn pill theo rules/ui-design-system.md.
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 onClick={() => onClose?.()}
-                className={`group flex items-start gap-2.5 rounded-xl p-2.5 text-xs transition-all ${
+                className={`group flex items-start gap-2.5 rounded-full px-3.5 py-2.5 text-xs transition-all ${
                   isActive
                     ? 'border border-[#FF385C]/40 bg-[#FF385C]/10 text-[#FF385C] shadow-2xs'
                     : hasAccess
@@ -135,8 +136,8 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
                   <div className="flex items-center justify-between">
                     <span className="font-semibold truncate">{item.title}</span>
                     {!hasAccess && (
-                      <span className="flex items-center gap-0.5 text-[10px] text-[#b0b0b0]">
-                        <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+                      <span className="flex items-center gap-1 text-[10px] text-[#b0b0b0]">
+                        <Lock size={16} strokeWidth={1.75} aria-hidden="true" />
                         <span>Chưa gán</span>
                       </span>
                     )}
@@ -162,7 +163,7 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
             }`}
           >
             <div className="flex items-center gap-2">
-              <Laptop className="h-3.5 w-3.5" aria-hidden="true" />
+              <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
               <span>Quản lý phiên & thiết bị</span>
             </div>
           </Link>
@@ -173,7 +174,7 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
             className="flex items-center justify-between rounded-full px-3 py-1.5 text-xs font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors"
           >
             <div className="flex items-center gap-2">
-              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
               <span>Cổng giới thiệu hệ thống</span>
             </div>
           </Link>

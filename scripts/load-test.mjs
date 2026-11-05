@@ -10,16 +10,27 @@
  */
 
 import os from 'node:os';
-import crypto from 'node:crypto';
-import pkg from '../apps/api/node_modules/pdf-lib/cjs/index.js';
-const { PDFDocument, StandardFonts, rgb } = pkg;
-import { PGlite } from '@electric-sql/pglite';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  createAndSeedLoadTestFixture,
+  buildLoadTestScenarios,
+} from './lib/load-test-scenarios.mjs';
 
 const CONCURRENCY = parseInt(process.env['LOAD_CONCURRENCY'] || '20', 10);
 const ITERATIONS_PER_VUSER = parseInt(process.env['LOAD_ITERATIONS'] || '50', 10);
 const TOTAL_OPS = CONCURRENCY * ITERATIONS_PER_VUSER;
 
-function calculatePercentiles(latenciesMs) {
+/**
+ * Algorithm / Thuật toán: Empirical Order-Statistic Percentile Estimator (Thống Kê Thứ Tự & Nội Suy Phân Vị Độ Trễ)
+ * Purpose / Mục đích: Compute full latency distribution metrics (`min`, `mean`, `p50`, `p90`, `p95`, `p99`, `max`)
+ *   from empirical load-test response times.
+ * Mechanism / Cơ chế hoạt động:
+ *   - Clones and sorts the sample array in ascending order via `O(N log N)` Timsort (`[...latenciesMs].sort((a, b) => a - b)`).
+ *   - Computes arithmetic `mean = sum / n` in `O(N)` and extracts order-statistic quantiles at `sorted[Math.floor(n * q)]`
+ *     for `q ∈ {0.50, 0.90, 0.95, 0.99}`, rounded to 2 millisecond decimal places.
+ */
+export function calculatePercentiles(latenciesMs) {
   if (latenciesMs.length === 0) {
     return { min: 0, mean: 0, p50: 0, p90: 0, p95: 0, p99: 0, max: 0 };
   }
@@ -38,7 +49,17 @@ function calculatePercentiles(latenciesMs) {
   };
 }
 
-async function runScenarioPool(name, fn, totalCount, concurrency) {
+/**
+ * Algorithm / Thuật toán: Bounded-Concurrency Worker Pool Scheduler (Điều Phối Hồ Công Tác Giới Hạn Đồng Thời & RPS)
+ * Purpose / Mục đích: Maintain exactly `concurrency` virtual users (VUsers) pulling operations continuously until
+ *   `totalCount` operations complete without unbounded Promise allocation.
+ * Mechanism / Cơ chế hoạt động:
+ *   - Uses a shared single-threaded event-loop cursor (`cursor++`) to dispatch operation indices `idx` lock-free across
+ *     `concurrency` async worker loops coordinated via `Promise.all`.
+ *   - Measures per-operation latency via monotonic `performance.now()`, tracks `errors` separately, and derives achieved
+ *     throughput `throughputRps = successCount / totalTimeSec`.
+ */
+export async function runScenarioPool(name, fn, totalCount, concurrency) {
   const latencies = [];
   let errors = 0;
   let cursor = 0;
@@ -79,7 +100,12 @@ async function runScenarioPool(name, fn, totalCount, concurrency) {
   };
 }
 
-async function main() {
+/**
+ * Algorithm / Thuật toán: Six-Flow NFR SLA Benchmark Orchestrator (Kiểm Định Tải 6 Luồng Nghiệp Vụ & Ngưỡng SLA p95)
+ * Purpose / Mục đích: Seed synthetic production-grade datasets, execute all 6 load scenarios under concurrent VUsers,
+ *   and evaluate strict `p95` NFR latency thresholds (Search < 150ms, PDP < 10ms, Login < 100ms, Watermark < 500ms).
+ */
+export async function main() {
   console.log('='.repeat(78));
   console.log('SDA PERFORMANCE & LOAD TEST HARNESS');
   console.log('='.repeat(78));
@@ -90,297 +116,31 @@ async function main() {
   console.log(`Concurrency: ${CONCURRENCY} VUsers | Total Ops per Scenario: ${TOTAL_OPS}`);
   console.log('='.repeat(78));
 
-  // Initialize in-memory SQL database with schema & sample data
   console.log('\n[1/3] Preparing test database and schema...');
-  const db = new PGlite();
-
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS documents (
-      id UUID PRIMARY KEY,
-      document_code VARCHAR(50) NOT NULL,
-      title VARCHAR(255) NOT NULL,
-      description TEXT,
-      classification_id INTEGER NOT NULL,
-      owner_id BIGINT NOT NULL,
-      department_id BIGINT NOT NULL,
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS access_grants (
-      id UUID PRIMARY KEY,
-      document_id UUID NOT NULL,
-      grantee_user_id BIGINT,
-      grantee_role_id BIGINT,
-      grant_type VARCHAR(20) NOT NULL,
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
-      valid_from TIMESTAMPTZ NOT NULL,
-      valid_until TIMESTAMPTZ NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id BIGSERIAL PRIMARY KEY,
-      actor_user_id BIGINT,
-      action VARCHAR(100) NOT NULL,
-      object_type VARCHAR(100) NOT NULL,
-      object_id VARCHAR(100),
-      outcome VARCHAR(30) NOT NULL,
-      chain_partition VARCHAR(50) NOT NULL,
-      previous_record_hash VARCHAR(64),
-      record_hash VARCHAR(64) NOT NULL,
-      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE INDEX idx_docs_search ON documents (classification_id, department_id, status);
-    CREATE INDEX idx_grants_lookup ON access_grants (document_id, status, valid_from, valid_until);
-    CREATE INDEX idx_audit_partition ON audit_logs (chain_partition, occurred_at);
-  `);
-
-  console.log('Seeding 5,000 synthetic documents, 5,000 grants, and 10,000 audit records...');
-  // Seed sample documents
-  const docInserts = [];
-  const grantInserts = [];
-  const docIds = [];
-
-  for (let i = 1; i <= 5000; i++) {
-    const docId = crypto.randomUUID();
-    docIds.push(docId);
-    const classification = (i % 4) + 1; // 1: PUBLIC, 2: INTERNAL, 3: CONFIDENTIAL, 4: TOP_SECRET
-    const deptId = (i % 20) + 1;
-    docInserts.push(
-      `('${docId}', 'DOC-${100000 + i}', 'Tài liệu nghiệp vụ dự án số ${i}', 'Mô tả an toàn ${i}', ${classification}, ${(i % 100) + 1}, ${deptId}, 'ACTIVE')`,
-    );
-
-    if (i % 10 === 0) {
-      const grantId = crypto.randomUUID();
-      const validFrom = new Date(Date.now() - 3600000).toISOString();
-      const validUntil = new Date(Date.now() + 86400000).toISOString();
-      grantInserts.push(
-        `('${grantId}', '${docId}', ${(i % 50) + 1}, NULL, 'USER', 'ACTIVE', '${validFrom}', '${validUntil}')`,
-      );
-    }
-  }
-
-  // Batch insert in chunks
-  for (let i = 0; i < docInserts.length; i += 500) {
-    await db.exec(
-      `INSERT INTO documents (id, document_code, title, description, classification_id, owner_id, department_id, status) VALUES ${docInserts.slice(i, i + 500).join(',')};`,
-    );
-  }
-  for (let i = 0; i < grantInserts.length; i += 500) {
-    await db.exec(
-      `INSERT INTO access_grants (id, document_id, grantee_user_id, grantee_role_id, grant_type, status, valid_from, valid_until) VALUES ${grantInserts.slice(i, i + 500).join(',')};`,
-    );
-  }
-
-  // Seed sample audit logs with cryptographic hash chain
-  let prevHash = '0000000000000000000000000000000000000000000000000000000000000000';
-  const auditInserts = [];
-  for (let i = 1; i <= 5000; i++) {
-    const recHash = crypto
-      .createHmac('sha256', 'audit-secret-key')
-      .update(`${prevHash}:${i}:VIEW:SUCCESS`)
-      .digest('hex');
-    auditInserts.push(
-      `(${(i % 50) + 1}, 'DOCUMENT_ACCESSED', 'DOCUMENT', '${docIds[i % docIds.length]}', 'SUCCESS', 'DOCUMENT', '${prevHash}', '${recHash}')`,
-    );
-    prevHash = recHash;
-  }
-  for (let i = 0; i < auditInserts.length; i += 500) {
-    await db.exec(
-      `INSERT INTO audit_logs (actor_user_id, action, object_type, object_id, outcome, chain_partition, previous_record_hash, record_hash) VALUES ${auditInserts.slice(i, i + 500).join(',')};`,
-    );
-  }
-
+  console.log('Seeding 5,000 synthetic documents, grants, and HMAC audit records...');
+  const { db, docIds, samplePdfBytes } = await createAndSeedLoadTestFixture();
   console.log('Seeding completed. Database ready for load test.');
 
-  // Pre-generate a sample PDF for watermark testing
-  const samplePdf = await PDFDocument.create();
-  const page = samplePdf.addPage([595, 842]);
-  page.drawText('CONFIDENTIAL DOCUMENT HEADER - INTERNAL USE ONLY', { x: 50, y: 800, size: 12 });
-  const samplePdfBytes = Buffer.from(await samplePdf.save());
-
   console.log('\n[2/3] Executing Load Test Scenarios...');
+  const scenarios = buildLoadTestScenarios({
+    db,
+    docIds,
+    samplePdfBytes,
+    totalOps: TOTAL_OPS,
+    concurrency: CONCURRENCY,
+  });
+
   const results = [];
-
-  // Scenario 1: Login & Token Verification
-  results.push(
-    await runScenarioPool(
-      '1. Login & Token Verification',
-      async (idx) => {
-        // Simulate cryptographic HMAC-SHA256 signature verification & claims parsing
-        const payload = JSON.stringify({
-          sub: `user_${(idx % 100) + 1}`,
-          dept: 'Engineering',
-          clearance: 3,
-          roles: ['DOCUMENT_VIEWER', 'REPORT_VIEWER'],
-          exp: Date.now() + 3600000,
-          jti: crypto.randomUUID(),
-        });
-        const sig = crypto
-          .createHmac('sha256', 'jwt-secret-key-32-chars-minimum')
-          .update(payload)
-          .digest('base64url');
-        const token = `${Buffer.from(payload).toString('base64url')}.${sig}`;
-
-        // Verification
-        const [b64, signature] = token.split('.');
-        const expectedSig = crypto
-          .createHmac('sha256', 'jwt-secret-key-32-chars-minimum')
-          .update(Buffer.from(b64, 'base64url').toString('utf8'))
-          .digest('base64url');
-        if (signature !== expectedSig) throw new Error('Invalid signature');
-      },
-      TOTAL_OPS,
-      CONCURRENCY,
-    ),
-  );
-
-  // Scenario 2: Search & Document Discovery
-  results.push(
-    await runScenarioPool(
-      '2. Search & Document Discovery (Filter & Pagination)',
-      async (idx) => {
-        const deptId = (idx % 20) + 1;
-        const classificationId = (idx % 3) + 1;
-        const offset = (idx % 5) * 20;
-
-        const res = await db.query(
-          `
-        SELECT id, document_code, title, classification_id, department_id
-        FROM documents
-        WHERE department_id = $1 AND classification_id <= $2 AND status = 'ACTIVE'
-        ORDER BY created_at DESC
-        LIMIT 20 OFFSET $3;
-      `,
-          [deptId, classificationId, offset],
-        );
-
-        if (!res.rows) throw new Error('Search failed');
-      },
-      TOTAL_OPS,
-      CONCURRENCY,
-    ),
-  );
-
-  // Scenario 3: ABAC PDP Access Decision Evaluation
-  results.push(
-    await runScenarioPool(
-      '3. ABAC PDP Access Decision Evaluation',
-      async (idx) => {
-        // Rule evaluation logic simulating compiled ABAC rules
-        const subject = {
-          userId: (idx % 500) + 1,
-          departmentId: (idx % 20) + 1,
-          clearanceLevel: (idx % 4) + 1,
-          ip: `10.0.${idx % 5}.${idx % 255}`,
-          isTrustedDevice: idx % 10 !== 0,
-        };
-        const resource = {
-          documentId: docIds[idx % docIds.length],
-          departmentId: (idx % 20) + 1,
-          classificationLevel: 3,
-          ownerId: (idx % 100) + 1,
-        };
-
-        // PDP Decision rule:
-        // PERMIT if clearance >= classification AND (dept matches OR is owner) AND trusted device
-        const isPermitted =
-          subject.clearanceLevel >= resource.classificationLevel &&
-          (subject.departmentId === resource.departmentId || subject.userId === resource.ownerId) &&
-          subject.isTrustedDevice;
-
-        const decision = isPermitted ? 'PERMIT' : 'DENY';
-        if (!decision) throw new Error('PDP evaluation failed');
-      },
-      TOTAL_OPS,
-      CONCURRENCY,
-    ),
-  );
-
-  // Scenario 4: Active Grant & Concurrency Check
-  results.push(
-    await runScenarioPool(
-      '4. Active Grant & Permission Check (Zero-Trust)',
-      async (idx) => {
-        const docId = docIds[idx % docIds.length];
-        const userId = (idx % 50) + 1;
-
-        const res = await db.query(
-          `
-        SELECT id, status, valid_from, valid_until
-        FROM access_grants
-        WHERE document_id = $1 AND grantee_user_id = $2 AND status = 'ACTIVE'
-          AND valid_from <= NOW() AND valid_until > NOW()
-        LIMIT 1;
-      `,
-          [docId, userId],
-        );
-
-        if (!res) throw new Error('Grant lookup failed');
-      },
-      TOTAL_OPS,
-      CONCURRENCY,
-    ),
-  );
-
-  // Scenario 5: Document View & Watermark Derivation
-  results.push(
-    await runScenarioPool(
-      '5. Document View & Dynamic Watermark Render',
-      async (idx) => {
-        // Watermark PDF overlay
-        const pdfDoc = await PDFDocument.load(samplePdfBytes);
-        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-        const pages = pdfDoc.getPages();
-        const firstPage = pages[0];
-
-        const token = `WM-${crypto.randomBytes(12).toString('hex')}`;
-        const watermarkText = `CONFIDENTIAL - USER_${idx % 100} - UID:${1000 + idx} - ${token}`;
-
-        firstPage.drawText(watermarkText, {
-          x: 100,
-          y: 400,
-          size: 14,
-          font,
-          color: rgb(0.5, 0.5, 0.5),
-          opacity: 0.35,
-          rotate: { type: 'degrees', angle: 45 },
-        });
-
-        const watermarked = await pdfDoc.save();
-        const hash = crypto.createHash('sha256').update(Buffer.from(watermarked)).digest('hex');
-        if (!hash) throw new Error('Watermark hashing failed');
-      },
-      Math.min(TOTAL_OPS, 200), // Resource-bounded for PDF engine
-      Math.min(CONCURRENCY, 10),
-    ),
-  );
-
-  // Scenario 6: Audit Trail Integrity Range Query
-  results.push(
-    await runScenarioPool(
-      '6. Audit Trail Partition Range Query & Verification',
-      async (_idx) => {
-        const limit = 50;
-        const res = await db.query(
-          `
-        SELECT id, action, object_id, outcome, previous_record_hash, record_hash
-        FROM audit_logs
-        WHERE chain_partition = 'DOCUMENT'
-        ORDER BY id ASC
-        LIMIT $1;
-      `,
-          [limit],
-        );
-
-        if (!res.rows || res.rows.length === 0) throw new Error('Audit query empty');
-      },
-      TOTAL_OPS,
-      CONCURRENCY,
-    ),
-  );
+  for (const scenario of scenarios) {
+    results.push(
+      await runScenarioPool(
+        scenario.name,
+        scenario.execute,
+        scenario.totalOps,
+        scenario.concurrency,
+      ),
+    );
+  }
 
   console.log('\n[3/3] Load Test Results Summary:\n');
   console.table(
@@ -397,11 +157,6 @@ async function main() {
   );
 
   const nfrBreaches = results.filter((r) => {
-    // NFR: p95 latency targets:
-    // Search < 150ms
-    // PDP Decision < 10ms
-    // Core APIs < 100ms
-    // Watermark rendering < 500ms
     if (r.scenario.includes('Search') && r.p95 > 150) return true;
     if (r.scenario.includes('PDP') && r.p95 > 10) return true;
     if (r.scenario.includes('Login') && r.p95 > 100) return true;
@@ -419,7 +174,12 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('Fatal load test error:', err);
-  process.exit(1);
-});
+const isCliEntrypoint =
+  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isCliEntrypoint) {
+  main().catch((err) => {
+    console.error('Fatal load test error:', err);
+    process.exit(1);
+  });
+}

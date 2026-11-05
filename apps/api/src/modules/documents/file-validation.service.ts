@@ -1,3 +1,8 @@
+/**
+ * Module: Dịch vụ Kiểm tra Hợp lệ Định dạng & Chữ ký Nhị phân Tệp tin (File Sanitization & Magic Bytes Validator)
+ * Thuật toán: Chuẩn hóa Unicode NFKC chống giả mạo tên tệp (RTLO/Null-byte/Double-extension/Path Traversal),
+ *   đối chiếu chéo danh sách trắng phần mở rộng - MIME type và xác thực chữ ký nhị phân đầu tệp (Magic Bytes).
+ */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import path from 'node:path';
 import { AppErrorCode } from '@sda/contracts';
@@ -60,6 +65,14 @@ export class FileValidationService {
    * - Double extensions (e.g. evil.exe.pdf, test.php.docx)
    * - Unicode spoofing (RTLO, zero-width, non-printable control chars, NFKC)
    * - Filename length limits (1-255 characters)
+   *
+   * Thuật toán: Chuẩn Hóa & Làm Sạch Đa Tầng Tên Tệp Tin (Multi-Stage Filename Canonicalization)
+   * Mục đích: Triệt tiêu các kỹ thuật ngụy trang phần mở rộng tệp thực thi và leo thang thư mục qua tên tệp tải lên.
+   * Cơ chế hoạt động:
+   *   - Chặn tức thì byte rỗng (`\0`) và các ký tự điều khiển đảo chiều hiển thị Unicode Bidi/RTLO (`BIDI_REGEX`).
+   *   - Đưa chuỗi về dạng chuẩn tương thích `NFKC`, xóa ký tự độ rộng bằng 0 (`ZERO_WIDTH_REGEX`) và lọc bỏ mã ASCII điều khiển.
+   *   - Chuẩn hóa dấu phân cách đường dẫn sang POSIX, trích xuất `basename` loại bỏ mọi thành phần thư mục cha,
+   *     sau đó duyệt toàn bộ các phân đoạn giữa dấu chấm để chặn phần mở rộng kép chứa đuôi thực thi nguy hiểm (`DANGEROUS_EXTENSIONS`).
    */
   sanitizeFilename(rawFilename: string): string {
     if (!rawFilename || typeof rawFilename !== 'string') {
@@ -144,6 +157,12 @@ export class FileValidationService {
 
   /**
    * Validates filename extension and declared MIME against allowlist (PDF, DOCX, XLSX, PPTX).
+   *
+   * Thuật toán: Đối Chiếu Chéo Danh Sách Trắng Phần Mở Rộng & Kiểu MIME (Allowlist Extension-MIME Binding)
+   * Mục đích: Đảm bảo phần mở rộng tệp thuộc tập định dạng được phép và khớp 1-1 với kiểu MIME khai báo.
+   * Cơ chế hoạt động:
+   *   - Tách phần mở rộng chữ thường bằng `path.extname`, kiểm tra thuộc tập `{.pdf, .docx, .xlsx, .pptx}`,
+   *     tách bỏ tham số phụ của `declaredMime` (sau dấu `;`) và so khớp chính xác với bảng ánh xạ `EXTENSION_TO_MIME`.
    */
   validateExtensionAndMime(
     sanitizedFilename: string,
@@ -181,6 +200,13 @@ export class FileValidationService {
   /**
    * Verifies magic bytes of the file header (minimum 512 bytes).
    * Confirms PDF magic (%PDF-) or Zip magic (PK\x03\x04) for Office formats.
+   *
+   * Thuật toán: Kiểm Chứng Chữ Ký Nhị Phân Đầu Tệp (Binary File Signature / Magic Bytes Verification)
+   * Mục đích: Ngăn chặn tệp giả mạo phần mở rộng và Content-Type bằng cách đối chiếu trực tiếp các byte đầu tiên của luồng dữ liệu.
+   * Cơ chế hoạt động:
+   *   - Với tệp `.pdf`: So khớp chính xác 5 byte đầu tiên với hằng số `PDF_MAGIC` (`0x25 0x50 0x44 0x46 0x2D` tức `%PDF-`).
+   *   - Với các định dạng gói Office OpenXML (`.docx`, `.xlsx`, `.pptx`): So khớp 4 byte đầu tiên với chữ ký Local File Header
+   *     của container PKZIP `ZIP_MAGIC` (`0x50 0x4B 0x03 0x04` tức `PK\x03\x04`).
    */
   validateMagicBytes(headerChunk: Buffer, extension: AllowedExtension): void {
     if (headerChunk.length < 4) {

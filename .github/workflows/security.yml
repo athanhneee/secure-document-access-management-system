@@ -66,8 +66,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Semgrep OWASP Top 10 Rules
-        run: semgrep scan --config auto --sarif --output semgrep.sarif
-        continue-on-error: true
+        run: semgrep scan --config auto --error --sarif --output semgrep.sarif
 
       - name: Upload Semgrep SARIF Report
         uses: github/codeql-action/upload-sarif@v3
@@ -94,6 +93,8 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
 
       - name: Upload Trivy Scan Results to GitHub Security Tab
         uses: github/codeql-action/upload-sarif@v3
@@ -111,6 +112,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js & pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.14.0'
+
+      - name: Install pnpm 12.4.1 & Dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.4.1 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Verify Permissive Licenses & Generate CycloneDX SBOM
+        run: pnpm security:licenses
+
       - name: Generate SBOM with Syft
         uses: anchore/sbom-action@v0
         with:
@@ -122,4 +137,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: software-bill-of-materials
-          path: 'sbom.spdx.json'
+          path: |
+            sbom.spdx.json
+            .reports/sbom-inventory.json

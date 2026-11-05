@@ -1,0 +1,117 @@
+enum alert_status {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  FALSE_POSITIVE
+}
+
+enum attribute_scope {
+  USER
+  RESOURCE
+  ENVIRONMENT
+}
+
+enum data_type {
+  STRING
+  NUMBER
+  BOOLEAN
+  DATE
+  ENUM
+}
+
+enum document_status {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+  DELETED
+}
+
+enum grant_source {
+  DIRECT
+  ACCESS_REQUEST
+  SYSTEM
+}
+
+enum grant_status {
+  ACTIVE
+  REVOKED
+  EXPIRED
+  SUSPENDED
+}
+
+enum incident_status {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  CLOSED
+}
+
+enum notification_status {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
+enum permission_code {
+  DISCOVER
+  VIEW
+  DOWNLOAD
+  SHARE
+  MANAGE
+}
+
+enum policy_effect {
+  PERMIT
+  DENY
+}
+
+enum principal_type {
+  USER
+  ROLE
+}
+
+enum request_status {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum scan_status {
+  PENDING
+  CLEAN
+  INFECTED
+  FAILED
+}
+
+enum session_status {
+  ACTIVE
+  ENDED
+  TERMINATED
+}
+
+enum severity_level {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum user_status {
+  PENDING
+  ACTIVE
+  LOCKED
+  DISABLED
+}
+
+enum auth_session_status {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum mfa_method_type {
+  TOTP
+  WEBAUTHN
+}

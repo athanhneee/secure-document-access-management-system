@@ -1,6 +1,13 @@
 import { getDatabaseClient, type notification_status } from '@sda/database';
 import { randomUUID } from 'node:crypto';
 
+/**
+ * Thuật toán / Tổng quan module:
+ * Bộ xử lý hàng đợi thông báo theo mẫu Transactional Outbox kết hợp phân phát lũy đẳng (Idempotent Delivery),
+ * cơ chế thử lại lùi mũ (Exponential Retry Backoff) và chuyển trạng thái sang hàng đợi thư chết (`DEAD_LETTER` - DLQ)
+ * khi vượt quá ngưỡng thử tối đa `max_attempts`.
+ */
+
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 const DEFAULT_BATCH_SIZE = 50;
@@ -15,6 +22,15 @@ export interface OutboxProcessResult {
 
 /**
  * Processes a batch of pending and retryable notification outbox entries.
+ *
+ * Thuật toán: Xử lý lô hàng đợi Transactional Outbox có chống trùng lặp lũy đẳng và lùi mũ thử lại (Exponential Backoff).
+ * - Pha 1 (Lấy lô ứng viên FIFO): Truy vấn tối đa `batchSize` bản ghi có `status = 'PENDING'` hoặc `status = 'FAILED'`
+ *   đã đến hạn thử lại (`next_retry_at <= now`), sắp xếp tăng dần theo `created_at`.
+ * - Pha 2 (Cắt mạch DLQ sớm): Nếu `attempt_count >= max_attempts`, chuyển thẳng bản ghi sang `DEAD_LETTER`.
+ * - Pha 3 (Phân phát đa kênh lũy đẳng): Định tuyến theo `channel` (`IN_APP`, `EMAIL`, `BOTH`); với kênh `IN_APP`,
+ *   kiểm tra khóa lũy đẳng tự nhiên `(recipient_id, related_object_type, related_object_id)` để không chèn trùng thông báo.
+ * - Pha 4 (Lùi mũ khi lỗi): Khi gửi thất bại, tăng `attempt_count`; nếu chạm trần thì chuyển sang `DEAD_LETTER`,
+ *   ngược lại tính độ trễ lùi mũ `delayMs = BASE_RETRY_DELAY_MS * 2^newAttemptCount` và đặt lịch `next_retry_at`.
  */
 export async function processOutboxBatch(options?: {
   databaseClient?: PrismaClient;
@@ -78,6 +94,7 @@ export async function processOutboxBatch(options?: {
           ? String(payload['relatedObjectId'])
           : null;
 
+        // Thuật toán: Khử trùng lặp lũy đẳng (Idempotent Deduplication) trên khóa nghiệp vụ (recipient_id, related_object_type, related_object_id)
         // Idempotency: verify if already inserted into notifications
         let alreadyDelivered = false;
         if (
@@ -151,6 +168,7 @@ export async function processOutboxBatch(options?: {
         });
         result.deadLettered++;
       } else {
+        // Thuật toán: Lùi mũ cấp số nhân (Exponential Retry Backoff): delayMs = BASE_RETRY_DELAY_MS * 2^newAttemptCount
         // Exponential backoff: base * 2^(attempt_count)
         const delayMs = BASE_RETRY_DELAY_MS * Math.pow(2, newAttemptCount);
         const nextRetry = new Date(now.getTime() + delayMs);
@@ -174,6 +192,9 @@ export async function processOutboxBatch(options?: {
 
 /**
  * Starts the notification outbox processor background runner.
+ *
+ * Thuật toán: Bộ lập lịch định kỳ chống chồng lấn chu kỳ (Non-Overlapping Interval Scheduler)
+ * điều phối tiến trình quét Transactional Outbox và dừng sạch khi nhận `AbortSignal`.
  */
 export function startNotificationOutboxJob(intervalMs: number, signal: AbortSignal): void {
   if (signal.aborted) return;

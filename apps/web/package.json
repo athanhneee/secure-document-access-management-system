@@ -7,7 +7,7 @@
     "build": "next build",
     "dev": "next dev --hostname 127.0.0.1",
     "start": "next start --hostname 127.0.0.1",
-    "lint": "oxlint app components lib next.config.ts",
+    "lint": "oxlint app components lib proxy.ts next.config.ts",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {

@@ -1,5 +1,12 @@
 import type { VisualPolicyRule } from './abac-models';
 
+/**
+ * Thuật toán: Khởi tạo Cây Cú Pháp Trừu Tượng (AST) Dạng Chuẩn Tuyển (DNF) cho Mẫu Chính Sách ABAC
+ * Mục đích: Cung cấp bộ quy tắc mẫu chuẩn hóa theo các mô hình an ninh kinh điển để nạp nhanh vào trình biên tập trực quan mà không cần dựng tay từng nút điều kiện.
+ * Cơ chế hoạt động:
+ *   - Biểu diễn sẵn các cấu trúc DNF cho 5 kịch bản trọng yếu: Ràng buộc giờ hành chính & mạng nội bộ, Bảo vệ tài liệu Tuyệt mật (Bell-LaPadula Cấp 4 + FIDO2 MFA), Cách ly phòng ban nghiêm ngặt (Strict Department Isolation), Chặn tải về từ mạng không tin cậy, và Đặc quyền chỉ đọc của Kiểm toán viên (Separation of Duties).
+ *   - Gắn kèm tập nghĩa vụ bắt buộc (`obligations`) và luật kết hợp ưu tiên từ chối (`DENY_OVERRIDES`).
+ */
 export interface PolicyTemplate {
   id: string;
   name: string;

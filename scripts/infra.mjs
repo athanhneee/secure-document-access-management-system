@@ -1,3 +1,9 @@
+/**
+ * Thuật toán: Điều Phối Vòng Đời Hạ Tầng Container & Chẩn Đoán Sức Khỏe Tiền Triển Khai (Docker Compose Orchestrator & Readiness Doctor)
+ * Mục đích: Quản lý thống nhất việc khởi chạy, kiểm tra sẵn sàng (`--wait`), xem log an toàn, chẩn đoán môi trường (`doctor`) và xóa sạch dữ liệu có rào chắn xác nhận (`reset-safe`).
+ * Cơ chế hoạt động:
+ *   - Thực thi mọi tiến trình con với `shell: false` chống tiêm lệnh (Command Injection), tự động cấp phát `.local/dev.env` nếu thiếu và tối ưu danh sách dịch vụ khởi chạy khi chạy trên môi trường CI.
+ */
 import { spawnSync } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
@@ -20,6 +26,12 @@ const composeBase = [
   projectName,
 ];
 
+/**
+ * Thuật toán: Thực Thi Tiến Trình Con Không Qua Shell (Shell-Free Synchronous Subprocess Runner)
+ * Mục đích: Chạy lệnh hệ thống (`docker`, `node`, `git`) an toàn tuyệt đối trước lỗ hổng tiêm ký tự đặc biệt của shell.
+ * Cơ chế hoạt động:
+ *   - Gọi `spawnSync` với mảng đối số tách rời và `shell: false`, kiểm tra cả lỗi khởi tạo tiến trình lẫn mã thoát khác 0 trừ khi được bật cờ `allowFailure`.
+ */
 function run(command, args, { capture = false, allowFailure = false } = {}) {
   const result = spawnSync(command, args, {
     cwd: repositoryRoot,
@@ -46,6 +58,12 @@ async function ensureEnvironment() {
   }
 }
 
+/**
+ * Thuật toán: Rào Chắn Xác Nhận Kép Trước Khi Hủy Volume Dữ Liệu (Two-Mode Destructive Reset Guard)
+ * Mục đích: Ngăn chặn thao tác xóa nhầm dữ liệu Docker volumes trong môi trường không tương tác hoặc gõ nhầm lệnh.
+ * Cơ chế hoạt động:
+ *   - Trong tự động hóa (`NODE_ENV` thuộc `local|test`), bắt buộc biến `INFRA_RESET_TARGET` khớp chính xác chuỗi khóa mục tiêu; trong chế độ dòng lệnh TTY, yêu cầu người vận hành nhập lại chính xác chuỗi định danh dự án.
+ */
 async function confirmReset() {
   const nonInteractiveAllowed =
     ['local', 'test'].includes(process.env['NODE_ENV'] ?? '') &&
@@ -64,6 +82,12 @@ async function confirmReset() {
   }
 }
 
+/**
+ * Thuật toán: Thăm Dò Chẩn Đoán Sẵn Sàng Hạ Tầng Đa Điểm (Multi-Probe Infrastructure Readiness Doctor)
+ * Mục đích: Kiểm tra toàn diện chuỗi công cụ (`Node.js`, `Docker CLI`, `Docker Compose`, `Docker daemon`), trạng thái ẩn tệp bí mật trên Git và tính hợp lệ cú pháp `compose.yaml`.
+ * Cơ chế hoạt động:
+ *   - Chạy tuần tự các phép thử không phá hủy, đối chiếu `git check-ignore` cho `.local/dev.env` và chạy `docker compose config --quiet` trước khi tổng hợp danh sách lỗi.
+ */
 async function doctor() {
   const failures = [];
   const checks = [

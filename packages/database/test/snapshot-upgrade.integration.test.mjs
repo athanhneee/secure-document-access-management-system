@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
+import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
+import {
+  EXPECTED_BUSINESS_TABLES,
+  loadPrismaMigrations,
+} from '../../../scripts/lib/schema-catalog.mjs';
 
-const schemaUrl = new URL(
-  '../prisma/migrations/20260917160000_initial_secure_schema/migration.sql',
-  import.meta.url,
-);
+const migrationsDirUrl = new URL('../prisma/migrations', import.meta.url);
 
-const expected31Tables = [
+const expectedInitial31Tables = [
   'access_grant_permissions',
   'access_grants',
   'access_request_decisions',
@@ -42,86 +43,103 @@ const expected31Tables = [
   'watermark_instances',
 ];
 
+/**
+ * Algorithm: Incremental Snapshot Upgrade Replay.
+ * Applies initial baseline migration (31 tables), inserts live domain records, and replays all
+ * subsequent migrations (reaching 39 RLS-hardened tables) to verify zero data loss.
+ */
 test('Database Upgrade [NFR-REL01] — initializes from empty database and applies baseline schema', async () => {
-  const db = await PGlite.create('memory://');
+  const migrations = await loadPrismaMigrations(migrationsDirUrl);
+  const db = await PGlite.create('memory://', { extensions: { pg_trgm } });
+  try {
+    const before = await db.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
+    assert.equal(before.rows.length, 0, 'Must begin with zero tables');
 
-  // Verify DB begins completely empty
-  const before = await db.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
-  assert.equal(before.rows.length, 0, 'Must begin with zero tables');
-
-  // Apply baseline schema
-  const sql = await readFile(schemaUrl, 'utf8');
-  await db.exec(sql);
-
-  // Verify all 31 business tables created
-  const tables = await db.query(
-    "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
-  );
-  assert.deepEqual(
-    tables.rows.map((r) => r.tablename),
-    expected31Tables,
-  );
+    await db.exec(migrations[0].sql);
+    const tables = await db.query(
+      "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
+    );
+    assert.deepEqual(
+      tables.rows.map((r) => r.tablename),
+      expectedInitial31Tables,
+    );
+  } finally {
+    await db.close();
+  }
 });
 
-test('Database Upgrade [NFR-REL01] — preserves data across incremental snapshot upgrades', async () => {
-  const db = await PGlite.create('memory://');
-  await db.exec(await readFile(schemaUrl, 'utf8'));
+test('Database Upgrade [NFR-REL01] — preserves data across all incremental Prisma migrations (31 -> 39 tables)', async () => {
+  const migrations = await loadPrismaMigrations(migrationsDirUrl);
+  const db = await PGlite.create('memory://', { extensions: { pg_trgm } });
+  try {
+    // CONFLICT-RESOLVED: Chạy thực tế toàn bộ các bản nâng cấp migration #2..#10 trên dữ liệu đang có thay vì chỉ tạo index giả lập
+    await db.exec(migrations[0].sql);
 
-  // Seed baseline data using system-generated identity columns
-  const dept = await db.query(
-    "INSERT INTO departments (code, name) VALUES ('BGD', 'Ban Giam Doc') RETURNING id",
-  );
-  const deptId = dept.rows[0].id;
+    const dept = await db.query(
+      "INSERT INTO departments (code, name) VALUES ('BGD', 'Ban Giam Doc') RETURNING id",
+    );
+    const deptId = dept.rows[0].id;
 
-  await db.query(
-    `INSERT INTO users (username, email, password_hash, full_name, department_id, status)
-     VALUES ('ceo_boss', 'ceo@corp.test', 'mock-password-hash', 'Tong Giam Doc', $1, 'ACTIVE')`,
-    [deptId],
-  );
+    await db.query(
+      `INSERT INTO users (username, email, password_hash, full_name, department_id, status)
+       VALUES ('ceo_boss', 'ceo@corp.test', 'mock-password-hash', 'Tong Giam Doc', $1, 'ACTIVE')`,
+      [deptId],
+    );
 
-  // Verify seeded record count
-  const userCount = await db.query('SELECT COUNT(*) as count FROM users');
-  assert.equal(Number(userCount.rows[0].count), 1);
+    for (const migration of migrations.slice(1)) {
+      await db.exec(migration.sql);
+    }
 
-  // Simulate applying incremental schema migration (e.g. adding index or auxiliary column)
-  await db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users (LOWER(email));
-    CREATE INDEX IF NOT EXISTS idx_documents_retention_check ON documents (retention_until);
-  `);
+    const upgradedTables = await db.query(
+      "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
+    );
+    assert.deepEqual(
+      upgradedTables.rows.map((r) => r.tablename),
+      EXPECTED_BUSINESS_TABLES,
+    );
 
-  // Verify existing data was untouched and intact
-  const verifiedUser = await db.query(
-    "SELECT username, email, status FROM users WHERE username = 'ceo_boss'",
-  );
-  assert.equal(verifiedUser.rows[0].username, 'ceo_boss');
-  assert.equal(verifiedUser.rows[0].status, 'ACTIVE');
+    const verifiedUser = await db.query(
+      "SELECT username, email, status, version FROM users WHERE username = 'ceo_boss'",
+    );
+    assert.equal(verifiedUser.rows[0].username, 'ceo_boss');
+    assert.equal(verifiedUser.rows[0].status, 'ACTIVE');
+    assert.equal(verifiedUser.rows[0].version, 0);
+  } finally {
+    await db.close();
+  }
 });
 
-test('Database Upgrade [NFR-REL01] — verifies audit log immutability trigger after full upgrade', async () => {
-  const db = await PGlite.create('memory://');
-  await db.exec(await readFile(schemaUrl, 'utf8'));
+test('Database Upgrade [NFR-REL01] — verifies audit log immutability and TRUNCATE guard after full 10-migration upgrade', async () => {
+  const migrations = await loadPrismaMigrations(migrationsDirUrl);
+  const db = await PGlite.create('memory://', { extensions: { pg_trgm } });
+  try {
+    for (const migration of migrations) {
+      await db.exec(migration.sql);
+    }
 
-  // Insert audit record
-  const audit = await db.query(
-    `INSERT INTO audit_logs (actor_username, action, object_type, outcome, correlation_id, entry_hash, chain_sequence)
-     VALUES ($1, 'BASELINE_VALIDATION', 'TEST', 'SUCCESS', $2, $3, 1) RETURNING id`,
-    ['schema-validation-fixture', '10000000-0000-4000-8000-000000000001', '0'.repeat(64)],
-  );
-  const auditId = audit.rows[0].id;
+    const audit = await db.query(
+      `INSERT INTO audit_logs (actor_username, action, object_type, outcome, correlation_id, entry_hash, chain_sequence)
+       VALUES ($1, 'BASELINE_VALIDATION', 'TEST', 'SUCCESS', $2, $3, 1) RETURNING id`,
+      ['schema-validation-fixture', '10000000-0000-4000-8000-000000000001', '0'.repeat(64)],
+    );
+    const auditId = audit.rows[0].id;
 
-  // Attempt to UPDATE audit log must be rejected by trigger
-  await assert.rejects(
-    async () => db.query("UPDATE audit_logs SET outcome='FAILED' WHERE id=$1", [auditId]),
-    /audit_logs is append-only/,
-  );
+    await assert.rejects(
+      async () => db.query("UPDATE audit_logs SET outcome = 'FAILED' WHERE id = $1", [auditId]),
+      /audit_logs is append-only/,
+    );
+    await assert.rejects(
+      async () => db.query('DELETE FROM audit_logs WHERE id = $1', [auditId]),
+      /audit_logs is append-only/,
+    );
+    await assert.rejects(
+      async () => db.exec('TRUNCATE TABLE audit_logs CASCADE'),
+      /audit_logs is append-only/,
+    );
 
-  // Attempt to DELETE audit log must be rejected by trigger
-  await assert.rejects(
-    async () => db.query('DELETE FROM audit_logs WHERE id=$1', [auditId]),
-    /audit_logs is append-only/,
-  );
-
-  // Original row remains pristine
-  const logRow = await db.query('SELECT outcome FROM audit_logs WHERE id = $1', [auditId]);
-  assert.equal(logRow.rows[0].outcome, 'SUCCESS');
+    const logRow = await db.query('SELECT outcome FROM audit_logs WHERE id = $1', [auditId]);
+    assert.equal(logRow.rows[0].outcome, 'SUCCESS');
+  } finally {
+    await db.close();
+  }
 });

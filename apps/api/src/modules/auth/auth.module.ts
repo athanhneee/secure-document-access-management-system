@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { DefaultDenyGuard } from '../../default-deny.guard.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { AuthAuditService } from './auth-audit.service.js';
@@ -14,6 +15,7 @@ import { WebAuthnService } from './webauthn.service.js';
 @Module({
   controllers: [AuthController],
   providers: [
+    DefaultDenyGuard,
     AuthService,
     AuthAuditService,
     AuthRepository,
@@ -26,6 +28,7 @@ import { WebAuthnService } from './webauthn.service.js';
     WebAuthnService,
   ],
   exports: [
+    DefaultDenyGuard,
     AuthService,
     AuthRepository,
     TokenService,

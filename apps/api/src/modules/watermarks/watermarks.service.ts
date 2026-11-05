@@ -1,3 +1,6 @@
+/**
+ * Module: WatermarksService — Quản lý cấu hình thủy vân pháp y (Forensic Watermark Policy Configuration) và truy vết nguồn rò rỉ tài liệu mật theo mã token (UC28).
+ */
 import {
   Injectable,
   NotFoundException,
@@ -6,44 +9,16 @@ import {
   Optional,
 } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
-import { AppErrorCode } from '@sda/contracts';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
+import {
+  traceWatermarkToken,
+  type WatermarkVerificationResult,
+} from './watermark-forensics.helper.js';
+
+export type { WatermarkVerificationResult };
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
-
-export interface WatermarkVerificationResult {
-  watermarkToken: string;
-  renderedText: string;
-  outputSha256Hash: string | null;
-  generatedAt: string;
-  user: {
-    id: string;
-    username: string;
-    fullName: string | null;
-    employeeCode: string | null;
-    email: string;
-  };
-  session: {
-    id: string;
-    startedAt: string;
-    ipAddress: string;
-    userAgent: string | null;
-  };
-  document: {
-    id: string;
-    title: string;
-    documentCode: string | null;
-    versionNo: number;
-    originalSha256Hash: string;
-  };
-  config: {
-    name: string;
-    opacityPercent: number;
-    fontSize: number;
-    includeQrCode: boolean;
-  };
-}
 
 @Injectable()
 export class WatermarksService {
@@ -62,7 +37,13 @@ export class WatermarksService {
   }
 
   /**
-   * List all active watermark configurations.
+   * Thuật toán: Chiếu danh mục cấu hình thủy vân đang kích hoạt kèm cấp độ mật (Active Watermark Catalog Projection)
+   * Mục đích: Liệt kê các mẫu thủy vân đang áp dụng theo thứ tự thời gian khởi tạo cùng thông tin hạng bảo mật `rank` của mức phân loại gắn kèm.
+   * Cơ chế hoạt động:
+   *   - Truy vấn `watermarkConfig` với bộ lọc `is_active: true` kèm quan hệ `classification_levels`, chuẩn hóa các trường `BigInt`/`Date` sang DTO.
+   *
+   * Algorithm: Active Watermark Configuration Catalog Projection.
+   * Queries active watermark templates ordered by creation time with classification level metadata.
    */
   async listConfigs(): Promise<{ data: unknown[] }> {
     const configs = await this.database.watermarkConfig.findMany({
@@ -102,7 +83,15 @@ export class WatermarksService {
   }
 
   /**
-   * Update a watermark configuration (opacity, font size, QR, etc.)
+   * Thuật toán: Cập nhật cấu hình thủy vân có chốt chặn chính sách hiển thị & biên độ mờ đục (Policy-Constrained Watermark Config Mutation)
+   * Mục đích: Cho phép tinh chỉnh giao diện thủy vân nhưng ngăn chặn hành vi tắt thủy vân pháp y hoặc đặt độ mờ quá nhạt/quá đặc làm hỏng khả năng truy vết.
+   * Cơ chế hoạt động:
+   *   - Chặn tuyệt đối yêu cầu tắt hiển thị (`input.isVisible === false`) và cưỡng chế độ mờ nằm trong đoạn đóng `[10%, 90%]`.
+   *   - Làm tròn số nguyên các tham số hình học (`opacityPercent`, `fontSize`, `rotationDegrees`), cập nhật CSDL và ghi nhật ký kiểm toán `WATERMARK_CONFIG_UPDATED`.
+   *
+   * Algorithm: Policy-Constrained Watermark Configuration Mutation.
+   * Rejects attempts to disable visible forensic watermarks or set opacity outside [10%, 90%],
+   * persists rounded numeric settings, and emits `WATERMARK_CONFIG_UPDATED` audit log.
    */
   async updateConfig(
     id: bigint,
@@ -187,115 +176,17 @@ export class WatermarksService {
   }
 
   /**
+   * Thuật toán: Truy vết định danh pháp y từ mã thủy vân tài liệu rò rỉ (Forensic Watermark Token Attribution - UC28)
+   * Mục đích: Đối chiếu chuỗi `watermark_token` thu được từ bản chụp/tệp rò rỉ để xác định chính xác người xem, phiên truy cập, địa chỉ IP, phiên bản tài liệu và mã băm SHA-256.
+   * Cơ chế hoạt động:
+   *   - Ủy quyền cho `traceWatermarkToken` thực hiện phép kết nối 4 bảng (`users`, `access_sessions`, `document_versions`, `watermark_configs`) và ghi vết kiểm toán `WATERMARK_TRACE_PERFORMED`.
+   *
    * UC28: Trace a watermark token to verify the user, session, document, version, and generation time.
-   * Essential for forensic investigation of document leaks.
    */
   async verifyWatermarkToken(
     token: string,
     actor?: AuthPrincipal,
   ): Promise<WatermarkVerificationResult> {
-    this.logger.log(`Verifying watermark token: ${token.slice(0, 11)}...`);
-    const instance = await this.database.watermarkInstance.findUnique({
-      where: { watermark_token: token },
-      include: {
-        users: {
-          select: {
-            id: true,
-            username: true,
-            full_name: true,
-            employee_code: true,
-            email: true,
-          },
-        },
-        access_sessions: {
-          select: {
-            id: true,
-            started_at: true,
-            ip_address: true,
-            user_agent: true,
-          },
-        },
-        document_versions: {
-          select: {
-            version_no: true,
-            sha256_hash: true,
-            document: {
-              select: {
-                id: true,
-                title: true,
-                document_code: true,
-              },
-            },
-          },
-        },
-        watermark_configs: {
-          select: {
-            name: true,
-            opacity_percent: true,
-            font_size: true,
-            include_qr_code: true,
-          },
-        },
-      },
-    });
-
-    if (!instance) {
-      throw new NotFoundException({
-        errorCode: AppErrorCode.WATERMARK_TOKEN_NOT_FOUND,
-        message: 'Watermark token was not found in the reconciliation registry.',
-      });
-    }
-
-    if (this.auditWriter && actor) {
-      await this.auditWriter.writeLog({
-        actorUserId: actor.userId,
-        actorUsername: actor.username,
-        action: 'WATERMARK_TRACE_PERFORMED',
-        objectType: 'WATERMARK_INSTANCE',
-        objectId: instance.id,
-        documentId: instance.document_versions.document.id,
-        accessSessionId: instance.access_sessions.id,
-        outcome: 'SUCCESS',
-        chainPartition: 'ACCESS_SESSION',
-        details: {
-          watermarkToken: token,
-          tracedUserId: instance.users.id.toString(),
-          tracedUsername: instance.users.username,
-        },
-      });
-    }
-
-    return {
-      watermarkToken: instance.watermark_token,
-      renderedText: instance.rendered_text,
-      outputSha256Hash: instance.output_sha256_hash,
-      generatedAt: instance.generated_at.toISOString(),
-      user: {
-        id: instance.users.id.toString(),
-        username: instance.users.username,
-        fullName: instance.users.full_name,
-        employeeCode: instance.users.employee_code,
-        email: instance.users.email,
-      },
-      session: {
-        id: instance.access_sessions.id,
-        startedAt: instance.access_sessions.started_at.toISOString(),
-        ipAddress: instance.access_sessions.ip_address,
-        userAgent: instance.access_sessions.user_agent,
-      },
-      document: {
-        id: instance.document_versions.document.id,
-        title: instance.document_versions.document.title,
-        documentCode: instance.document_versions.document.document_code,
-        versionNo: instance.document_versions.version_no,
-        originalSha256Hash: instance.document_versions.sha256_hash,
-      },
-      config: {
-        name: instance.watermark_configs.name,
-        opacityPercent: instance.watermark_configs.opacity_percent,
-        fontSize: instance.watermark_configs.font_size,
-        includeQrCode: instance.watermark_configs.include_qr_code,
-      },
-    };
+    return traceWatermarkToken(this.database, this.auditWriter, this.logger, token, actor);
   }
 }

@@ -1,22 +1,37 @@
-import { randomBytes, randomUUID } from 'node:crypto';
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  Optional,
-  UnauthorizedException,
-} from '@nestjs/common';
+/**
+ * @module AuthService
+ * Algorithm: Constant-Work Multi-Stage Login, RFC 9700 Token Rotation & Multi-Factor Authentication Facade.
+ */
+import { Injectable, Optional } from '@nestjs/common';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { AppConfigService } from '../../config/config.service.js';
 import { AuthAuditService } from './auth-audit.service.js';
+import {
+  executeBeginMfaEnrollment,
+  executeDisableMfa,
+  executeVerifyMfa,
+  executeVerifyMfaEnrollment,
+} from './auth-mfa.helper.js';
+import {
+  executeChangePassword,
+  executeForgotPassword,
+  executeResetPassword,
+} from './auth-password.helper.js';
+import { executeLogin, executeRefresh } from './auth-session.helper.js';
+import {
+  executeBeginWebAuthnEnrollment,
+  executeGetWebAuthnAuthOptions,
+  executeVerifyWebAuthnAuth,
+  executeVerifyWebAuthnEnrollment,
+} from './auth-webauthn.helper.js';
 import { AuthRepository } from './auth.repository.js';
-import { MFA_REQUIRED_ROLES, type AuthPrincipal, type RequestContext } from './auth.types.js';
+import type { AuthPrincipal, RequestContext } from './auth.types.js';
 import { LoginRateLimitService } from './login-rate-limit.service.js';
 import { MfaService } from './mfa.service.js';
 import { PasswordService } from './password.service.js';
 import { ResetMailerService } from './reset-mailer.service.js';
 import { TokenService } from './token.service.js';
-import { WebAuthnService, type StoredWebAuthnCredential } from './webauthn.service.js';
+import { WebAuthnService } from './webauthn.service.js';
 
 export interface SessionArtifacts {
   accessToken: string;
@@ -27,10 +42,6 @@ export interface SessionArtifacts {
   mfaRequired: boolean;
   enrollmentRequired: boolean;
 }
-
-const GENERIC_LOGIN_ERROR = 'Unable to authenticate with the supplied credentials.';
-const GENERIC_RESET_RESPONSE =
-  'If the account is eligible, password reset instructions will be sent.';
 
 @Injectable()
 export class AuthService {
@@ -56,106 +67,12 @@ export class AuthService {
     this.resetTtl = config.get('AUTH_RESET_TTL_SECONDS');
   }
 
-  async login(
-    identifier: string,
-    password: string,
-    context: RequestContext,
-  ): Promise<SessionArtifacts> {
-    const accountKey = identifier.normalize('NFKC').trim().toLowerCase();
-    this.rateLimit.assertAllowed(context.ip, accountKey);
-    const user = await this.repository.findUserByIdentifier(accountKey);
-    const passwordMatches = user
-      ? await this.passwords.verify(user.passwordHash, password)
-      : (await this.passwords.burnEquivalentWork(password), false);
-    const eligible =
-      user?.status === 'ACTIVE' && (!user.lockedUntil || user.lockedUntil <= new Date());
-    if (!user || !passwordMatches || !eligible) {
-      const delayMs = this.rateLimit.recordFailure(context.ip, accountKey);
-      if (user) await this.repository.recordLoginFailure(user);
-      await this.audit.record(
-        {
-          action: 'LOGIN',
-          outcome: 'DENIED',
-          actorUserId: user?.id,
-          actorUsername: user?.username ?? accountKey.slice(0, 80),
-          reasonCode: 'INVALID_CREDENTIALS',
-          details: { delayMs },
-        },
-        context,
-      );
-      throw new UnauthorizedException(GENERIC_LOGIN_ERROR);
-    }
-
-    this.rateLimit.clearAccount(accountKey);
-    await this.repository.recordLoginSuccess(user.id);
-    const mfaRequired =
-      Boolean(user.mfaMethod) || user.roles.some((role) => MFA_REQUIRED_ROLES.has(role));
-    const artifacts = await this.startSession(user.id, context, !mfaRequired, mfaRequired);
-    await this.audit.record(
-      {
-        action: 'LOGIN',
-        outcome: 'SUCCESS',
-        actorUserId: user.id,
-        actorUsername: user.username,
-        objectId: artifacts.sessionId,
-        details: { mfaRequired },
-      },
-      context,
-    );
-    return {
-      ...artifacts,
-      mfaRequired,
-      enrollmentRequired: mfaRequired && !user.mfaMethod,
-    };
+  login(identifier: string, password: string, context: RequestContext): Promise<SessionArtifacts> {
+    return executeLogin(this.deps(), identifier, password, context);
   }
 
-  async refresh(refreshToken: string, context: RequestContext): Promise<SessionArtifacts> {
-    const nextToken = this.tokens.newOpaqueToken();
-    const result = await this.repository.rotateRefreshToken(
-      this.tokens.hashOpaqueToken(refreshToken),
-      {
-        id: randomUUID(),
-        hash: this.tokens.hashOpaqueToken(nextToken),
-        expiresAt: new Date(Date.now() + this.refreshTtl * 1_000),
-      },
-    );
-    if (result.kind === 'reuse') {
-      await this.audit.record(
-        {
-          action: 'REFRESH_REUSE',
-          outcome: 'DENIED',
-          actorUserId: result.userId,
-          objectId: result.sessionId,
-          reasonCode: 'REFRESH_TOKEN_REUSE',
-        },
-        context,
-      );
-      throw new UnauthorizedException('Session is no longer valid.');
-    }
-    if (result.kind !== 'rotated') throw new UnauthorizedException('Session is no longer valid.');
-    const accessToken = await this.tokens.issueAccessToken(
-      result.user.id,
-      result.sessionId,
-      result.mfa,
-    );
-    await this.audit.record(
-      {
-        action: 'TOKEN_REFRESH',
-        outcome: 'SUCCESS',
-        actorUserId: result.user.id,
-        objectId: result.sessionId,
-      },
-      context,
-    );
-    return {
-      accessToken,
-      refreshToken: nextToken,
-      csrfToken: randomBytes(32).toString('base64url'),
-      accessMaxAge: this.accessTtl,
-      refreshMaxAge: this.refreshTtl,
-      mfaRequired: false,
-      enrollmentRequired: false,
-    };
+  refresh(refreshToken: string, context: RequestContext): Promise<SessionArtifacts> {
+    return executeRefresh(this.deps(), refreshToken, context);
   }
 
   async logout(principal: AuthPrincipal, context: RequestContext): Promise<void> {
@@ -186,492 +103,117 @@ export class AuthService {
     );
   }
 
-  async changePassword(
+  changePassword(
     principal: AuthPrincipal,
     currentPassword: string,
     newPassword: string,
     context: RequestContext,
   ): Promise<void> {
-    const user = await this.repository.findUserById(principal.userId);
-    if (!user || !(await this.passwords.verify(user.passwordHash, currentPassword))) {
-      throw new UnauthorizedException(GENERIC_LOGIN_ERROR);
-    }
-    this.passwords.validate(newPassword, [user.username, user.email]);
-    await this.repository.updatePassword(user.id, await this.passwords.hash(newPassword));
-    await this.repository.revokeAllSessions(user.id, 'PASSWORD_CHANGED');
-    await this.audit.record(
-      { action: 'PASSWORD_CHANGE', outcome: 'SUCCESS', actorUserId: user.id },
-      context,
-    );
+    return executeChangePassword(this.deps(), principal, currentPassword, newPassword, context);
   }
 
-  async forgotPassword(identifier: string, context: RequestContext): Promise<{ message: string }> {
-    const startedAt = Date.now();
-    const normalized = identifier.normalize('NFKC').trim().toLowerCase();
-    const rateKey = `reset:${normalized}`;
-    this.rateLimit.assertAllowed(context.ip, rateKey);
-    this.rateLimit.recordFailure(context.ip, rateKey);
-    await this.passwords.burnEquivalentWork(normalized);
-    const user = await this.repository.findUserByIdentifier(normalized);
-    if (user?.status === 'ACTIVE') {
-      const token = this.tokens.newOpaqueToken();
-      await this.repository.createPasswordReset(
-        user.id,
-        this.tokens.hashOpaqueToken(token),
-        new Date(Date.now() + this.resetTtl * 1_000),
-        context.ip,
-      );
-      try {
-        await this.mailer.send(user.email, token);
-        await this.audit.record(
-          { action: 'PASSWORD_RESET_REQUEST', outcome: 'SUCCESS', actorUserId: user.id },
-          context,
-        );
-      } catch {
-        await this.audit.record(
-          {
-            action: 'PASSWORD_RESET_REQUEST',
-            outcome: 'FAILED',
-            actorUserId: user.id,
-            reasonCode: 'DELIVERY_FAILED',
-          },
-          context,
-        );
-      }
-    } else {
-      await this.audit.record(
-        { action: 'PASSWORD_RESET_REQUEST', outcome: 'SUCCESS', actorUsername: 'anonymous' },
-        context,
-      );
-    }
-    // Keep the externally visible response floor independent of lookup and SMTP outcome.
-    const remainingDelay = 1_250 - (Date.now() - startedAt);
-    if (remainingDelay > 0) await new Promise((resolve) => setTimeout(resolve, remainingDelay));
-    return { message: GENERIC_RESET_RESPONSE };
+  forgotPassword(identifier: string, context: RequestContext): Promise<{ message: string }> {
+    return executeForgotPassword(this.deps(), identifier, context);
   }
 
-  async resetPassword(token: string, newPassword: string, context: RequestContext): Promise<void> {
-    this.passwords.validate(newPassword);
-    const userId = await this.repository.consumePasswordReset(
-      this.tokens.hashOpaqueToken(token),
-      await this.passwords.hash(newPassword),
-    );
-    if (!userId) throw new BadRequestException('Reset request is invalid or expired.');
-    await this.audit.record(
-      { action: 'PASSWORD_RESET', outcome: 'SUCCESS', actorUserId: userId },
-      context,
-    );
+  resetPassword(token: string, newPassword: string, context: RequestContext): Promise<void> {
+    return executeResetPassword(this.deps(), token, newPassword, context);
   }
 
-  async beginMfaEnrollment(
+  beginMfaEnrollment(
     principal: AuthPrincipal,
     label: string | undefined,
     context: RequestContext,
   ): Promise<{ secret: string; uri: string }> {
-    await this.assertEnrollmentAllowed(principal, context);
-    const enrollment = this.mfa.createEnrollment(principal.username);
-    await this.repository.createMfaEnrollment(principal.userId, enrollment.encryptedSecret, label);
-    await this.audit.record(
-      { action: 'MFA_ENROLLMENT_STARTED', outcome: 'SUCCESS', actorUserId: principal.userId },
-      context,
-    );
-    return { secret: enrollment.secret, uri: enrollment.uri };
+    return executeBeginMfaEnrollment(this.deps(), principal, label, context);
   }
 
-  async verifyMfaEnrollment(
+  verifyMfaEnrollment(
     principal: AuthPrincipal,
     code: string,
     context: RequestContext,
   ): Promise<SessionArtifacts & { recoveryCodes: string[] }> {
-    const rateKey = `mfa-enroll:${principal.userId}`;
-    this.rateLimit.assertAllowed(context.ip, rateKey);
-    await this.assertEnrollmentAllowed(principal, context);
-    const pending = await this.repository.pendingMfaMethod(principal.userId);
-    if (!pending || !this.mfa.verifyTotp(pending.encryptedSecret, code)) {
-      this.rateLimit.recordFailure(context.ip, rateKey);
-      throw new UnauthorizedException('MFA verification failed.');
-    }
-    this.rateLimit.clearAccount(rateKey);
-    const recovery = this.mfa.createRecoveryCodes();
-    await this.repository.enableMfa(pending.id, principal.userId, recovery.hashes);
-    const artifacts = await this.activateMfaSession(principal);
-    await this.audit.record(
-      { action: 'MFA_ENABLED', outcome: 'SUCCESS', actorUserId: principal.userId },
-      context,
-    );
-    return { ...artifacts, recoveryCodes: recovery.plaintext };
+    return executeVerifyMfaEnrollment(this.deps(), principal, code, context);
   }
 
-  async beginWebAuthnEnrollment(
+  beginWebAuthnEnrollment(
     principal: AuthPrincipal,
     label: string | undefined,
     context: RequestContext,
   ) {
-    await this.assertEnrollmentAllowed(principal, context);
-    const existing = await this.repository.getActiveMfaMethods(principal.userId);
-    const existingCreds = existing
-      .map((m) => this.webauthn.parseStoredCredential(m.encryptedSecret))
-      .filter((c): c is StoredWebAuthnCredential => c !== null);
-
-    const { options, challengeToken } = await this.webauthn.generateRegistrationOptions(
-      principal.userId,
-      principal.username,
-      existingCreds,
-    );
-
-    await this.audit.record(
-      {
-        action: 'MFA_WEBAUTHN_ENROLL_START',
-        outcome: 'SUCCESS',
-        actorUserId: principal.userId,
-        actorUsername: principal.username,
-        details: { label: label ?? null },
-      },
-      context,
-    );
-
-    return { options, challengeToken };
+    return executeBeginWebAuthnEnrollment(this.deps(), principal, label, context);
   }
 
-  async verifyWebAuthnEnrollment(
+  verifyWebAuthnEnrollment(
     principal: AuthPrincipal,
     response: RegistrationResponseJSON,
     challengeToken: string,
     label: string | undefined,
     context: RequestContext,
   ): Promise<SessionArtifacts & { recoveryCodes: string[] }> {
-    await this.assertEnrollmentAllowed(principal, context);
-    const verification = await this.webauthn.verifyRegistration(
+    return executeVerifyWebAuthnEnrollment(
+      this.deps(),
+      principal,
       response,
       challengeToken,
-      principal.userId,
       label,
-    );
-
-    const recovery = this.mfa.createRecoveryCodes();
-    const methodId = await this.repository.createMfaEnrollment(
-      principal.userId,
-      verification.encryptedSecret,
-      label ?? 'FIDO2 / WebAuthn Key',
-      'WEBAUTHN',
-    );
-    await this.repository.enableMfa(methodId, principal.userId, recovery.hashes);
-
-    const artifacts = await this.activateMfaSession(principal);
-    await this.audit.record(
-      {
-        action: 'MFA_WEBAUTHN_ENROLLED',
-        outcome: 'SUCCESS',
-        actorUserId: principal.userId,
-        actorUsername: principal.username,
-        objectId: methodId,
-        details: {
-          credentialId: verification.credential.credentialId,
-          deviceName: verification.credential.deviceName ?? null,
-          aaguid: verification.credential.aaguid ?? null,
-        },
-      },
       context,
     );
-
-    return { ...artifacts, recoveryCodes: recovery.plaintext };
   }
 
-  async getWebAuthnAuthOptions(
+  getWebAuthnAuthOptions(
     principal: AuthPrincipal | undefined,
     username: string | undefined,
     context: RequestContext,
   ) {
-    let userId: bigint | undefined = principal?.userId;
-    const normalizedUsername = username?.normalize('NFKC').trim().toLowerCase();
-    if (!userId && normalizedUsername) {
-      this.rateLimit.assertAllowed(context.ip, `webauthn-opt:${normalizedUsername}`);
-      const user = await this.repository.findUserByIdentifier(normalizedUsername);
-      if (user && user.status === 'ACTIVE') userId = user.id;
-    }
-
-    if (!userId) {
-      if (!principal && normalizedUsername) {
-        this.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
-        throw new BadRequestException(
-          'Unable to initiate WebAuthn authentication for the supplied identifier.',
-        );
-      }
-      throw new BadRequestException('User identification is required for WebAuthn authentication.');
-    }
-
-    const activeMethods = await this.repository.getActiveMfaMethods(userId);
-    const webauthnCreds = activeMethods
-      .map((m) => this.webauthn.parseStoredCredential(m.encryptedSecret))
-      .filter((c): c is StoredWebAuthnCredential => c !== null);
-
-    if (webauthnCreds.length === 0) {
-      if (!principal && normalizedUsername) {
-        this.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
-        throw new BadRequestException(
-          'Unable to initiate WebAuthn authentication for the supplied identifier.',
-        );
-      }
-      throw new BadRequestException('No WebAuthn security keys found for this account.');
-    }
-
-    const { options, challengeToken } = await this.webauthn.generateAuthenticationOptions(
-      webauthnCreds,
-      userId,
-    );
-
-    await this.audit.record(
-      {
-        action: 'MFA_WEBAUTHN_AUTH_OPTIONS',
-        outcome: 'SUCCESS',
-        actorUserId: userId,
-      },
-      context,
-    );
-
-    return { options, challengeToken };
+    return executeGetWebAuthnAuthOptions(this.deps(), principal, username, context);
   }
 
-  async verifyWebAuthnAuth(
+  verifyWebAuthnAuth(
     principal: AuthPrincipal,
     response: AuthenticationResponseJSON,
     challengeToken: string,
     context: RequestContext,
   ): Promise<SessionArtifacts> {
-    const rateKey = `webauthn:${principal.userId}`;
-    this.rateLimit.assertAllowed(context.ip, rateKey);
-    const activeMethods = await this.repository.getActiveMfaMethods(principal.userId);
-    let matchedMethod: (typeof activeMethods)[number] | null = null;
-    let matchedCred: StoredWebAuthnCredential | null = null;
-
-    for (const m of activeMethods) {
-      const cred = this.webauthn.parseStoredCredential(m.encryptedSecret);
-      if (cred && cred.credentialId === response.id) {
-        matchedMethod = m;
-        matchedCred = cred;
-        break;
-      }
-    }
-
-    if (!matchedMethod || !matchedCred) {
-      this.rateLimit.recordFailure(context.ip, rateKey);
-      await this.audit.record(
-        {
-          action: 'MFA_WEBAUTHN_VERIFY',
-          outcome: 'DENIED',
-          actorUserId: principal.userId,
-          reasonCode: 'CREDENTIAL_NOT_FOUND',
-        },
-        context,
-      );
-      throw new UnauthorizedException('Security key credential was not recognized for this user.');
-    }
-
-    let result: Awaited<ReturnType<WebAuthnService['verifyAuthentication']>>;
-    try {
-      result = await this.webauthn.verifyAuthentication(
-        response,
-        challengeToken,
-        matchedCred,
-        principal.userId,
-      );
-    } catch (error) {
-      this.rateLimit.recordFailure(context.ip, rateKey);
-      throw error;
-    }
-
-    if (result.cloneDetected) {
-      this.rateLimit.recordFailure(context.ip, rateKey);
-      await this.repository.recordSecurityAlert({
-        alertType: 'WEBAUTHN_CLONE_DETECTED',
-        severity: 'CRITICAL',
-        title: 'FIDO2 / WebAuthn clone attack detected',
-        description: `Authenticator counter rollback or cloned key detected for user ID ${principal.userId}.`,
-        detectedUserId: principal.userId,
-      });
-
-      await this.audit.record(
-        {
-          action: 'MFA_WEBAUTHN_VERIFY',
-          outcome: 'DENIED',
-          actorUserId: principal.userId,
-          reasonCode: 'CLONE_DETECTED',
-          details: { credentialId: matchedCred.credentialId },
-        },
-        context,
-      );
-
-      throw new UnauthorizedException('Security key cloning or replay attack detected.');
-    }
-
-    this.rateLimit.clearAccount(rateKey);
-    await this.repository.updateMfaSecret(matchedMethod.id, result.updatedEncryptedSecret);
-
-    const artifacts = await this.activateMfaSession(principal);
-    await this.audit.record(
-      {
-        action: 'MFA_WEBAUTHN_VERIFY',
-        outcome: 'SUCCESS',
-        actorUserId: principal.userId,
-        actorUsername: principal.username,
-        objectId: matchedMethod.id,
-        details: {
-          credentialId: matchedCred.credentialId,
-          counter: result.newCounter,
-        },
-      },
-      context,
-    );
-
-    return artifacts;
+    return executeVerifyWebAuthnAuth(this.deps(), principal, response, challengeToken, context);
   }
 
-  async verifyMfa(
+  verifyMfa(
     principal: AuthPrincipal,
     code: string | undefined,
     recoveryCode: string | undefined,
     context: RequestContext,
   ): Promise<SessionArtifacts> {
-    const rateKey = `mfa:${principal.userId}`;
-    this.rateLimit.assertAllowed(context.ip, rateKey);
-    const activeMethods = await this.repository.getActiveMfaMethods(principal.userId);
-    if (activeMethods.length === 0) throw new UnauthorizedException('MFA verification failed.');
-
-    let valid = false;
-    if (code) {
-      for (const method of activeMethods) {
-        try {
-          if (this.mfa.verifyTotp(method.encryptedSecret, code)) {
-            valid = true;
-            break;
-          }
-        } catch {
-          // Ignore non-TOTP secrets
-        }
-      }
-    }
-
-    if (!valid && recoveryCode) {
-      for (const method of activeMethods) {
-        const remaining = this.mfa.consumeRecoveryCode(method.recoveryCodeHashes, recoveryCode);
-        if (remaining) {
-          await this.repository.consumeRecoveryCode(method.id, remaining);
-          valid = true;
-          break;
-        }
-      }
-    }
-
-    if (!valid) {
-      this.rateLimit.recordFailure(context.ip, rateKey);
-      await this.audit.record(
-        { action: 'MFA_VERIFY', outcome: 'DENIED', actorUserId: principal.userId },
-        context,
-      );
-      throw new UnauthorizedException('MFA verification failed.');
-    }
-    this.rateLimit.clearAccount(rateKey);
-    const artifacts = await this.activateMfaSession(principal);
-    await this.audit.record(
-      { action: 'MFA_VERIFY', outcome: 'SUCCESS', actorUserId: principal.userId },
-      context,
-    );
-    return artifacts;
+    return executeVerifyMfa(this.deps(), principal, code, recoveryCode, context);
   }
 
-  async disableMfa(principal: AuthPrincipal, context: RequestContext): Promise<void> {
-    if (!principal.mfa) throw new ForbiddenException('Verified MFA is required.');
-    await this.repository.disableMfa(principal.userId);
-    await this.repository.revokeAllSessions(principal.userId, 'MFA_CHANGED');
-    await this.audit.record(
-      { action: 'MFA_DISABLED', outcome: 'SUCCESS', actorUserId: principal.userId },
-      context,
-    );
+  disableMfa(
+    principal: AuthPrincipal,
+    currentPassword: string,
+    code: string | undefined,
+    recoveryCode: string | undefined,
+    context: RequestContext,
+  ): Promise<void> {
+    return executeDisableMfa(this.deps(), principal, currentPassword, code, recoveryCode, context);
   }
 
   jwks(): ReturnType<TokenService['jwks']> {
     return this.tokens.jwks();
   }
 
-  private async assertEnrollmentAllowed(
-    principal: AuthPrincipal,
-    context: RequestContext,
-  ): Promise<void> {
-    if (principal.mfa) return;
-    const activeMethods =
-      typeof this.repository.getActiveMfaMethods === 'function'
-        ? await this.repository.getActiveMfaMethods(principal.userId)
-        : [];
-    if (activeMethods.length > 0) {
-      await this.audit.record(
-        {
-          action: 'MFA_ENROLLMENT_BLOCKED',
-          outcome: 'DENIED',
-          actorUserId: principal.userId,
-          actorUsername: principal.username,
-          reasonCode: 'STEP_UP_MFA_REQUIRED',
-        },
-        context,
-      );
-      throw new ForbiddenException(
-        'Step-up MFA verification is required to enroll or modify MFA factors.',
-      );
-    }
-  }
-
-  private async startSession(
-    userId: bigint,
-    context: RequestContext,
-    issueRefresh: boolean,
-    preMfa: boolean,
-  ): Promise<SessionArtifacts & { sessionId: string }> {
-    const sessionId = randomUUID();
-    const familyId = randomUUID();
-    const refreshToken = issueRefresh ? this.tokens.newOpaqueToken() : undefined;
-    const lifetime = preMfa ? 300 : this.refreshTtl;
-    await this.repository.createSession({
-      userId,
-      sessionId,
-      familyId,
-      refreshTokenId: refreshToken ? randomUUID() : undefined,
-      refreshTokenHash: refreshToken ? this.tokens.hashOpaqueToken(refreshToken) : undefined,
-      refreshExpiresAt: refreshToken ? new Date(Date.now() + this.refreshTtl * 1_000) : undefined,
-      sessionExpiresAt: new Date(Date.now() + lifetime * 1_000),
-      mfaVerified: !preMfa,
-      context,
-    });
+  private deps() {
     return {
-      sessionId,
-      accessToken: await this.tokens.issueAccessToken(userId, sessionId, !preMfa),
-      refreshToken,
-      csrfToken: randomBytes(32).toString('base64url'),
-      accessMaxAge: preMfa ? 300 : this.accessTtl,
-      refreshMaxAge: this.refreshTtl,
-      mfaRequired: preMfa,
-      enrollmentRequired: false,
-    };
-  }
-
-  private async activateMfaSession(principal: AuthPrincipal): Promise<SessionArtifacts> {
-    const refreshToken = this.tokens.newOpaqueToken();
-    const activated = await this.repository.activateMfaSession(
-      principal.sessionId,
-      principal.userId,
-      {
-        id: randomUUID(),
-        hash: this.tokens.hashOpaqueToken(refreshToken),
-        expiresAt: new Date(Date.now() + this.refreshTtl * 1_000),
-      },
-    );
-    if (!activated) throw new UnauthorizedException('Session is no longer valid.');
-    return {
-      accessToken: await this.tokens.issueAccessToken(principal.userId, principal.sessionId, true),
-      refreshToken,
-      csrfToken: randomBytes(32).toString('base64url'),
-      accessMaxAge: this.accessTtl,
-      refreshMaxAge: this.refreshTtl,
-      mfaRequired: false,
-      enrollmentRequired: false,
+      repository: this.repository,
+      passwords: this.passwords,
+      tokens: this.tokens,
+      mfa: this.mfa,
+      rateLimit: this.rateLimit,
+      audit: this.audit,
+      mailer: this.mailer,
+      webauthn: this.webauthn,
+      accessTtl: this.accessTtl,
+      refreshTtl: this.refreshTtl,
+      resetTtl: this.resetTtl,
     };
   }
 }

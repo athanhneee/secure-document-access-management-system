@@ -9,6 +9,16 @@ import { startNotificationOutboxJob } from './notification-outbox-job.js';
 import { startExportCleanupJob } from './export-cleanup-job.js';
 import { startIcapServerJob } from './icap/icap-worker-job.js';
 
+/**
+ * Thuật toán / Tổng quan module:
+ * Điểm khởi chạy trung tâm (Bootstrap & Orchestrator) của tiến trình nền `@sda/worker`:
+ * - Pha 1 (Khám phá biến môi trường phân cấp): Tìm nạp tệp cấu hình `.env` / `.local/dev.env` theo thứ tự ưu tiên từ thư mục hiện hành lên gốc monorepo.
+ * - Pha 2 (Đăng ký tín hiệu dừng mềm): Ánh xạ `SIGINT` và `SIGTERM` vào một `AbortController` dùng chung cho toàn bộ các tác vụ nền.
+ * - Pha 3 (Hậu kiểm khóa mật mã Fail-Fast): Trong môi trường `production`, cưỡng chế từ chối khởi động ngay lập tức nếu khóa toàn vẹn kiểm toán thiếu độ dài (< 32 ký tự) hoặc mang giá trị giữ chỗ.
+ * - Pha 4 (Kích hoạt đồng thời & Neo vòng đời): Khởi chạy 7 dịch vụ nền độc lập cùng lắng nghe `shutdown.signal` và treo tiến trình qua `waitForShutdown`.
+ */
+
+// Thuật toán: Tìm kiếm và nạp biến môi trường dự phòng theo chuỗi ứng viên phân cấp thư mục (Hierarchical Env Fallback Resolution)
 if (!process.env['DATABASE_URL']) {
   const candidateGroups = [
     [
@@ -48,6 +58,7 @@ const configuredAuditHmacKey =
   process.env['DOCUMENT_AUDIT_HMAC_KEY'] ??
   process.env['AUDIT_HMAC_KEY'];
 
+// Thuật toán: Kiểm tra điều kiện tiên quyết mật mã Fail-Fast trên môi trường Production chống chạy với khóa yếu/mặc định
 if (process.env['NODE_ENV'] === 'production') {
   if (
     !configuredAuditHmacKey ||
@@ -63,6 +74,8 @@ if (process.env['NODE_ENV'] === 'production') {
 
 const GRANT_AUDIT_HMAC_KEY =
   configuredAuditHmacKey ?? 'local-only-audit-integrity-hmac-key-0000000000000000';
+// CONFLICT-RESOLVED: Truyền cấu hình xoay vòng khóa AUDIT_KEY_ROTATION_JSON xuống các tác vụ nền Worker (grant-expiry-job và audit-verification-job) đồng bộ với API.
+const AUDIT_KEY_ROTATION_JSON = process.env['AUDIT_KEY_ROTATION_JSON'];
 
 const DERIVATIVE_CLEANUP_INTERVAL_MS = Number(
   process.env['DERIVATIVE_CLEANUP_INTERVAL_MS'] ?? '300000',
@@ -77,10 +90,21 @@ const NOTIFICATION_OUTBOX_INTERVAL_MS = Number(
 );
 const EXPORT_CLEANUP_INTERVAL_MS = Number(process.env['EXPORT_CLEANUP_INTERVAL_MS'] ?? '300000');
 
+// Thuật toán: Khởi chạy điều phối song song 7 tác vụ nền gắn kết chung một tín hiệu hủy tập trung (Unified AbortSignal Fan-Out)
 // Start worker jobs
-startGrantExpiryJob(GRANT_EXPIRY_INTERVAL_MS, GRANT_AUDIT_HMAC_KEY, shutdown.signal);
+startGrantExpiryJob(
+  GRANT_EXPIRY_INTERVAL_MS,
+  GRANT_AUDIT_HMAC_KEY,
+  shutdown.signal,
+  AUDIT_KEY_ROTATION_JSON,
+);
 startDerivativeCleanupJob(DERIVATIVE_CLEANUP_INTERVAL_MS, DERIVATIVE_TTL_MINUTES, shutdown.signal);
-startAuditVerificationJob(AUDIT_VERIFY_INTERVAL_MS, GRANT_AUDIT_HMAC_KEY, shutdown.signal);
+startAuditVerificationJob(
+  AUDIT_VERIFY_INTERVAL_MS,
+  GRANT_AUDIT_HMAC_KEY,
+  shutdown.signal,
+  AUDIT_KEY_ROTATION_JSON,
+);
 startSecurityDetectionJob(SECURITY_DETECTION_INTERVAL_MS, shutdown.signal);
 startNotificationOutboxJob(NOTIFICATION_OUTBOX_INTERVAL_MS, shutdown.signal);
 startExportCleanupJob(EXPORT_CLEANUP_INTERVAL_MS, shutdown.signal);

@@ -1,0 +1,226 @@
+model AlertAuditLink {
+  alert_id        String        @db.Uuid
+  audit_log_id    BigInt
+  security_alerts SecurityAlert @relation(fields: [alert_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  audit_logs      AuditLog      @relation(fields: [audit_log_id], references: [id], onUpdate: NoAction)
+
+  @@id([alert_id, audit_log_id])
+  @@map("alert_audit_links")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model AuditLog {
+  id                BigInt           @id @default(autoincrement())
+  occurred_at       DateTime         @default(now()) @db.Timestamptz(6)
+  actor_user_id     BigInt?
+  actor_username    String?          @db.VarChar(80)
+  action            String           @db.VarChar(100)
+  object_type       String           @db.VarChar(80)
+  object_id         String?          @db.VarChar(100)
+  document_id       String?          @db.Uuid
+  access_session_id String?          @db.Uuid
+  outcome           String           @db.VarChar(20)
+  reason_code       String?          @db.VarChar(80)
+  ip_address        String?          @db.Inet
+  user_agent        String?
+  correlation_id    String           @db.Uuid
+  details           Json             @default("{}")
+  previous_hash     String?          @db.Char(64)
+  entry_hash        String           @db.Char(64)
+  chain_partition   String           @default("GLOBAL") @db.VarChar(80)
+  chain_sequence    BigInt
+  hmac_key_version  Int              @default(1)
+  chain_algorithm   String           @default("HMAC-SHA-256") @db.VarChar(20)
+  alert_audit_links AlertAuditLink[]
+  access_sessions   AccessSession?   @relation(fields: [access_session_id], references: [id], onUpdate: NoAction)
+  users             User?            @relation(fields: [actor_user_id], references: [id], onUpdate: NoAction)
+  documents         Document?        @relation(fields: [document_id], references: [id], onUpdate: NoAction)
+
+  @@unique([chain_partition, entry_hash], map: "uq_audit_chain_entry_hash")
+  @@unique([chain_partition, chain_sequence], map: "uq_audit_chain_position")
+  @@index([action, occurred_at(sort: Desc)], map: "idx_audit_action_time")
+  @@index([actor_user_id, occurred_at(sort: Desc)], map: "idx_audit_actor_time")
+  @@index([details], map: "idx_audit_details_gin", type: Gin)
+  @@index([document_id, occurred_at(sort: Desc)], map: "idx_audit_document_time")
+  @@index([outcome, occurred_at(sort: Desc)], map: "idx_audit_outcome_time")
+  @@index([chain_partition, occurred_at(sort: Desc)], map: "idx_audit_partition_time")
+  @@index([occurred_at(sort: Desc)], map: "idx_audit_occurred_at")
+  @@map("audit_logs")
+}
+
+model AuditAnchor {
+  id              BigInt   @id @default(autoincrement())
+  chain_partition String   @db.VarChar(80)
+  anchor_sequence BigInt
+  entry_hash      String   @db.Char(64)
+  anchored_at     DateTime @default(now()) @db.Timestamptz(6)
+  signature       String   @db.VarChar(512)
+  signer_key_id   String   @db.VarChar(80)
+  status          String   @default("VALID") @db.VarChar(20)
+
+  @@index([chain_partition, anchor_sequence(sort: Desc)], map: "idx_audit_anchor_partition")
+  @@map("audit_anchors")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model IncidentAction {
+  id                 BigInt         @id @default(autoincrement())
+  incident_report_id String         @db.Uuid
+  action_type        String         @db.VarChar(80)
+  recommendation     String
+  assigned_to        BigInt?
+  due_at             DateTime?      @db.Timestamptz(6)
+  completed_at       DateTime?      @db.Timestamptz(6)
+  completion_note    String?
+  created_at         DateTime       @default(now()) @db.Timestamptz(6)
+  users              User?          @relation(fields: [assigned_to], references: [id], onUpdate: NoAction)
+  incident_reports   IncidentReport @relation(fields: [incident_report_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("incident_actions")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model IncidentReport {
+  id                                               String           @id @db.Uuid
+  incident_code                                    String           @unique @db.VarChar(50)
+  alert_id                                         String?          @db.Uuid
+  title                                            String           @db.VarChar(255)
+  summary                                          String
+  findings                                         String?
+  impact_assessment                                String?
+  status                                           incident_status  @default(DRAFT)
+  prepared_by                                      BigInt
+  submitted_to_owner                               BigInt?
+  submitted_to_admin                               BigInt?
+  created_at                                       DateTime         @default(now()) @db.Timestamptz(6)
+  submitted_at                                     DateTime?        @db.Timestamptz(6)
+  closed_at                                        DateTime?        @db.Timestamptz(6)
+  incident_actions                                 IncidentAction[]
+  security_alerts                                  SecurityAlert?   @relation(fields: [alert_id], references: [id], onUpdate: NoAction)
+  users_incident_reports_prepared_byTousers        User             @relation("incident_reports_prepared_byTousers", fields: [prepared_by], references: [id], onUpdate: NoAction)
+  users_incident_reports_submitted_to_adminTousers User?            @relation("incident_reports_submitted_to_adminTousers", fields: [submitted_to_admin], references: [id], onUpdate: NoAction)
+  users_incident_reports_submitted_to_ownerTousers User?            @relation("incident_reports_submitted_to_ownerTousers", fields: [submitted_to_owner], references: [id], onUpdate: NoAction)
+
+  @@map("incident_reports")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model Notification {
+  id                  String              @id @db.Uuid
+  recipient_id        BigInt
+  notification_type   String              @db.VarChar(80)
+  title               String              @db.VarChar(255)
+  body                String
+  related_object_type String?             @db.VarChar(80)
+  related_object_id   String?             @db.VarChar(100)
+  status              notification_status @default(UNREAD)
+  created_at          DateTime            @default(now()) @db.Timestamptz(6)
+  read_at             DateTime?           @db.Timestamptz(6)
+  users               User                @relation(fields: [recipient_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([recipient_id, status, created_at(sort: Desc)], map: "idx_notifications_recipient")
+  @@map("notifications")
+}
+
+model NotificationOutbox {
+  id                String    @id @db.Uuid
+  recipient_id      BigInt
+  channel           String    @db.VarChar(20)
+  notification_type String    @db.VarChar(80)
+  title             String    @db.VarChar(255)
+  body              String
+  payload           Json      @default("{}")
+  deduplication_key String    @unique @db.VarChar(255)
+  status            String    @default("PENDING") @db.VarChar(20)
+  attempt_count     Int       @default(0)
+  max_attempts      Int       @default(5)
+  next_retry_at     DateTime  @default(now()) @db.Timestamptz(6)
+  last_error        String?
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  processed_at      DateTime? @db.Timestamptz(6)
+  users             User      @relation(fields: [recipient_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([status, next_retry_at], map: "idx_outbox_pending")
+  @@index([deduplication_key], map: "idx_outbox_dedup")
+  @@map("notification_outbox")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model SecurityAlert {
+  id                                            String           @id @db.Uuid
+  alert_type                                    String           @db.VarChar(80)
+  severity                                      severity_level
+  status                                        alert_status     @default(OPEN)
+  title                                         String           @db.VarChar(255)
+  description                                   String
+  detected_user_id                              BigInt?
+  document_id                                   String?          @db.Uuid
+  detected_at                                   DateTime         @default(now()) @db.Timestamptz(6)
+  assigned_to                                   BigInt?
+  resolved_at                                   DateTime?        @db.Timestamptz(6)
+  resolution_note                               String?
+  alert_audit_links                             AlertAuditLink[]
+  incident_reports                              IncidentReport[]
+  users_security_alerts_assigned_toTousers      User?            @relation("security_alerts_assigned_toTousers", fields: [assigned_to], references: [id], onUpdate: NoAction)
+  users_security_alerts_detected_user_idTousers User?            @relation("security_alerts_detected_user_idTousers", fields: [detected_user_id], references: [id], onUpdate: NoAction)
+  documents                                     Document?        @relation(fields: [document_id], references: [id], onUpdate: NoAction)
+
+  @@index([status, severity, detected_at(sort: Desc)], map: "idx_alert_status_severity")
+  @@map("security_alerts")
+}
+
+model DetectionRuleConfig {
+  id               BigInt         @id @default(autoincrement())
+  rule_code        String         @unique @db.VarChar(80)
+  name             String         @db.VarChar(180)
+  description      String?
+  is_enabled       Boolean        @default(true)
+  severity         severity_level @default(HIGH)
+  threshold        Int            @default(5)
+  window_minutes   Int            @default(10)
+  cooldown_minutes Int            @default(30)
+  parameters       Json           @default("{}")
+  updated_at       DateTime       @default(now()) @db.Timestamptz(6)
+  updated_by       BigInt?
+  users            User?          @relation(fields: [updated_by], references: [id], onUpdate: NoAction)
+
+  @@map("detection_rule_configs")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model SystemHealthSnapshot {
+  id                  BigInt   @id @default(autoincrement())
+  captured_at         DateTime @default(now()) @db.Timestamptz(6)
+  service_name        String   @db.VarChar(100)
+  status              String   @db.VarChar(20)
+  response_time_ms    Int?
+  storage_used_bytes  BigInt?
+  storage_total_bytes BigInt?
+  error_count         Int      @default(0)
+  details             Json     @default("{}")
+
+  @@map("system_health_snapshots")
+}
+
+model AsyncExportJob {
+  id                String    @id @db.Uuid
+  requester_user_id BigInt
+  export_type       String    @db.VarChar(80)
+  format            String    @db.VarChar(20)
+  status            String    @default("PENDING") @db.VarChar(20)
+  filter_params     Json      @default("{}")
+  file_path         String?   @db.VarChar(500)
+  file_size_bytes   BigInt?
+  sha256_hash       String?   @db.Char(64)
+  mime_type         String?   @db.VarChar(150)
+  row_count         Int       @default(0)
+  error_message     String?
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  completed_at      DateTime? @db.Timestamptz(6)
+  expires_at        DateTime  @db.Timestamptz(6)
+  users             User      @relation(fields: [requester_user_id], references: [id], onUpdate: NoAction)
+
+  @@index([requester_user_id, status], map: "idx_export_jobs_user_status")
+  @@index([expires_at], map: "idx_export_jobs_expires")
+  @@map("async_export_jobs")
+}

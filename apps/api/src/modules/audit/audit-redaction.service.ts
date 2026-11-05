@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
 
+/**
+ * Thuật toán: Quét tuyến tính thay thế mã điều khiển ASCII/C1 (`0..31`, `127..159`) chống Log Injection / CRLF Forging.
+ */
 function stripControlCharacters(input: string, replaceWith = ' '): string {
   let output = '';
   for (let i = 0; i < input.length; i++) {
@@ -140,6 +143,11 @@ export class AuditRedactionService {
     return this.sensitiveKeyPatterns.has(normalized);
   }
 
+  /**
+   * Thuật toán: Duyệt cây theo chiều sâu giới hạn bậc `depth <= 8` che dấu khóa và mẫu chuỗi nhạy cảm (Depth-Bounded DFS Redaction).
+   * Cơ chế hoạt động: Cắt ngắn độ sâu tại mức 8 chống tấn công lồng đối tượng sâu (Deep-Nesting DoS), chuẩn hóa tên khóa
+   * chữ thường bỏ ký tự phân cách để đối chiếu O(1) với `sensitiveKeyPatterns`, và quét biểu thức chính quy lọc JWT/Bearer/Ticket.
+   */
   private scrubValue(val: unknown, depth: number): unknown {
     if (depth > 8) {
       return '[MAX_DEPTH_EXCEEDED]';

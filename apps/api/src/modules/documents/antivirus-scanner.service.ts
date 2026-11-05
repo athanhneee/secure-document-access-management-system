@@ -1,3 +1,8 @@
+/**
+ * Module: Dịch vụ Quét Mã độc Tệp tin qua Giao thức ClamAV TCP Stream (Antivirus Stream Scanner)
+ * Thuật toán: Nhận diện chữ ký kiểm thử EICAR trực tiếp kết hợp truyền luồng nhị phân phân mảnh
+ *   theo giao thức `zINSTREAM` (khung độ dài 4-byte Big-Endian) của ClamAV daemon có kiểm soát timeout.
+ */
 import { Injectable, Logger } from '@nestjs/common';
 import net from 'node:net';
 import { Readable } from 'node:stream';
@@ -26,6 +31,13 @@ export class AntivirusScannerService {
   /**
    * Scans a file buffer or stream with ClamAV over TCP INSTREAM protocol.
    * Also verifies the standard EICAR test signature directly.
+   *
+   * Thuật toán: Quét Mã Độc Hai Tầng Có Chốt Chặn Fail-Closed Trên Production
+   * Mục đích: Phát hiện phần mềm độc hại trên dữ liệu tệp tải lên trước khi cho phép mã hóa và kích hoạt.
+   * Cơ chế hoạt động:
+   *   - Tầng 1: Kiểm tra nhanh chuỗi chữ ký chuẩn EICAR trên vùng nhớ đệm để đảm bảo bắt trúng ngay cả khi chạy cô lập.
+   *   - Tầng 2: Truyền luồng sang ClamAV daemon qua TCP socket; nếu kết nối thất bại trong môi trường `production`
+   *     thì áp dụng chính sách Fail-Closed trả trạng thái `FAILED` (từ chối tệp), đồng thời ghi nhận số liệu Prometheus.
    */
   async scan(source: Buffer | Readable): Promise<AntivirusScanResult> {
     const startTime = Date.now();
@@ -87,6 +99,18 @@ export class AntivirusScannerService {
     return finalResult;
   }
 
+  /**
+   * Thuật toán: Đóng Gói Khung Nhị Phân Giao Thức `zINSTREAM` ClamAV Qua TCP Socket
+   * Mục đích: Truyền nội dung tệp sang tiến trình `clamd` qua mạng nội bộ mà không cần chia sẻ hệ thống tệp chung.
+   * Cơ chế hoạt động:
+   *   - Thiết lập kết nối TCP kèm ngưỡng cắt thời gian chờ `socket.setTimeout(10_000)` chống treo kết nối.
+   *   - Mở đầu phiên bằng lệnh kết thúc ký tự rỗng `zINSTREAM\0`.
+   *   - Phân mảnh dữ liệu (theo lát cắt 32 KiB đối với `Buffer` hoặc duyệt bất đồng bộ `for await` đối với `Readable` stream),
+   *     mỗi mảnh được đóng khung gồm tiền tố 4 byte số nguyên không dấu Big-Endian (`writeUInt32BE(chunk.length, 0)`)
+   *     theo sau bởi mảng byte dữ liệu thô.
+   *   - Kết thúc luồng bằng khung rỗng 4 byte `0x00000000`, thu thập phản hồi từ `clamd` và đảm bảo chỉ chốt kết quả
+   *     một lần duy nhất qua cờ trạng thái `hasFinished`.
+   */
   private scanWithClamAv(
     source: Buffer | Readable,
   ): Promise<{ status: 'CLEAN' | 'INFECTED' | 'FAILED'; virusName?: string }> {
@@ -158,6 +182,13 @@ export class AntivirusScannerService {
     });
   }
 
+  /**
+   * Thuật toán: Phân Tích Phản Hồi Văn Bản Giao Thức ClamAV INSTREAM
+   * Mục đích: Chuyển đổi chuỗi trả về từ `clamd` thành kết quả phân loại chuẩn `CLEAN` | `INFECTED` | `FAILED`.
+   * Cơ chế hoạt động:
+   *   - Loại bỏ các ký tự kết thúc chuỗi `\0`, cắt khoảng trắng dư và đối chiếu hậu tố `OK` hoặc biểu thức
+   *     chính quy `stream: <VirusName> FOUND` để bóc tách định danh mã độc.
+   */
   private parseClamAvResponse(
     response: string,
     resolve: (res: { status: 'CLEAN' | 'INFECTED' | 'FAILED'; virusName?: string }) => void,

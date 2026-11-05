@@ -1,78 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { evaluatePolicy } from '../dist/modules/abac/policy-engine.js';
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function seededRandom(seed) {
-  let state = seed >>> 0;
-  return () => {
-    state = (1664525 * state + 1013904223) >>> 0;
-    return state;
-  };
-}
-
-function randomInput(rand) {
-  return {
-    resourceType: 'DOCUMENT',
-    action: ['DISCOVER', 'VIEW', 'DOWNLOAD', 'SHARE', 'MANAGE'][rand() % 5],
-    subject: {
-      clearanceRank: rand() % 2 === 0 ? null : (rand() % 5) + 1,
-      departmentId: String(rand() % 50),
-      employmentStatus: ['ACTIVE', 'LOCKED', 'DISABLED', 'PENDING'][rand() % 4],
-      projects: rand() % 3 === 0 ? [] : [`PRJ_${rand() % 10}`],
-    },
-    resource: {
-      classificationRank: rand() % 2 === 0 ? null : (rand() % 5) + 1,
-      ownerId: String(rand() % 100),
-      departmentId: String(rand() % 50),
-      category: ['SECURITY', 'FINANCE', 'HR', 'GENERAL'][rand() % 4],
-      status: ['ACTIVE', 'DRAFT', 'ARCHIVED', 'DELETED'][rand() % 4],
-    },
-    environment: {
-      currentTime: new Date(2026, 0, 1 + (rand() % 365), rand() % 24, rand() % 60).toISOString(),
-      ip: `${rand() % 256}.${rand() % 256}.${rand() % 256}.${rand() % 256}`,
-      trustedNetwork: rand() % 2 === 0,
-      deviceTrust: rand() % 2 === 0,
-      mfa: rand() % 2 === 0,
-      riskScore: rand() % 101,
-    },
-  };
-}
+import { policy, randomInput, rule, seededRandom } from './helpers/abac-test-fixtures.mjs';
 
 function makeRule(id, conditions, overrides = {}) {
-  return {
-    id: String(id),
-    code: `RULE_${id}`,
-    effect: 'PERMIT',
-    priority: 100,
-    targetResource: 'DOCUMENT',
-    targetAction: null,
-    combiningAlgorithm: 'DENY_OVERRIDES',
-    validFrom: '2020-01-01T00:00:00.000Z',
-    validTo: null,
-    groups: [
-      {
-        id: 1,
-        conditions: conditions.map((c, i) => ({ id: `${id}-${i}`, ...c })),
-      },
-    ],
-    obligations: [],
-    ...overrides,
-  };
+  return rule(id, conditions, { targetAction: null, ...overrides });
 }
 
 function makePolicy(rules) {
-  return {
-    version: '1',
-    requiredAttributes: ['resource.classificationRank', 'subject.clearanceRank'],
-    rules,
-  };
+  return policy(rules, '1');
 }
 
 const ITERATIONS = 500;
-
-// ── Property 1: Idempotency ─────────────────────────────────────────────────
 
 test('PROPERTY: same input and policy always produce identical output (500 iterations)', () => {
   const rand = seededRandom(0xdeadbeef);
@@ -97,8 +36,6 @@ test('PROPERTY: same input and policy always produce identical output (500 itera
   }
 });
 
-// ── Property 2: DENY dominance ──────────────────────────────────────────────
-
 test('PROPERTY: any policy with a matching DENY rule always yields DENY decision', () => {
   const rand = seededRandom(0xcafebabe);
   const alwaysMatchDeny = makeRule(
@@ -112,7 +49,6 @@ test('PROPERTY: any policy with a matching DENY rule always yields DENY decision
 
   for (let i = 0; i < ITERATIONS; i += 1) {
     const input = randomInput(rand);
-    // Force non-null clearance >= classification so we don't get pre-empted by clearance check
     input.subject.clearanceRank = 5;
     input.resource.classificationRank = 1;
     const pol = makePolicy([alwaysPermit, alwaysMatchDeny]);
@@ -121,8 +57,6 @@ test('PROPERTY: any policy with a matching DENY rule always yields DENY decision
     assert.equal(result.reasonCode, 'EXPLICIT_DENY');
   }
 });
-
-// ── Property 3: No code execution from policy data ──────────────────────────
 
 test('PROPERTY: malicious strings in expected values never execute as code', () => {
   const payloads = [
@@ -174,8 +108,6 @@ test('PROPERTY: malicious strings in expected values never execute as code', () 
   delete globalThis.__propertyTestCompromised;
 });
 
-// ── Property 4: Clearance invariant ─────────────────────────────────────────
-
 test('PROPERTY: clearanceRank < classificationRank always denies regardless of policy', () => {
   const rand = seededRandom(0xfeedface);
   const permissiveRule = makeRule(1, [
@@ -184,16 +116,14 @@ test('PROPERTY: clearanceRank < classificationRank always denies regardless of p
 
   for (let i = 0; i < ITERATIONS; i += 1) {
     const input = randomInput(rand);
-    const classRank = (rand() % 4) + 2; // 2-5
+    const classRank = (rand() % 4) + 2;
     input.resource.classificationRank = classRank;
-    input.subject.clearanceRank = classRank - 1; // always lower
+    input.subject.clearanceRank = classRank - 1;
     const result = evaluatePolicy(makePolicy([permissiveRule]), input);
     assert.equal(result.decision, 'DENY', `Clearance invariant violated at iteration ${i}`);
     assert.equal(result.reasonCode, 'INSUFFICIENT_CLEARANCE');
   }
 });
-
-// ── Property 5: Missing required → DENY ─────────────────────────────────────
 
 test('PROPERTY: null clearanceRank always denies as MISSING_REQUIRED_ATTRIBUTE', () => {
   const rand = seededRandom(0xbadf00d);

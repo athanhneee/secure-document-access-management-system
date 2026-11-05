@@ -3,6 +3,11 @@
 -- Enhancements approved by ADR-006 are marked DATABASE-EVOLUTION.
 -- PRISMA-UNREPRESENTABLE: CHECK constraints, partial indexes and triggers in this file
 -- are intentional database guarantees and must not be removed by schema regeneration.
+--
+-- Thuật toán tổng quan migration:
+-- Khởi tạo lược đồ bảo mật cốt lõi kết hợp đa mô hình kiểm soát truy cập (RBAC + ABAC + MAC/Bell-LaPadula + Discretionary Grants),
+-- khóa lạc quan (Optimistic Concurrency Control), chỉ mục duy nhất từng phần (Partial Unique Index), chỉ mục đảo GIN trên JSONB,
+-- và hệ thống trigger PL/pgSQL cưỡng chế toàn vẹn phiên bản tài liệu, thống trị độ mật (Clearance Dominance) và chuỗi băm kiểm toán chỉ ghi nối tiếp (Append-Only Hash Chain).
 
 
 CREATE TYPE user_status AS ENUM ('PENDING', 'ACTIVE', 'LOCKED', 'DISABLED');
@@ -245,6 +250,9 @@ CREATE TABLE document_classification_history (
     CHECK (effective_to IS NULL OR effective_to > effective_from)
 );
 
+-- Thuật toán: Chỉ mục duy nhất từng phần cho phân loại mật hiện hành (Single Active Classification Invariant).
+-- Đảm bảo tại mọi thời điểm mỗi tài liệu (`document_id`) chỉ có tối đa một bản ghi phân loại đang hiệu lực (`effective_to IS NULL`),
+-- đồng thời vẫn lưu giữ đầy đủ lịch sử tái phân loại có đóng dấu thời gian kết thúc.
 CREATE UNIQUE INDEX uq_document_current_classification
     ON document_classification_history(document_id)
     WHERE effective_to IS NULL;
@@ -496,7 +504,11 @@ CREATE INDEX idx_sessions_user_active ON access_sessions(user_id, status, last_a
 CREATE INDEX idx_audit_actor_time ON audit_logs(actor_user_id, occurred_at DESC);
 CREATE INDEX idx_audit_document_time ON audit_logs(document_id, occurred_at DESC);
 CREATE INDEX idx_audit_action_time ON audit_logs(action, occurred_at DESC);
+-- Thuật toán: Chỉ mục đảo GIN (Generalized Inverted Index) trên cột JSONB `details` của `audit_logs`,
+-- tăng tốc độ truy vấn chứa khóa/giá trị (`@>`, `?`) phục vụ điều tra pháp chứng mà không cần quét tuần tự toàn bảng.
 CREATE INDEX idx_audit_details_gin ON audit_logs USING GIN(details);
+-- Thuật toán: Cặp chỉ mục duy nhất bảo toàn bất biến vị trí mắt xích (`chain_partition, chain_sequence`)
+-- và tính duy nhất mã băm (`chain_partition, entry_hash`) chống chèn rẽ nhánh (fork) trên từng phân vùng chuỗi kiểm toán.
 -- DATABASE-EVOLUTION: positions and HMAC values are unique within a chain partition.
 CREATE UNIQUE INDEX uq_audit_chain_position ON audit_logs(chain_partition, chain_sequence);
 CREATE UNIQUE INDEX uq_audit_chain_entry_hash ON audit_logs(chain_partition, entry_hash);
@@ -505,6 +517,10 @@ CREATE INDEX idx_notifications_recipient ON notifications(recipient_id, status, 
 
 -- PRISMA-UNREPRESENTABLE: updated_at, cross-row ownership/clearance, audit continuity
 -- and append-only enforcement require PostgreSQL trigger functions.
+--
+-- Thuật toán: Tự động đóng dấu thời gian cập nhật (`set_updated_at`).
+-- Đầu vào/Đầu ra: Trigger `BEFORE UPDATE` mức dòng gán `NEW.updated_at := now()` theo đồng hồ giao dịch PostgreSQL,
+-- bảo đảm dấu vết thời gian sửa đổi không phụ thuộc đồng hồ phía ứng dụng.
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
 BEGIN
   NEW.updated_at := now();
@@ -530,6 +546,9 @@ CREATE TRIGGER trg_watermark_configs_updated BEFORE UPDATE ON watermark_configs
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- Bao dam current_version_id thuoc dung document.
+-- Thuật toán: Kiểm tra bất biến tham chiếu chéo quyền sở hữu phiên bản hiện hành (`validate_current_document_version`).
+-- Đầu vào/Đầu ra: Khi thêm mới hoặc đổi `current_version_id` trên bảng `documents`, xác minh tồn tại dòng trong `document_versions`
+-- có đồng thời `v.id = NEW.current_version_id` và `v.document_id = NEW.id`; ném ngoại lệ chặn trỏ chéo phiên bản sang tài liệu khác.
 CREATE OR REPLACE FUNCTION validate_current_document_version() RETURNS trigger AS $$
 BEGIN
   IF NEW.current_version_id IS NOT NULL AND NOT EXISTS (
@@ -548,6 +567,10 @@ FOR EACH ROW EXECUTE FUNCTION validate_current_document_version();
 
 -- Ngan cap quyen VIEW/DOWNLOAD khi clearance hien tai thap hon muc mat.
 -- Gia dinh attribute definition CLEARANCE_LEVEL dung option.numeric_rank.
+-- Thuật toán: Kiểm soát truy cập bắt buộc theo mô hình Bell-LaPadula Simple Security / Clearance Dominance (`validate_user_clearance_for_grant`).
+-- Cơ chế: Khi kích hoạt quyền trực tiếp cho người dùng (`principal_type = 'USER'`, `status = 'ACTIVE'`), truy vấn bậc thẩm tra an ninh cao nhất
+-- đang còn hiệu lực thời gian của người dùng (`CLEARANCE_LEVEL` -> `user_rank`) và đối chiếu với bậc phân loại mật hiện hành của tài liệu (`document_rank`).
+-- Bất biến bảo mật: Từ chối giao dịch ngay tại tầng CSDL nếu thiếu nhãn độ mật hoặc `user_rank < document_rank` (No Read Up).
 CREATE OR REPLACE FUNCTION validate_user_clearance_for_grant() RETURNS trigger AS $$
 DECLARE
   user_rank INTEGER;
@@ -585,6 +608,11 @@ FOR EACH ROW EXECUTE FUNCTION validate_user_clearance_for_grant();
 
 -- DATABASE-EVOLUTION: verify link continuity without storing or computing the HMAC key in PostgreSQL.
 -- The trusted writer computes entry_hash = HMAC-SHA-256(canonical event + previous_hash) outside the database.
+-- Thuật toán: Tuần tự hóa phân vùng và xác minh tính liên tục mắt xích chuỗi băm kiểm toán (`validate_audit_chain_link`).
+-- Cơ chế:
+-- 1. Xin khóa tư vấn mức giao dịch `pg_advisory_xact_lock(hashtextextended(NEW.chain_partition, 0))` để tuần tự hóa tuyệt đối các luồng ghi cùng phân vùng.
+-- 2. Nếu `chain_sequence = 1`, xác minh phân vùng chưa từng có bản ghi khởi nguyên (chống tái khởi tạo đè gốc chuỗi).
+-- 3. Nếu `chain_sequence > 1`, tra cứu `entry_hash` của mắt xích liền kề `chain_sequence - 1` và cưỡng chế khớp chính xác với `NEW.previous_hash`.
 CREATE OR REPLACE FUNCTION validate_audit_chain_link() RETURNS trigger AS $$
 DECLARE
   expected_previous_hash CHAR(64);
@@ -615,6 +643,8 @@ BEFORE INSERT ON audit_logs
 FOR EACH ROW EXECUTE FUNCTION validate_audit_chain_link();
 
 -- Audit log la append-only: khong cho sua/xoa bang vai tro ung dung.
+-- Thuật toán: Cưỡng chế sổ cái kiểm toán bất biến chỉ ghi nối tiếp (`prevent_audit_mutation` - Append-Only WORM Invariant).
+-- Chặn vô điều kiện mọi câu lệnh `UPDATE` hoặc `DELETE` trên bảng nhật ký kiểm toán bằng ngoại lệ tức thời ở pha `BEFORE`.
 CREATE OR REPLACE FUNCTION prevent_audit_mutation() RETURNS trigger AS $$
 BEGIN
   RAISE EXCEPTION 'audit_logs is append-only';

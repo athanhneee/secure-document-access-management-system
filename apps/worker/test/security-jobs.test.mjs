@@ -194,3 +194,36 @@ test('cleanExpiredExportJobs — deletes expired export records from database', 
   assert.equal(result.expiredJobsCleaned, 1);
   assert.equal(jobs.length, 0);
 });
+
+test('loadDetectionRules & runDetectionCycle — share canonical thresholds and actions with API', async () => {
+  const createdAlerts = [];
+  const now = new Date('2026-09-23T09:00:00Z');
+  const mockDb = {
+    detectionRuleConfig: { findMany: async () => [] },
+    auditLog: {
+      findMany: async ({ where }) => {
+        if (Array.isArray(where?.action?.in) && where.action.in.includes('REFRESH_REUSE')) {
+          return [{ id: 501n, actor_user_id: 88n, occurred_at: now }];
+        }
+        return [];
+      },
+    },
+    securityAlert: {
+      findFirst: async () => null,
+      create: async ({ data }) => {
+        createdAlerts.push(data);
+        return data;
+      },
+    },
+    alertAuditLink: {
+      createMany: async ({ data }) => ({ count: data.length }),
+    },
+    $transaction: async (fn) => fn(mockDb),
+  };
+
+  const result = await runDetectionCycle({ databaseClient: mockDb, now });
+  assert.equal(result.rulesEvaluated, 6);
+  assert.equal(result.alertsCreated, 1);
+  assert.equal(createdAlerts[0].alert_type, 'REFRESH_TOKEN_REUSE');
+  assert.equal(createdAlerts[0].severity, 'HIGH');
+});

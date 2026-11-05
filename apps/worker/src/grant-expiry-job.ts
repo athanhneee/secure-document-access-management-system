@@ -1,59 +1,19 @@
 import { getDatabaseClient } from '@sda/database';
+import { buildAuditKeyRing, canonicalizeJson } from '@sda/contracts';
 import { createHmac, randomUUID } from 'node:crypto';
 
 /**
- * Grant Expiry Job
+ * Grant Expiry Job (D-BR15 Defense-in-Depth)
  *
- * Scans for ACTIVE access_grants past valid_until and transitions them to EXPIRED.
- * Also terminates related ACTIVE access_sessions.
- *
- * D-BR15: Worker hết hạn grant theo lịch, nhưng mỗi request truy cập vẫn tự kiểm tra
- * thời gian để không phụ thuộc worker. Worker là defense-in-depth.
- *
- * Runs on a configurable interval (GRANT_EXPIRY_INTERVAL_MS, default 60s).
- * Each run processes up to BATCH_SIZE grants with FOR UPDATE SKIP LOCKED
- * to support concurrent worker instances.
+ * Algorithm / Thuật toán tổng quan module:
+ * - Định kỳ quét bảng `access_grants` để thu hồi tự động theo lô (`BATCH_SIZE = 100`) các quyền truy cập hết hạn
+ *   (`status = 'ACTIVE'` và `valid_until <= now`) kết hợp khóa hàng `FOR UPDATE SKIP LOCKED`.
+ * - Chấm dứt dây chuyền phiên truy cập đang mở (`access_sessions`), xin khóa tư vấn giao dịch `pg_advisory_xact_lock`,
+ *   chuẩn hóa JSON tất định RFC 8785 (`canonicalizeJson` từ `@sda/contracts`) và nối chuỗi băm kiểm toán mật mã
+ *   HMAC-SHA256 theo phiên bản khóa đang kích hoạt trong `AuditKeyRing`.
  */
 
 const BATCH_SIZE = 100;
-
-function canonicalizeJson(value: unknown): string {
-  if (value === null) return 'null';
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return 'null';
-    return JSON.stringify(value);
-  }
-  if (typeof value === 'bigint') return JSON.stringify(value.toString());
-  if (typeof value === 'string') return JSON.stringify(value);
-  if (value instanceof Date) return JSON.stringify(value.toISOString());
-  if (Array.isArray(value)) {
-    const serialized = value.map((el) => {
-      if (typeof el === 'undefined' || typeof el === 'symbol' || typeof el === 'function') {
-        return 'null';
-      }
-      return canonicalizeJson(el);
-    });
-    return `[${serialized.join(',')}]`;
-  }
-  if (typeof value === 'object') {
-    if (typeof (value as { toJSON?: () => unknown }).toJSON === 'function') {
-      return canonicalizeJson((value as { toJSON: () => unknown }).toJSON());
-    }
-    const obj = value as Record<string, unknown>;
-    const sortedKeys = Object.keys(obj).sort();
-    const parts: string[] = [];
-    for (const key of sortedKeys) {
-      const val = obj[key];
-      if (typeof val === 'undefined' || typeof val === 'symbol' || typeof val === 'function') {
-        continue;
-      }
-      parts.push(`${JSON.stringify(key)}:${canonicalizeJson(val)}`);
-    }
-    return `{${parts.join(',')}}`;
-  }
-  return 'null';
-}
 
 interface ExpiredGrantRow {
   id: string;
@@ -71,14 +31,20 @@ interface AuditChainRow {
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 type TransactionClient = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
 
-export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
+/**
+ * Algorithm / Thuật toán: Thu hồi theo lô quyền truy cập hết hạn và ghi nhật ký chuỗi băm kiểm toán nguyên tử.
+ */
+export async function runGrantExpiryBatch(
+  hmacKey: string,
+  keyRotationJson?: string,
+): Promise<number> {
   const database = getDatabaseClient();
+  const keyRing = buildAuditKeyRing(hmacKey, keyRotationJson);
   const now = new Date();
   let expiredCount = 0;
 
   await database.$transaction(
     async (tx: TransactionClient) => {
-      // Select grants to expire with row locking, skip already-locked rows
       const expiring = await tx.$queryRawUnsafe<ExpiredGrantRow[]>(
         `SELECT id, document_id, principal_user_id, principal_role_id, principal_type
          FROM access_grants
@@ -92,29 +58,20 @@ export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
       if (expiring.length === 0) return;
 
       const ids = expiring.map((r: ExpiredGrantRow) => r.id);
-
-      // Batch update grants to EXPIRED
       const result = await tx.accessGrant.updateMany({
         where: { id: { in: ids } },
         data: { status: 'EXPIRED' },
       });
       expiredCount = result.count;
 
-      // Terminate related active sessions
       const activeSessions = await tx.accessSession.findMany({
-        where: {
-          access_grant_id: { in: ids },
-          status: 'ACTIVE',
-        },
+        where: { access_grant_id: { in: ids }, status: 'ACTIVE' },
         select: { id: true, user_id: true, access_grant_id: true },
       });
 
       if (activeSessions.length > 0) {
         await tx.accessSession.updateMany({
-          where: {
-            access_grant_id: { in: ids },
-            status: 'ACTIVE',
-          },
+          where: { access_grant_id: { in: ids }, status: 'ACTIVE' },
           data: {
             status: 'TERMINATED',
             ended_at: now,
@@ -123,7 +80,6 @@ export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
         });
       }
 
-      // Record audit for each expired grant
       for (const grant of expiring) {
         const partition = 'ACCESS_GRANT';
         await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', partition);
@@ -150,7 +106,7 @@ export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
           batchExpiry: true,
         };
 
-        const canonicalPayload = {
+        const canonical = canonicalizeJson({
           action: 'GRANT_EXPIRED',
           actorUserId: null,
           actorUsername: 'SYSTEM_WORKER',
@@ -169,10 +125,11 @@ export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
           previousHash,
           reasonCode: 'GRANT_VALIDITY_EXPIRED',
           userAgent: null,
-        };
+        });
 
-        const canonical = canonicalizeJson(canonicalPayload);
-        const entryHash = createHmac('sha256', hmacKey).update(canonical, 'utf8').digest('hex');
+        const entryHash = createHmac('sha256', keyRing.activeKey)
+          .update(canonical, 'utf8')
+          .digest('hex');
 
         await tx.auditLog.create({
           data: {
@@ -194,7 +151,7 @@ export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
             entry_hash: entryHash,
             chain_partition: partition,
             chain_sequence: sequence,
-            hmac_key_version: 1,
+            hmac_key_version: keyRing.activeVersion,
             chain_algorithm: 'HMAC-SHA-256',
           },
         });
@@ -207,19 +164,20 @@ export async function runGrantExpiryBatch(hmacKey: string): Promise<number> {
 }
 
 /**
- * Start the grant expiry job loop. Runs until the AbortSignal fires.
+ * Algorithm / Thuật toán: Điều phối vòng lặp định thời chống chồng lấn chu kỳ (Non-Overlapping Interval Scheduler).
  */
 export function startGrantExpiryJob(
   intervalMs: number,
   hmacKey: string,
   signal: AbortSignal,
+  keyRotationJson?: string,
 ): void {
   let isRunning = false;
   const tick = async (): Promise<void> => {
     if (isRunning || signal.aborted) return;
     isRunning = true;
     try {
-      const count = await runGrantExpiryBatch(hmacKey);
+      const count = await runGrantExpiryBatch(hmacKey, keyRotationJson);
       if (count > 0) {
         console.info(`Grant expiry worker: expired ${count} grants.`);
       }

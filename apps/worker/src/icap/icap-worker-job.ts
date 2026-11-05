@@ -1,14 +1,48 @@
-import { IcapServer } from './icap-server.js';
+import { IcapServer, persistNetworkDlpSecurityAlert } from './icap-server.js';
 import type { IcapServerConfig } from './icap.types.js';
-import { getDatabaseClient } from '@sda/database';
-import { randomUUID } from 'node:crypto';
 
+/**
+ * Thuật toán / Tổng quan module:
+ * Trình khởi tạo và gắn kết dịch vụ nền máy chủ RFC 3507 ICAP Network DLP vào tiến trình Worker trung tâm,
+ * chuẩn hóa cấu hình hành động chính sách theo nguyên lý Fail-Closed và chuyển đổi mọi sự kiện vi phạm DLP
+ * (cả `BLOCK` lẫn `AUDIT_ONLY`) thành cảnh báo an ninh SOC (`security_alerts`) chịu lỗi cô lập.
+ */
+
+/**
+ * Giải thuật chuẩn hóa chế độ xử lý vi phạm ICAP DLP (`ICAP_DLP_ACTION`):
+ * - Chấp nhận `BLOCK` (chặn luồng mạng HTTP 403) và `AUDIT_ONLY` (cho qua HTTP 204 nhưng ghi nhận cảnh báo SOC).
+ * - Tương thích ngược với bí danh `MONITOR` -> ánh xạ sang `AUDIT_ONLY` kèm cảnh báo cấu hình để tránh chặn ngầm ngoài ý muốn.
+ * - Mọi giá trị không xác định sẽ ghi cảnh báo và áp dụng cơ chế Fail-Closed (`BLOCK`).
+ */
+export function resolveIcapDlpAction(rawAction: string | undefined): 'BLOCK' | 'AUDIT_ONLY' {
+  const normalized = rawAction?.trim().toUpperCase();
+  if (!normalized || normalized === 'BLOCK') {
+    return 'BLOCK';
+  }
+  if (normalized === 'AUDIT_ONLY') {
+    return 'AUDIT_ONLY';
+  }
+  if (normalized === 'MONITOR') {
+    console.warn(
+      '[ICAP DLP] ICAP_DLP_ACTION="MONITOR" is deprecated; mapping to "AUDIT_ONLY" mode.',
+    );
+    return 'AUDIT_ONLY';
+  }
+  console.warn(
+    `[ICAP DLP] Unknown ICAP_DLP_ACTION="${rawAction}"; failing closed to "BLOCK" mode.`,
+  );
+  return 'BLOCK';
+}
+
+/**
+ * Thuật toán: Khởi tạo máy chủ ICAP từ tham số/biến môi trường, gắn đường ống lưu cảnh báo `NETWORK_DLP_VIOLATION`
+ * cho cả hai chế độ `BLOCK` và `AUDIT_ONLY`, và nối kết tín hiệu `AbortSignal` để đóng máy chủ sạch khi tiến trình dừng.
+ */
 export function startIcapServerJob(options?: IcapServerConfig, signal?: AbortSignal): IcapServer {
   const enabled = options?.enabled ?? process.env['ICAP_SERVER_ENABLED'] !== 'false';
   const port = options?.port ?? Number(process.env['ICAP_SERVER_PORT'] ?? '1344');
   const host = options?.host ?? process.env['ICAP_SERVER_HOST'] ?? '127.0.0.1';
-  const action =
-    options?.action ?? (process.env['ICAP_DLP_ACTION'] === 'AUDIT_ONLY' ? 'AUDIT_ONLY' : 'BLOCK');
+  const action = options?.action ?? resolveIcapDlpAction(process.env['ICAP_DLP_ACTION']);
   const customKeywords =
     options?.customKeywords ??
     (process.env['ICAP_DLP_CUSTOM_KEYWORDS']
@@ -29,34 +63,8 @@ export function startIcapServerJob(options?: IcapServerConfig, signal?: AbortSig
     customKeywords,
   });
 
-  // Connect violation alerts to database if available
   server.onViolation(async (scanResult, request) => {
-    try {
-      const db = getDatabaseClient();
-      const highestSeverity = scanResult.violations.some((v) => v.severity === 'CRITICAL')
-        ? 'CRITICAL'
-        : 'HIGH';
-
-      const alertId = randomUUID();
-      const safeUri = request.uri.replace(/\p{Cc}/gu, '').slice(0, 200);
-      const violationSummary = scanResult.violations.map((v) => `[${v.type}] ${v.rule}`).join('; ');
-
-      await db.securityAlert.create({
-        data: {
-          id: alertId,
-          alert_type: 'NETWORK_DLP_VIOLATION',
-          title: `[Network DLP] Phát hiện rò rỉ dữ liệu qua Gateway: ${scanResult.violations[0]?.type ?? 'UNKNOWN'}`,
-          description: `Giao thức ICAP phát hiện vi phạm chính sách phòng chống thất thoát dữ liệu (${request.method} ${safeUri}): ${violationSummary}. Chi tiết vi phạm: ${scanResult.violations.map((v) => `${v.rule} (${v.matchedSnippet})`).join(', ')}`,
-          severity: highestSeverity,
-          status: 'OPEN',
-        },
-      });
-
-      console.info(`[ICAP DLP] Created SecurityAlert [${alertId}] for network violation.`);
-    } catch (err) {
-      // Don't fail the ICAP stream if database logging has a glitch
-      console.warn('[ICAP DLP] Could not record alert in database:', (err as Error).message);
-    }
+    await persistNetworkDlpSecurityAlert(scanResult, request);
   });
 
   if (enabled) {

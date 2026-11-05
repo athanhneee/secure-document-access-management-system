@@ -3,6 +3,11 @@ import { Redis } from 'ioredis';
 import { AppConfigService } from '../../config/config.service.js';
 import type { CompiledPolicy } from './abac.types.js';
 
+/**
+ * Thuật toán: Bộ nhớ đệm chính sách bất biến định danh theo phiên bản (Version-Addressed Fail-Open Redis Cache).
+ * Cơ chế hoạt động: Lưu trữ AST chính sách đã biên dịch dưới khóa `sda:abac:compiled:<version>` kèm kiểm tra
+ * đối xứng phiên bản khi đọc. Nếu Redis mất kết nối, tự động bỏ qua lỗi để tầng trên biên dịch trực tiếp từ PostgreSQL.
+ */
 @Injectable()
 export class PolicyCache implements OnModuleDestroy {
   private readonly redis: Redis;

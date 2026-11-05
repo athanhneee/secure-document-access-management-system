@@ -1,3 +1,6 @@
+/**
+ * Module: ReportsController — Giao diện HTTP khởi tạo, tra cứu tiến độ và tải xuống báo cáo tuân thủ bất đồng bộ kèm tiêu đề cấm lưu đệm (`Cache-Control: no-store`).
+ */
 import {
   Controller,
   Get,
@@ -10,12 +13,14 @@ import {
   UnauthorizedException,
   BadRequestException,
   Header,
+  Optional,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { CreateExportJobSchema } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
-import { RequirePermission } from '../rbac/require-permission.js';
+import { AuthorizationService } from '../rbac/authorization.service.js';
+import { resolveExportAuthorizationScope } from './export-filter-scope.helper.js';
 import { ExportJobService } from './export-job.service.js';
 
 @ApiTags('reports')
@@ -25,10 +30,10 @@ export class ReportsController {
   constructor(
     private readonly exportJobService: ExportJobService,
     private readonly csrf: CsrfService,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {}
 
   @Post('export')
-  @RequirePermission('AUDIT_LOG', 'EXPORT')
   @ApiOperation({ summary: 'Initiate an asynchronous report export job with 24h TTL' })
   @ApiResponse({ status: HttpStatus.ACCEPTED, description: 'Export job initiated' })
   async createExportJob(@Body() body: unknown, @Req() req: FastifyRequest) {
@@ -36,11 +41,11 @@ export class ReportsController {
     if (!req.auth) throw new UnauthorizedException('Authentication required.');
     const parsed = CreateExportJobSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    await resolveExportAuthorizationScope(this.authorization, req.auth, parsed.data.exportType);
     return this.exportJobService.createExportJob(parsed.data, req.auth, req.correlationId);
   }
 
   @Get('export/:jobId')
-  @RequirePermission('AUDIT_LOG', 'EXPORT')
   @ApiOperation({ summary: 'Check status and metadata of an export job' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Export job details' })
   async getExportJob(@Param('jobId') jobId: string, @Req() req: FastifyRequest) {
@@ -49,7 +54,6 @@ export class ReportsController {
   }
 
   @Get('export/:jobId/download')
-  @RequirePermission('AUDIT_LOG', 'EXPORT')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
   @Header('Pragma', 'no-cache')
   @ApiOperation({ summary: 'Download completed export report file' })

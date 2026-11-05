@@ -59,7 +59,12 @@ services:
     command:
       - /bin/sh
       - -ec
-      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$${REDIS_PASSWORD}"
+      - |
+        umask 077
+        printf 'appendonly yes\nappendfsync everysec\nrequirepass "%s"\n' "$${REDIS_PASSWORD}" > /tmp/redis.conf
+        exec redis-server /tmp/redis.conf
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?Generate .local/dev.env first}
     ports:
@@ -67,7 +72,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: [CMD-SHELL, 'redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -qx PONG']
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -qx PONG']
       interval: 5s
       timeout: 3s
       retries: 20

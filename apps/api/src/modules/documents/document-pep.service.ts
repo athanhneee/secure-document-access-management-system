@@ -1,54 +1,54 @@
+/**
+ * Module: Document Policy Enforcement Point (PEP) Service
+ * Algorithm: Multi-layer zero-trust enforcement pipeline (SoD role guard -> ACTIVE document & CLEAN version ->
+ *   explicit/resolved grant + Bell-LaPadula clearance -> ABAC PDP & obligation gate -> context-bound `AccessSession`),
+ *   plus fail-closed multi-replica session obligation verification.
+ */
 import {
+  BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
-  ForbiddenException,
   NotFoundException,
-  BadRequestException,
   Optional,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
 import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import { AbacService } from '../abac/abac.service.js';
-import { cidrMatch } from '../abac/policy-engine.js';
 import { AppConfigService } from '../../config/config.service.js';
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
 import { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import { verifyAndResolveEffectiveGrant } from './pep-clearance.helper.js';
+import {
+  isRestrictedNonBusinessRole,
+  recordPepDenyAudit,
+  type ActiveSessionPolicy,
+  type PepAccessContext,
+  type PepEvaluationResult,
+} from './pep-context-builder.js';
+import {
+  evaluatePepPolicyAndObligations,
+  finalizePermittedAccessSession,
+} from './pep-obligations.helper.js';
+import {
+  resolveAndEnforceSessionPolicy,
+  type SessionRecordForPolicyCheck,
+} from './session-policy-resolver.helper.js';
+
+export type {
+  ActiveSessionPolicy,
+  PepAccessContext,
+  PepEvaluationResult,
+} from './pep-context-builder.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
-
-export interface PepAccessContext {
-  action: 'VIEW' | 'DOWNLOAD';
-  grantId?: string | undefined;
-  deviceFingerprint?: string | undefined;
-  now?: Date | undefined;
-}
-
-export interface PepEvaluationResult {
-  sessionId: string;
-  documentId: string;
-  documentTitle: string;
-  documentCode: string | null;
-  documentVersionId: bigint;
-  versionNo: number;
-  grantId: string;
-  watermarkRequired: boolean;
-  allowDownload: boolean;
-  classificationRank: number;
-  obligations: string[];
-}
-
-export interface ActiveSessionPolicy {
-  grantedAction: 'VIEW' | 'DOWNLOAD';
-  forbidDownload: boolean;
-  expiresAtMs: number | null;
-}
 
 @Injectable()
 export class DocumentPepService {
   private readonly logger = new Logger(DocumentPepService.name);
   private readonly database: PrismaClient;
+  // shortcut: 10,000 cached session policies (~2 MB) with fail-closed DB/audit rehydration on miss, move to Redis hash for shared L1 cache
   private readonly sessionPolicies = new Map<string, ActiveSessionPolicy>();
 
   constructor(
@@ -70,13 +70,31 @@ export class DocumentPepService {
   }
 
   /**
-   * Policy Enforcement Point (PEP) for controlled document access.
-   *
-   * 1. Evaluates Grant validity, User active state, Clearance, and Classification rules.
-   * 2. Evaluates PDP (ABAC) policies.
-   * 3. Enforces Obligations (FORBID_DOWNLOAD, REQUIRE_WATERMARK).
-   * 4. When PERMIT, atomically creates an AccessSession tied to the grant, user, and current version.
-   * 5. Emits tamper-resistant audit log.
+   * Algorithm: Fail-Closed Active Session Obligation Enforcement
+   * Validates in-memory or re-hydrated ABAC session duration (`MAX_SESSION_MINUTES`) and `FORBID_DOWNLOAD` obligations.
+   */
+  async enforceSessionPolicy(
+    session: SessionRecordForPolicyCheck,
+    requiredAction: 'VIEW' | 'DOWNLOAD',
+    principal: AuthPrincipal,
+    context: RequestContext,
+    now = new Date(),
+  ): Promise<ActiveSessionPolicy> {
+    return resolveAndEnforceSessionPolicy({
+      session,
+      requiredAction,
+      principal,
+      context,
+      now,
+      sessionPolicies: this.sessionPolicies,
+      database: this.database,
+      abac: this.abac,
+      config: this.config,
+    });
+  }
+
+  /**
+   * Algorithm: Multi-Layer Zero-Trust PEP Enforcement Pipeline
    */
   async enforceAccess(
     documentId: string,
@@ -86,21 +104,23 @@ export class DocumentPepService {
   ): Promise<PepEvaluationResult> {
     const now = pepContext.now ?? new Date();
     const action = pepContext.action;
-
-    const roles = principal.roles ?? [];
-    const hasRestrictedRole = roles.includes('SYSTEM_ADMIN') || roles.includes('AUDITOR');
-    const hasBusinessRole =
-      roles.includes('DOCUMENT_OWNER') ||
-      roles.includes('DOCUMENT_READER') ||
-      roles.includes('DEPARTMENT_ADMIN');
-    if (hasRestrictedRole && !hasBusinessRole) {
-      await this.recordDenyAudit(
+    const deny = (grantId: string | null, reasonCode: string, reasonMessage: string) =>
+      recordPepDenyAudit({
+        audit: this.audit,
+        logger: this.logger,
         documentId,
+        grantId,
+        reasonCode,
+        reasonMessage,
+        principal,
+        context,
+      });
+
+    if (isRestrictedNonBusinessRole(principal.roles ?? [])) {
+      await deny(
         pepContext.grantId ?? null,
         AppErrorCode.DOCUMENT_ACCESS_DENIED,
         'Separation of duties: technical admin and auditor roles cannot access document content.',
-        principal,
-        context,
       );
       throw new ForbiddenException({
         errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
@@ -108,7 +128,6 @@ export class DocumentPepService {
       });
     }
 
-    // 1. Load document with classification and current version
     const document = await this.database.document.findUnique({
       where: { id: documentId },
       include: {
@@ -119,23 +138,14 @@ export class DocumentPepService {
         current_version: true,
       },
     });
-
     if (!document) {
       throw new NotFoundException({
         errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
         message: 'Document was not found.',
       });
     }
-
     if (document.status !== 'ACTIVE') {
-      await this.recordDenyAudit(
-        documentId,
-        null,
-        AppErrorCode.DOCUMENT_ACCESS_DENIED,
-        'Document is not in ACTIVE state.',
-        principal,
-        context,
-      );
+      await deny(null, AppErrorCode.DOCUMENT_ACCESS_DENIED, 'Document is not in ACTIVE state.');
       throw new ForbiddenException({
         errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
         message: `Cannot access document in ${document.status} status.`,
@@ -157,222 +167,56 @@ export class DocumentPepService {
     const classRequireWatermark =
       currentClassification?.classification_levels?.require_watermark ?? true;
 
-    // 2. Validate Access Grant: either explicit grantId or find active grant for user/roles
-    let effectiveGrantId: string | null = pepContext.grantId ?? null;
+    const effectiveGrantId = await verifyAndResolveEffectiveGrant({
+      database: this.database,
+      grantsService: this.grantsService,
+      documentId,
+      requestedGrantId: pepContext.grantId,
+      userId: principal.userId,
+      action,
+      now,
+      documentRank,
+      isOwner: document.owner_id === principal.userId,
+      classAllowDownload,
+      deny,
+    });
 
-    if (effectiveGrantId) {
-      // Validate provided grant and bind to requested documentId (anti-BOLA)
-      const validated = await this.grantsService.assertGrantValidForAccess(
-        effectiveGrantId,
-        principal.userId,
-        action,
-        now,
-        documentId,
-      );
-      if (validated && validated.grant.document_id !== documentId) {
-        await this.recordDenyAudit(
-          documentId,
-          effectiveGrantId,
-          AppErrorCode.DOCUMENT_ACCESS_DENIED,
-          'Provided grantId belongs to a different document.',
-          principal,
-          context,
-        );
-        throw new ForbiddenException({
-          errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
-          message: 'Access grant does not belong to the requested document.',
-        });
-      }
-    } else {
-      // Find eligible grant for user or user's active roles
-      effectiveGrantId = await this.resolveEligibleGrant(
-        documentId,
-        principal.userId,
-        action,
-        now,
-        documentRank,
-        document.owner_id === principal.userId,
-        classAllowDownload,
-      );
-      if (!effectiveGrantId) {
-        await this.recordDenyAudit(
-          documentId,
-          null,
-          AppErrorCode.DOCUMENT_ACCESS_DENIED,
-          'No valid active grant found for this user and action.',
-          principal,
-          context,
-        );
-        throw new ForbiddenException({
-          errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
-          message: `No active grant found providing ${action} permission for this document.`,
-        });
-      }
-    }
-
-    // 3. Check Classification Download Policy
-    if (action === 'DOWNLOAD' && !classAllowDownload) {
-      await this.recordDenyAudit(
-        documentId,
-        effectiveGrantId,
-        AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
-        'Classification level forbids download.',
-        principal,
-        context,
-      );
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
-        message: 'This document classification level does not allow downloads.',
-      });
-    }
-
-    // 4. Run PDP (ABAC) Evaluation
-    const subjectAttributes = await this.buildSubjectAttributes(principal.userId, now);
     const categoryCode =
       (currentClassification as { business_categories?: { code?: string } | null } | undefined)
         ?.business_categories?.code ?? null;
-    const resourceAttributes = {
-      classificationRank: documentRank,
-      departmentId: document.department_id?.toString() ?? null,
-      documentStatus: document.status,
-      ownerId: document.owner_id.toString(),
-      category: categoryCode,
-      status: document.status,
-    };
-
-    const rawTrustedCidrs =
-      typeof this.config?.get === 'function'
-        ? this.config.get('ABAC_TRUSTED_NETWORK_CIDRS')
-        : undefined;
-    const trustedNetwork =
-      typeof rawTrustedCidrs === 'string' && rawTrustedCidrs.length > 0
-        ? rawTrustedCidrs
-            .split(',')
-            .map((c) => c.trim())
-            .filter(Boolean)
-            .some((cidr) => cidrMatch(context.ip, cidr))
-        : false;
-
-    const abacResult = await this.abac.evaluate({
-      resourceType: 'DOCUMENT',
+    const policyOutcome = await evaluatePepPolicyAndObligations({
+      database: this.database,
+      abac: this.abac,
+      config: this.config,
       action,
-      subject: subjectAttributes,
-      resource: resourceAttributes,
-      environment: {
-        currentTime: now.toISOString(),
-        ip: context.ip,
-        trustedNetwork,
-        deviceTrust: false,
-        mfa: principal.mfa,
-        riskScore: 0,
-      },
-    });
-
-    if (abacResult.decision === 'DENY') {
-      await this.recordDenyAudit(
-        documentId,
-        effectiveGrantId,
-        AppErrorCode.POLICY_DENIED,
-        abacResult.reasonCode,
-        principal,
-        context,
-      );
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.POLICY_DENIED,
-        message: `Access denied by policy: ${abacResult.reasonCode}`,
-      });
-    }
-
-    // 5. Enforce Obligations
-    const obligations = abacResult.obligations ?? [];
-    if (obligations.some((o) => o.type === 'REQUIRE_MFA') && !principal.mfa) {
-      await this.recordDenyAudit(
-        documentId,
-        effectiveGrantId,
-        AppErrorCode.STEP_UP_MFA_REQUIRED,
-        'Policy obligation requires multi-factor authentication.',
-        principal,
-        context,
-      );
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.STEP_UP_MFA_REQUIRED,
-        message: 'Policy obligation requires multi-factor authentication.',
-      });
-    }
-
-    const forbidDownloadObligation = obligations.some((o) => o.type === 'FORBID_DOWNLOAD');
-    if (action === 'DOWNLOAD' && forbidDownloadObligation) {
-      await this.recordDenyAudit(
-        documentId,
-        effectiveGrantId,
-        AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
-        'Policy obligation forbids download.',
-        principal,
-        context,
-      );
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
-        message: 'Policy obligation forbids downloading this document.',
-      });
-    }
-
-    const watermarkRequired =
-      classRequireWatermark || obligations.some((o) => o.type === 'REQUIRE_WATERMARK');
-
-    const maxSessionObligation = obligations.find(
-      (o): o is Extract<(typeof obligations)[number], { type: 'MAX_SESSION_MINUTES' }> =>
-        o.type === 'MAX_SESSION_MINUTES',
-    );
-    const expiresAtMs =
-      maxSessionObligation && typeof maxSessionObligation.minutes === 'number'
-        ? now.getTime() + maxSessionObligation.minutes * 60_000
-        : null;
-
-    // 6. Create AccessSession when PERMIT
-    const sessionId = randomUUID();
-    await this.database.accessSession.create({
-      data: {
-        id: sessionId,
-        access_grant_id: effectiveGrantId,
-        document_version_id: currentVersion.id,
-        user_id: principal.userId,
-        ip_address: context.ip,
-        user_agent: context.userAgent ?? null,
-        device_fingerprint: pepContext.deviceFingerprint ?? null,
-        status: 'ACTIVE',
-        started_at: now,
-        last_activity_at: now,
-      },
-    });
-
-    if (this.sessionPolicies.size >= 10_000) {
-      const oldestKey = this.sessionPolicies.keys().next().value;
-      if (oldestKey) this.sessionPolicies.delete(oldestKey);
-    }
-    this.sessionPolicies.set(sessionId, {
-      grantedAction: action,
-      forbidDownload: forbidDownloadObligation,
-      expiresAtMs,
-    });
-
-    // 7. Audit log ACCESS_PERMITTED
-    await this.audit.record(
-      {
-        action: 'ACCESS_PERMITTED',
-        outcome: 'SUCCESS',
-        documentId,
-        sessionId,
-        objectId: effectiveGrantId,
-        details: {
-          action,
-          versionNo: currentVersion.version_no,
-          watermarkRequired,
-          obligations: obligations.map((o) => o.type).join(','),
-        },
-      },
+      now,
       principal,
       context,
-    );
+      documentRank,
+      departmentId: document.department_id,
+      documentStatus: document.status,
+      ownerId: document.owner_id,
+      categoryCode,
+      classRequireWatermark,
+      effectiveGrantId,
+      deny,
+    });
+
+    const sessionId = await finalizePermittedAccessSession({
+      database: this.database,
+      audit: this.audit,
+      sessionPolicies: this.sessionPolicies,
+      documentId,
+      effectiveGrantId,
+      documentVersionId: currentVersion.id,
+      versionNo: currentVersion.version_no,
+      action,
+      deviceFingerprint: pepContext.deviceFingerprint,
+      now,
+      principal,
+      context,
+      policyOutcome,
+    });
 
     return {
       sessionId,
@@ -382,243 +226,10 @@ export class DocumentPepService {
       documentVersionId: currentVersion.id,
       versionNo: currentVersion.version_no,
       grantId: effectiveGrantId,
-      watermarkRequired,
-      allowDownload: classAllowDownload && !forbidDownloadObligation,
+      watermarkRequired: policyOutcome.watermarkRequired,
+      allowDownload: classAllowDownload && !policyOutcome.forbidDownloadObligation,
       classificationRank: documentRank,
-      obligations: obligations.map((o) => o.type),
+      obligations: policyOutcome.obligationTypes,
     };
-  }
-
-  /**
-   * Find an eligible active grant for user directly or through user's active roles.
-   */
-  private async resolveEligibleGrant(
-    documentId: string,
-    userId: bigint,
-    action: 'VIEW' | 'DOWNLOAD',
-    now: Date,
-    documentRank: number,
-    isOwner = false,
-    classAllowDownload = true,
-  ): Promise<string | null> {
-    // 1. Direct USER grant
-    const directGrant = await this.database.accessGrant.findFirst({
-      where: {
-        document_id: documentId,
-        principal_type: 'USER',
-        principal_user_id: userId,
-        status: 'ACTIVE',
-        valid_from: { lte: now },
-        valid_until: { gt: now },
-        access_grant_permissions: {
-          some: { permission: action },
-        },
-      },
-      select: { id: true },
-    });
-
-    if (directGrant) {
-      // Check clearance
-      const hasClearance = await this.checkUserClearance(userId, documentRank, now);
-      if (hasClearance) return directGrant.id;
-    }
-
-    // 2. ROLE grants through user's currently active roles
-    const userRoles = await this.database.userRole.findMany({
-      where: {
-        user_id: userId,
-        valid_from: { lte: now },
-        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-        roles: { is_active: true },
-      },
-      select: { role_id: true },
-    });
-
-    if (userRoles.length > 0) {
-      const roleIds = userRoles.map((r) => r.role_id);
-      const roleGrant = await this.database.accessGrant.findFirst({
-        where: {
-          document_id: documentId,
-          principal_type: 'ROLE',
-          principal_role_id: { in: roleIds },
-          status: 'ACTIVE',
-          valid_from: { lte: now },
-          valid_until: { gt: now },
-          access_grant_permissions: {
-            some: { permission: action },
-          },
-        },
-        select: { id: true },
-      });
-
-      if (roleGrant) {
-        // Even for ROLE grant, verify individual user clearance (D-BR04)
-        const hasClearance = await this.checkUserClearance(userId, documentRank, now);
-        if (hasClearance) return roleGrant.id;
-      }
-    }
-
-    // 3. Document Owner access (UC20 & UC21: Owner can view/download own document with clearance)
-    if (isOwner) {
-      const hasClearance = await this.checkUserClearance(userId, documentRank, now);
-      if (!hasClearance) return null;
-      if (action === 'DOWNLOAD' && !classAllowDownload) return null;
-
-      const existingOwnerGrant = await this.database.accessGrant.findFirst({
-        where: {
-          document_id: documentId,
-          principal_type: 'USER',
-          principal_user_id: userId,
-          status: 'ACTIVE',
-          valid_from: { lte: now },
-          valid_until: { gt: now },
-        },
-        include: { access_grant_permissions: true },
-      });
-
-      if (existingOwnerGrant) {
-        const perms = existingOwnerGrant.access_grant_permissions.map((p) => p.permission);
-        if (!perms.includes(action)) {
-          await this.database.accessGrantPermission.create({
-            data: { access_grant_id: existingOwnerGrant.id, permission: action },
-          });
-        }
-        return existingOwnerGrant.id;
-      }
-
-      const grantId = randomUUID();
-      const validUntil = new Date(now.getTime() + 365 * 86400000);
-      const permissions: ('VIEW' | 'DOWNLOAD')[] = ['VIEW'];
-      if (classAllowDownload) permissions.push('DOWNLOAD');
-
-      await this.database.accessGrant.create({
-        data: {
-          id: grantId,
-          document_id: documentId,
-          principal_type: 'USER',
-          principal_user_id: userId,
-          source: 'DIRECT',
-          status: 'ACTIVE',
-          valid_from: now,
-          valid_until: validUntil,
-          granted_by: userId,
-          access_grant_permissions: {
-            createMany: {
-              data: permissions.map((p) => ({ permission: p })),
-            },
-          },
-        },
-      });
-      return grantId;
-    }
-
-    return null;
-  }
-
-  private async checkUserClearance(
-    userId: bigint,
-    documentRank: number,
-    now: Date,
-  ): Promise<boolean> {
-    const clearance = await this.database.userAttributeAssignment.findFirst({
-      where: {
-        user_id: userId,
-        attribute_definitions: { code: 'CLEARANCE_LEVEL' },
-        valid_from: { lte: now },
-        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-      },
-      include: { attribute_options: true },
-      orderBy: { attribute_options: { numeric_rank: 'desc' } },
-    });
-
-    const rank = clearance?.attribute_options?.numeric_rank ?? 0;
-    return rank >= documentRank;
-  }
-
-  private async buildSubjectAttributes(
-    userId: bigint,
-    now: Date,
-  ): Promise<{
-    clearanceRank: number | null;
-    departmentId: string | null;
-    employmentStatus: string | null;
-    projects: string[];
-  }> {
-    const user = await this.database.user?.findUnique?.({
-      where: { id: userId },
-      select: { department_id: true, status: true },
-    });
-
-    const clearance = await this.database.userAttributeAssignment.findFirst({
-      where: {
-        user_id: userId,
-        attribute_definitions: { code: 'CLEARANCE_LEVEL' },
-        valid_from: { lte: now },
-        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-      },
-      include: { attribute_options: true },
-      orderBy: { attribute_options: { numeric_rank: 'desc' } },
-    });
-
-    let projects: string[] = [];
-    if (typeof this.database?.userAttributeAssignment?.findMany === 'function') {
-      const projectAssignments = await this.database.userAttributeAssignment.findMany({
-        where: {
-          user_id: userId,
-          attribute_definitions: { code: 'PROJECT', is_active: true },
-          valid_from: { lte: now },
-          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-        },
-        include: { attribute_options: true },
-      });
-      projects = projectAssignments
-        .map(
-          (a) =>
-            (
-              a as {
-                attribute_options?: { value_code?: string } | null;
-                value_text?: string | null;
-              }
-            ).attribute_options?.value_code ?? (a as { value_text?: string | null }).value_text,
-        )
-        .filter((v): v is string => typeof v === 'string' && v.length > 0)
-        .sort();
-    }
-
-    return {
-      clearanceRank: clearance?.attribute_options?.numeric_rank ?? null,
-      departmentId: user?.department_id?.toString() ?? null,
-      employmentStatus: user?.status ?? null,
-      projects,
-    };
-  }
-
-  private async recordDenyAudit(
-    documentId: string,
-    grantId: string | null,
-    reasonCode: string,
-    reasonMessage: string,
-    principal: AuthPrincipal,
-    context: RequestContext,
-  ): Promise<void> {
-    try {
-      await this.audit.record(
-        {
-          action: 'ACCESS_DENIED',
-          outcome: 'DENIED',
-          documentId,
-          objectId: grantId,
-          reasonCode,
-          details: { message: reasonMessage },
-        },
-        principal,
-        context,
-      );
-    } catch (auditErr) {
-      this.logger.error(`Failed to record access deny audit: ${auditErr}`);
-      if (process.env['NODE_ENV'] === 'production') {
-        throw auditErr;
-      }
-    }
   }
 }

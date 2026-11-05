@@ -113,13 +113,18 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
       text || (typeof children === 'string' && children.trim() ? children : 'Button');
     const style: VariantStyle = variantStyles[variant] ?? variantStyles.primary;
     const sizeClass = sizeStyles[size] || sizeStyles.md;
-    const iconElement = icon || <ArrowRight size={16} strokeWidth={2} />;
+    const iconElement = icon || <ArrowRight size={16} strokeWidth={2} aria-hidden="true" />;
 
     const innerContent = (
       <>
         {isLoading ? (
           <span className="inline-flex items-center justify-center gap-2">
-            <Loader2 size={16} strokeWidth={2} className="animate-spin text-current" />
+            <Loader2
+              size={16}
+              strokeWidth={2}
+              className="animate-spin text-current"
+              aria-hidden="true"
+            />
             <span>Đang xử lý…</span>
           </span>
         ) : (
@@ -137,7 +142,7 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
     );
 
     const baseClasses = cn(
-      'group ihb-button border text-center shadow-2xs select-none disabled:pointer-events-none disabled:opacity-50',
+      'group ihb-button rounded-full border text-center shadow-2xs select-none disabled:pointer-events-none disabled:opacity-50',
       style.base,
       style.hover,
       style.text,
@@ -155,7 +160,13 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
     }
 
     return (
-      <button ref={ref} disabled={disabled || isLoading} className={baseClasses} {...props}>
+      <button
+        ref={ref}
+        disabled={disabled || isLoading}
+        aria-busy={isLoading || undefined}
+        className={baseClasses}
+        {...props}
+      >
         {innerContent}
       </button>
     );

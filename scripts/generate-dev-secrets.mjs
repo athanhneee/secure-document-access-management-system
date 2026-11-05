@@ -1,3 +1,10 @@
+/**
+ * Thuật toán: Sinh Khóa Mật Mã Ngẫu Nhiên An Toàn CSPRNG & Ghi Tệp Độc Quyền Nguyên Tử (CSPRNG Base64URL Secret Provisioning)
+ * Mục đích: Tự động khởi tạo tệp cấu hình `.local/dev.env` chứa các khóa bí mật có độ hỗn loạn (entropy) cao phục vụ môi trường phát triển cục bộ mà không lưu cứng bí mật trong kho mã nguồn.
+ * Cơ chế hoạt động:
+ *   - Sử dụng nguồn entropy hệ điều hành `crypto.randomBytes` (tuyệt đối không dùng bộ sinh số giả ngẫu nhiên không an toàn về mặt mật mã) kết hợp mã hóa RFC 4648 Base64URL an toàn cho URI (không chứa ký tự `+` hay `/`).
+ *   - Cưỡng chế mở tệp bằng cờ nguyên tử `wx` (tránh ghi đè ngoài ý muốn và chống tranh chấp TOCTOU) cùng quyền truy cập POSIX tối thiểu `0o600` (chỉ chủ sở hữu được đọc/ghi).
+ */
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
@@ -6,10 +13,22 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 export const defaultOutput = path.join(repositoryRoot, '.local', 'dev.env');
 
+/**
+ * Thuật toán: Sinh Chuỗi Ngẫu Nhiên Mật Mã An Toàn Cho URL (CSPRNG Base64URL Token Generator)
+ * Mục đích: Tạo chuỗi bí mật ngẫu nhiên từ số lượng byte entropy chỉ định (mặc định 32 byte = 256 bit) an toàn khi nhúng trực tiếp vào chuỗi kết nối URI.
+ * Cơ chế hoạt động:
+ *   - Đọc `bytes` byte ngẫu nhiên từ nhân hệ điều hành qua `randomBytes` và biểu diễn sang bảng chữ cái Base64URL không dấu đệm (`A-Za-z0-9_-`).
+ */
 function randomSecret(bytes = 32) {
   return randomBytes(bytes).toString('base64url');
 }
 
+/**
+ * Thuật toán: Tổng Hợp Bản Kê Biến Môi Trường Phát Triển Độc Lập Mỗi Lần Sinh (Ephemeral Dev-Environment Builder)
+ * Mục đích: Khởi tạo tách biệt từng thông tin xác thực cho PostgreSQL, Redis, MinIO, Grafana cùng khóa chủ mã hóa phong bì 256-bit và khóa toàn vẹn chuỗi kiểm toán.
+ * Cơ chế hoạt động:
+ *   - Gọi độc lập hàm sinh CSPRNG cho từng dịch vụ hạ tầng và xuất khóa mật mã 32 byte dưới dạng chuỗi thập lục phân (`hex` 64 ký tự) cho các khóa gốc của ứng dụng.
+ */
 export function buildDevelopmentEnvironment() {
   const postgresPassword = randomSecret();
   const redisPassword = randomSecret();
@@ -46,6 +65,12 @@ export function buildDevelopmentEnvironment() {
   ].join('\n');
 }
 
+/**
+ * Thuật toán: Tạo Tệp Bí Mật Nguyên Tử Với Quyền Hạn Hẹp 0o600 (Atomic Exclusive Secret File Writer)
+ * Mục đích: Ghi nội dung biến môi trường xuống đĩa an toàn, bảo vệ tệp khỏi người dùng khác trên cùng máy và tránh vô tình xoay vòng khóa khi chưa có cờ `--force`.
+ * Cơ chế hoạt động:
+ *   - Khởi tạo thư mục cha đệ quy, mở descriptor tệp với cờ `'wx'` (báo lỗi `EEXIST` nguyên tử nếu tệp đã tồn tại, trừ khi `force === true` dùng `'w'`), ghi dữ liệu UTF-8, đóng handle trong khối `finally` và khóa quyền `chmod(0o600)`.
+ */
 export async function generateDevelopmentSecrets({ output = defaultOutput, force = false } = {}) {
   await mkdir(path.dirname(output), { recursive: true });
   const handle = await open(output, force ? 'w' : 'wx', 0o600);

@@ -1,10 +1,16 @@
-import { createHmac, randomUUID } from 'node:crypto';
+/**
+ * @module AuditVerifierService
+ * Algorithm: Cursor-Batched RFC 8785 HMAC-SHA256 Hash-Chain & Checkpoint Anchor Verifier.
+ */
+import { createHmac } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import { AuditWriterService } from './audit-writer.service.js';
 import { canonicalizeJson } from './audit-canonicalizer.js';
 import { safeTimingEqualString } from './audit-chain-helper.js';
+import { fetchPartitionAnchors, verifyPartitionAnchors } from './audit-anchor-verifier.js';
+import { raiseAuditIntegrityAlert } from './audit-alert-escalator.js';
 
 export interface AuditViolation {
   code: string;
@@ -44,22 +50,28 @@ export class AuditVerifierService {
   }
 
   /**
-   * Verifies the cryptographic integrity of an entire partition or range.
+   * Algorithm / Thuật toán: Thẩm định toàn vẹn chuỗi băm phân lô con trỏ & đối chiếu điểm neo chữ ký (Cursor-Batched Hash-Chain & Anchor Verification).
+   * Cơ chế hoạt động:
+   *   1. Duyệt tuần tự theo lô 1.000 bản ghi bằng con trỏ `chain_sequence > cursorSequence` (bộ nhớ lô cố định).
+   *   2. Kiểm tra tính liên tục số thứ tự (`AUDIT_SEQUENCE_GAP`) và liên kết mắt xích `previous_hash === prior.entry_hash` (`AUDIT_CHAIN_BROKEN`).
+   *   3. Tái tạo JSON chuẩn tắc RFC 8785 theo `hmac_key_version`, tính lại `HMAC-SHA256` phát hiện sửa đổi (`AUDIT_LOG_TAMPERED`).
+   *   4. Đối chiếu chéo với bảng điểm neo `audit_anchors` và phát cảnh báo `CRITICAL` nếu phát hiện vi phạm.
    */
   async verifyPartition(
     partition: string,
     options?: { fromSequence?: bigint; toSequence?: bigint },
   ): Promise<PartitionVerificationResult> {
     const violations: AuditViolation[] = [];
-
     const VERIFY_BATCH_SIZE = 1000;
+    // Pre-fetch checkpoint anchors first so we retain ONLY anchored sequences in RAM (O(|anchors|) instead of O(N_logs) OOM).
+    const preloadedAnchors = await fetchPartitionAnchors(this.database, partition, options);
+    const anchorSequences = new Set<bigint>(preloadedAnchors.map((a) => a.anchor_sequence));
     const logHashBySequence = new Map<bigint, { id: bigint; entry_hash: string }>();
     let totalChecked = 0;
 
     let previousHash: string | null = null;
     let expectedSequence: bigint | null = options?.fromSequence ?? null;
 
-    // If starting from a specific sequence > 1, fetch prior entry for hash continuity
     if (options?.fromSequence && options.fromSequence > 1n) {
       const priorLog = await this.database.auditLog.findFirst({
         where: {
@@ -79,9 +91,7 @@ export class AuditVerifierService {
       const batchWhere: {
         chain_partition: string;
         chain_sequence?: { gt?: bigint; gte?: bigint; lte?: bigint };
-      } = {
-        chain_partition: partition,
-      };
+      } = { chain_partition: partition };
       if (cursorSequence !== undefined || options?.toSequence !== undefined) {
         batchWhere.chain_sequence = {};
         if (cursorSequence !== undefined) batchWhere.chain_sequence.gt = cursorSequence;
@@ -90,25 +100,19 @@ export class AuditVerifierService {
 
       const logs = await this.database.auditLog.findMany({
         where: batchWhere,
-        orderBy: {
-          chain_sequence: 'asc',
-        },
+        orderBy: { chain_sequence: 'asc' },
         take: VERIFY_BATCH_SIZE,
       });
 
-      if (logs.length === 0) {
-        break;
-      }
+      if (logs.length === 0) break;
 
-      for (let i = 0; i < logs.length; i++) {
-        const log = logs[i]!;
+      for (const log of logs) {
         totalChecked += 1;
-        logHashBySequence.set(log.chain_sequence, { id: log.id, entry_hash: log.entry_hash });
-
-        // 1. Check sequence gap
-        if (expectedSequence === null) {
-          expectedSequence = log.chain_sequence;
+        if (anchorSequences.has(log.chain_sequence)) {
+          logHashBySequence.set(log.chain_sequence, { id: log.id, entry_hash: log.entry_hash });
         }
+
+        if (expectedSequence === null) expectedSequence = log.chain_sequence;
 
         if (log.chain_sequence !== expectedSequence) {
           violations.push({
@@ -123,7 +127,6 @@ export class AuditVerifierService {
           expectedSequence = log.chain_sequence;
         }
 
-        // 2. Check previous hash continuity
         if (log.chain_sequence === 1n && !options?.fromSequence) {
           if (log.previous_hash !== null) {
             violations.push({
@@ -151,9 +154,8 @@ export class AuditVerifierService {
           });
         }
 
-        // 3. Recalculate HMAC-SHA-256 over canonicalized payload
         const hmacKey = this.writerService.getHmacKey(log.hmac_key_version);
-        const canonicalPayload = {
+        const canonicalString = canonicalizeJson({
           action: log.action,
           actorUserId: log.actor_user_id ? log.actor_user_id.toString() : null,
           actorUsername: log.actor_username,
@@ -172,9 +174,7 @@ export class AuditVerifierService {
           previousHash: log.previous_hash,
           reasonCode: log.reason_code,
           userAgent: log.user_agent,
-        };
-
-        const canonicalString = canonicalizeJson(canonicalPayload);
+        });
         const computedHash = createHmac('sha256', hmacKey)
           .update(canonicalString, 'utf8')
           .digest('hex');
@@ -196,103 +196,40 @@ export class AuditVerifierService {
         cursorSequence = log.chain_sequence;
       }
 
-      if (logs.length < VERIFY_BATCH_SIZE) {
-        break;
-      }
+      if (logs.length < VERIFY_BATCH_SIZE) break;
     }
 
-    // 4. Verify against audit_anchors
-    const anchorWhere: {
-      chain_partition: string;
-      anchor_sequence?: { gte?: bigint; lte?: bigint };
-    } = {
-      chain_partition: partition,
-    };
-    if (options?.fromSequence !== undefined || options?.toSequence !== undefined) {
-      anchorWhere.anchor_sequence = {};
-      if (options.fromSequence !== undefined)
-        anchorWhere.anchor_sequence.gte = options.fromSequence;
-      if (options.toSequence !== undefined) anchorWhere.anchor_sequence.lte = options.toSequence;
-    }
+    const anchorCheck = await verifyPartitionAnchors(
+      this.database,
+      partition,
+      logHashBySequence,
+      (v) => this.writerService.getHmacKey(v),
+      options,
+      preloadedAnchors,
+    );
+    violations.push(...anchorCheck.violations);
 
-    const anchors = await this.database.auditAnchor.findMany({
-      where: anchorWhere,
-      orderBy: {
-        anchor_sequence: 'asc',
-      },
-    });
-
-    for (const anchor of anchors) {
-      // Find matching log
-      const targetLog = logHashBySequence.get(anchor.anchor_sequence);
-      if (!targetLog) {
-        violations.push({
-          code: AppErrorCode.AUDIT_ANCHOR_MISMATCH,
-          partition,
-          sequence: anchor.anchor_sequence,
-          expected: anchor.entry_hash,
-          actual: 'LOG_RECORD_MISSING',
-          message: `Anchor at sequence ${anchor.anchor_sequence} references non-existent log record`,
-        });
-        continue;
-      }
-
-      if (!safeTimingEqualString(targetLog.entry_hash, anchor.entry_hash)) {
-        violations.push({
-          code: AppErrorCode.AUDIT_ANCHOR_MISMATCH,
-          partition,
-          sequence: anchor.anchor_sequence,
-          logId: targetLog.id,
-          expected: anchor.entry_hash,
-          actual: targetLog.entry_hash,
-          message: `Anchor entry_hash mismatch at sequence ${anchor.anchor_sequence}`,
-        });
-      }
-
-      // Verify anchor signature
-      const anchorKey = this.writerService.getHmacKey(1);
-      const expectedSignature = createHmac('sha256', anchorKey)
-        .update(`${anchor.chain_partition}:${anchor.anchor_sequence}:${anchor.entry_hash}`)
-        .digest('hex');
-
-      if (!safeTimingEqualString(anchor.signature, expectedSignature)) {
-        violations.push({
-          code: AppErrorCode.AUDIT_ANCHOR_MISMATCH,
-          partition,
-          sequence: anchor.anchor_sequence,
-          expected: expectedSignature,
-          actual: anchor.signature,
-          message: `Anchor signature verification failed for sequence ${anchor.anchor_sequence}`,
-        });
-      }
-    }
-
-    let alertId: string | undefined;
-
-    // 5. If violations found: create a CRITICAL SecurityAlert
-    if (violations.length > 0) {
-      alertId = await this.raiseCriticalAlert(partition, violations);
-    }
+    const alertId =
+      violations.length > 0
+        ? await raiseAuditIntegrityAlert(this.database, this.logger, partition, violations)
+        : undefined;
 
     return {
       partition,
       valid: violations.length === 0,
       totalChecked,
-      anchorsChecked: anchors.length,
+      anchorsChecked: anchorCheck.anchorsChecked,
       violations,
       alertId,
     };
   }
 
   /**
-   * Verifies all active partitions in the database.
+   * Algorithm / Thuật toán: Quét kiểm chứng tuần tự toàn bộ phân vùng nhật ký đang hoạt động.
    */
   async verifyAllPartitions(): Promise<Record<string, PartitionVerificationResult>> {
-    // Distinct partitions in audit_logs
     const distinctPartitions = await this.database.auditLog.findMany({
-      select: {
-        chain_partition: true,
-      },
+      select: { chain_partition: true },
       distinct: ['chain_partition'],
     });
 
@@ -300,80 +237,6 @@ export class AuditVerifierService {
     for (const p of distinctPartitions) {
       results[p.chain_partition] = await this.verifyPartition(p.chain_partition);
     }
-
     return results;
-  }
-
-  private async raiseCriticalAlert(
-    partition: string,
-    violations: AuditViolation[],
-  ): Promise<string> {
-    const alertId = randomUUID();
-    const primaryViolation = violations[0]!;
-
-    this.logger.error(
-      `CRITICAL SECURITY ALERT: Audit trail integrity compromised in partition ${partition}! Total violations: ${violations.length}`,
-    );
-
-    try {
-      const { MetricsService } = await import('../system-health/metrics.service.js');
-      MetricsService.getInstance().recordAuditVerifyFailure(partition);
-      MetricsService.getInstance().recordSecurityAlert('CRITICAL', 'audit_integrity');
-    } catch {
-      // Fallback
-    }
-
-    let resolvedAlertId: string = alertId;
-    await this.database.$transaction(async (tx) => {
-      if (typeof tx.securityAlert?.findFirst === 'function') {
-        const existingOpen = await tx.securityAlert.findFirst({
-          where: {
-            alert_type: 'AUDIT_INTEGRITY_COMPROMISED',
-            status: 'OPEN',
-            title: { contains: `partition ${partition} ` },
-          },
-          select: { id: true },
-        });
-        if (existingOpen) {
-          resolvedAlertId = existingOpen.id;
-          return;
-        }
-      }
-
-      await tx.securityAlert.create({
-        data: {
-          id: alertId,
-          alert_type: 'AUDIT_INTEGRITY_COMPROMISED',
-          severity: 'CRITICAL',
-          status: 'OPEN',
-          title: `CRITICAL: Audit integrity compromised in partition ${partition} (${primaryViolation.code})`,
-          description: JSON.stringify({
-            partition,
-            violations: violations.slice(0, 10).map((v) => ({
-              code: v.code,
-              partition: v.partition,
-              sequence: v.sequence.toString(),
-              logId: v.logId?.toString(),
-              expected: v.expected,
-              actual: v.actual,
-              message: v.message,
-            })),
-            detectedAt: new Date().toISOString(),
-          }),
-        },
-      });
-
-      // Link alert to the first affected audit log if available
-      if (primaryViolation.logId) {
-        await tx.alertAuditLink.create({
-          data: {
-            alert_id: alertId,
-            audit_log_id: primaryViolation.logId,
-          },
-        });
-      }
-    });
-
-    return resolvedAlertId;
   }
 }

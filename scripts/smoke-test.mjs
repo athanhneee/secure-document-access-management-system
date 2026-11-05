@@ -2,6 +2,11 @@
  * Post-Deployment Smoke Test Script (SDA System)
  * Validates system availability, zero-trust security controls,
  * authentication, document search, access control, and revocation.
+ *
+ * Thuật toán: Bộ Thăm Dò Sẵn Sàng Hậu Triển Khai & Kiểm Chứng Luồng Bảo Mật Đầu-Cuối (End-to-End Post-Deployment Smoke Probe)
+ * Mục đích: Xác minh tức thời 7 chốt chặn bảo mật cốt lõi của hệ thống ngay sau khi triển khai bằng các phép thử tự chứa có đo độ trễ.
+ * Cơ chế hoạt động:
+ *   - Thực thi tuần tự 7 bài kiểm tra độc lập qua `runCheck`: (1) Khởi tạo đọc/ghi SQL `PGlite`, (2) Mã hóa phong bì `AES-256-GCM` KEK/DEK đối chiếu hằng thời gian `timingSafeEqual`, (3) Ký và xác thực JWT `HMAC-SHA256`, (4) Đánh giá PDP Bell-LaPadula & `DENY_OVERRIDES`, (5) Đối soát băm `SHA-256` mã thủy ấn truy vết, (6) Xác minh tính liên tục chuỗi kiểm toán `HMAC-SHA256`, và (7) Thu hồi tức thì phiên đọc đang hoạt động.
  */
 
 import os from 'node:os';
@@ -17,6 +22,12 @@ async function main() {
   console.log('='.repeat(78));
 
   const results = [];
+  /**
+   * Thuật toán: Khung Bao Thực Thi Phép Thử Có Đo Độ Trễ & Cô Lập Lỗi (Timed Probe Execution Wrapper)
+   * Mục đích: Chạy từng phép kiểm tra khói độc lập, đo thời gian phản hồi chính xác tới 0.01ms và thu thập trạng thái `PASS`/`FAIL` để tổng hợp báo cáo cuối cùng.
+   * Cơ chế hoạt động:
+   *   - Ghi mốc thời gian trước và sau hàm bất đồng bộ `fn()`, bắt mọi ngoại lệ để ghi nhận chi tiết lỗi mà không làm đứt quãng các phép thử kế tiếp.
+   */
   const runCheck = async (name, fn) => {
     const start = performance.now();
     try {

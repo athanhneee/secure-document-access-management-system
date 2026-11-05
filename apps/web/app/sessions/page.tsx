@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth-context';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { AuthGuard } from '@/components/auth-guard';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -21,22 +22,28 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 export default function SessionsPage() {
   const { user, logout } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
+  const [confirmLogoutAllOpen, setConfirmLogoutAllOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  /**
+   * Thuật toán: Thu Hồi Đồng Loạt Phiên Thiết Bị Từ Xa (Global Remote Session Revocation)
+   * Mục đích: Cho phép người dùng chủ động vô hiệu hóa toàn bộ các phiên đăng nhập và chuỗi xoay vòng token trên mọi thiết bị khác khi nghi ngờ lộ lọt.
+   * Cơ chế hoạt động:
+   *   - Yêu cầu xác nhận qua hộp thoại phương thức `ConfirmDialog` (thay cho `window.confirm`), kích hoạt điểm cuối `/auth/logout-all` kèm mã bảo vệ CSRF và phản hồi kết quả thu hồi tức thì.
+   */
   async function handleLogoutAll() {
-    if (!confirm('Bạn có chắc chắn muốn đăng xuất khỏi tất cả các thiết bị khác không?')) {
-      return;
-    }
-
+    // CONFLICT-RESOLVED: Thay thế hộp thoại trình duyệt thô window.confirm bằng ConfirmDialog chuẩn WCAG (.showModal()).
     setIsLoading(true);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     try {
       await apiClient('/auth/logout-all', { method: 'POST' });
+      setConfirmLogoutAllOpen(false);
       setSuccessMessage('Đã hủy tất cả các phiên đăng nhập khác thành công.');
     } catch (err) {
+      setConfirmLogoutAllOpen(false);
       if (err instanceof ApiError) {
         setErrorMessage(err.message || 'Không thể đăng xuất tất cả phiên.');
       } else {
@@ -64,7 +71,7 @@ export default function SessionsPage() {
 
             <InteractiveHoverButton
               variant="destructive"
-              onClick={() => void handleLogoutAll()}
+              onClick={() => setConfirmLogoutAllOpen(true)}
               disabled={isLoading}
               isLoading={isLoading}
               text="Đăng xuất tất cả thiết bị khác"
@@ -74,7 +81,12 @@ export default function SessionsPage() {
 
           {successMessage && (
             <Alert className="rounded-[20px] border border-[#008A05]/30 bg-[#008A05]/10 text-[#008A05] text-xs">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-[#008A05]" aria-hidden="true" />
+              <CheckCircle2
+                size={16}
+                strokeWidth={1.75}
+                className="shrink-0 text-[#008A05]"
+                aria-hidden="true"
+              />
               <AlertDescription className="ml-2">{successMessage}</AlertDescription>
             </Alert>
           )}
@@ -84,7 +96,12 @@ export default function SessionsPage() {
               variant="destructive"
               className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
             >
-              <AlertTriangle className="h-4 w-4 shrink-0 text-[#C13515]" aria-hidden="true" />
+              <AlertTriangle
+                size={16}
+                strokeWidth={1.75}
+                className="shrink-0 text-[#C13515]"
+                aria-hidden="true"
+              />
               <AlertDescription className="ml-2">{errorMessage}</AlertDescription>
             </Alert>
           )}
@@ -194,6 +211,18 @@ export default function SessionsPage() {
               </CardContent>
             </Card>
           </div>
+
+          <ConfirmDialog
+            open={confirmLogoutAllOpen}
+            onOpenChange={setConfirmLogoutAllOpen}
+            title="Đăng xuất khỏi tất cả thiết bị khác"
+            description="Bạn có chắc chắn muốn thu hồi ngay lập tức toàn bộ các phiên đăng nhập đang mở trên những thiết bị khác không? Thiết bị hiện tại vẫn được giữ nguyên."
+            confirmText="Đăng xuất tất cả"
+            cancelText="Giữ nguyên"
+            variant="danger"
+            isLoading={isLoading}
+            onConfirm={handleLogoutAll}
+          />
         </div>
       </AppLayout>
     </AuthGuard>

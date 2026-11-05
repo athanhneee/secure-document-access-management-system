@@ -49,6 +49,9 @@ export class DatabaseUnavailableError extends DatabaseError {
 
 const retryableTransactionCodes = new Set(['P2034', '40001', '40P01']);
 
+/**
+ * Thuật toán: Duyệt cây nguyên nhân lỗi giới hạn độ sâu `depth <= 3` để trích xuất mã lỗi Prisma / PostgreSQL SQLSTATE.
+ */
 function extractDatabaseCode(error: unknown, depth = 0): string | undefined {
   if (depth > 3 || typeof error !== 'object' || error === null) return undefined;
   const record = error as Record<string, unknown>;
@@ -82,7 +85,10 @@ export function isDatabaseOperationError(error: unknown): boolean {
   return code !== undefined && (/^P\d{4}$/u.test(code) || /^[0-9A-Z]{5}$/u.test(code));
 }
 
-/** Maps only stable error codes; raw SQL, driver messages and metadata are never exposed. */
+/**
+ * Maps only stable error codes; raw SQL, driver messages and metadata are never exposed.
+ * Thuật toán: Ánh xạ phân loại mã lỗi SQLSTATE/Prisma sang miền lỗi an toàn không rò rỉ câu lệnh SQL gốc.
+ */
 export function mapDatabaseError(error: unknown): DatabaseError {
   if (error instanceof DatabaseError) return error;
   const code = extractDatabaseCode(error);

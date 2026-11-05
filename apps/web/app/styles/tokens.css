@@ -1,0 +1,117 @@
+@layer base {
+  :root {
+    /* Base surface & canvas - Light Theme (Airbnb Aesthetic) */
+    --background: 0 0% 100%;
+    --foreground: 0 0% 13.3%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 13.3%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 13.3%;
+
+    /* Brand Accent: #FF385C (Airbnb Coral / Red-Pink) */
+    --primary: 349 100% 61%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 96.9%;
+    --secondary-foreground: 0 0% 13.3%;
+
+    --muted: 0 0% 96.9%;
+    --muted-foreground: 0 0% 44.3%;
+
+    --accent: 0 0% 96.9%;
+    --accent-foreground: 0 0% 13.3%;
+
+    /* Semantic Security Status Tokens */
+    --destructive: 8 80% 42%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 122 100% 27%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 28 85% 48%;
+    --warning-foreground: 0 0% 100%;
+
+    --info: 182 100% 27%;
+    --info-foreground: 0 0% 100%;
+
+    /* Structural tokens */
+    --border: 0 0% 92.2%;
+    --input: 0 0% 86.7%;
+    --ring: 349 100% 61%;
+    --radius: 1.75rem;
+
+    /* Design System Tokens (Mandatory Rules) */
+    --text-primary: rgb(34, 34, 34);
+    --text-secondary: rgb(113, 113, 113);
+    --text-muted: #b0b0b0;
+    --accent-brand: #ff385c;
+    --bg-primary: #ffffff;
+    --bg-secondary: #f7f7f7;
+    --border-subtle: #ebebeb;
+    --border-default: #dddddd;
+
+    /* Border Radius Tokens (Capsule & Soft System) */
+    --radius-full: 9999px;
+    --radius-xl: 28px;
+    --radius-2xl: 36px;
+
+    /* Semantic Status Tokens */
+    --status-success: #008a05;
+    --status-warning: #e07912;
+    --status-danger: #c13515;
+    --status-info: #008489;
+    --status-primary: #ff385c;
+    --status-neutral: #717171;
+  }
+}
+
+/* "staff-001" Pattern: strictly transparent, no border, no padding */
+.staff-badge {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  font-family: var(--font-inter), 'Inter', sans-serif !important;
+}
+
+/* Enforce Inter Bold on all monospace / code-style elements per design system */
+.font-mono,
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-inter), 'Inter', sans-serif !important;
+  font-weight: 700 !important;
+  font-feature-settings:
+    'tnum' on,
+    'lnum' on,
+    'zero' on;
+}
+
+/* 6px Status Dots */
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+.dot-success {
+  background-color: #008a05;
+}
+.dot-warning {
+  background-color: #e07912;
+}
+.dot-danger {
+  background-color: #c13515;
+}
+.dot-info {
+  background-color: #008489;
+}
+.dot-primary {
+  background-color: #ff385c;
+}
+.dot-neutral {
+  background-color: #717171;
+}

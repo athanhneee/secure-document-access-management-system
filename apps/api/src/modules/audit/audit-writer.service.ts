@@ -1,12 +1,15 @@
-import { createHmac, randomUUID } from 'node:crypto';
+/**
+ * @module AuditWriterService
+ * Algorithm: Partition-Locked RFC 8785 HMAC-SHA256 Audit Chain Writer (delegating core append to `appendChainedAuditLog`).
+ */
+import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { getDatabaseClient, type Prisma } from '@sda/database';
-import { AppErrorCode } from '@sda/contracts';
+import { AppErrorCode, type AuditKeyRing } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
 import type { RequestContext } from '../auth/auth.types.js';
 import { AuditRedactionService } from './audit-redaction.service.js';
-import { canonicalizeJson } from './audit-canonicalizer.js';
-import { resolveAuditHmacKey } from './audit-chain-helper.js';
+import { appendChainedAuditLog, resolveAuditKeyRing } from './audit-chain-helper.js';
 
 export interface AuditWriteEvent {
   action: string;
@@ -40,8 +43,7 @@ type PrismaClient = ReturnType<typeof getDatabaseClient>;
 @Injectable()
 export class AuditWriterService {
   private readonly logger = new Logger(AuditWriterService.name);
-  private readonly defaultHmacKey: string;
-  private readonly keyRotationMap = new Map<number, string>();
+  private readonly keyRing: AuditKeyRing;
   private readonly database: PrismaClient;
 
   constructor(
@@ -54,52 +56,20 @@ export class AuditWriterService {
     } catch {
       this.database = (databaseClient ?? null) as unknown as PrismaClient;
     }
-    const primaryKey = resolveAuditHmacKey(this.config);
-    this.defaultHmacKey = primaryKey;
-    this.keyRotationMap.set(1, primaryKey);
-
-    let rotationJson: string | undefined;
-    try {
-      rotationJson = this.config.get('AUDIT_KEY_ROTATION_JSON') ?? undefined;
-    } catch {
-      rotationJson = undefined;
-    }
-    if (rotationJson) {
-      try {
-        const parsed = JSON.parse(rotationJson) as Record<string, string>;
-        for (const [ver, key] of Object.entries(parsed)) {
-          const vNum = Number(ver);
-          if (Number.isInteger(vNum) && vNum > 0 && typeof key === 'string' && key.length >= 32) {
-            this.keyRotationMap.set(vNum, key);
-          }
-        }
-      } catch (err) {
-        this.logger.warn(`Failed to parse AUDIT_KEY_ROTATION_JSON: ${String(err)}`);
-      }
-    }
+    // CONFLICT-RESOLVED: Dùng chung bộ phân giải vòng khóa xoay vòng resolveAuditKeyRing với audit-chain-helper.ts và Worker để đảm bảo đồng bộ phiên bản khóa HMAC trên toàn hệ thống.
+    this.keyRing = resolveAuditKeyRing(this.config, (err) => {
+      this.logger.warn(`Failed to parse AUDIT_KEY_ROTATION_JSON: ${String(err)}`);
+    });
   }
 
-  /**
-   * Retrieves the HMAC integrity key for a specific key version.
-   */
   getHmacKey(version = 1): string {
-    return this.keyRotationMap.get(version) ?? this.defaultHmacKey;
+    return this.keyRing.getKey(version);
   }
 
-  /**
-   * Gets the active key version for writing new audit entries.
-   */
   getActiveKeyVersion(): number {
-    let maxVersion = 1;
-    for (const v of this.keyRotationMap.keys()) {
-      if (v > maxVersion) maxVersion = v;
-    }
-    return maxVersion;
+    return this.keyRing.activeVersion;
   }
 
-  /**
-   * Convenience wrapper to record an audit log with optional default context.
-   */
   async writeLog(
     event: AuditWriteEvent,
     context?: Partial<RequestContext>,
@@ -119,10 +89,8 @@ export class AuditWriterService {
   }
 
   /**
-   * Records a tamper-evident audit event.
-   *
-   * May be executed within an existing Prisma transaction client or standalone.
-   * Never swallows audit errors; if logging fails, throws AuditWriteException.
+   * Thuật toán: Ghi chuỗi băm kiểm toán hỗ trợ đa phiên bản khóa xoay vòng (`pg_advisory_xact_lock` + Versioned HMAC-SHA256).
+   * Ủy quyền thực thi lõi cho `appendChainedAuditLog` để loại bỏ nhân bản logic khóa phân vùng, che dấu dữ liệu và ký JCS.
    */
   async record(
     event: AuditWriteEvent,
@@ -135,104 +103,28 @@ export class AuditWriterService {
     chain_sequence: bigint;
   }> {
     const partition = event.chainPartition || 'GLOBAL';
+    const keyVersion = this.getActiveKeyVersion();
+    const activeKey = this.getHmacKey(keyVersion);
 
-    const executeOperation = async (tx: Prisma.TransactionClient) => {
-      // 1. Acquire transaction advisory lock isolated to this specific chain partition
-      await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', partition);
-
-      // 2. Fetch the latest record in this partition
-      const previous = await tx.$queryRawUnsafe<
-        Array<{ entry_hash: string; chain_sequence: bigint }>
-      >(
-        'SELECT entry_hash, chain_sequence FROM audit_logs WHERE chain_partition=$1 ORDER BY chain_sequence DESC LIMIT 1',
+    const executeOperation = (tx: Prisma.TransactionClient) =>
+      appendChainedAuditLog(tx, {
         partition,
-      );
-
-      const prior = previous[0];
-      const sequence = (prior?.chain_sequence ?? 0n) + 1n;
-      const previousHash = prior?.entry_hash ?? null;
-
-      // 3. Normalize correlation ID and timestamps
-      const correlationId =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          context.correlationId,
-        )
-          ? context.correlationId
-          : randomUUID();
-
-      const occurredAt = event.occurredAt ?? new Date();
-
-      // 4. Redact sensitive data from details, reason, user agent, IP
-      const sanitizedDetails = this.redactionService.sanitizeDetails(event.details);
-      const sanitizedReason = this.redactionService.sanitizeReason(event.reasonCode);
-      const sanitizedUserAgent = this.redactionService.sanitizeUserAgent(context.userAgent);
-      const sanitizedIp = this.redactionService.sanitizeIp(context.ip);
-      const keyVersion = this.getActiveKeyVersion();
-      const activeKey = this.getHmacKey(keyVersion);
-
-      const actorUsername = event.actorUsername ?? (event.actorUserId ? null : 'anonymous');
-
-      // 5. Build canonical payload for deterministic HMAC-SHA-256 calculation (RFC 8785)
-      const canonicalPayload = {
+        hmacKey: activeKey,
+        keyVersion,
         action: event.action,
-        actorUserId: event.actorUserId ? event.actorUserId.toString() : null,
-        actorUsername,
-        chainAlgorithm: 'HMAC-SHA-256',
-        chainPartition: partition,
-        chainSequence: sequence.toString(),
-        correlationId,
-        details: sanitizedDetails,
-        documentId: event.documentId ?? null,
-        accessSessionId: event.accessSessionId ?? null,
-        ipAddress: sanitizedIp,
-        objectType: event.objectType,
-        objectId: event.objectId ?? null,
-        occurredAt: occurredAt.toISOString(),
         outcome: event.outcome,
-        previousHash,
-        reasonCode: sanitizedReason,
-        userAgent: sanitizedUserAgent,
-      };
-
-      const canonicalString = canonicalizeJson(canonicalPayload);
-      const entryHash = createHmac('sha256', activeKey)
-        .update(canonicalString, 'utf8')
-        .digest('hex');
-
-      // 6. Append audit log row
-      const created = await tx.auditLog.create({
-        data: {
-          occurred_at: occurredAt,
-          actor_user_id: event.actorUserId ?? null,
-          actor_username: actorUsername,
-          action: event.action,
-          object_type: event.objectType,
-          object_id: event.objectId ?? null,
-          document_id: event.documentId ?? null,
-          access_session_id: event.accessSessionId ?? null,
-          outcome: event.outcome,
-          reason_code: sanitizedReason,
-          ip_address: sanitizedIp,
-          user_agent: sanitizedUserAgent,
-          correlation_id: correlationId,
-          details: sanitizedDetails as Prisma.InputJsonValue,
-          previous_hash: previousHash,
-          entry_hash: entryHash,
-          chain_partition: partition,
-          chain_sequence: sequence,
-          hmac_key_version: keyVersion,
-          chain_algorithm: 'HMAC-SHA-256',
-        },
-        select: {
-          id: true,
-          entry_hash: true,
-          chain_partition: true,
-          chain_sequence: true,
-        },
+        objectType: event.objectType,
+        objectId: event.objectId,
+        actorUserId: event.actorUserId,
+        actorUsername: event.actorUsername,
+        documentId: event.documentId,
+        accessSessionId: event.accessSessionId,
+        reasonCode: event.reasonCode,
+        details: event.details,
+        occurredAt: event.occurredAt,
+        context,
+        redactor: this.redactionService,
       });
-
-      return created;
-    };
 
     try {
       if (externalTx) {

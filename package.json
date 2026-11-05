@@ -33,8 +33,9 @@
     "infra:reset-safe": "node scripts/infra.mjs reset-safe",
     "infra:doctor": "node scripts/infra.mjs doctor",
     "security:secrets": "node scripts/scan-secrets.mjs",
+    "security:licenses": "node scripts/check-licenses-sbom.mjs",
     "security:dependencies": "pnpm audit --audit-level=high",
-    "security:scan": "pnpm security:secrets && pnpm security:dependencies",
+    "security:scan": "pnpm security:secrets && pnpm security:licenses && pnpm security:dependencies",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:integration && pnpm build && pnpm test:e2e && pnpm test:infra && pnpm db:validate && pnpm security:scan"
   },
   "devDependencies": {

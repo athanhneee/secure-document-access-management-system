@@ -29,7 +29,7 @@ Nền tảng quản trị, lưu trữ mã hóa và kiểm soát truy cập tài 
 | **Background & DLP**    | Node.js Worker (`@sda/worker`), Native TCP Server (`RFC 3507`)                                             | 6 tiến trình nền định kỳ + máy chủ ICAP Network DLP lắng nghe cổng TCP `1344`                          |
 | **Cơ sở dữ liệu**       | PostgreSQL `18.6`, Prisma ORM `7.10` (`@prisma/adapter-pg`), PGlite `0.5` (WASM)                           | Lưu trữ dữ liệu quan hệ, giao dịch cô lập `SERIALIZABLE`, ràng buộc toàn vẹn cấp CSDL, kiểm thử cô lập |
 | **Bộ nhớ đệm & Khóa**   | Redis `8.2`, `ioredis` `6.0`, Custom Redlock + Lua Scripts                                                 | Lưu trữ phiên, bộ đệm quyền/chính sách, giới hạn tần suất (Rate Limit), khóa phân tán Quorum           |
-| **Lưu trữ & Xử lý Tệp** | S3-Compatible Object Storage (MinIO cho local dev), ClamAV `1.5`, Gotenberg `8.17`, `pdf-lib`              | Lưu trữ đối tượng mã hóa, quét mã độc luồng TCP `INSTREAM`, chuyển đổi Office sang PDF, đóng dấu       |
+| **Lưu trữ & Xử lý Tệp** | S3-Compatible Object Storage (`pgsty/silo` local, `@aws-sdk/client-s3`), ClamAV `1.5`, Gotenberg `8.17`    | Lưu trữ đối tượng mã hóa, quét mã độc luồng TCP `INSTREAM`, chuyển đổi Office sang PDF, đóng dấu       |
 | **Mật mã & Xác thực**   | `node:crypto` (`AES-256-GCM`, `HKDF-SHA256`), `jose` (`EdDSA`/`Ed25519`), `argon2`, `@simplewebauthn` `14` | Mã hóa phong bì tài liệu, ký JWT bất đối xứng, băm mật khẩu Argon2id, xác thực TOTP & FIDO2            |
 | **Quan sát & Kiểm thử** | Prometheus `3.13`, Grafana `13.2`, Node Test Runner, Playwright `1.63`, Oxlint `1.82`                      | Thu thập metrics, cảnh báo vận hành, kiểm thử Unit / Integration / Infra / E2E                         |
 
@@ -55,15 +55,16 @@ flowchart TB
         SecOps["Audit & SOC: RFC 8785 Canonicalizer | HMAC-SHA256 Chain | SecurityAlerts | Incidents | Reports"]
     end
 
-    subgraph WorkerLayer["apps/worker — Background Jobs & DLP Server"]
+    subgraph WorkerLayer["apps/worker — Background Jobs & DLP Server (No Redis/S3/ClamAV Deps)"]
         Jobs["Scheduled Jobs: GrantExpiry | DerivativeCleanup | ExportCleanup | AuditVerify | SOC Detection | Outbox"]
         IcapSrv["ICAP Server (RFC 3507 - TCP 1344) + 5-Layer DLP Engine"]
     end
 
     subgraph InfraLayer["Tầng Lưu trữ & Hạ tầng Phụ trợ"]
-        PG[("PostgreSQL 18.6 (ACID & Append-Only Constraints)")]
+        PG[("PostgreSQL 18.6 (39 Tables, 18 ENUMs, 21 Triggers)")]
         Redis[("Redis 8.2 (Sessions, Cache, Redlock)")]
-        S3[("S3-Compatible Object Storage (Encrypted Buckets)")]
+        S3[("S3-Compatible Object Storage (pgsty/silo :9000)")]
+        LocalFS[("Worker Local Temp & Export FS")]
         ClamAV["ClamAV 1.5 (TCP 3310 INSTREAM)"]
         Gotenberg["Gotenberg 8.17 (Headless LibreOffice)"]
         Obs["Prometheus 3.13 + Grafana 13.2"]
@@ -89,39 +90,41 @@ flowchart TB
     DocEngine --> Gotenberg
 
     Jobs --> PG
-    Jobs --> S3
+    Jobs --> LocalFS
     IcapSrv --> PG
     Obs -.->|"Metrics Scrape"| ApiLayer
 ```
+
+> **Phân tách Phụ thuộc của `@sda/worker`**: Tiến trình `apps/worker` chỉ phụ thuộc vào `@sda/contracts` và `@sda/database` — kết nối duy nhất tới **PostgreSQL**, hệ thống tệp cục bộ (`os.tmpdir()` cho bản phái sinh tạm thời và `.local/exports` cho tệp xuất báo cáo bất đồng bộ) và mở cổng TCP `1344` cho máy chủ ICAP DLP. Worker **không** cài đặt hay kết nối tới Redis, S3 hay ClamAV.
 
 ### Cấu trúc Không gian Làm việc (Workspace Topology)
 
 ```text
 secure-document-access-system/
 ├── apps/
-│   ├── api/                 # @sda/api — Backend REST API (16 domain modules, Fastify adapter)
+│   ├── api/                 # @sda/api — Backend REST API (17 domain modules, Fastify adapter)
 │   ├── web/                 # @sda/web — Giao diện người dùng Next.js 16 (5 role workspaces)
 │   └── worker/              # @sda/worker — 6 background jobs định kỳ & máy chủ ICAP DLP (TCP 1344)
 ├── packages/
 │   ├── config/              # @sda/config — Cấu hình tsconfig nền tảng dùng chung
 │   ├── contracts/           # @sda/contracts — DTOs, Zod schemas, mã lỗi chuẩn hóa, hằng số phân quyền
-│   ├── database/            # @sda/database — Prisma ORM client, lược đồ định kiểu và quản lý giao dịch
-│   ├── security/            # @sda/security — Chính sách public endpoint và tiện ích bảo mật cốt lõi
-│   └── testing/             # @sda/testing — Khung kiểm thử tích hợp, fixtures và PGlite helpers
+│   ├── database/            # @sda/database — Prisma 7 multi-file schema (39 bảng), Pool TLS & giao dịch SERIALIZABLE
+│   ├── security/            # @sda/security — Helper nguyên thủy kiểm tra metadata public endpoint (isExplicitlyPublicEndpoint)
+│   └── testing/             # @sda/testing — Tiện ích kiểm chứng hợp đồng liveness nghiêm ngặt (assertLiveness)
 ├── infra/                   # Cấu hình Docker Compose (local & hardened prod), Prometheus, Grafana
 ├── e2e/                     # Kịch bản kiểm thử đầu-cuối (Playwright Chromium)
 ├── test/                    # Kiểm thử đơn vị cấp kho lưu trữ và kiểm thử sẵn sàng hạ tầng
-└── scripts/                 # Công cụ CLI vận hành: sinh khóa cục bộ, quản lý infra, sao lưu, kiểm định
+└── scripts/                 # CLI quản lý hạ tầng/bí mật/kiểm định + 4 bộ mô phỏng PGlite độc lập trên RAM
 ```
 
-### Danh mục Module trong `@sda/api`
+### Danh mục 17 Module Nghiệp vụ trong `@sda/api`
 
-Backend được phân tách thành 16 module nghiệp vụ độc lập tại `apps/api/src/modules/`:
+Backend được phân tách thành **17 module nghiệp vụ** độc lập tại `apps/api/src/modules/`:
 
-- **Định danh & Truy cập**: `auth`, `users`, `departments`, `rbac`, `abac`
-- **Quản trị Vòng đời Tài liệu**: `documents`, `classifications`, `watermarks`
-- **Điều phối Quyền Truy cập**: `access-requests`, `access-grants`, `access-sessions`, `concurrency`
-- **Kiểm toán, SOC & Vận hành**: `audit`, `security-operations`, `reports`, `notifications`, `system-health`
+- **Định danh & Truy cập (5)**: `auth`, `users`, `departments`, `rbac`, `abac`
+- **Quản trị Vòng đời Tài liệu (3)**: `documents`, `classifications`, `watermarks`
+- **Điều phối Quyền & Tương tranh (4)**: `access-requests`, `access-grants`, `access-sessions`, `concurrency`
+- **Kiểm toán, SOC & Vận hành (5)**: `audit`, `security-operations`, `reports`, `notifications`, `system-health`
 
 ---
 
@@ -226,7 +229,7 @@ Khóa `DEK` sau khi mã hóa tệp được bọc bởi `KmsService` và xóa tr
 4. Số thẻ thanh toán quốc tế hợp lệ theo kiểm tra tổng **Luhn Checksum**.
 5. Số định danh cá nhân 12 chữ số và danh sách từ khóa tùy chỉnh (`ICAP_DLP_CUSTOM_KEYWORDS`).
 
-Khi phát hiện vi phạm ở chế độ `BLOCK`, máy chủ trả về gói tin `ICAP/1.0 200 OK` đóng gói phản hồi `HTTP/1.1 403 Forbidden` và tự động ghi nhận cảnh báo an ninh cho SOC.
+Khi phát hiện vi phạm ở chế độ `BLOCK` (mặc định), máy chủ trả về gói tin `ICAP/1.0 200 OK` đóng gói phản hồi `HTTP/1.1 403 Forbidden` và tự động ghi nhận cảnh báo an ninh (`NETWORK_DLP_VIOLATION`) cho SOC. Khi cấu hình `ICAP_DLP_ACTION=AUDIT_ONLY` (hoặc bí danh tương thích ngược `MONITOR`, kèm cảnh báo deprecated), máy chủ vẫn ghi nhận cảnh báo SOC nhưng trả về `ICAP/1.0 204 No modifications` để không chặn luồng mạng; mọi giá trị cấu hình không hợp lệ đều tự động Fail-Closed về `BLOCK`.
 
 ---
 
@@ -292,7 +295,10 @@ pnpm db:seed
 pnpm dev
 ```
 
-> **Lưu ý về Quản lý Bí mật Cục bộ**: Lệnh `pnpm generate-dev-secrets` sinh khóa ngẫu nhiên an toàn mật mã vào tệp `.local/dev.env` (quyền `0600`, đã được `.gitignore`, tách biệt hoàn toàn với tệp mẫu `.env.example`). Để xoay vòng lại toàn bộ bí mật cục bộ, chạy `node scripts/generate-dev-secrets.mjs --force`.
+> **Lưu ý về Quản lý Bí mật & Tài khoản Mẫu Cục bộ**:
+>
+> - Lệnh `pnpm generate-dev-secrets` sinh các khóa đối xứng/HMAC ngẫu nhiên an toàn mật mã vào tệp `.local/dev.env` (quyền `0600`, đã được `.gitignore`, tách biệt với `.env.example`). Cặp khóa ký JWT `Ed25519` không ghi vào tệp này mà được `TokenService` sinh tạm thời trên RAM ở môi trường `development`/`test` (trên `production` bắt buộc cấp từ bên ngoài).
+> - Lệnh `pnpm db:seed` tạo 5 tài khoản mẫu (`admin.demo`, `security.demo`, `auditor.demo`, `owner.demo`, `reader.demo`) ở trạng thái **`DISABLED`** với chuỗi khóa không thể đăng nhập (`!AUTHENTICATION_NOT_CONFIGURED_DEMO_ACCOUNT!`) theo chính sách Zero-Static-Secret. Để đăng nhập thử nghiệm cục bộ, cần cập nhật `password_hash` chuẩn Argon2id (tối thiểu 15 ký tự), chuyển `status = 'ACTIVE'`, và đăng ký MFA cho 3 vai trò đặc quyền (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`).
 
 ### 6.3. Bảng Ánh xạ Cổng Dịch vụ Cục bộ (Local Loopback Ports)
 
@@ -319,17 +325,17 @@ Toàn bộ cổng hạ tầng phát triển trong `infra/compose.yaml` chỉ g�
 
 Cấu hình ứng dụng được kiểm tra hợp lệ nghiêm ngặt lúc khởi động thông qua `apps/api/src/config/env.schema.ts` (Zod). Khi `NODE_ENV=production`, hệ thống áp dụng cơ chế **Fail-Fast**: từ chối khởi chạy nếu phát hiện bất kỳ giá trị mặc định/placeholder nào hoặc thiếu cặp khóa ký `Ed25519` được cấp từ bên ngoài.
 
-| Nhóm Cấu hình      | Biến Môi trường Tiêu biểu                                                                                    | Mô tả & Quy tắc Ràng buộc                                                                        |
-| :----------------- | :----------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------- |
-| **Mạng & API**     | `NODE_ENV`, `HOST`, `PORT`, `CORS_ALLOWED_ORIGINS`, `ABAC_TRUSTED_NETWORK_CIDRS`                             | Chế độ vận hành, địa chỉ bind, danh sách origin hợp lệ và dải mạng nội bộ tin cậy cho ABAC       |
-| **Cơ sở dữ liệu**  | `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`, `DATABASE_SSL`                                            | Kết nối PostgreSQL qua pooler/trực tiếp, giới hạn kết nối và cưỡng chế mã hóa đường truyền TLS   |
-| **Redis & Khóa**   | `REDIS_URL`, `REDLOCK_CLUSTER_NODES`, `REDLOCK_DEFAULT_TTL_MS`, `REDLOCK_FAIL_CLOSED`                        | Cấu hình Redis đơn lẻ hoặc cụm nút Redlock độc lập và chính sách đóng/mở khi mất quorum          |
-| **Lưu trữ & Tệp**  | `STORAGE_ENDPOINT`, `STORAGE_PORT`, `STORAGE_USE_SSL`, `STORAGE_BUCKET_*`, `CLAMAV_*`, `GOTENBERG_URL`       | Kết nối S3-compatible object storage, máy chủ quét virus và dịch vụ kết xuất PDF cô lập          |
-| **Giới hạn Tải**   | `UPLOAD_MAX_FILE_SIZE_BYTES`, `ZIP_MAX_TOTAL_UNCOMPRESSED_SIZE`, `ZIP_MAX_ENTRIES`, `ZIP_MAX_DEPTH`          | Ngưỡng bảo vệ chống tấn công cạn kiệt tài nguyên (DoS / Zip Bomb)                                |
-| **Mật mã & KMS**   | `KMS_PROVIDER`, `APP_ENCRYPTION_MASTER_KEY`, `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_KEY_NAME`                   | Chọn nhà cung cấp KMS và khóa gốc độ entropy cao được nạp từ trình quản lý bí mật                |
-| **Xác thực & MFA** | `AUTH_SIGNING_PRIVATE_KEY_PEM`, `AUTH_SIGNING_PUBLIC_KEYS_JSON`, `AUTH_ACTIVE_KID`, `WEBAUTHN_RP_ID`         | Cặp khóa ký JWT `Ed25519` (bắt buộc cấu hình ngoài trên Production) và định danh miền WebAuthn   |
-| **Kiểm toán**      | `AUDIT_INTEGRITY_KEY`, `DOCUMENT_AUDIT_HMAC_KEY`, `AUTH_AUDIT_HMAC_KEY`, `AUDIT_VERIFY_INTERVAL_MS`          | Khóa bí mật HMAC-SHA256 bảo vệ tính toàn vẹn chuỗi nhật ký và chu kỳ đối soát nền                |
-| **ICAP DLP**       | `ICAP_SERVER_ENABLED`, `ICAP_SERVER_HOST`, `ICAP_SERVER_PORT`, `ICAP_DLP_ACTION`, `ICAP_DLP_CUSTOM_KEYWORDS` | Bật/tắt máy chủ ICAP trên Worker, chế độ xử lý (`BLOCK` / `MONITOR`) và từ khóa nhạy cảm bổ sung |
+| Nhóm Cấu hình      | Biến Môi trường Tiêu biểu                                                                                                 | Mô tả & Quy tắc Ràng buộc                                                                                        |
+| :----------------- | :------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------- |
+| **Mạng & API**     | `NODE_ENV`, `HOST`, `PORT`, `CORS_ALLOWED_ORIGINS`, `ABAC_TRUSTED_NETWORK_CIDRS`                                          | Chế độ vận hành, địa chỉ bind, danh sách origin hợp lệ và dải mạng nội bộ tin cậy cho ABAC                       |
+| **Cơ sở dữ liệu**  | `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`, `DATABASE_SSL`, `DATABASE_SSL_REJECT_UNAUTHORIZED`, `DATABASE_CA_CERT` | Kết nối PostgreSQL, giới hạn pool và xác thực chứng chỉ TLS nghiêm ngặt (chặn CWE-295 fail-fast trên Production) |
+| **Redis & Khóa**   | `REDIS_URL`, `REDLOCK_CLUSTER_NODES`, `REDLOCK_DEFAULT_TTL_MS`, `REDLOCK_FAIL_CLOSED`                                     | Cấu hình Redis đơn lẻ hoặc cụm nút Redlock độc lập và chính sách đóng/mở khi mất quorum                          |
+| **Lưu trữ & Tệp**  | `STORAGE_ENDPOINT`, `STORAGE_PORT`, `STORAGE_USE_SSL`, `STORAGE_BUCKET_*`, `CLAMAV_*`, `GOTENBERG_URL`                    | Kết nối S3-compatible object storage, máy chủ quét virus và dịch vụ kết xuất PDF cô lập                          |
+| **Giới hạn Tải**   | `UPLOAD_MAX_FILE_SIZE_BYTES`, `ZIP_MAX_TOTAL_UNCOMPRESSED_SIZE`, `ZIP_MAX_ENTRIES`, `ZIP_MAX_DEPTH`                       | Ngưỡng bảo vệ chống tấn công cạn kiệt tài nguyên (DoS / Zip Bomb)                                                |
+| **Mật mã & KMS**   | `KMS_PROVIDER`, `APP_ENCRYPTION_MASTER_KEY`, `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_KEY_NAME`                                | Chọn nhà cung cấp KMS và khóa gốc độ entropy cao được nạp từ trình quản lý bí mật                                |
+| **Xác thực & MFA** | `AUTH_SIGNING_PRIVATE_KEY_PEM`, `AUTH_SIGNING_PUBLIC_KEYS_JSON`, `AUTH_ACTIVE_KID`, `WEBAUTHN_RP_ID`                      | Cặp khóa ký JWT `Ed25519` (bắt buộc cấu hình ngoài trên Production) và định danh miền WebAuthn                   |
+| **Kiểm toán**      | `AUDIT_INTEGRITY_KEY`, `DOCUMENT_AUDIT_HMAC_KEY`, `AUTH_AUDIT_HMAC_KEY`, `AUDIT_VERIFY_INTERVAL_MS`                       | Khóa bí mật HMAC-SHA256 bảo vệ tính toàn vẹn chuỗi nhật ký và chu kỳ đối soát nền                                |
+| **ICAP DLP**       | `ICAP_SERVER_ENABLED`, `ICAP_SERVER_HOST`, `ICAP_SERVER_PORT`, `ICAP_DLP_ACTION`, `ICAP_DLP_CUSTOM_KEYWORDS`              | Bật/tắt máy chủ ICAP trên Worker, chế độ xử lý (`BLOCK` / `AUDIT_ONLY`, bí danh cũ `MONITOR`) và từ khóa bổ sung |
 
 Xem danh sách đầy đủ các tham số mẫu tại [`.env.example`](./.env.example) và [`apps/api/src/config/env.schema.ts`](./apps/api/src/config/env.schema.ts).
 
@@ -354,11 +360,15 @@ Toàn bộ thay đổi mã nguồn phải vượt qua lệnh tổng hợp `pnpm 
 | `pnpm security:scan`    | `scan-secrets.mjs` + `pnpm audit`       | Quét rò rỉ khóa bí mật trong cây thư mục và lỗ hổng phụ thuộc mức `high`/`critical`        |
 | `pnpm check`            | Chuỗi tuần tự toàn bộ cổng trên         | Cổng chất lượng tổng thể bắt buộc trên CI                                                  |
 
-### 8.2. Quản trị Hạ tầng Cục bộ & Tiện ích Vận hành (`scripts/`)
+### 8.2. Quản trị Hạ tầng Cục bộ & Phân loại Kịch bản trong `scripts/`
 
-- `pnpm infra:up` / `pnpm infra:down` / `pnpm infra:logs [service]`: Khởi chạy, dừng an toàn (giữ nguyên dữ liệu named volumes) và theo dõi nhật ký container cục bộ.
-- `pnpm infra:reset-safe`: Xóa sạch container và dữ liệu named volumes cục bộ (yêu cầu nhập chuỗi xác nhận chính xác để chống mất dữ liệu nhầm lẫn).
-- Các kịch bản vận hành khác trong `scripts/`: `backup-restore.mjs` (sao lưu/phục hồi), `load-test.mjs` (kiểm thử tải), `profile-queries.mjs` (phân tích hiệu năng truy vấn), `smoke-test.mjs`, `check-licenses-sbom.mjs`.
+- **Công cụ CLI Vận hành & Kiểm định Thực tế**:
+  - `scripts/infra.mjs` (`pnpm infra:up` / `infra:down` / `infra:logs` / `infra:doctor` / `infra:reset-safe`): Điều phối vòng đời container Docker Compose cục bộ, kiểm tra sức khỏe dịch vụ và bảo vệ dữ liệu named volumes bằng chuỗi xác nhận.
+  - `scripts/generate-dev-secrets.mjs`: Sinh khóa mật mã ngẫu nhiên cho môi trường phát triển vào `.local/dev.env` (`0600`).
+  - `scripts/validate-database.mjs`: Kiểm định độc lập migration nền tảng và các ràng buộc bất biến CSDL bằng PGlite WASM.
+  - `scripts/run-infra-tests.mjs`, `scripts/scan-secrets.mjs`, `scripts/check-licenses-sbom.mjs`, `scripts/check-toolchain.mjs`: Chạy kiểm thử hạ tầng thật (ClamAV/S3/API), quét rò rỉ khóa bí mật, kiểm tra giấy phép/SBOM và phiên bản Node.js/pnpm.
+- **Bộ Mô phỏng & Benchmark Cô lập trên RAM (`PGlite` In-Memory Harnesses)**:
+  - Bốn kịch bản `scripts/backup-restore.mjs`, `scripts/load-test.mjs`, `scripts/profile-queries.mjs` và `scripts/smoke-test.mjs` là các bộ kiểm chứng thuật toán tự thân khởi tạo thực thể `new PGlite()` tạm thời ngay trong bộ nhớ RAM với lược đồ rút gọn (1–6 bảng mẫu) rồi tự giải phóng khi kết thúc — **không** kết nối hay sao lưu/phục hồi trên cụm PostgreSQL, S3 hoặc API đang vận hành thực tế.
 
 ### 8.3. Đường ống CI/CD & Quét An ninh Tự động (`.github/workflows/`)
 
@@ -396,5 +406,6 @@ Hệ thống được thiết kế không phụ thuộc nhà cung cấp hạ t�
 
 - [`infra/README.md`](./infra/README.md): Quy tắc vận hành hạ tầng Docker Compose cục bộ, cơ chế bảo vệ dữ liệu volume và giám sát Prometheus / Grafana.
 - [`infra/compose.prod.yaml`](./infra/compose.prod.yaml): Đặc tả triển khai container cứng hóa (non-root, read-only rootfs, cô lập mạng và giới hạn tài nguyên hệ thống).
+- [`packages/database/prisma/schema/`](./packages/database/prisma/schema): Lược đồ Prisma đa tệp định nghĩa 39 bảng nghiệp vụ và 18 kiểu `ENUM` đồng bộ với 10 bản migration.
 - [`packages/contracts/`](./packages/contracts): Lược đồ kiểm tra đầu vào Zod, hằng số phân quyền RBAC/ABAC và danh mục mã lỗi chuẩn hóa toàn hệ thống.
 - [`.github/workflows/`](./.github/workflows): Định nghĩa đường ống CI, quét bảo mật tự động DevSecOps và phát hành container chuẩn SLSA.

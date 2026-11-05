@@ -13,6 +13,14 @@ interface AuthGuardProps {
   requiredPermission?: string;
 }
 
+/**
+ * Thuật toán: Cổng Kiểm Soát Truy Cập Tuyến Đường Theo Máy Trạng Thái RBAC (Client-Side Route Guard State Machine)
+ * Mục đích: Chặn hiển thị trái phép các phân hệ nghiệp vụ khi phiên chưa xác thực hoặc tài khoản thiếu vai trò/quyền tối thiểu (Least Privilege).
+ * Cơ chế hoạt động:
+ *   - Pha 1 (`isLoading`): Dựng khung chờ xác thực phiên bất đồng bộ.
+ *   - Pha 2 (`!isAuthenticated`): Tự động chuyển hướng sang `/login` kèm tham số `redirect` mã hóa URI của đường dẫn hiện tại.
+ *   - Pha 3 (`Authorization Check`): Kiểm tra hội logic `isRoleAllowed && isPermissionAllowed`; nếu vi phạm thì chặn nội dung con và hiển thị cảnh báo kiểm toán HTTP 403.
+ */
 export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGuardProps) {
   const { user, isLoading, isAuthenticated, hasRole, hasPermission, refreshUser } = useAuth();
   const router = useRouter();
@@ -26,15 +34,18 @@ export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGu
   }, [isLoading, isAuthenticated, router, pathname]);
 
   if (isLoading) {
+    // CONFLICT-RESOLVED: Loại bỏ hộp tròn nền/viền bao quanh icon RefreshCw theo quy tắc Icon System (rules/ui-design-system.md).
     return (
       <output
         className="flex min-h-[60vh] flex-col items-center justify-center space-y-4"
         aria-label="Đang kiểm tra quyền truy cập"
       >
-        <div className="relative flex h-12 w-12 items-center justify-center">
-          <div className="absolute h-12 w-12 animate-ping rounded-full border-2 border-[#FF385C]/30" />
-          <RefreshCw className="h-6 w-6 animate-spin text-[#FF385C]" aria-hidden="true" />
-        </div>
+        <RefreshCw
+          size={24}
+          strokeWidth={1.75}
+          className="animate-spin text-[#FF385C]"
+          aria-hidden="true"
+        />
         <p className="text-sm font-medium text-[#717171]">Đang xác thực phiên làm việc…</p>
       </output>
     );

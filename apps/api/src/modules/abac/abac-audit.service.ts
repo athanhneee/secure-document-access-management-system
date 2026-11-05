@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
-import { appendChainedAuditLog, resolveAuditHmacKey } from '../audit/audit-chain-helper.js';
+import { appendChainedAuditLog, resolveActiveAuditKey } from '../audit/audit-chain-helper.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 
 export interface AbacAuditEvent {
@@ -16,9 +16,13 @@ export interface AbacAuditEvent {
 @Injectable()
 export class AbacAuditService {
   private readonly hmacKey: string;
+  private readonly keyVersion: number;
 
   constructor(config: AppConfigService) {
-    this.hmacKey = resolveAuditHmacKey(config);
+    // CONFLICT-RESOLVED: Sử dụng khóa xoay vòng đang kích hoạt kèm hmac_key_version đồng bộ với AuditWriterService.
+    const active = resolveActiveAuditKey(config);
+    this.hmacKey = active.hmacKey;
+    this.keyVersion = active.keyVersion;
   }
 
   async record(
@@ -30,6 +34,7 @@ export class AbacAuditService {
     await appendChainedAuditLog(transaction, {
       partition: 'ABAC',
       hmacKey: this.hmacKey,
+      keyVersion: this.keyVersion,
       action: event.action,
       outcome: event.outcome,
       objectType: event.objectType,

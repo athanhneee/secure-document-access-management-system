@@ -1,3 +1,8 @@
+/**
+ * Module: Bộ Điều phối Tiếp nhận Luồng Tệp Tải lên (Multipart Streaming Upload Controller)
+ * Thuật toán: Xác thực CSRF và kiểm tra hợp lệ sớm các trường biểu mẫu multipart kèm cơ chế hủy luồng tức thì
+ *   (`part.file.destroy()`) khi phát hiện tham số sai định dạng trước khi chuyển vào đường ống tiếp nhận.
+ */
 import {
   BadRequestException,
   Controller,
@@ -29,6 +34,14 @@ export class DocumentIngestionController {
     private readonly csrf: CsrfService,
   ) {}
 
+  /**
+   * Thuật toán: Bóc Tách Luồng Multipart Có Hủy Sớm Chống Rò Rỉ Tài Nguyên (Fail-Fast Multipart Stream Guard)
+   * Mục đích: Xác thực token chống giả mạo yêu cầu chéo trang (CSRF) và định dạng siêu dữ liệu đi kèm tệp trước khi đọc luồng.
+   * Cơ chế hoạt động:
+   *   - Kiểm chứng CSRF, xác nhận kiểu `multipart/form-data` và lấy phần tử tệp đầu tiên.
+   *   - Kiểm tra biểu thức chính quy chặt chẽ trên các trường ID số nguyên lớn, UUID, mã tài liệu và ngày lưu trữ;
+   *     nếu bất kỳ trường nào vi phạm thì gọi `part.file.destroy()` giải phóng bộ đệm socket ngay lập tức trước khi ném lỗi 400.
+   */
   @Post('upload')
   @HttpCode(HttpStatus.CREATED)
   @RequirePermission('DOCUMENT', 'UPLOAD')

@@ -1,19 +1,28 @@
-import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+/**
+ * Module: Quản lý Vòng đời Phiên Truy cập Tài liệu (Document Access Session Lifecycle Service)
+ * Algorithm / Thuật toán: Theo dõi phiên đọc tài liệu đang hoạt động (Bounded Session Listing)
+ *   và thực thi chấm dứt phiên đơn lẻ lũy đẳng (Idempotent Session Termination).
+ */
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { getDatabaseClient, type session_status } from '@sda/database';
+import { AuditWriterService } from '../audit/audit-writer.service.js';
+import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
-type TransactionClient = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
 
-export interface TerminateResult {
-  count: number;
-  affectedUserIds: bigint[];
-}
+export const SESSION_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface AccessSessionDto {
   id: string;
   accessGrantId: string;
-  documentVersionId: number;
-  userId: number;
+  documentVersionId: string;
+  userId: string;
   username: string;
   fullName: string;
   documentId: string;
@@ -34,7 +43,10 @@ export class AccessSessionsService {
   private readonly logger = new Logger(AccessSessionsService.name);
   private readonly database: PrismaClient;
 
-  constructor(@Optional() databaseClient?: PrismaClient) {
+  constructor(
+    @Optional() databaseClient?: PrismaClient,
+    @Optional() private readonly auditWriter?: AuditWriterService,
+  ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
     } catch {
@@ -42,6 +54,13 @@ export class AccessSessionsService {
     }
   }
 
+  /**
+   * Algorithm / Thuật toán: Truy Vấn Phiên Truy Cập Có Giới Hạn Trần (Bounded Session Listing)
+   * Mục đích: Trả về danh sách các phiên truy cập mới nhất theo trạng thái để giám sát vận hành an ninh.
+   * Cơ chế hoạt động:
+   *   - Kẹp ngưỡng kích thước trang tối đa ở 100 bản ghi (`Math.min(limit, 100)`), mặc định lọc `ACTIVE`
+   *     và sắp xếp giảm dần theo `started_at` kèm thông tin người dùng và phiên bản tài liệu.
+   */
   async listSessions(options?: {
     status?: session_status;
     limit?: number;
@@ -73,8 +92,8 @@ export class AccessSessionsService {
     const data: AccessSessionDto[] = sessions.map((s) => ({
       id: s.id,
       accessGrantId: s.access_grant_id,
-      documentVersionId: Number(s.document_version_id),
-      userId: Number(s.user_id),
+      documentVersionId: s.document_version_id.toString(),
+      userId: s.user_id.toString(),
       username: s.users.username,
       fullName: s.users.full_name,
       documentId: s.document_versions.document.id,
@@ -93,12 +112,30 @@ export class AccessSessionsService {
     return { data };
   }
 
+  /**
+   * Algorithm / Thuật toán: Chấm Dứt Phiên Truy Cập Đơn Lẻ Lũy Đẳng (Idempotent Session Termination)
+   * Mục đích: Ngắt ngay lập tức một phiên xem tài liệu cụ thể theo yêu cầu cưỡng chế của cán bộ an ninh.
+   * Cơ chế hoạt động:
+   *   - Kiểm tra sự tồn tại của phiên; nếu phiên không còn ở trạng thái `ACTIVE` thì trả về nguyên trạng (lũy đẳng).
+   *   - Chuyển trạng thái sang `TERMINATED`, đóng dấu thời gian `ended_at` và lưu lý do chấm dứt.
+   */
   async terminateSession(
     id: string,
     reason = 'Terminated by security officer',
+    actor?: AuthPrincipal,
+    context?: Partial<RequestContext>,
   ): Promise<{ id: string; status: string }> {
+    if (!SESSION_UUID_REGEX.test(id)) {
+      throw new BadRequestException('Session identifier must be a valid UUID.');
+    }
+
     const session = await this.database.accessSession.findUnique({
       where: { id },
+      include: {
+        document_versions: {
+          select: { document_id: true },
+        },
+      },
     });
 
     if (!session) {
@@ -118,138 +155,37 @@ export class AccessSessionsService {
       },
     });
 
+    if (this.auditWriter) {
+      const sessionMeta = session as {
+        user_id?: bigint | null;
+        document_versions?: { document_id?: string | null } | null;
+      };
+      await this.auditWriter.writeLog(
+        {
+          action: 'ACCESS_SESSION_TERMINATED',
+          outcome: 'SUCCESS',
+          objectType: 'ACCESS_SESSION',
+          objectId: updated.id,
+          accessSessionId: updated.id,
+          documentId: sessionMeta.document_versions?.document_id ?? null,
+          actorUserId: actor?.userId ?? null,
+          actorUsername: actor?.username ?? 'system',
+          reasonCode: 'MANUAL_TERMINATION',
+          chainPartition: 'SECURITY',
+          details: {
+            reason,
+            targetUserId:
+              sessionMeta.user_id !== undefined && sessionMeta.user_id !== null
+                ? sessionMeta.user_id.toString()
+                : null,
+          },
+        },
+        context,
+      );
+    }
+
     this.logger.warn(`Access session ${id} terminated manually. Reason: ${reason}`);
 
     return { id: updated.id, status: updated.status };
-  }
-
-  /**
-   * Terminate all ACTIVE sessions associated with a specific grant.
-   * Used during grant revocation and expiry.
-   *
-   * Can operate within a provided transaction or create its own.
-   */
-  async terminateSessionsByGrant(
-    grantId: string,
-    reason: string,
-    now: Date = new Date(),
-    tx?: TransactionClient,
-  ): Promise<TerminateResult> {
-    const execute = async (client: TransactionClient | PrismaClient): Promise<TerminateResult> => {
-      // Find affected sessions first to collect user IDs
-      const activeSessions = await client.accessSession.findMany({
-        where: {
-          access_grant_id: grantId,
-          status: 'ACTIVE',
-        },
-        select: { id: true, user_id: true },
-      });
-
-      if (activeSessions.length === 0) {
-        return { count: 0, affectedUserIds: [] };
-      }
-
-      const result = await client.accessSession.updateMany({
-        where: {
-          access_grant_id: grantId,
-          status: 'ACTIVE',
-        },
-        data: {
-          status: 'TERMINATED',
-          ended_at: now,
-          terminated_reason: reason,
-        },
-      });
-
-      const uniqueUserIds = [...new Set(activeSessions.map((s) => s.user_id))];
-
-      this.logger.log(`Terminated ${result.count} sessions for grant ${grantId}: ${reason}`);
-
-      return {
-        count: result.count,
-        affectedUserIds: uniqueUserIds,
-      };
-    };
-
-    if (tx) {
-      return execute(tx);
-    }
-    return execute(this.database);
-  }
-
-  /**
-   * Terminate all ACTIVE sessions for a specific user.
-   * Used when user account is disabled or clearance changes.
-   */
-  async terminateSessionsByUser(
-    userId: bigint,
-    reason: string,
-    now: Date = new Date(),
-    tx?: TransactionClient,
-  ): Promise<number> {
-    const execute = async (client: TransactionClient | PrismaClient): Promise<number> => {
-      const result = await client.accessSession.updateMany({
-        where: {
-          user_id: userId,
-          status: 'ACTIVE',
-        },
-        data: {
-          status: 'TERMINATED',
-          ended_at: now,
-          terminated_reason: reason,
-        },
-      });
-      return result.count;
-    };
-
-    if (tx) {
-      return execute(tx);
-    }
-    return execute(this.database);
-  }
-
-  /**
-   * Terminate all ACTIVE sessions for a batch of grant IDs.
-   * Used by the expiry worker.
-   */
-  async terminateSessionsByGrants(
-    grantIds: string[],
-    reason: string,
-    now: Date = new Date(),
-    tx?: TransactionClient,
-  ): Promise<TerminateResult> {
-    const execute = async (client: TransactionClient | PrismaClient): Promise<TerminateResult> => {
-      const activeSessions = await client.accessSession.findMany({
-        where: {
-          access_grant_id: { in: grantIds },
-          status: 'ACTIVE',
-        },
-        select: { user_id: true },
-      });
-
-      if (activeSessions.length === 0) {
-        return { count: 0, affectedUserIds: [] };
-      }
-
-      const result = await client.accessSession.updateMany({
-        where: {
-          access_grant_id: { in: grantIds },
-          status: 'ACTIVE',
-        },
-        data: {
-          status: 'TERMINATED',
-          ended_at: now,
-          terminated_reason: reason,
-        },
-      });
-
-      const uniqueUserIds = [...new Set(activeSessions.map((s) => s.user_id))];
-      return { count: result.count, affectedUserIds: uniqueUserIds };
-    };
-
-    if (tx) {
-      return execute(tx);
-    }
-    return execute(this.database);
   }
 }

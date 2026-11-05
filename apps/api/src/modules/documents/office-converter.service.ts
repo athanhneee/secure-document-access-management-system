@@ -1,14 +1,16 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  GatewayTimeoutException,
-  Optional,
-} from '@nestjs/common';
-import yauzl from 'yauzl';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+/**
+ * Module: Safe Sandboxed Office-to-PDF Converter Service
+ * Algorithm: Pre-conversion OOXML security inspection followed by `Promise.race` deadline enforcement
+ *   over headless Gotenberg conversion with deterministic internal A4 PDF fallback.
+ */
+import { GatewayTimeoutException, Injectable, Logger, Optional } from '@nestjs/common';
 import { AppErrorCode } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
+import {
+  extractOfficeFallbackText,
+  inspectOfficeArchiveSecurity,
+} from './office-archive-inspector.js';
+import { convertWithGotenberg, renderSanitizedTextToPdf } from './office-fallback-pdf.js';
 
 export interface OfficeConversionOptions {
   timeoutMs?: number;
@@ -35,13 +37,8 @@ export class OfficeConverterService {
   }
 
   /**
-   * Safely inspects an Office OpenXML file (.docx, .xlsx, .pptx) and converts it to PDF.
-   * Enforces:
-   * 1. No VBA macros (vbaProject.bin, etc.) -> OFFICE_MACRO_BLOCKED
-   * 2. No external link execution or embedded objects (SSRF/NTLM leak protection)
-   * 3. Headless LibreOffice conversion via Gotenberg container (with seamless fallback)
-   * 4. Timeout enforcement (default 10,000ms) -> OFFICE_CONVERSION_TIMEOUT
-   * 5. Corrupt file detection -> OFFICE_CONVERSION_FAILED
+   * Algorithm: Deadline-Bounded Safe Office-to-PDF Conversion
+   * Races `performSafeConversion` against a hard `timeoutMs` timer raising `OFFICE_CONVERSION_TIMEOUT`.
    */
   async convertOfficeToPdf(
     officeBuffer: Buffer,
@@ -71,403 +68,24 @@ export class OfficeConverterService {
     filename: string,
     options: OfficeConversionOptions,
   ): Promise<Buffer> {
-    // 1. Inspect ZIP archive entries
-    const entries = await this.readZipEntries(officeBuffer);
+    await inspectOfficeArchiveSecurity(officeBuffer);
 
-    // 2. Security Check: Detect and block prohibited VBA macros & ActiveX
-    for (const entry of entries) {
-      const lower = entry.fileName.toLowerCase();
-      if (
-        lower.includes('vbaproject.bin') ||
-        lower.includes('vbadirection') ||
-        lower.includes('vbadata') ||
-        (lower.endsWith('.bin') && lower.includes('vba')) ||
-        lower.includes('/activex/')
-      ) {
-        throw new BadRequestException({
-          errorCode: AppErrorCode.OFFICE_MACRO_BLOCKED,
-          message: 'Office document contains prohibited executable VBA macros.',
-        });
-      }
-      if (lower === 'xl/connections.xml' || lower.endsWith('/externallink1.xml')) {
-        throw new BadRequestException({
-          errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
-          message: 'Office document contains prohibited external data connections.',
-        });
-      }
-    }
-
-    // 2b. Security Check: Detect and block prohibited external relationships & XXE
-    for (const entry of entries) {
-      const lowerFileName = entry.fileName.toLowerCase();
-      if (lowerFileName.endsWith('.rels') || lowerFileName.endsWith('.xml')) {
-        const content = await this.extractEntryContent(officeBuffer, entry.fileName);
-        if (content) {
-          if (/<!doctype\b|<!entity\b/iu.test(content)) {
-            throw new BadRequestException({
-              errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
-              message:
-                'Office XML contains prohibited DOCTYPE or ENTITY declarations (XXE protection).',
-            });
-          }
-
-          if (lowerFileName.endsWith('.rels')) {
-            const decoded = content
-              .replace(/&#x([0-9a-f]+);/giu, (_, hex: string) =>
-                String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff)),
-              )
-              .replace(/&#(\d+);/gu, (_, dec: string) =>
-                String.fromCodePoint(Math.min(parseInt(dec, 10), 0x10ffff)),
-              )
-              .replace(/&quot;/giu, '"')
-              .replace(/&apos;/giu, "'")
-              .replace(/&amp;/giu, '&');
-
-            if (
-              /targetmode\s*=\s*["']\s*external\s*["']/iu.test(decoded) ||
-              /target\s*=\s*["']\s*(?:https?|ftp|file|gopher|ldap|jar|netdoc|smb|mailto|mhtml):/iu.test(
-                decoded,
-              ) ||
-              /target\s*=\s*["']\s*(?:\\\\|\/\/)/iu.test(decoded)
-            ) {
-              throw new BadRequestException({
-                errorCode: AppErrorCode.OFFICE_EXTERNAL_RESOURCE_BLOCKED,
-                message:
-                  'Office document contains prohibited external relationships or SSRF attack vectors.',
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // 3. Attempt high-fidelity conversion via Gotenberg container (LibreOffice headless)
     const timeoutMs = options.timeoutMs ?? 10_000;
-    const gotenbergPdf = await this.convertWithGotenberg(officeBuffer, filename, timeoutMs);
+    const gotenbergPdf = await convertWithGotenberg(
+      this.gotenbergUrl,
+      this.gotenbergEnabled,
+      officeBuffer,
+      filename,
+      timeoutMs,
+      this.logger,
+    );
     if (gotenbergPdf) {
       this.logger.log(`Rendered ${filename} to PDF using Gotenberg/LibreOffice headless engine.`);
       return gotenbergPdf;
     }
 
-    // 4. Fallback: Extract text content and render safely into standardized PDF
     this.logger.log(`Rendering ${filename} via built-in safe text-to-PDF fallback engine.`);
-    const ext = filename.split('.').pop()?.toLowerCase();
-    let extractedText = '';
-
-    if (ext === 'docx') {
-      extractedText = await this.extractDocxText(officeBuffer);
-    } else if (ext === 'xlsx') {
-      extractedText = await this.extractXlsxText(officeBuffer);
-    } else if (ext === 'pptx') {
-      extractedText = await this.extractPptxText(officeBuffer);
-    } else {
-      extractedText = `Document: ${filename}\nFormat: Office OpenXML`;
-    }
-
-    // 5. Render extracted content safely into a standardized PDF
-    return await this.renderTextToPdf(filename, extractedText, options.maxPages ?? 50);
-  }
-
-  /**
-   * Attempts headless Office-to-PDF conversion using the Gotenberg container.
-   * Returns converted PDF buffer or null if Gotenberg is unavailable or returns an error.
-   */
-  private async convertWithGotenberg(
-    officeBuffer: Buffer,
-    filename: string,
-    timeoutMs: number,
-  ): Promise<Buffer | null> {
-    if (!this.gotenbergEnabled || !this.gotenbergUrl) {
-      return null;
-    }
-
-    try {
-      const endpoint = `${this.gotenbergUrl.replace(/\/+$/, '')}/forms/libreoffice/convert`;
-      const formData = new FormData();
-      const arrayBuffer = officeBuffer.buffer.slice(
-        officeBuffer.byteOffset,
-        officeBuffer.byteOffset + officeBuffer.byteLength,
-      ) as ArrayBuffer;
-      const blob = new Blob([arrayBuffer]);
-      formData.append('files', blob, filename);
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, 8_000));
-
-      try {
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          body: formData,
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          this.logger.warn(
-            `Gotenberg conversion returned HTTP ${response.status} for ${filename}. Falling back to internal engine.`,
-          );
-          return null;
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        const pdfBuffer = Buffer.from(arrayBuffer);
-
-        if (pdfBuffer.length < 4 || pdfBuffer.subarray(0, 4).toString('ascii') !== '%PDF') {
-          this.logger.warn(`Gotenberg response for ${filename} is not a valid PDF.`);
-          return null;
-        }
-
-        return pdfBuffer;
-      } finally {
-        clearTimeout(timer);
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.debug(
-        `Gotenberg conversion unavailable for ${filename} (${msg}). Falling back to internal engine.`,
-      );
-      return null;
-    }
-  }
-
-  /**
-   * Reads all entry metadata from the zip buffer.
-   */
-  private readZipEntries(buffer: Buffer): Promise<yauzl.Entry[]> {
-    return new Promise((resolve, reject) => {
-      yauzl.fromBuffer(buffer, { lazyEntries: true, autoClose: false }, (err, zipfile) => {
-        if (err || !zipfile) {
-          return reject(
-            new BadRequestException({
-              errorCode: AppErrorCode.OFFICE_CONVERSION_FAILED,
-              message: 'Invalid or corrupt Office OpenXML package.',
-            }),
-          );
-        }
-
-        const safeClose = (): void => {
-          try {
-            zipfile.close();
-          } catch {
-            // Ignore
-          }
-        };
-
-        const entries: yauzl.Entry[] = [];
-        zipfile.readEntry();
-
-        zipfile.on('entry', (entry) => {
-          entries.push(entry);
-          zipfile.readEntry();
-        });
-
-        zipfile.on('end', () => {
-          safeClose();
-          resolve(entries);
-        });
-        zipfile.on('error', (zipErr) => {
-          safeClose();
-          reject(
-            new BadRequestException({
-              errorCode: AppErrorCode.OFFICE_CONVERSION_FAILED,
-              message: `Corrupt zip archive: ${zipErr.message}`,
-            }),
-          );
-        });
-      });
-    });
-  }
-
-  /**
-   * Extracts entry content as string (capped at 5MB to prevent memory exhaustion).
-   */
-  private extractEntryContent(buffer: Buffer, entryPath: string): Promise<string | null> {
-    const maxExtractBytes = 5 * 1024 * 1024;
-    return new Promise((resolve) => {
-      yauzl.fromBuffer(buffer, { lazyEntries: true, autoClose: false }, (err, zipfile) => {
-        if (err || !zipfile) return resolve(null);
-
-        let settled = false;
-        const finish = (val: string | null): void => {
-          if (settled) return;
-          settled = true;
-          try {
-            zipfile.close();
-          } catch {
-            // Ignore
-          }
-          resolve(val);
-        };
-
-        zipfile.readEntry();
-        zipfile.on('entry', (entry) => {
-          if (settled) return;
-          if (entry.fileName === entryPath) {
-            zipfile.openReadStream(entry, (streamErr, readStream) => {
-              if (streamErr || !readStream) return finish(null);
-              const chunks: Buffer[] = [];
-              let total = 0;
-              readStream.on('data', (c: Buffer) => {
-                total += c.length;
-                if (total > maxExtractBytes) {
-                  readStream.destroy();
-                  finish(null);
-                  return;
-                }
-                chunks.push(c);
-              });
-              readStream.on('end', () => finish(Buffer.concat(chunks).toString('utf-8')));
-              readStream.on('error', () => finish(null));
-            });
-          } else {
-            zipfile.readEntry();
-          }
-        });
-
-        zipfile.on('end', () => finish(null));
-        zipfile.on('error', () => finish(null));
-      });
-    });
-  }
-
-  private async extractDocxText(buffer: Buffer): Promise<string> {
-    const xml = await this.extractEntryContent(buffer, 'word/document.xml');
-    if (!xml) return 'Document body is empty.';
-    return this.sanitizeXmlToText(xml);
-  }
-
-  private async extractXlsxText(buffer: Buffer): Promise<string> {
-    const sharedStringsXml = await this.extractEntryContent(buffer, 'xl/sharedStrings.xml');
-    if (!sharedStringsXml) return 'Workbook contains no shared strings.';
-    return this.sanitizeXmlToText(sharedStringsXml);
-  }
-
-  private async extractPptxText(buffer: Buffer): Promise<string> {
-    const slideXml = await this.extractEntryContent(buffer, 'ppt/slides/slide1.xml');
-    if (!slideXml) return 'Presentation slide content.';
-    return this.sanitizeXmlToText(slideXml);
-  }
-
-  /**
-   * Sanitizes XML content, strips all XML tags, external links, scripts, and normalizes text.
-   */
-  private sanitizeXmlToText(xml: string): string {
-    // Replace paragraph and break tags with newlines
-    let text = xml.replace(/<\/w:p>/g, '\n').replace(/<\/w:r>/g, ' ');
-    // Remove all XML tags
-    text = text.replace(/<[^>]+>/g, '');
-    // Decode basic XML entities
-    text = text
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'");
-    // Normalize excessive whitespace
-    return text
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .join('\n');
-  }
-
-  private toWinAnsiSafeText(input: string): string {
-    return input
-      .replace(/Đ/gu, 'D')
-      .replace(/đ/gu, 'd')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/gu, '')
-      .replace(/[^\x20-\x7E\xA0-\xFF]/gu, '?');
-  }
-
-  /**
-   * Renders sanitized text into a standardized multi-page PDF.
-   */
-  private async renderTextToPdf(
-    title: string,
-    content: string,
-    maxPages: number = 50,
-  ): Promise<Buffer> {
-    const pdfDoc = await PDFDocument.create();
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    const safeTitle = this.toWinAnsiSafeText(title);
-
-    const lines = content.split('\n');
-    const linesPerPage = 42;
-    let pageCount = 0;
-
-    let lineIdx = 0;
-    while (lineIdx < lines.length && pageCount < maxPages) {
-      const page = pdfDoc.addPage([595.28, 841.89]); // A4 portrait
-      pageCount++;
-      const { width, height } = page.getSize();
-
-      // Header on first page
-      if (pageCount === 1) {
-        page.drawText(`Converted Document: ${safeTitle}`, {
-          x: 40,
-          y: height - 40,
-          size: 14,
-          font: boldFont,
-          color: rgb(0.1, 0.1, 0.1),
-        });
-        page.drawText('Sanitized Office Preview (Macros/Scripts Blocked)', {
-          x: 40,
-          y: height - 58,
-          size: 9,
-          font,
-          color: rgb(0.4, 0.4, 0.4),
-        });
-      }
-
-      let yPos = pageCount === 1 ? height - 85 : height - 45;
-      const endLine = Math.min(lineIdx + linesPerPage, lines.length);
-
-      for (let i = lineIdx; i < endLine; i++) {
-        const rawLine = lines[i] ?? '';
-        // Truncate line if too long for A4 width
-        const truncated = this.toWinAnsiSafeText(
-          rawLine.length > 95 ? `${rawLine.substring(0, 92)}...` : rawLine,
-        );
-        page.drawText(truncated, {
-          x: 40,
-          y: yPos,
-          size: 10,
-          font,
-          color: rgb(0.15, 0.15, 0.15),
-        });
-        yPos -= 17;
-      }
-
-      // Page footer
-      page.drawText(`Page ${pageCount}`, {
-        x: width - 80,
-        y: 20,
-        size: 8,
-        font,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-
-      lineIdx = endLine;
-    }
-
-    if (lines.length === 0 || pageCount === 0) {
-      const page = pdfDoc.addPage([595.28, 841.89]);
-      page.drawText(`Converted Document: ${safeTitle}`, {
-        x: 40,
-        y: 800,
-        size: 14,
-        font: boldFont,
-      });
-      page.drawText('(Document has no printable text content)', {
-        x: 40,
-        y: 770,
-        size: 10,
-        font,
-      });
-    }
-
-    const pdfBytes = await pdfDoc.save();
-    return Buffer.from(pdfBytes);
+    const extractedText = await extractOfficeFallbackText(officeBuffer, filename);
+    return await renderSanitizedTextToPdf(filename, extractedText, options.maxPages ?? 50);
   }
 }

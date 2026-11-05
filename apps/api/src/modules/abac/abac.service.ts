@@ -50,6 +50,14 @@ export class AbacService {
     };
   }
 
+  /**
+   * Thuật toán: Đánh giá chính sách ABAC có bộ nhớ đệm định danh theo phiên bản (Version-Keyed Read-Through PDP Evaluation).
+   * Cơ chế hoạt động:
+   *   1. Đọc số hiệu phiên bản chính sách đơn điệu hiện tại từ PostgreSQL sequence (`abac_policy_version_seq`).
+   *   2. Tra cứu bản biên dịch trong Redis theo khóa phiên bản; nếu trúng và hợp lệ thì đánh giá ngay trên RAM.
+   *   3. Nếu trượt cache hoặc bản cache hỏng: tải nguồn từ DB, biên dịch cây DNF AST, ghi lại cache và đánh giá.
+   *   4. Nếu quá trình biên dịch phát hiện lỗi cấu trúc, tự động rơi về quyết định từ chối an toàn `INVALID_POLICY` (Fail-Closed).
+   */
   async evaluate(input: PolicyEvaluationInput): Promise<PdpResult> {
     const start = performance.now();
     let isCached = false;
@@ -96,6 +104,11 @@ export class AbacService {
     return result;
   }
 
+  /**
+   * Thuật toán: Mô phỏng quyết định chính sách thời điểm bất kỳ có ghi vết kiểm toán tuần tự hóa (Audited Point-in-Time Policy Simulation).
+   * Cơ chế hoạt động: Kiểm tra ma trận quyền mô phỏng, tái dựng ngữ cảnh thuộc tính tại mốc thời gian yêu cầu,
+   * chạy bộ đánh giá PDP và ghi nhận bản ghi kiểm toán bất biến trong giao dịch mức cô lập `SERIALIZABLE`.
+   */
   async simulate(
     principal: AuthPrincipal,
     input: {
@@ -140,6 +153,13 @@ export class AbacService {
     return result;
   }
 
+  /**
+   * Thuật toán: Kích hoạt luật chính sách kiểm chứng hai pha chống tranh chấp (Two-Phase Validated SERIALIZABLE Activation).
+   * Cơ chế hoạt động:
+   *   1. Pha kiểm tra sơ bộ (Pre-flight): giả lập gộp luật ứng viên vào tập luật đang hoạt động và biên dịch thử.
+   *   2. Pha giao dịch `SERIALIZABLE`: đọc lại tập luật dưới khóa cô lập tuần tự hóa, biên dịch xác nhận lần hai
+   *      để triệt tiêu xung đột ghi đồng thời (write skew), cập nhật cờ kích hoạt, ghi kiểm toán và xóa cache phiên bản cũ.
+   */
   async activateRule(
     principal: AuthPrincipal,
     ruleId: bigint,

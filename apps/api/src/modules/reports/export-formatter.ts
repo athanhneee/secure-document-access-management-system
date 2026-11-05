@@ -1,3 +1,6 @@
+/**
+ * Module: ExportFormatter — Động cơ dàn trang bảng biểu PDF đa trang (A4 Landscape `pdf-lib`) và kết xuất sổ tính Excel XLSX (`ExcelJS`) tích hợp phòng vệ Formula Injection.
+ */
 import ExcelJS from 'exceljs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
@@ -8,6 +11,11 @@ export interface ExportColumn {
 }
 
 /**
+ * Thuật toán: Chuyển tự Unicode NFD sang bảng mã ASCII in được tương thích WinAnsi (Unicode-to-WinAnsi Transliteration)
+ * Mục đích: Ngăn lỗi mã hóa phông chữ chuẩn `Helvetica` của `pdf-lib` khi tiêu đề hoặc dữ liệu báo cáo chứa dấu tiếng Việt/ký tự đặc biệt.
+ * Cơ chế hoạt động:
+ *   - Phân rã tổ hợp dấu bằng chuẩn hóa Unicode `NFD`, tước bỏ dải dấu phụ kết hợp `[\u0300-\u036f]`, chuyển `đ/Đ` thành `d/D`, thay ký tự ngoài miền in ASCII `[\x20-\x7E]` bằng khoảng trắng và gom gọn khoảng trắng thừa.
+ *
  * Transliterates Vietnamese / Unicode text to ASCII-compatible string for WinAnsi standard PDF fonts.
  */
 export function sanitizeForPdf(text: string): string {
@@ -22,6 +30,13 @@ export function sanitizeForPdf(text: string): string {
 }
 
 /**
+ * Thuật toán: Dàn trang bảng biểu PDF khổ ngang A4 đa trang (Multi-Page A4 Landscape Tabular Layout Engine)
+ * Mục đích: Kết xuất tập dữ liệu kiểm toán/sự cố thành tệp PDF có tiêu đề, thanh cột, dòng xen kẽ màu (Zebra Striping), đánh số trang và chân trang bảo mật.
+ * Cơ chế hoạt động:
+ *   - Thiết lập khổ giấy A4 ngang (`841.89 x 595.28 pt`, lề `36 pt`), chia đều độ rộng cột `colWidth = usableWidth / max(1, columns.length)`.
+ *   - Tính sức chứa dòng mỗi trang `rowsPerPage = max(1, floor((usableHeight - 65) / rowHeight))` và tổng số trang `ceil(rows.length / rowsPerPage)`.
+ *   - Với từng trang: vẽ tiêu đề, metadata trang, thanh header nền tối, lát cắt dữ liệu `rows.slice(pageIdx * rowsPerPage, (pageIdx + 1) * rowsPerPage)` có cắt ngắn chuỗi dài (`> 24` ký tự) và đóng dấu chân trang bảo mật.
+ *
  * Generates a structured multi-page PDF tabular document.
  */
 export async function generatePdfTable(
@@ -140,6 +155,12 @@ export async function generatePdfTable(
 }
 
 /**
+ * Thuật toán: Kết xuất bảng tính Excel XLSX có định dạng & khử công thức độc hại (Formula-Safe Styled XLSX Workbook Generator)
+ * Mục đích: Tạo tệp `.xlsx` chuyên nghiệp phục vụ lưu trữ/phân tích kiểm toán trong khi ngăn chặn tấn công chèn công thức bảng tính (CWE-1236).
+ * Cơ chế hoạt động:
+ *   - Khởi tạo `ExcelJS.Workbook`, giới hạn tên trang tính tối đa 30 ký tự (chuẩn OOXML Worksheet Name Limit) và tính độ rộng cột tự động `max(header.length + 6, 16)`.
+ *   - Trước khi chèn từng ô dữ liệu, kiểm tra biểu thức chính quy `/^[=+\-@\t\r]/u` và ghép tiền tố `'` nếu phát hiện ký tự khởi đầu công thức; tô màu nền xen kẽ cho các dòng lẻ.
+ *
  * Generates an Excel XLSX workbook using ExcelJS.
  */
 export async function generateExcelTable(

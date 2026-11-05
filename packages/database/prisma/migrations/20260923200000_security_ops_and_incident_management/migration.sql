@@ -1,5 +1,11 @@
 -- Migration: Security Operations, Incident Management, Notification Outbox, and Async Export Jobs
 -- Prompt 15: Security Officer, Auditor & Administrator Operations
+--
+-- Thuật toán tổng quan migration:
+-- Khởi tạo hạ tầng vận hành an ninh SOC & điều phối bất đồng bộ đáng tin cậy:
+-- 1. Hàng đợi `notification_outbox` theo mẫu Transactional Outbox với khóa chống trùng lặp duy nhất (`deduplication_key`) và chỉ mục lịch thử lại lùi mũ.
+-- 2. Bảng quản lý công việc xuất báo cáo lớn `async_export_jobs` kèm dấu kiểm toàn vẹn SHA-256 và chỉ mục thu dọn hết hạn TTL (`expires_at`).
+-- 3. Bảng cấu hình động các luật phát hiện bất thường cửa sổ trượt `detection_rule_configs` cùng dữ liệu khởi tạo lũy đẳng (`ON CONFLICT DO NOTHING`).
 
 -- 1. Create notification_outbox table for transactional outbox pattern with deduplication and retry backoff
 CREATE TABLE IF NOT EXISTS "notification_outbox" (
@@ -23,6 +29,7 @@ CREATE TABLE IF NOT EXISTS "notification_outbox" (
     CONSTRAINT "notification_outbox_recipient_id_fkey" FOREIGN KEY ("recipient_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE NO ACTION
 );
 
+-- Thuật toán: Chỉ mục duy nhất chống gửi trùng lặp thông báo (`idx_outbox_dedup`) và chỉ mục quét hàng đợi đến hạn thử lại (`idx_outbox_pending`).
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_outbox_dedup" ON "notification_outbox"("deduplication_key");
 CREATE INDEX IF NOT EXISTS "idx_outbox_pending" ON "notification_outbox"("status", "next_retry_at");
 
@@ -48,6 +55,7 @@ CREATE TABLE IF NOT EXISTS "async_export_jobs" (
     CONSTRAINT "async_export_jobs_requester_user_id_fkey" FOREIGN KEY ("requester_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE NO ACTION
 );
 
+-- Thuật toán: Chỉ mục tra cứu theo người yêu cầu (`idx_export_jobs_user_status`) và chỉ mục quét thu dọn tệp xuất quá hạn TTL (`idx_export_jobs_expires`).
 CREATE INDEX IF NOT EXISTS "idx_export_jobs_user_status" ON "async_export_jobs"("requester_user_id", "status");
 CREATE INDEX IF NOT EXISTS "idx_export_jobs_expires" ON "async_export_jobs"("expires_at");
 
@@ -72,6 +80,7 @@ CREATE TABLE IF NOT EXISTS "detection_rule_configs" (
 
 CREATE UNIQUE INDEX IF NOT EXISTS "detection_rule_configs_rule_code_key" ON "detection_rule_configs"("rule_code");
 
+-- Thuật toán: Khởi tạo dữ liệu hạt giống lũy đẳng (`ON CONFLICT DO NOTHING`) cho 6 luật phát hiện bất thường cửa sổ trượt mặc định của SOC.
 -- 4. Seed initial default detection rules
 INSERT INTO "detection_rule_configs" ("rule_code", "name", "description", "is_enabled", "severity", "threshold", "window_minutes", "cooldown_minutes", "parameters")
 VALUES

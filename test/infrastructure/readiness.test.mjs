@@ -7,6 +7,12 @@ const port = 3199;
 const readinessUrl = `http://127.0.0.1:${port}/api/v1/health/ready`;
 let api;
 
+/**
+ * Thuật toán: Thăm dò Điểm cuối Sẵn sàng HTTP Có Hạn giờ (Bounded-Timeout HTTP Readiness Probe)
+ * Mục đích: Truy vấn trạng thái sức khỏe tổng hợp `/api/v1/health/ready` của máy chủ API với ngưỡng ngắt tự động `5000ms`.
+ * Cơ chế hoạt động:
+ *   - Sử dụng `AbortSignal.timeout(5_000)` để hủy kết nối treo khi phụ thuộc hạ tầng (Redis/PostgreSQL) bị dừng đột ngột, sau đó giải mã phản hồi JSON phục vụ kiểm chứng trạng thái suy giảm (`degraded` / HTTP 503) và phục hồi (`ready` / HTTP 200).
+ */
 async function readiness() {
   const response = await fetch(readinessUrl, { signal: AbortSignal.timeout(5_000) });
   const body = await response.json();

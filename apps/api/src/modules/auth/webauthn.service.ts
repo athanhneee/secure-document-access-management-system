@@ -1,4 +1,7 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+/**
+ * @module WebAuthnService
+ * Algorithm: W3C WebAuthn Level 3 Registration, Attestation & Sign-Counter Clone Detection.
+ */
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import {
   generateAuthenticationOptions,
@@ -11,6 +14,7 @@ import {
 } from '@simplewebauthn/server';
 import { AppConfigService } from '../../config/config.service.js';
 import { MfaService } from './mfa.service.js';
+import { WebAuthnChallengeStore } from './webauthn-challenge.helper.js';
 
 export interface StoredWebAuthnCredential {
   type: 'WEBAUTHN';
@@ -23,19 +27,12 @@ export interface StoredWebAuthnCredential {
   createdAt: string;
 }
 
-interface SignedChallengePayload {
-  challenge: string;
-  userId?: string | undefined;
-  timestamp: number;
-}
-
 @Injectable()
 export class WebAuthnService {
   private readonly rpName: string;
   private readonly rpId: string;
   private readonly origins: string[];
-  private readonly challengeSigningKey: Buffer;
-  private readonly consumedChallenges = new Map<string, number>();
+  private readonly challenges: WebAuthnChallengeStore;
 
   constructor(
     private readonly mfa: MfaService,
@@ -49,11 +46,7 @@ export class WebAuthnService {
       .split(',')
       .map((o) => o.trim())
       .filter((o) => o.length > 0);
-
-    const master = config.get('APP_ENCRYPTION_MASTER_KEY');
-    this.challengeSigningKey = createHash('sha256')
-      .update(`webauthn-challenge-token:${master}`)
-      .digest();
+    this.challenges = new WebAuthnChallengeStore(config.get('APP_ENCRYPTION_MASTER_KEY'));
   }
 
   getRpId(): string {
@@ -64,98 +57,16 @@ export class WebAuthnService {
     return this.origins;
   }
 
-  /**
-   * Generates a signed, stateless challenge token with 5-minute TTL.
-   * Tamper-proof and binds to the target user (if provided).
-   */
   createChallengeToken(challenge: string, userId?: bigint | string): string {
-    const payload: SignedChallengePayload = {
-      challenge,
-      userId: userId !== undefined ? String(userId) : undefined,
-      timestamp: Date.now(),
-    };
-    const serialized = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    const signature = createHmac('sha256', this.challengeSigningKey)
-      .update(serialized)
-      .digest('base64url');
-    return `${serialized}.${signature}`;
+    return this.challenges.createChallengeToken(challenge, userId);
   }
 
-  /**
-   * Verifies the stateless challenge token and extracts the expected challenge.
-   */
   verifyChallengeToken(token: string, expectedUserId?: bigint | string): string {
-    const parts = token.split('.');
-    if (parts.length !== 2 || !parts[0] || !parts[1]) {
-      throw new BadRequestException('Invalid challenge token format.');
-    }
-    const serialized = parts[0];
-    const signature = parts[1];
-
-    const expectedSignature = createHmac('sha256', this.challengeSigningKey)
-      .update(serialized)
-      .digest('base64url');
-
-    const signatureBuffer = Buffer.from(signature, 'utf8');
-    const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
-
-    if (
-      signatureBuffer.length !== expectedBuffer.length ||
-      !timingSafeEqual(signatureBuffer, expectedBuffer)
-    ) {
-      throw new BadRequestException('Challenge token signature verification failed.');
-    }
-
-    let payload: SignedChallengePayload;
-    try {
-      payload = JSON.parse(
-        Buffer.from(serialized, 'base64url').toString('utf8'),
-      ) as SignedChallengePayload;
-    } catch {
-      throw new BadRequestException('Malformed challenge token payload.');
-    }
-
-    // Enforce 5-minute maximum lifetime
-    const now = Date.now();
-    if (now - payload.timestamp > 300_000 || payload.timestamp > now + 30_000) {
-      throw new BadRequestException('Challenge token has expired.');
-    }
-
-    if (
-      expectedUserId !== undefined &&
-      payload.userId !== undefined &&
-      payload.userId !== String(expectedUserId)
-    ) {
-      throw new BadRequestException('Challenge token is bound to a different user.');
-    }
-
-    this.pruneConsumedChallenges(now);
-    const replayKey = createHash('sha256').update(token).digest('hex');
-    const consumedExpiry = this.consumedChallenges.get(replayKey);
-    if (consumedExpiry && consumedExpiry > now) {
-      throw new BadRequestException('Challenge token has already been used.');
-    }
-    this.consumedChallenges.set(replayKey, payload.timestamp + 300_000);
-
-    return payload.challenge;
-  }
-
-  private pruneConsumedChallenges(now: number): void {
-    if (this.consumedChallenges.size < 4_096) return;
-    for (const [key, expiresAt] of this.consumedChallenges) {
-      if (expiresAt <= now) {
-        this.consumedChallenges.delete(key);
-      }
-    }
-    while (this.consumedChallenges.size >= 8_192) {
-      const oldest = this.consumedChallenges.keys().next().value;
-      if (!oldest) break;
-      this.consumedChallenges.delete(oldest);
-    }
+    return this.challenges.verifyChallengeToken(token, expectedUserId);
   }
 
   /**
-   * Generates registration options conforming to W3C WebAuthn Level 3.
+   * Algorithm / Thuật toán: Sinh tham số đăng ký khóa phần cứng chuẩn W3C WebAuthn Level 3 kèm loại trừ khóa đã đăng ký.
    */
   async generateRegistrationOptions(
     userId: bigint,
@@ -184,7 +95,7 @@ export class WebAuthnService {
   }
 
   /**
-   * Verifies registration response from client and returns encrypted credential for database persistence.
+   * Algorithm / Thuật toán: Xác minh chứng thực đăng ký FIDO2/WebAuthn và mã hóa khóa công khai lưu trữ an toàn.
    */
   async verifyRegistration(
     response: RegistrationResponseJSON,
@@ -228,7 +139,7 @@ export class WebAuthnService {
   }
 
   /**
-   * Generates authentication options for an existing user's registered keys.
+   * Algorithm / Thuật toán: Sinh thử thách xác thực WebAuthn cho tập khóa phần cứng hiện có của tài khoản.
    */
   async generateAuthenticationOptions(credentials: StoredWebAuthnCredential[], userId?: bigint) {
     const options = await generateAuthenticationOptions({
@@ -245,7 +156,7 @@ export class WebAuthnService {
   }
 
   /**
-   * Verifies authentication response from client with clone detection.
+   * Algorithm / Thuật toán: Kiểm chứng chữ ký xác thực WebAuthn kèm phát hiện nhân bản khóa qua bộ đếm đơn điệu (`newCounter > stored.counter`).
    */
   async verifyAuthentication(
     response: AuthenticationResponseJSON,
@@ -260,10 +171,12 @@ export class WebAuthnService {
   }> {
     const expectedChallenge = this.verifyChallengeToken(challengeToken, userId);
 
+    // Pass counter: 0 to @simplewebauthn/server so cryptographic signature verification completes
+    // without prematurely throwing on counter rollback, allowing explicit clone detection below.
     const webauthnCred: WebAuthnCredential = {
       id: stored.credentialId,
       publicKey: new Uint8Array(Buffer.from(stored.publicKeyBase64Url, 'base64url')),
-      counter: stored.counter,
+      counter: 0,
       ...(stored.transports ? { transports: [...stored.transports] } : {}),
     };
 
@@ -282,7 +195,6 @@ export class WebAuthnService {
 
     const { newCounter } = verification.authenticationInfo;
 
-    // Clone Detection: Authenticator counter must increase if counter > 0
     if (stored.counter > 0 && newCounter <= stored.counter) {
       return {
         verified: false,
@@ -292,23 +204,17 @@ export class WebAuthnService {
       };
     }
 
-    // Update stored counter
-    const updatedCredential: StoredWebAuthnCredential = {
-      ...stored,
-      counter: newCounter,
-    };
-    const updatedEncryptedSecret = this.mfa.encryptPayload(updatedCredential);
-
+    const updatedCredential: StoredWebAuthnCredential = { ...stored, counter: newCounter };
     return {
       verified: true,
       cloneDetected: false,
       newCounter,
-      updatedEncryptedSecret,
+      updatedEncryptedSecret: this.mfa.encryptPayload(updatedCredential),
     };
   }
 
   /**
-   * Helper to parse stored credential from database secret string.
+   * Algorithm / Thuật toán: Giải mã và thu hẹp kiểu an toàn cấu trúc khóa WebAuthn từ chuỗi bí mật lưu trong DB.
    */
   parseStoredCredential(encryptedSecret: string): StoredWebAuthnCredential | null {
     try {

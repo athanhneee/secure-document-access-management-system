@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import zlib from 'node:zlib';
 
 process.env['NODE_ENV'] = 'test';
 process.env['STORAGE_MOCK'] = 'true';
@@ -11,84 +10,12 @@ process.env['REDIS_URL'] = 'redis://127.0.0.1:1/0';
 process.env['APP_ENCRYPTION_MASTER_KEY'] = 'test-master-key-with-thirty-two-chars-min!!';
 
 import { disconnectDatabase } from '@sda/database';
+import { AppErrorCode } from '@sda/contracts';
 import { createApplication } from '../dist/application.js';
 import { OfficeConverterService } from '../dist/modules/documents/office-converter.service.js';
 import { FileValidationService } from '../dist/modules/documents/file-validation.service.js';
-import { AppErrorCode } from '@sda/contracts';
-
-// Helper to create an in-memory ZIP buffer with custom files using node:zlib
-function createZipBuffer(filesMap) {
-  const localHeaders = [];
-  const centralHeaders = [];
-  let offset = 0;
-  const entries = Object.entries(filesMap).map(([name, content]) => ({ name, content }));
-
-  for (const entry of entries) {
-    const nameBuf = Buffer.from(entry.name, 'utf8');
-    const content = Buffer.isBuffer(entry.content)
-      ? entry.content
-      : Buffer.from(entry.content, 'utf8');
-    const crc = zlib.crc32(content);
-    const uncompressedSize = content.length;
-    const compressedData = zlib.deflateRawSync(content);
-    const compressedSize = compressedData.length;
-
-    // Local file header: 30 bytes
-    const lh = Buffer.alloc(30);
-    lh.writeUInt32LE(0x04034b50, 0); // signature
-    lh.writeUInt16LE(20, 4); // version
-    lh.writeUInt16LE(0, 6); // flags
-    lh.writeUInt16LE(8, 8); // Deflate
-    lh.writeUInt16LE(0, 10);
-    lh.writeUInt16LE(0, 12);
-    lh.writeUInt32LE(crc, 14);
-    lh.writeUInt32LE(compressedSize, 18);
-    lh.writeUInt32LE(uncompressedSize, 22);
-    lh.writeUInt16LE(nameBuf.length, 26);
-    lh.writeUInt16LE(0, 28);
-
-    localHeaders.push(lh, nameBuf, compressedData);
-
-    // Central directory header: 46 bytes
-    const ch = Buffer.alloc(46);
-    ch.writeUInt32LE(0x02014b50, 0);
-    ch.writeUInt16LE(20, 4);
-    ch.writeUInt16LE(20, 6);
-    ch.writeUInt16LE(0, 8);
-    ch.writeUInt16LE(8, 10);
-    ch.writeUInt16LE(0, 12);
-    ch.writeUInt16LE(0, 14);
-    ch.writeUInt32LE(crc, 16);
-    ch.writeUInt32LE(compressedSize, 20);
-    ch.writeUInt32LE(uncompressedSize, 24);
-    ch.writeUInt16LE(nameBuf.length, 28);
-    ch.writeUInt16LE(0, 30);
-    ch.writeUInt16LE(0, 32);
-    ch.writeUInt16LE(0, 34);
-    ch.writeUInt16LE(0, 36);
-    ch.writeUInt32LE(0, 38);
-    ch.writeUInt32LE(offset, 42);
-
-    centralHeaders.push(ch, nameBuf);
-    offset += 30 + nameBuf.length + compressedSize;
-  }
-
-  const centralDir = Buffer.concat(centralHeaders);
-  const cdOffset = offset;
-  const cdSize = centralDir.length;
-
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(0, 4);
-  eocd.writeUInt16LE(0, 6);
-  eocd.writeUInt16LE(entries.length, 8);
-  eocd.writeUInt16LE(entries.length, 10);
-  eocd.writeUInt32LE(cdSize, 12);
-  eocd.writeUInt32LE(cdOffset, 16);
-  eocd.writeUInt16LE(0, 20);
-
-  return Buffer.concat([...localHeaders, centralDir, eocd]);
-}
+import { DocumentPepService } from '../dist/modules/documents/document-pep.service.js';
+import { createZipBuffer } from './helpers/zip-builder.mjs';
 
 let application;
 
@@ -103,8 +30,6 @@ after(async () => {
   await disconnectDatabase();
 });
 
-// ── 1. Security Headers & CORS Tests ─────────────────────────────────────────
-
 test('Security Headers — Fastify attaches full suite of security headers to responses', async () => {
   const response = await application.inject({
     method: 'GET',
@@ -112,8 +37,6 @@ test('Security Headers — Fastify attaches full suite of security headers to re
   });
 
   assert.equal(response.statusCode, 200);
-
-  // Assert all OWASP ASVS required headers
   assert.equal(response.headers['x-content-type-options'], 'nosniff');
   assert.equal(response.headers['x-frame-options'], 'DENY');
   assert.equal(response.headers['referrer-policy'], 'strict-origin-when-cross-origin');
@@ -134,7 +57,6 @@ test('Security Headers — Fastify attaches full suite of security headers to re
 });
 
 test('CORS — rejects non-allowlisted origins and never uses wildcard with credentials', async () => {
-  // Test unauthorized origin
   const unauthorizedRes = await application.inject({
     method: 'OPTIONS',
     url: '/api/v1/health/live',
@@ -144,14 +66,12 @@ test('CORS — rejects non-allowlisted origins and never uses wildcard with cred
     },
   });
 
-  // Must NOT reflect the malicious origin
   assert.notEqual(
     unauthorizedRes.headers['access-control-allow-origin'],
     'https://malicious-attacker-site.com',
   );
   assert.notEqual(unauthorizedRes.headers['access-control-allow-origin'], '*');
 
-  // Test allowlisted origin
   const authorizedRes = await application.inject({
     method: 'OPTIONS',
     url: '/api/v1/health/live',
@@ -167,12 +87,9 @@ test('CORS — rejects non-allowlisted origins and never uses wildcard with cred
   }
 });
 
-// ── 2. Office Converter SSRF & External Resource Tests ───────────────────────
-
 test('SSRF Protection — OfficeConverter blocks external TargetMode="External" in .rels', async () => {
   const converter = new OfficeConverterService();
 
-  // Construct a docx package with an external relationship pointing to AWS metadata endpoint (SSRF)
   const maliciousRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
@@ -249,8 +166,6 @@ test('OfficeConverter — allows safe Office package with only internal relation
   assert.ok(pdfBuffer.subarray(0, 4).toString().startsWith('%PDF'));
 });
 
-// ── 3. Path Traversal & Upload Security ───────────────────────────────────────
-
 test('FileValidationService — strips path traversal characters and blocks null bytes', () => {
   const validator = new FileValidationService();
 
@@ -258,10 +173,7 @@ test('FileValidationService — strips path traversal characters and blocks null
   assert.equal(validator.sanitizeFilename('..\\..\\windows\\system32\\cmd.pdf'), 'cmd.pdf');
   assert.equal(validator.sanitizeFilename('  report draft.docx  '), 'report draft.docx');
 
-  // Blocks null byte
   assert.throws(() => validator.sanitizeFilename('file\0name.pdf'), /null byte/i);
-
-  // Blocks dangerous double extension
   assert.throws(
     () => validator.sanitizeFilename('malware.exe.pdf'),
     /forbidden executable double extension/i,
@@ -271,30 +183,53 @@ test('FileValidationService — strips path traversal characters and blocks null
 test('FileValidationService — rejects invalid extensions and mime mismatches', () => {
   const validator = new FileValidationService();
 
-  // Executable extension
   assert.throws(
     () => validator.validateExtensionAndMime('trojan.exe', 'application/pdf'),
     /Unsupported file extension/i,
   );
 
-  // Mime type mismatch
   assert.throws(
     () => validator.validateExtensionAndMime('document.pdf', 'text/plain'),
     /does not match expected MIME/i,
   );
 });
 
-// ── 4. IDOR Protection (Least Privilege & Scoping) ───────────────────────────
+test('IDOR & SoD Protection — real DocumentPepService blocks SYSTEM_ADMIN and AUDITOR from accessing document content', async () => {
+  const deniedAuditEvents = [];
+  const pep = new DocumentPepService(
+    { evaluate: async () => ({ decision: 'PERMIT', obligations: [] }) },
+    {},
+    {
+      record: async (event) => {
+        deniedAuditEvents.push(event);
+      },
+    },
+    {},
+  );
 
-test('IDOR Protection — technical admin cannot bypass ownership or access document content directly', () => {
-  const principal = {
-    userId: 999n,
-    role: 'SYSTEM_ADMIN',
-    departmentId: 1n,
-    clearanceRank: 1,
-  };
+  for (const restrictedRole of ['SYSTEM_ADMIN', 'AUDITOR']) {
+    await assert.rejects(
+      async () =>
+        pep.enforceAccess(
+          '11111111-1111-4111-8111-111111111111',
+          {
+            userId: 999n,
+            sessionId: 'sess-sod-1',
+            username: `user_${restrictedRole.toLowerCase()}`,
+            roles: [restrictedRole],
+            mfa: true,
+          },
+          { ip: '10.0.0.5', correlationId: 'corr-sod-1' },
+          { action: 'VIEW' },
+        ),
+      (err) => {
+        assert.equal(err.status, 403);
+        assert.equal(err.response?.errorCode, AppErrorCode.DOCUMENT_ACCESS_DENIED);
+        return true;
+      },
+    );
+  }
 
-  // Admin has administrative capabilities, but not document content access
-  assert.notEqual(principal.role, 'DOCUMENT_OWNER');
-  assert.ok(principal.clearanceRank < 4);
+  assert.equal(deniedAuditEvents.length, 2);
+  assert.ok(deniedAuditEvents.every((e) => e.outcome === 'DENIED'));
 });

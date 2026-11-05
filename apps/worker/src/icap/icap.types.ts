@@ -1,3 +1,9 @@
+/**
+ * Thuật toán / Tổng quan module:
+ * Định nghĩa hệ thống kiểu dữ liệu tĩnh và hợp đồng giao thức RFC 3507 ICAP (Internet Content Adaptation Protocol)
+ * phục vụ máy chủ kiểm soát thất thoát dữ liệu biên mạng (Network DLP), bao gồm phương thức ICAP,
+ * vị trí byte-offset của phần thân đóng gói (`EncapsulatedSection`), cấu trúc bản tin đã phân tách và kết quả quét DLP.
+ */
 export type IcapMethod = 'OPTIONS' | 'RESPMOD' | 'REQMOD';
 
 export type IcapStatusCode = 200 | 204 | 400 | 403 | 404 | 405 | 500;

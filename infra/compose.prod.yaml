@@ -28,6 +28,8 @@ services:
       NODE_ENV: production
       PORT: '3001'
       HOST: '0.0.0.0'
+      TRUST_PROXY: ${TRUST_PROXY:-loopback}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Allowed CORS origins required}
       DATABASE_URL: ${DATABASE_URL:?Database connection required}
       REDIS_URL: ${REDIS_URL:?Redis connection required}
       APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:?Master key required}
@@ -36,7 +38,17 @@ services:
       AUTH_AUDIT_HMAC_KEY: ${AUTH_AUDIT_HMAC_KEY:?Auth audit HMAC key required}
       AUTH_SIGNING_PRIVATE_KEY_PEM: ${AUTH_SIGNING_PRIVATE_KEY_PEM:?Ed25519 private key required}
       AUTH_SIGNING_PUBLIC_KEYS_JSON: ${AUTH_SIGNING_PUBLIC_KEYS_JSON:?Ed25519 public keys required}
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-minio}
+      STORAGE_PORT: ${STORAGE_PORT:-9000}
+      STORAGE_USE_SSL: ${STORAGE_USE_SSL:-false}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?Object storage access key required}
       STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?Object storage secret key required}
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
+      CLAMAV_PORT: ${CLAMAV_PORT:-3310}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:?WebAuthn RP ID required}
+      WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:?WebAuthn origins required}
+      PASSWORD_RESET_BASE_URL: ${PASSWORD_RESET_BASE_URL:?Password reset base URL required}
+      EXPORT_STORAGE_DIR: /tmp/exports
       GOTENBERG_URL: http://gotenberg:3000
     cpus: 2.0
     mem_limit: 1g
@@ -72,9 +84,19 @@ services:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:?Database connection required}
       REDIS_URL: ${REDIS_URL:?Redis connection required}
+      APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:?Master key required}
       AUDIT_INTEGRITY_KEY: ${AUDIT_INTEGRITY_KEY:?Audit integrity key required}
-      ICAP_SERVER_HOST: '127.0.0.1'
+      DOCUMENT_AUDIT_HMAC_KEY: ${DOCUMENT_AUDIT_HMAC_KEY:?Document audit HMAC key required}
+      AUTH_AUDIT_HMAC_KEY: ${AUTH_AUDIT_HMAC_KEY:?Auth audit HMAC key required}
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-minio}
+      STORAGE_PORT: ${STORAGE_PORT:-9000}
+      STORAGE_USE_SSL: ${STORAGE_USE_SSL:-false}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?Object storage access key required}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?Object storage secret key required}
+      EXPORT_STORAGE_DIR: /tmp/exports
+      ICAP_SERVER_HOST: '0.0.0.0'
       ICAP_SERVER_PORT: '1344'
+      ICAP_DLP_ACTION: ${ICAP_DLP_ACTION:-BLOCK}
     cpus: 1.0
     mem_limit: 512m
     mem_reservation: 128m

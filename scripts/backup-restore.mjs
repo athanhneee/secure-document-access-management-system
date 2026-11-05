@@ -3,12 +3,30 @@
  * Demonstrates PostgreSQL table data export, SHA-256 bundle verification,
  * disaster simulation, full restore, audit HMAC chain re-validation,
  * and object storage recovery verification.
+ *
+ * Thuật toán: Quy Trình Diễn Tập Sao Lưu Logic, Kiểm Chứng Băm SHA-256 & Phục Hồi Thảm Họa (Disaster Recovery & Cryptographic Restore Drill)
+ * Mục đích: Xác minh khả năng khôi phục toàn vẹn 100% cơ sở dữ liệu quan hệ, chuỗi nhật ký kiểm toán bất biến và đối tượng lưu trữ mã hóa sau sự cố mất mát toàn bộ nút đích.
+ * Cơ chế hoạt động:
+ *   - Bước 1-2: Khởi tạo dữ liệu nguồn kèm chuỗi băm liên kết `HMAC-SHA256`, kết xuất gói sao lưu JSON và tính tổng kiểm mật mã `SHA-256` (`backupSha256`).
+ *   - Bước 3-5: Giả lập thảm họa trên phiên bản PostgreSQL WASM (`PGlite`) trống, xác thực lại chữ ký `SHA-256` của gói sao lưu trước khi nạp (Fail-Closed) và khôi phục tuần tự từng bảng.
+ *   - Bước 6-8: Đối chiếu chẵn lẻ số dòng (Row Parity), tính lại toàn bộ mắt xích `previous_record_hash -> record_hash` và kiểm chứng khôi phục chính xác từng bit cho tệp mã hóa Object Storage.
  */
 
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
+import {
+  DRILL_SCHEMA_SQL,
+  populateDrillSourceDb,
+  restoreParsedTables,
+  verifyObjectStorageRoundtrip,
+  verifyRestoredAuditChain,
+} from './helpers/backup-restore-fixtures.mjs';
 
+/**
+ * Thuật toán: Bộ Điều Phối Kịch Bản Diễn Tập Khôi Phục Thảm Họa 8 Bước Có Đo Độ Trễ (8-Stage Timed DR Drill Orchestrator)
+ * Mục đích: Thực thi tuần tự 8 bước kiểm định sao lưu - phục hồi và lập bảng thống kê thời gian thực thi chi tiết từng pha.
+ */
 async function main() {
   console.log('='.repeat(78));
   console.log('SDA DISASTER RECOVERY & BACKUP/RESTORE DRILL');
@@ -31,55 +49,7 @@ async function main() {
   // Step 1: Initialize Source Database with Seed Data
   const sourceDb = new PGlite();
   const t0 = performance.now();
-  await sourceDb.exec(`
-    CREATE TABLE users (
-      id BIGSERIAL PRIMARY KEY,
-      username VARCHAR(50) UNIQUE NOT NULL,
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE'
-    );
-
-    CREATE TABLE documents (
-      id UUID PRIMARY KEY,
-      title VARCHAR(255) NOT NULL,
-      classification_level INTEGER NOT NULL,
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE'
-    );
-
-    CREATE TABLE audit_logs (
-      id BIGSERIAL PRIMARY KEY,
-      action VARCHAR(100) NOT NULL,
-      sequence BIGINT NOT NULL,
-      previous_record_hash VARCHAR(64) NOT NULL,
-      record_hash VARCHAR(64) NOT NULL
-    );
-  `);
-
-  // Populate sample records
-  await sourceDb.exec(`
-    INSERT INTO users (username, status) VALUES ('admin_root', 'ACTIVE'), ('owner_dept1', 'ACTIVE'), ('reader_staff', 'ACTIVE');
-  `);
-
-  const docId1 = crypto.randomUUID();
-  const docId2 = crypto.randomUUID();
-  await sourceDb.exec(`
-    INSERT INTO documents (id, title, classification_level, status) VALUES
-    ('${docId1}', 'Chien Luoc An Toan Thong Tin 2026', 3, 'ACTIVE'),
-    ('${docId2}', 'Bao Cao Kiem Toan Quy 3', 2, 'ACTIVE');
-  `);
-
-  // Generate 5 chained audit records
-  let prevHash = '0000000000000000000000000000000000000000000000000000000000000000';
-  for (let seq = 1; seq <= 5; seq++) {
-    const recHash = crypto
-      .createHmac('sha256', 'drill-secret')
-      .update(`${prevHash}:${seq}:AUDIT_${seq}`)
-      .digest('hex');
-    await sourceDb.exec(`
-      INSERT INTO audit_logs (action, sequence, previous_record_hash, record_hash)
-      VALUES ('SYSTEM_EVENT_${seq}', ${seq}, '${prevHash}', '${recHash}');
-    `);
-    prevHash = recHash;
-  }
+  await populateDrillSourceDb(sourceDb);
   recordStep(
     '1. Initialize Source Database & Populate Data',
     'PASS',
@@ -117,28 +87,7 @@ async function main() {
   // Step 3: Simulate Disaster (Clean Empty Destination Target)
   const t2 = performance.now();
   const restoredDb = new PGlite();
-  await restoredDb.exec(`
-    CREATE TABLE users (
-      id BIGSERIAL PRIMARY KEY,
-      username VARCHAR(50) UNIQUE NOT NULL,
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE'
-    );
-
-    CREATE TABLE documents (
-      id UUID PRIMARY KEY,
-      title VARCHAR(255) NOT NULL,
-      classification_level INTEGER NOT NULL,
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE'
-    );
-
-    CREATE TABLE audit_logs (
-      id BIGSERIAL PRIMARY KEY,
-      action VARCHAR(100) NOT NULL,
-      sequence BIGINT NOT NULL,
-      previous_record_hash VARCHAR(64) NOT NULL,
-      record_hash VARCHAR(64) NOT NULL
-    );
-  `);
+  await restoredDb.exec(DRILL_SCHEMA_SQL);
   recordStep(
     '3. Simulate Disaster & Provision Empty Target',
     'PASS',
@@ -161,23 +110,7 @@ async function main() {
 
   // Step 5: Restore Data into Clean Target Database
   const t4 = performance.now();
-  const parsedBackup = JSON.parse(backupPayload);
-
-  for (const user of parsedBackup.tables.users) {
-    await restoredDb.exec(
-      `INSERT INTO users (id, username, status) VALUES (${user.id}, '${user.username}', '${user.status}');`,
-    );
-  }
-  for (const doc of parsedBackup.tables.documents) {
-    await restoredDb.exec(
-      `INSERT INTO documents (id, title, classification_level, status) VALUES ('${doc.id}', '${doc.title}', ${doc.classification_level}, '${doc.status}');`,
-    );
-  }
-  for (const log of parsedBackup.tables.audit_logs) {
-    await restoredDb.exec(
-      `INSERT INTO audit_logs (id, action, sequence, previous_record_hash, record_hash) VALUES (${log.id}, '${log.action}', ${log.sequence}, '${log.previous_record_hash}', '${log.record_hash}');`,
-    );
-  }
+  await restoreParsedTables(restoredDb, JSON.parse(backupPayload));
   recordStep(
     '5. Restore Table Records into Target',
     'PASS',
@@ -207,24 +140,7 @@ async function main() {
 
   // Step 7: Validate Cryptographic HMAC Chain Integrity on Restored Data
   const t6 = performance.now();
-  const restoredAuditRows = await restoredDb.query(
-    'SELECT sequence, previous_record_hash, record_hash, action FROM audit_logs ORDER BY sequence ASC;',
-  );
-  let chainCursor = '0000000000000000000000000000000000000000000000000000000000000000';
-
-  for (const row of restoredAuditRows.rows) {
-    if (row.previous_record_hash !== chainCursor) {
-      throw new Error(`Restored audit sequence ${row.sequence} chain link mismatch!`);
-    }
-    const expected = crypto
-      .createHmac('sha256', 'drill-secret')
-      .update(`${chainCursor}:${row.sequence}:AUDIT_${row.sequence}`)
-      .digest('hex');
-    if (row.record_hash !== expected) {
-      throw new Error(`Restored audit sequence ${row.sequence} hash verification failed!`);
-    }
-    chainCursor = row.record_hash;
-  }
+  await verifyRestoredAuditChain(restoredDb);
   recordStep(
     '7. Restored Audit HMAC Chain Verification',
     'PASS',
@@ -234,26 +150,7 @@ async function main() {
 
   // Step 8: Object Storage Backup & Recovery Simulation
   const t7 = performance.now();
-  const sampleDocumentBuffer = Buffer.from(
-    'PDF_ENCRYPTED_HEADER_TEST_CIPHERTEXT_AES_256_GCM_SIMULATION_DATA',
-  );
-  const originalFileHash = crypto.createHash('sha256').update(sampleDocumentBuffer).digest('hex');
-
-  // Backup object
-  const objectBackup = {
-    key: 'documents/2026/test_doc.enc',
-    sha256: originalFileHash,
-    sizeBytes: sampleDocumentBuffer.length,
-    base64Data: sampleDocumentBuffer.toString('base64'),
-  };
-
-  // Restore object
-  const restoredBuffer = Buffer.from(objectBackup.base64Data, 'base64');
-  const restoredFileHash = crypto.createHash('sha256').update(restoredBuffer).digest('hex');
-
-  if (restoredFileHash !== originalFileHash) {
-    throw new Error('Object storage restore corrupted file content!');
-  }
+  const originalFileHash = verifyObjectStorageRoundtrip();
   recordStep(
     '8. Object Storage Backup & Bit-Exact Restore',
     'PASS',

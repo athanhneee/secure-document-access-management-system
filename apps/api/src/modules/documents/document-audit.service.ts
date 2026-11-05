@@ -1,7 +1,11 @@
+/**
+ * Module: Dịch vụ Nhật ký Kiểm toán Vòng đời Tài liệu (Document Lifecycle Hash-Chained Audit Service)
+ * Thuật toán: Ghi nối tiếp sự kiện kiểm toán phân vùng `DOCUMENT` với chuỗi băm HMAC chống sửa đổi.
+ */
 import { Injectable, Logger } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
-import { appendChainedAuditLog, resolveAuditHmacKey } from '../audit/audit-chain-helper.js';
+import { appendChainedAuditLog, resolveActiveAuditKey } from '../audit/audit-chain-helper.js';
 import type { RequestContext } from '../auth/auth.types.js';
 
 export interface DocumentAuditEvent {
@@ -34,12 +38,23 @@ export interface DocumentAuditEvent {
 export class DocumentAuditService {
   private readonly logger = new Logger(DocumentAuditService.name);
   private readonly hmacKey: string;
+  private readonly keyVersion: number;
   private readonly database = getDatabaseClient();
 
   constructor(config: AppConfigService) {
-    this.hmacKey = resolveAuditHmacKey(config);
+    // CONFLICT-RESOLVED: Sử dụng khóa xoay vòng đang kích hoạt kèm hmac_key_version đồng bộ với AuditWriterService.
+    const active = resolveActiveAuditKey(config);
+    this.hmacKey = active.hmacKey;
+    this.keyVersion = active.keyVersion;
   }
 
+  /**
+   * Thuật toán: Ghi Nối Tiếp Chuỗi Băm Kiểm Toán Phân Vùng Tài Liệu (Fail-Closed Document Audit Append)
+   * Mục đích: Đảm bảo mọi thao tác tải lên, quét mã độc, phân loại, kích hoạt và tìm kiếm tài liệu đều được ký chuỗi HMAC.
+   * Cơ chế hoạt động:
+   *   - Hợp nhất `versionNo` vào `details`, mở giao dịch gọi `appendChainedAuditLog` trên phân vùng `DOCUMENT`,
+   *     và cưỡng chế ném lỗi Fail-Closed nếu ghi kiểm toán thất bại trong môi trường `production`.
+   */
   async record(event: DocumentAuditEvent, context: RequestContext): Promise<void> {
     try {
       await this.database.$transaction(async (transaction) => {
@@ -52,6 +67,7 @@ export class DocumentAuditService {
         await appendChainedAuditLog(transaction, {
           partition: 'DOCUMENT',
           hmacKey: this.hmacKey,
+          keyVersion: this.keyVersion,
           action: event.action,
           outcome: event.outcome,
           objectType: 'DOCUMENT',

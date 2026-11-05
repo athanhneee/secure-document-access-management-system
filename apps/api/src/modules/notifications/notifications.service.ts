@@ -1,7 +1,11 @@
+/**
+ * Module: NotificationsService — Điều phối thông báo đa kênh (`IN_APP`, `EMAIL`, `BOTH`) kết hợp hộp thư đi giao dịch (Transactional Outbox Pattern) chống gửi trùng lặp.
+ */
 import { Injectable, NotFoundException, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { getDatabaseClient } from '@sda/database';
+import { getDatabaseClient, type Prisma } from '@sda/database';
 import { AppErrorCode, type QueryNotificationsInput } from '@sda/contracts';
+import { enqueueNotificationOutbox } from './notification-outbox.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -23,13 +27,6 @@ export interface SendNotificationResult {
   isDuplicate: boolean;
 }
 
-export interface OutboxProcessResult {
-  processed: number;
-  delivered: number;
-  retried: number;
-  deadLettered: number;
-}
-
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -44,8 +41,16 @@ export class NotificationsService {
   }
 
   /**
-   * Sends in-app notification and queues transactional outbox entry for email/push.
-   * Enforces deduplication via deduplication_key.
+   * Thuật toán: Phân nhánh thông báo đa kênh kèm khóa khử trùng lặp tổ hợp (Dual-Channel Fan-Out with Composite Deduplication Key)
+   * Mục đích: Đồng thời lưu thông báo nội bộ trong ứng dụng và xếp hàng gửi thư điện tử tin cậy mà không phát sinh thư rác lặp lại khi thử lại.
+   * Cơ chế hoạt động:
+   *   - Tổng hợp khóa định danh duy nhất `dedupKey = <type>:<recipientId>:<objectType>:<objectId>` (hoặc nhận khóa truyền vào).
+   *   - Nhánh `IN_APP`/`BOTH`: tạo bản ghi trạng thái `UNREAD` chịu lỗi cô lập (không làm gãy luồng nghiệp vụ chính nếu lỗi ghi thông báo).
+   *   - Nhánh `EMAIL`/`BOTH`: đẩy vào hộp thư đi lũy đẳng qua `enqueueNotificationOutbox` gắn ràng buộc duy nhất trên `deduplication_key`.
+   *
+   * Algorithm: Dual-Channel Notification Fan-Out with Deduplication Key.
+   * Persists in-app notification state when channel includes IN_APP and delegates
+   * idempotent email queuing to the transactional outbox helper when channel includes EMAIL.
    */
   async sendNotification(options: SendNotificationOptions): Promise<SendNotificationResult> {
     const channel = options.channel ?? 'BOTH';
@@ -57,7 +62,6 @@ export class NotificationsService {
     let outboxId: string | undefined;
     let isDuplicate = false;
 
-    // In-App Notification creation
     if (channel === 'IN_APP' || channel === 'BOTH') {
       notificationId = randomUUID();
       try {
@@ -78,51 +82,30 @@ export class NotificationsService {
       }
     }
 
-    // Outbox queue for Email / external delivery
     if (channel === 'EMAIL' || channel === 'BOTH') {
-      try {
-        // Check deduplication
-        const existingOutbox = await this.database.notificationOutbox.findUnique({
-          where: { deduplication_key: dedupKey },
-        });
-
-        if (existingOutbox) {
-          isDuplicate = true;
-          this.logger.log(
-            `Notification outbox suppressed duplicate key: ${dedupKey} (current status: ${existingOutbox.status})`,
-          );
-          outboxId = existingOutbox.id;
-        } else {
-          outboxId = randomUUID();
-          await this.database.notificationOutbox.create({
-            data: {
-              id: outboxId,
-              recipient_id: options.recipientId,
-              channel: 'EMAIL',
-              notification_type: options.notificationType,
-              title: options.title,
-              body: options.body,
-              payload: (options.payload ?? {}) as never,
-              deduplication_key: dedupKey,
-              status: 'PENDING',
-              attempt_count: 0,
-              max_attempts: 5,
-              next_retry_at: new Date(),
-            },
-          });
-        }
-      } catch (err) {
-        // Unique constraint violation also represents duplicate
-        isDuplicate = true;
-        this.logger.warn(`Outbox insert handled duplicate key ${dedupKey}:`, err);
-      }
+      const outbox = await enqueueNotificationOutbox(this.database, this.logger, {
+        recipientId: options.recipientId,
+        notificationType: options.notificationType,
+        title: options.title,
+        body: options.body,
+        ...(options.payload !== undefined ? { payload: options.payload } : {}),
+        dedupKey,
+      });
+      outboxId = outbox.outboxId;
+      isDuplicate = outbox.isDuplicate;
     }
 
     return { notificationId, outboxId, isDuplicate };
   }
 
   /**
-   * Retrieves in-app notifications for a user.
+   * Thuật toán: Phân trang đọc trước N+1 hộp thư thông báo người dùng (Lookahead N+1 Notification Pagination)
+   * Mục đích: Liệt kê thông báo của riêng người dùng sắp xếp mới nhất trước mà không tốn truy vấn đếm tổng `COUNT(*)`.
+   * Cơ chế hoạt động:
+   *   - Truy vấn `take = pageSize + 1` và `skip = (page - 1) * pageSize`; nếu số bản ghi trả về lớn hơn `pageSize` thì xác định `hasMore = true` và cắt đúng `pageSize` phần tử.
+   *
+   * Algorithm: Lookahead Paginated Notification Query (`pageSize + 1` slice).
+   * Queries one extra row beyond `pageSize` to compute `hasMore` without a separate COUNT(*) query.
    */
   async listUserNotifications(
     userId: bigint,
@@ -143,7 +126,7 @@ export class NotificationsService {
     pageSize: number;
     hasMore: boolean;
   }> {
-    const where: import('@sda/database').Prisma.NotificationWhereInput = {
+    const where: Prisma.NotificationWhereInput = {
       recipient_id: userId,
       ...(query.status ? { status: query.status } : {}),
     };
@@ -180,7 +163,13 @@ export class NotificationsService {
   }
 
   /**
-   * Marks a notification as read (updates status to READ and sets read_at).
+   * Thuật toán: Chuyển trạng thái đã đọc lũy đẳng có kiểm tra quyền sở hữu (Owner-Scoped Idempotent Read Transition)
+   * Mục đích: Đánh dấu thông báo từ `UNREAD` sang `READ` và ngăn người dùng thao tác trên thông báo của người khác (chống IDOR).
+   * Cơ chế hoạt động:
+   *   - Truy vấn kết hợp cặp điều kiện `(id = notificationId AND recipient_id = userId)`; ném `404` nếu không khớp, và chỉ cập nhật `status = 'READ'` kèm `read_at` khi trạng thái hiện tại là `UNREAD`.
+   *
+   * Algorithm: Owner-Scoped Idempotent Read-State Transition.
+   * Verifies recipient ownership before transitioning UNREAD -> READ with timestamp.
    */
   async markAsRead(notificationId: string, userId: bigint): Promise<void> {
     const item = await this.database.notification.findFirst({
@@ -203,98 +192,5 @@ export class NotificationsService {
         },
       });
     }
-  }
-
-  /**
-   * Processes a batch of pending outbox messages with exponential backoff and DLQ.
-   */
-  async processOutboxBatch(
-    batchSize = 50,
-    transportSimulator?: (item: {
-      id: string;
-      recipient_id: bigint;
-      channel: string;
-      notification_type: string;
-      title: string;
-      body: string;
-    }) => Promise<boolean>,
-  ): Promise<OutboxProcessResult> {
-    const now = new Date();
-    const pendingItems = await this.database.notificationOutbox.findMany({
-      where: {
-        status: 'PENDING',
-        next_retry_at: { lte: now },
-      },
-      take: batchSize,
-      orderBy: { next_retry_at: 'asc' },
-    });
-
-    let delivered = 0;
-    let retried = 0;
-    let deadLettered = 0;
-
-    for (const item of pendingItems) {
-      try {
-        // Dispatch via transport (email service / mock simulator)
-        const success = transportSimulator ? await transportSimulator(item) : true; // Default simulated success
-
-        if (success) {
-          await this.database.notificationOutbox.update({
-            where: { id: item.id },
-            data: {
-              status: 'DELIVERED',
-              processed_at: new Date(),
-            },
-          });
-          delivered++;
-        } else {
-          throw new Error('Transport simulation returned delivery failure.');
-        }
-      } catch (err) {
-        const nextAttempt = item.attempt_count + 1;
-        const errorMessage = err instanceof Error ? err.message : String(err);
-
-        if (nextAttempt >= item.max_attempts) {
-          // Dead-Letter Queue (DLQ)
-          await this.database.notificationOutbox.update({
-            where: { id: item.id },
-            data: {
-              status: 'DEAD_LETTER',
-              attempt_count: nextAttempt,
-              last_error: errorMessage,
-              processed_at: new Date(),
-            },
-          });
-          deadLettered++;
-          this.logger.error(
-            `Notification ${item.id} moved to DEAD_LETTER after ${nextAttempt} attempts. Error: ${errorMessage}`,
-          );
-        } else {
-          // Exponential backoff: base 1000ms * 2^(attempt)
-          const backoffDelayMs = 1000 * Math.pow(2, nextAttempt);
-          const nextRetryAt = new Date(Date.now() + backoffDelayMs);
-
-          await this.database.notificationOutbox.update({
-            where: { id: item.id },
-            data: {
-              attempt_count: nextAttempt,
-              next_retry_at: nextRetryAt,
-              last_error: errorMessage,
-            },
-          });
-          retried++;
-          this.logger.warn(
-            `Notification ${item.id} retry scheduled in ${backoffDelayMs}ms (attempt #${nextAttempt}).`,
-          );
-        }
-      }
-    }
-
-    return {
-      processed: pendingItems.length,
-      delivered,
-      retried,
-      deadLettered,
-    };
   }
 }

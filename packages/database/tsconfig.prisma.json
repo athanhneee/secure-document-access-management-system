@@ -3,5 +3,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["prisma.config.ts", "prisma/seed.ts"]
+  "include": ["prisma.config.ts", "prisma/**/*.ts"]
 }

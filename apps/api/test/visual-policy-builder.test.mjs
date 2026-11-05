@@ -1,212 +1,182 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { CONTEXT_ATTRIBUTES } from '../dist/modules/abac/attribute-registry.js';
+import { compilePolicy } from '../dist/modules/abac/policy-compiler.js';
+import { evaluatePolicy } from '../dist/modules/abac/policy-engine.js';
+import { validatePolicy } from '../dist/modules/abac/policy-validator.js';
+import { hasContradiction } from '../dist/modules/abac/policy-contradiction-solver.js';
 
-// Visual Policy Builder AST and PDP Engine Test Suite
-
-function evaluateVisualRule(rule, flatAttributes, action = 'VIEW') {
-  // Action check
-  const actionMatches = rule.targetAction === 'ALL' || rule.targetAction === action;
-  if (!actionMatches) {
-    return {
-      decision: 'DENY',
-      reasonCode: 'ACTION_NOT_TARGETED',
-      matchedRuleCodes: [],
-      obligations: [],
-    };
-  }
-
-  // DNF Evaluation: Groups (OR) -> Conditions (AND)
-  const groupEvaluations = rule.groups.map((group) => {
-    const conditionResults = group.conditions.map((cond) => {
-      const actual = flatAttributes[cond.attribute];
-      const matched = evaluateCondition(cond, actual);
-      return { conditionId: cond.id, matched };
-    });
-
-    const satisfied = conditionResults.length > 0 && conditionResults.every((c) => c.matched);
-    return satisfied;
-  });
-
-  const anyGroupSatisfied = groupEvaluations.some(Boolean);
-
-  if (anyGroupSatisfied) {
-    return {
-      decision: rule.effect,
-      reasonCode: rule.effect === 'PERMIT' ? 'RULE_PERMIT_MATCHED' : 'EXPLICIT_DENY_RULE_MATCHED',
-      matchedRuleCodes: [rule.code],
-      obligations: rule.obligations,
-    };
-  }
-
+function baseInput(overrides = {}) {
   return {
-    decision: 'DENY',
-    reasonCode: 'DEFAULT_DENY_NO_GROUP_MATCH',
-    matchedRuleCodes: [],
-    obligations: [],
+    resourceType: 'DOCUMENT',
+    action: 'VIEW',
+    subject: {
+      clearanceRank: 4,
+      departmentId: 'FINANCE_DEPT',
+      employmentStatus: 'ACTIVE',
+      projects: ['PRJ-ALPHA'],
+      ...(overrides.subject ?? {}),
+    },
+    resource: {
+      classificationRank: 2,
+      departmentId: 'FINANCE_DEPT',
+      ownerId: '10',
+      category: 'FINANCE',
+      status: 'ACTIVE',
+      ...(overrides.resource ?? {}),
+    },
+    environment: {
+      currentTime: '2026-09-22T03:15:00.000Z', // 10:15 Asia/Ho_Chi_Minh (UTC+7)
+      ip: '10.20.30.40',
+      trustedNetwork: true,
+      deviceTrust: true,
+      mfa: true,
+      riskScore: 20,
+      ...(overrides.environment ?? {}),
+    },
   };
 }
 
-function evaluateCondition(cond, actual) {
-  if (cond.operator === 'EXISTS') {
-    return actual !== undefined && actual !== null && actual !== '';
-  }
-  if (actual === undefined || actual === null) {
-    return false;
-  }
-  switch (cond.operator) {
-    case 'EQ':
-      return actual === cond.expected;
-    case 'NEQ':
-      return actual !== cond.expected;
-    case 'GTE':
-      return Number(actual) >= Number(cond.expected);
-    case 'LTE':
-      return Number(actual) <= Number(cond.expected);
-    case 'BETWEEN':
-      if (Array.isArray(cond.expected) && cond.expected.length === 2) {
-        const num = Number(actual);
-        return num >= Number(cond.expected[0]) && num <= Number(cond.expected[1]);
-      }
-      return false;
-    case 'IN':
-      if (Array.isArray(cond.expected)) {
-        if (Array.isArray(actual)) {
-          return actual.some((a) => cond.expected.includes(a));
-        }
-        return cond.expected.includes(actual);
-      }
-      return false;
-    case 'NOT_IN':
-      if (Array.isArray(cond.expected)) {
-        if (Array.isArray(actual)) {
-          return !actual.some((a) => cond.expected.includes(a));
-        }
-        return !cond.expected.includes(actual);
-      }
-      return false;
-    case 'TIME_BETWEEN':
-      if (typeof cond.expected === 'object' && cond.expected !== null) {
-        const current = String(actual);
-        return current >= cond.expected.start && current <= cond.expected.end;
-      }
-      return false;
-    case 'CIDR_MATCH':
-      if (typeof cond.expected === 'string' && typeof actual === 'string') {
-        const cidrPrefix = cond.expected.split('/')[0].split('.').slice(0, 3).join('.');
-        return actual.startsWith(cidrPrefix);
-      }
-      return false;
-    default:
-      return false;
-  }
-}
-
-// 1. Template: Office Hours & Intranet Only
-test('Visual Policy Builder — evaluates Office Hours & Intranet template correctly', () => {
-  const officeHoursRule = {
-    code: 'POL_OFFICE_HOURS_INTRANET',
-    name: 'Chính sách Giờ Hành chính & Mạng Nội bộ',
-    effect: 'PERMIT',
-    priority: 10,
-    targetResource: 'DOCUMENT',
-    targetAction: 'ALL',
-    combiningAlgorithm: 'DENY_OVERRIDES',
-    groups: [
+test('Visual Policy Builder -> Real ABAC Compiler & Engine: evaluates Office Hours & Intranet template', () => {
+  const compiled = compilePolicy(
+    1n,
+    [],
+    [
       {
-        id: 1,
+        id: 101n,
+        code: 'POL_OFFICE_HOURS_INTRANET',
+        effect: 'PERMIT',
+        priority: 10,
+        targetResource: 'DOCUMENT',
+        targetAction: null,
+        combiningAlgorithm: 'DENY_OVERRIDES',
+        obligations: [{ type: 'REQUIRE_WATERMARK' }],
+        validFrom: new Date('2026-01-01T00:00:00.000Z'),
+        validTo: null,
         conditions: [
-          { id: 'c1', attribute: 'environment.trustedNetwork', operator: 'EQ', expected: true },
           {
-            id: 'c2',
-            attribute: 'environment.currentTime',
-            operator: 'TIME_BETWEEN',
-            expected: { start: '08:00', end: '17:30', timeZone: 'Asia/Ho_Chi_Minh' },
+            id: 1n,
+            definitionCode: null,
+            group: 1,
+            sequence: 1,
+            contextKey: 'environment.trustedNetwork',
+            operator: 'EQ',
+            expectedValue: true,
           },
-          { id: 'c3', attribute: 'environment.riskScore', operator: 'LTE', expected: 35 },
+          {
+            id: 2n,
+            definitionCode: null,
+            group: 1,
+            sequence: 2,
+            contextKey: 'environment.currentTime',
+            operator: 'TIME_BETWEEN',
+            expectedValue: { start: '08:00', end: '17:30', timeZone: 'Asia/Ho_Chi_Minh' },
+          },
+          {
+            id: 3n,
+            definitionCode: null,
+            group: 1,
+            sequence: 3,
+            contextKey: 'environment.riskScore',
+            operator: 'LTE',
+            expectedValue: 35,
+          },
         ],
       },
     ],
-    obligations: [{ type: 'REQUIRE_WATERMARK' }],
-  };
+  );
 
-  // Valid internal context in working hours
-  const validContext = {
-    'environment.trustedNetwork': true,
-    'environment.currentTime': '10:15',
-    'environment.riskScore': 20,
-  };
-  const result1 = evaluateVisualRule(officeHoursRule, validContext, 'VIEW');
-  assert.equal(result1.decision, 'PERMIT');
-  assert.equal(result1.reasonCode, 'RULE_PERMIT_MATCHED');
-  assert.deepEqual(result1.obligations, [{ type: 'REQUIRE_WATERMARK' }]);
+  assert.deepEqual(validatePolicy(compiled, CONTEXT_ATTRIBUTES), []);
 
-  // Invalid: Out of working hours (20:00)
-  const invalidTimeContext = {
-    'environment.trustedNetwork': true,
-    'environment.currentTime': '20:00',
-    'environment.riskScore': 20,
-  };
-  const result2 = evaluateVisualRule(officeHoursRule, invalidTimeContext, 'VIEW');
-  assert.equal(result2.decision, 'DENY');
+  const permit = evaluatePolicy(compiled, baseInput());
+  assert.equal(permit.decision, 'PERMIT');
+  assert.equal(permit.reasonCode, 'POLICY_PERMIT');
+  assert.deepEqual(permit.obligations, [{ type: 'REQUIRE_WATERMARK' }]);
 
-  // Invalid: High risk score (70 > 35)
-  const highRiskContext = {
-    'environment.trustedNetwork': true,
-    'environment.currentTime': '11:00',
-    'environment.riskScore': 70,
-  };
-  const result3 = evaluateVisualRule(officeHoursRule, highRiskContext, 'VIEW');
-  assert.equal(result3.decision, 'DENY');
+  const offHours = evaluatePolicy(
+    compiled,
+    baseInput({ environment: { currentTime: '2026-09-22T13:00:00.000Z' } }), // 20:00 ICT
+  );
+  assert.equal(offHours.decision, 'DENY');
+  assert.equal(offHours.reasonCode, 'DEFAULT_DENY');
 
-  // Invalid: From untrusted public network
-  const remoteContext = {
-    'environment.trustedNetwork': false,
-    'environment.currentTime': '11:00',
-    'environment.riskScore': 10,
-  };
-  const result4 = evaluateVisualRule(officeHoursRule, remoteContext, 'VIEW');
-  assert.equal(result4.decision, 'DENY');
+  const highRisk = evaluatePolicy(compiled, baseInput({ environment: { riskScore: 70 } }));
+  assert.equal(highRisk.decision, 'DENY');
+
+  const untrustedNet = evaluatePolicy(
+    compiled,
+    baseInput({ environment: { trustedNetwork: false } }),
+  );
+  assert.equal(untrustedNet.decision, 'DENY');
 });
 
-// 2. Template: Top Secret Protection with FIDO2 MFA & Obligations
-test('Visual Policy Builder — evaluates Top Secret Protection rule with strict obligations', () => {
-  const topSecretRule = {
-    code: 'POL_TOP_SECRET_HARDENED',
-    name: 'Kiểm soát Truy cập Tài liệu Tuyệt mật Cấp 4',
-    effect: 'PERMIT',
-    priority: 5,
-    targetResource: 'DOCUMENT',
-    targetAction: 'VIEW',
-    combiningAlgorithm: 'DENY_OVERRIDES',
-    groups: [
+test('Visual Policy Builder -> Real ABAC Engine: evaluates Top Secret rule with strict obligations & Bell-LaPadula', () => {
+  const compiled = compilePolicy(
+    2n,
+    [],
+    [
       {
-        id: 1,
+        id: 202n,
+        code: 'POL_TOP_SECRET_HARDENED',
+        effect: 'PERMIT',
+        priority: 5,
+        targetResource: 'DOCUMENT',
+        targetAction: 'VIEW',
+        combiningAlgorithm: 'DENY_OVERRIDES',
+        obligations: [
+          { type: 'REQUIRE_WATERMARK' },
+          { type: 'REQUIRE_MFA' },
+          { type: 'FORBID_DOWNLOAD' },
+          { type: 'MAX_SESSION_MINUTES', minutes: 20 },
+        ],
+        validFrom: new Date('2026-01-01T00:00:00.000Z'),
+        validTo: null,
         conditions: [
-          { id: 'c1', attribute: 'resource.classificationRank', operator: 'GTE', expected: 4 },
-          { id: 'c2', attribute: 'subject.clearanceRank', operator: 'GTE', expected: 4 },
-          { id: 'c3', attribute: 'environment.mfa', operator: 'EQ', expected: true },
-          { id: 'c4', attribute: 'environment.deviceTrust', operator: 'EQ', expected: true },
+          {
+            id: 1n,
+            definitionCode: null,
+            group: 1,
+            sequence: 1,
+            contextKey: 'resource.classificationRank',
+            operator: 'GTE',
+            expectedValue: 4,
+          },
+          {
+            id: 2n,
+            definitionCode: null,
+            group: 1,
+            sequence: 2,
+            contextKey: 'subject.clearanceRank',
+            operator: 'GTE',
+            expectedValue: 4,
+          },
+          {
+            id: 3n,
+            definitionCode: null,
+            group: 1,
+            sequence: 3,
+            contextKey: 'environment.mfa',
+            operator: 'EQ',
+            expectedValue: true,
+          },
+          {
+            id: 4n,
+            definitionCode: null,
+            group: 1,
+            sequence: 4,
+            contextKey: 'environment.deviceTrust',
+            operator: 'EQ',
+            expectedValue: true,
+          },
         ],
       },
     ],
-    obligations: [
-      { type: 'REQUIRE_WATERMARK' },
-      { type: 'REQUIRE_MFA' },
-      { type: 'FORBID_DOWNLOAD' },
-      { type: 'MAX_SESSION_MINUTES', minutes: 20 },
-    ],
-  };
+  );
 
-  // Qualified Top Secret Officer with FIDO2 MFA on MDM device
-  const officerContext = {
-    'resource.classificationRank': 4,
-    'subject.clearanceRank': 4,
-    'environment.mfa': true,
-    'environment.deviceTrust': true,
-  };
-
-  // Action VIEW -> PERMIT
-  const resultView = evaluateVisualRule(topSecretRule, officerContext, 'VIEW');
+  const resultView = evaluatePolicy(
+    compiled,
+    baseInput({ resource: { classificationRank: 4 }, subject: { clearanceRank: 4 } }),
+  );
   assert.equal(resultView.decision, 'PERMIT');
   assert.equal(resultView.obligations.length, 4);
   assert.ok(resultView.obligations.some((o) => o.type === 'FORBID_DOWNLOAD'));
@@ -214,175 +184,99 @@ test('Visual Policy Builder — evaluates Top Secret Protection rule with strict
     resultView.obligations.some((o) => o.type === 'MAX_SESSION_MINUTES' && o.minutes === 20),
   );
 
-  // Action DOWNLOAD -> DENY (targetAction is strictly VIEW)
-  const resultDownload = evaluateVisualRule(topSecretRule, officerContext, 'DOWNLOAD');
+  const resultDownload = evaluatePolicy(compiled, {
+    ...baseInput({ resource: { classificationRank: 4 }, subject: { clearanceRank: 4 } }),
+    action: 'DOWNLOAD',
+  });
   assert.equal(resultDownload.decision, 'DENY');
-  assert.equal(resultDownload.reasonCode, 'ACTION_NOT_TARGETED');
+  assert.equal(resultDownload.reasonCode, 'DEFAULT_DENY');
 
-  // Insufficient clearance (rank 3 < 4) -> DENY
-  const lowClearanceContext = { ...officerContext, 'subject.clearanceRank': 3 };
-  assert.equal(evaluateVisualRule(topSecretRule, lowClearanceContext, 'VIEW').decision, 'DENY');
-
-  // No MFA -> DENY
-  const noMfaContext = { ...officerContext, 'environment.mfa': false };
-  assert.equal(evaluateVisualRule(topSecretRule, noMfaContext, 'VIEW').decision, 'DENY');
-});
-
-// 3. Template: Strict Department Boundary (Explicit DENY)
-test('Visual Policy Builder — enforces Explicit DENY for cross-department access', () => {
-  const deptIsolationRule = {
-    code: 'POL_FINANCE_DEPT_ISOLATION',
-    name: 'Cách ly Ngăn chặn Truy cập Chéo Phòng ban Tài chính',
-    effect: 'DENY',
-    priority: 1,
-    targetResource: 'DOCUMENT',
-    targetAction: 'ALL',
-    combiningAlgorithm: 'DENY_OVERRIDES',
-    groups: [
-      {
-        id: 1,
-        conditions: [
-          {
-            id: 'c1',
-            attribute: 'resource.departmentId',
-            operator: 'EQ',
-            expected: 'FINANCE_DEPT',
-          },
-          {
-            id: 'c2',
-            attribute: 'subject.departmentId',
-            operator: 'NEQ',
-            expected: 'FINANCE_DEPT',
-          },
-        ],
-      },
-    ],
-    obligations: [{ type: 'NO_CACHE' }],
-  };
-
-  // Cross-department request (IT trying to access Finance document)
-  const crossDeptContext = {
-    'resource.departmentId': 'FINANCE_DEPT',
-    'subject.departmentId': 'IT_DEPT',
-  };
-  const result = evaluateVisualRule(deptIsolationRule, crossDeptContext, 'VIEW');
-  assert.equal(result.decision, 'DENY');
-  assert.equal(result.reasonCode, 'EXPLICIT_DENY_RULE_MATCHED');
-  assert.deepEqual(result.obligations, [{ type: 'NO_CACHE' }]);
-
-  // Same department request (Finance accessing Finance document)
-  const sameDeptContext = {
-    'resource.departmentId': 'FINANCE_DEPT',
-    'subject.departmentId': 'FINANCE_DEPT',
-  };
-  const sameDeptResult = evaluateVisualRule(deptIsolationRule, sameDeptContext, 'VIEW');
-  // Group condition (NEQ FINANCE_DEPT) is false -> not matched -> default deny or pass
-  assert.equal(sameDeptResult.reasonCode, 'DEFAULT_DENY_NO_GROUP_MATCH');
-});
-
-// 4. Multi-Group DNF (Disjunctive Normal Form) OR Logic
-test('Visual Policy Builder — correctly evaluates multi-group OR logic with nested AND clauses', () => {
-  const multiGroupRule = {
-    code: 'POL_MULTI_GROUP_TEST',
-    name: 'Quy tắc Đa nhóm OR',
-    effect: 'PERMIT',
-    priority: 10,
-    targetResource: 'DOCUMENT',
-    targetAction: 'ALL',
-    combiningAlgorithm: 'DENY_OVERRIDES',
-    groups: [
-      // Group 1: Intranet + Clearance 3
-      {
-        id: 1,
-        conditions: [
-          { id: 'c1', attribute: 'environment.trustedNetwork', operator: 'EQ', expected: true },
-          { id: 'c2', attribute: 'subject.clearanceRank', operator: 'GTE', expected: 3 },
-        ],
-      },
-      // Group 2: Special Project Alpha Member + MFA (even outside intranet)
-      {
-        id: 2,
-        conditions: [
-          { id: 'c3', attribute: 'subject.projects', operator: 'IN', expected: ['PROJECT_ALPHA'] },
-          { id: 'c4', attribute: 'environment.mfa', operator: 'EQ', expected: true },
-        ],
-      },
-    ],
-    obligations: [{ type: 'REQUIRE_WATERMARK' }],
-  };
-
-  // Case A: Satisfies Group 1 only (on intranet, clearance 3, but not on Project Alpha)
-  const contextA = {
-    'environment.trustedNetwork': true,
-    'subject.clearanceRank': 3,
-    'subject.projects': ['OTHER_PROJECT'],
-    'environment.mfa': false,
-  };
-  assert.equal(evaluateVisualRule(multiGroupRule, contextA).decision, 'PERMIT');
-
-  // Case B: Satisfies Group 2 only (untrusted network, clearance 1, but on Project Alpha with MFA)
-  const contextB = {
-    'environment.trustedNetwork': false,
-    'subject.clearanceRank': 1,
-    'subject.projects': ['PROJECT_ALPHA'],
-    'environment.mfa': true,
-  };
-  assert.equal(evaluateVisualRule(multiGroupRule, contextB).decision, 'PERMIT');
-
-  // Case C: Satisfies neither group
-  const contextC = {
-    'environment.trustedNetwork': false,
-    'subject.clearanceRank': 1,
-    'subject.projects': ['OTHER_PROJECT'],
-    'environment.mfa': false,
-  };
-  assert.equal(evaluateVisualRule(multiGroupRule, contextC).decision, 'DENY');
-});
-
-// 5. Two-Way JSON AST Lossless Serialization & Deserialization
-test('Visual Policy Builder — preserves lossless round-trip JSON AST sync', () => {
-  const originalRule = {
-    id: 'rule-test-roundtrip',
-    code: 'POL_ROUNDTRIP_SYNC',
-    name: 'Kiểm thử Đồng bộ Hai Chiều JSON AST',
-    description:
-      'Bảo toàn cấu trúc cây điều kiện khi chuyển qua lại giữa Visual Blocks và JSON DSL.',
-    effect: 'PERMIT',
-    priority: 15,
-    targetResource: 'DOCUMENT',
-    targetAction: 'DOWNLOAD',
-    combiningAlgorithm: 'DENY_OVERRIDES',
-    groups: [
-      {
-        id: 1,
-        conditions: [
-          {
-            id: 'c1',
-            attribute: 'environment.ip',
-            operator: 'CIDR_MATCH',
-            expected: '192.168.1.0/24',
-          },
-          {
-            id: 'c2',
-            attribute: 'resource.category',
-            operator: 'IN',
-            expected: ['FINANCE', 'LEGAL'],
-          },
-          { id: 'c3', attribute: 'environment.riskScore', operator: 'BETWEEN', expected: [0, 40] },
-        ],
-      },
-    ],
-    obligations: [{ type: 'REQUIRE_WATERMARK' }, { type: 'MAX_SESSION_MINUTES', minutes: 45 }],
-  };
-
-  const serialized = JSON.stringify(originalRule, null, 2);
-  const deserialized = JSON.parse(serialized);
-
-  assert.deepEqual(
-    deserialized,
-    originalRule,
-    'Parsed AST must strictly match original rule structure',
+  const lowClearance = evaluatePolicy(
+    compiled,
+    baseInput({ resource: { classificationRank: 4 }, subject: { clearanceRank: 3 } }),
   );
-  assert.equal(deserialized.groups[0].conditions.length, 3);
-  assert.equal(deserialized.obligations[1].minutes, 45);
+  assert.equal(lowClearance.decision, 'DENY');
+  assert.equal(lowClearance.reasonCode, 'INSUFFICIENT_CLEARANCE');
+});
+
+test('Visual Policy Builder -> Real ABAC Engine & Contradiction Solver: DENY_OVERRIDES & contradiction detection', () => {
+  const compiled = compilePolicy(
+    3n,
+    [],
+    [
+      {
+        id: 300n,
+        code: 'POL_GENERAL_PERMIT',
+        effect: 'PERMIT',
+        priority: 10,
+        targetResource: 'DOCUMENT',
+        targetAction: null,
+        combiningAlgorithm: 'DENY_OVERRIDES',
+        obligations: [],
+        validFrom: new Date('2026-01-01T00:00:00.000Z'),
+        validTo: null,
+        conditions: [
+          {
+            id: 1n,
+            definitionCode: null,
+            group: 1,
+            sequence: 1,
+            contextKey: 'environment.mfa',
+            operator: 'EQ',
+            expectedValue: true,
+          },
+        ],
+      },
+      {
+        id: 301n,
+        code: 'POL_FINANCE_DEPT_ISOLATION',
+        effect: 'DENY',
+        priority: 1,
+        targetResource: 'DOCUMENT',
+        targetAction: null,
+        combiningAlgorithm: 'DENY_OVERRIDES',
+        obligations: [],
+        validFrom: new Date('2026-01-01T00:00:00.000Z'),
+        validTo: null,
+        conditions: [
+          {
+            id: 2n,
+            definitionCode: null,
+            group: 1,
+            sequence: 1,
+            contextKey: 'resource.departmentId',
+            operator: 'EQ',
+            expectedValue: 'FINANCE_DEPT',
+          },
+          {
+            id: 3n,
+            definitionCode: null,
+            group: 1,
+            sequence: 2,
+            contextKey: 'subject.departmentId',
+            operator: 'NEQ',
+            expectedValue: 'FINANCE_DEPT',
+          },
+        ],
+      },
+    ],
+  );
+
+  const crossDept = evaluatePolicy(compiled, baseInput({ subject: { departmentId: 'IT_DEPT' } }));
+  assert.equal(crossDept.decision, 'DENY');
+  assert.equal(crossDept.reasonCode, 'EXPLICIT_DENY');
+
+  const sameDept = evaluatePolicy(
+    compiled,
+    baseInput({ subject: { departmentId: 'FINANCE_DEPT' } }),
+  );
+  assert.equal(sameDept.decision, 'PERMIT');
+
+  assert.equal(
+    hasContradiction([
+      { id: '1', attribute: 'environment.riskScore', operator: 'GTE', expected: 80 },
+      { id: '2', attribute: 'environment.riskScore', operator: 'LTE', expected: 30 },
+    ]),
+    true,
+  );
 });

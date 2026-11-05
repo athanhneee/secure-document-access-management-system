@@ -1,21 +1,20 @@
-import { Injectable } from '@nestjs/common';
-
 /**
- * Strict Low-Cardinality Label Policy:
- * Under NO circumstances should high-cardinality identifiers (UUIDs, user emails, document titles,
- * tokens, session IDs, passwords, IPs) be emitted as metric labels.
+ * Module: MetricsService — Bộ thu thập chỉ số đo lường hiệu năng & an ninh chuẩn Prometheus trong bộ nhớ (In-Memory Prometheus Telemetry Registry).
+ *
+ * Thuật toán tổng thể:
+ *   - Quản lý 3 cấu trúc dữ liệu chỉ số cốt lõi: Bộ đếm đơn điệu tăng (`Counter`), Đồng hồ đo tức thời (`Gauge`) và Biểu đồ tần suất độ trễ phân nhóm (`Histogram`).
+ *   - Mọi tổ hợp nhãn (`MetricLabels`) đều được chuẩn hóa từ điển và lọc bỏ khóa định danh phân tán cao (UUID, email, IP, phiên) để chống bùng nổ tổ hợp chuỗi thời gian (Cardinality Explosion).
  */
+import { Injectable } from '@nestjs/common';
+import {
+  sanitizeMetricRoute,
+  serializeMetricLabels,
+  serializePrometheusText,
+  type HistogramData,
+  type MetricLabels,
+} from './prometheus-exporter.helper.js';
 
-interface MetricLabels {
-  [key: string]: string | number;
-}
-
-interface HistogramData {
-  buckets: number[];
-  bucketCounts: Map<string, number[]>; // labelKey -> counts array
-  sums: Map<string, number>;
-  counts: Map<string, number>;
-}
+export type { HistogramData, MetricLabels };
 
 const DEFAULT_HTTP_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 const DEFAULT_PDP_BUCKETS = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25];
@@ -23,31 +22,13 @@ const DEFAULT_SCAN_BUCKETS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5];
 const DEFAULT_WATERMARK_BUCKETS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5];
 const DEFAULT_REVOKE_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5];
 
-// Deny-list for label keys
-const DISALLOWED_LABEL_KEYS = new Set([
-  'document_title',
-  'title',
-  'user_email',
-  'email',
-  'token',
-  'session_id',
-  'password',
-  'secret',
-  'jwt',
-  'ip',
-  'user_id',
-  'document_id',
-]);
-
 @Injectable()
 export class MetricsService {
   private static instance: MetricsService;
 
-  // Counters: metricName -> Map<labelKey, value>
+  // shortcut: ~2,000 UUID-scrubbed metric label series (<2 MB) per process, scrape per-pod /metrics or push via OTLP Collector
   private readonly counters = new Map<string, Map<string, number>>();
-  // Gauges: metricName -> Map<labelKey, value>
   private readonly gauges = new Map<string, Map<string, number>>();
-  // Histograms: metricName -> HistogramData
   private readonly histograms = new Map<string, HistogramData>();
 
   constructor() {
@@ -78,6 +59,12 @@ export class MetricsService {
     );
   }
 
+  /**
+   * Thuật toán: Khởi tạo cấu trúc Histogram với ranh giới nhóm sắp xếp tăng dần (Sorted-Boundary Histogram Initialization)
+   * Mục đích: Đảm bảo mảng ngưỡng trên `buckets` luôn đơn điệu tăng (`le_0 <= le_1 <= ...`) trước khi ghi nhận mẫu độ trễ.
+   * Cơ chế hoạt động:
+   *   - Sao chép và sắp xếp số học `buckets` theo thứ tự tăng dần `O(B log B)`, khởi tạo các bảng băm rỗng cho `bucketCounts`, `sums` và `counts` theo khóa nhãn chuẩn hóa.
+   */
   private registerHistogram(name: string, buckets: number[]): void {
     this.histograms.set(name, {
       buckets: [...buckets].sort((a, b) => a - b),
@@ -87,45 +74,18 @@ export class MetricsService {
     });
   }
 
-  // Sanitizes route path to eliminate high-cardinality values like UUIDs or IDs
   static sanitizeRoute(path: string): string {
-    if (!path) return 'unknown';
-    // Remove query string
-    const cleanPath = path.split('?')[0] || '/';
-
-    return (
-      cleanPath
-        // Replace UUIDs
-        .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':id')
-        // Replace watermark tokens
-        .replace(/WM-[0-9a-fA-F]+/g, ':token')
-        // Replace one-time download tickets
-        .replace(/DT-[0-9a-fA-F]+/g, ':ticket')
-        // Replace numeric segments
-        .replace(/\/\d+(?=\/|$)/g, '/:id')
-        // Replace long hex/hash strings (16+ chars)
-        .replace(/\/[0-9a-f]{16,}(?=\/|$)/gi, '/:hash')
-    );
+    return sanitizeMetricRoute(path);
   }
 
-  // Sanitizes labels and formats label string: key1="val1",key2="val2"
-  private serializeLabels(labels: MetricLabels = {}): string {
-    const entries = Object.entries(labels)
-      .filter(([k]) => !DISALLOWED_LABEL_KEYS.has(k.toLowerCase()))
-      .map(([k, v]) => {
-        const valStr = String(v)
-          .slice(0, 64)
-          .replace(/\\/g, '\\\\')
-          .replace(/"/g, '\\"')
-          .replace(/\n/g, '');
-        return `${k}="${valStr}"`;
-      })
-      .sort();
-
-    return entries.join(',');
-  }
-
-  // 1. Counter increment
+  /**
+   * Thuật toán: Tích lũy bộ đếm đơn điệu theo khóa nhãn chuẩn hóa (Monotonic Counter Accumulation by Canonical Label Key)
+   * Mục đích: Đếm tổng số sự kiện (HTTP requests, quyết định PDP, cảnh báo an ninh, lỗi kiểm toán) bảo toàn tính đơn điệu không giảm.
+   * Cơ chế hoạt động:
+   *   - Bỏ qua các giá trị không dương (`value <= 0`), tuần tự hóa tập nhãn qua `serializeMetricLabels` làm khóa tra cứu `O(1)` và cộng dồn `current + value`.
+   *
+   * Algorithm: Monotonic Counter Accumulation by Canonical Label Key.
+   */
   incrementCounter(name: string, labels: MetricLabels = {}, value = 1): void {
     if (value <= 0) return;
     let labelMap = this.counters.get(name);
@@ -133,22 +93,39 @@ export class MetricsService {
       labelMap = new Map();
       this.counters.set(name, labelMap);
     }
-    const key = this.serializeLabels(labels);
+    const key = serializeMetricLabels(labels);
     labelMap.set(key, (labelMap.get(key) ?? 0) + value);
   }
 
-  // 2. Gauge set
+  /**
+   * Thuật toán: Gán giá trị tức thời Gauge theo khóa nhãn chuẩn hóa (Instantaneous Gauge Assignment)
+   * Mục đích: Phản ánh số lượng tài nguyên biến thiên tăng/giảm tại thời điểm lấy mẫu (số phiên truy cập đang mở, độ sâu hàng đợi xuất báo cáo).
+   * Cơ chế hoạt động:
+   *   - Ánh xạ tập nhãn về chuỗi khóa chuẩn hóa `key` và ghi đè trực tiếp giá trị hiện hành trong `Map` `O(1)`.
+   *
+   * Algorithm: Instantaneous Gauge Assignment by Canonical Label Key.
+   */
   setGauge(name: string, value: number, labels: MetricLabels = {}): void {
     let labelMap = this.gauges.get(name);
     if (!labelMap) {
       labelMap = new Map();
       this.gauges.set(name, labelMap);
     }
-    const key = this.serializeLabels(labels);
+    const key = serializeMetricLabels(labels);
     labelMap.set(key, value);
   }
 
-  // 3. Histogram observe
+  /**
+   * Thuật toán: Ghi nhận mẫu quan sát vào các nhóm ngưỡng trên Histogram (Upper-Bound `le` Bucket Histogram Observation)
+   * Mục đích: Phân bổ thời gian thực thi (tính bằng giây) vào các ranh giới độ trễ định sẵn để ước lượng phân vị (p50, p95, p99) trên Prometheus.
+   * Cơ chế hoạt động:
+   *   - Tự động khởi tạo histogram với `DEFAULT_HTTP_BUCKETS` nếu tên chỉ số chưa đăng ký.
+   *   - Tăng tổng số mẫu `counts` thêm 1, cộng dồn tổng thời gian không âm `Math.max(0, valueSeconds)` vào `sums`, và duyệt các ranh giới `buckets[i]` để tăng bộ đếm tại các ô thỏa `valueSeconds <= buckets[i]`.
+   *
+   * Algorithm: Non-Cumulative Bucket Histogram Observation.
+   * Updates observation count, clamped non-negative sum, and matching bucket slot;
+   * cumulative summation is deferred to scrape serialization time.
+   */
   observeHistogram(name: string, valueSeconds: number, labels: MetricLabels = {}): void {
     let histo = this.histograms.get(name);
     if (!histo) {
@@ -156,12 +133,9 @@ export class MetricsService {
       histo = this.histograms.get(name)!;
     }
 
-    const key = this.serializeLabels(labels);
-    const count = (histo.counts.get(key) ?? 0) + 1;
-    const sum = (histo.sums.get(key) ?? 0) + Math.max(0, valueSeconds);
-
-    histo.counts.set(key, count);
-    histo.sums.set(key, sum);
+    const key = serializeMetricLabels(labels);
+    histo.counts.set(key, (histo.counts.get(key) ?? 0) + 1);
+    histo.sums.set(key, (histo.sums.get(key) ?? 0) + Math.max(0, valueSeconds));
 
     let bucketCounts = histo.bucketCounts.get(key);
     if (!bucketCounts) {
@@ -172,26 +146,30 @@ export class MetricsService {
     for (let i = 0; i < histo.buckets.length; i++) {
       if (valueSeconds <= histo.buckets[i]!) {
         bucketCounts[i]! += 1;
+        break;
       }
     }
   }
 
-  // Domain-specific metric helper methods:
+  /**
+   * Thuật toán: Ghi nhận tổ hợp chỉ số RED (Rate, Errors, Duration) cho yêu cầu HTTP
+   * Mục đích: Đồng thời cập nhật lưu lượng truy cập, phân phối độ trễ và tỷ lệ lỗi HTTP (`statusCode >= 400`) với đường dẫn đã khử tham số động.
+   * Cơ chế hoạt động:
+   *   - Làm sạch `rawRoute` qua `MetricsService.sanitizeRoute`, tăng `http_requests_total`, đẩy `durationSeconds` vào `http_request_duration_seconds` và tăng `http_request_errors_total` nếu mã phản hồi >= 400.
+   */
   recordHttpRequest(
     method: string,
     rawRoute: string,
     statusCode: number,
     durationSeconds: number,
   ): void {
-    const route = MetricsService.sanitizeRoute(rawRoute);
     const labels = {
       method: method.toUpperCase(),
-      route,
+      route: MetricsService.sanitizeRoute(rawRoute),
       status_code: String(statusCode),
     };
     this.incrementCounter('http_requests_total', labels);
     this.observeHistogram('http_request_duration_seconds', durationSeconds, labels);
-
     if (statusCode >= 400) {
       this.incrementCounter('http_request_errors_total', labels);
     }
@@ -250,55 +228,12 @@ export class MetricsService {
   }
 
   /**
-   * Generates Prometheus exposition format output (v0.0.4 text format).
+   * Thuật toán: Xuất bản toàn bộ kho chỉ số sang định dạng văn bản Prometheus Exposition v0.0.4
+   * Mục đích: Kết xuất chuỗi văn bản chuẩn `# HELP` / `# TYPE` kèm chuỗi thời gian tích lũy `+Inf` cho trình thu thập Prometheus scraper.
+   * Cơ chế hoạt động:
+   *   - Ủy quyền cho `serializePrometheusText` duyệt qua 3 tập `counters`, `gauges`, `histograms` và định dạng kết quả.
    */
   exportPrometheusText(): string {
-    const lines: string[] = [];
-
-    // 1. Export Counters
-    for (const [name, labelMap] of this.counters.entries()) {
-      lines.push(`# HELP ${name} Total count of ${name}`);
-      lines.push(`# TYPE ${name} counter`);
-      for (const [labels, val] of labelMap.entries()) {
-        const labelPart = labels.length > 0 ? `{${labels}}` : '';
-        lines.push(`${name}${labelPart} ${val}`);
-      }
-    }
-
-    // 2. Export Gauges
-    for (const [name, labelMap] of this.gauges.entries()) {
-      lines.push(`# HELP ${name} Current value of ${name}`);
-      lines.push(`# TYPE ${name} gauge`);
-      for (const [labels, val] of labelMap.entries()) {
-        const labelPart = labels.length > 0 ? `{${labels}}` : '';
-        lines.push(`${name}${labelPart} ${val}`);
-      }
-    }
-
-    // 3. Export Histograms
-    for (const [name, histo] of this.histograms.entries()) {
-      lines.push(`# HELP ${name} Latency histogram of ${name}`);
-      lines.push(`# TYPE ${name} histogram`);
-
-      for (const [labelKey] of histo.counts.entries()) {
-        const count = histo.counts.get(labelKey) ?? 0;
-        const sum = histo.sums.get(labelKey) ?? 0;
-        const bucketCounts = histo.bucketCounts.get(labelKey) ?? [];
-
-        let cumulative = 0;
-        for (let i = 0; i < histo.buckets.length; i++) {
-          cumulative += bucketCounts[i] ?? 0;
-          const le = histo.buckets[i];
-          const labelPrefix = labelKey.length > 0 ? `${labelKey},` : '';
-          lines.push(`${name}_bucket{${labelPrefix}le="${le}"} ${cumulative}`);
-        }
-        const labelPrefix = labelKey.length > 0 ? `${labelKey},` : '';
-        lines.push(`${name}_bucket{${labelPrefix}le="+Inf"} ${count}`);
-        lines.push(`${name}_sum{${labelKey ? `${labelKey}` : ''}} ${sum}`);
-        lines.push(`${name}_count{${labelKey ? `${labelKey}` : ''}} ${count}`);
-      }
-    }
-
-    return lines.join('\n') + '\n';
+    return serializePrometheusText(this.counters, this.gauges, this.histograms);
   }
 }

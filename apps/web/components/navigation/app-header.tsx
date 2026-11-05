@@ -76,7 +76,11 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
             onClick={onToggleSidebar}
             aria-label={isSidebarOpen ? 'Đóng bảng điều hướng' : 'Mở bảng điều hướng'}
           >
-            {isSidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            {isSidebarOpen ? (
+              <X size={16} strokeWidth={2} aria-hidden="true" />
+            ) : (
+              <Menu size={16} strokeWidth={2} aria-hidden="true" />
+            )}
           </button>
         )}
 
@@ -104,7 +108,12 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
               <span className="max-w-[100px] sm:max-w-none truncate">
                 {activeRole ? ROLE_LABELS[activeRole] : 'Góc nhìn'}
               </span>
-              <ChevronDown className="h-3 w-3 shrink-0 text-[#717171]" aria-hidden="true" />
+              <ChevronDown
+                size={16}
+                strokeWidth={1.75}
+                className="shrink-0 text-[#717171]"
+                aria-hidden="true"
+              />
             </button>
 
             {roleMenuOpen && (
@@ -140,7 +149,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                       role="menuitem"
                     >
                       <div className="flex items-center gap-2">
-                        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                        <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
                         <span>{item.label}</span>
                       </div>
                       {hasAccess ? (
@@ -168,7 +177,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
               title="Quản lý phiên đăng nhập thiết bị"
               aria-label="Quản lý phiên đăng nhập"
             >
-              <Laptop className="h-3.5 w-3.5" aria-hidden="true" />
+              <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
               <span className="hidden md:inline text-xs font-medium">Phiên làm việc</span>
             </Link>
 

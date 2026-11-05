@@ -73,7 +73,12 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         >
           {isLoading ? (
             <span className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin text-current" strokeWidth={2} />
+              <Loader2
+                size={16}
+                strokeWidth={2}
+                className="animate-spin text-current"
+                aria-hidden="true"
+              />
               <span>Đang xử lý…</span>
             </span>
           ) : (
@@ -106,7 +111,12 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       >
         {isLoading ? (
           <span className="flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin text-current" strokeWidth={2} />
+            <Loader2
+              size={16}
+              strokeWidth={2}
+              className="animate-spin text-current"
+              aria-hidden="true"
+            />
             {children}
           </span>
         ) : (

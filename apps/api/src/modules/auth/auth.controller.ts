@@ -1,3 +1,7 @@
+/**
+ * @module AuthController
+ * Algorithm: Cookie-Bound Authentication, TOTP/WebAuthn Step-Up MFA & CSRF-Protected HTTP Controller.
+ */
 import {
   BadRequestException,
   Body,
@@ -12,45 +16,21 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { z } from 'zod';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
-import {
-  WebAuthnAuthOptionsRequestSchema,
-  WebAuthnRegistrationOptionsRequestSchema,
-  WebAuthnVerifyAuthRequestSchema,
-  WebAuthnVerifyRegistrationRequestSchema,
-} from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
 import { PublicEndpoint } from '../../public-endpoint.js';
 import { AllowPreMfa } from './allow-pre-mfa.js';
-import { AuthService, type SessionArtifacts } from './auth.service.js';
-import type { AuthPrincipal, RequestContext } from './auth.types.js';
+import { AuthService } from './auth.service.js';
 import { CsrfService } from './csrf.service.js';
+import * as S from './auth.schemas.js';
+import {
+  clearAuthSessionCookies,
+  extractAuthRequestContext,
+  guardAuthenticatedBody,
+  requireAuthPrincipal,
+  setAuthSessionCookies,
+} from './auth-cookies.helper.js';
 
-const LoginSchema = z.object({
-  identifier: z.string().trim().min(1).max(255),
-  password: z.string().min(1).max(128),
-});
-const ForgotSchema = z.object({ identifier: z.string().trim().min(1).max(255) });
-const ResetSchema = z.object({
-  token: z.string().min(40).max(100),
-  newPassword: z.string().min(1).max(128),
-});
-const ChangePasswordSchema = z.object({
-  currentPassword: z.string().min(1).max(128),
-  newPassword: z.string().min(1).max(128),
-});
-const EnrollmentSchema = z.object({ label: z.string().trim().min(1).max(80).optional() });
-const TotpSchema = z.object({ code: z.string().regex(/^\d{6}$/) });
-const MfaVerifySchema = z
-  .object({
-    code: z
-      .string()
-      .regex(/^\d{6}$/)
-      .optional(),
-    recoveryCode: z.string().min(16).max(64).optional(),
-  })
-  .refine((value) => Boolean(value.code || value.recoveryCode));
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
@@ -75,30 +55,31 @@ export class AuthController {
     @Body() body: unknown,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ authenticated: boolean; mfaRequired: boolean; enrollmentRequired: boolean }> {
-    const input = this.parse(LoginSchema, body);
-    const result = await this.auth.login(input.identifier, input.password, this.context(request));
-    this.setSessionCookies(reply, result);
+  ) {
+    const input = S.parseAuthBody(S.LoginSchema, body);
+    const res = await this.auth.login(
+      input.identifier,
+      input.password,
+      extractAuthRequestContext(request),
+    );
+    setAuthSessionCookies(reply, res, this.secureCookies);
     return {
-      authenticated: !result.mfaRequired,
-      mfaRequired: result.mfaRequired,
-      enrollmentRequired: result.enrollmentRequired,
+      authenticated: !res.mfaRequired,
+      mfaRequired: res.mfaRequired,
+      enrollmentRequired: res.enrollmentRequired,
     };
   }
 
   @PublicEndpoint()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  async refresh(
-    @Req() request: FastifyRequest,
-    @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ authenticated: true }> {
+  async refresh(@Req() request: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
     this.csrf.assertRequest(request);
     const refreshToken = request.cookies?.['sda_refresh'];
     if (!refreshToken) throw new BadRequestException('Refresh request is invalid.');
-    const result = await this.auth.refresh(refreshToken, this.context(request));
-    this.setSessionCookies(reply, result);
-    return { authenticated: true };
+    const result = await this.auth.refresh(refreshToken, extractAuthRequestContext(request));
+    setAuthSessionCookies(reply, result, this.secureCookies);
+    return { authenticated: true as const };
   }
 
   @Post('logout')
@@ -108,8 +89,8 @@ export class AuthController {
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<void> {
     this.csrf.assertRequest(request);
-    await this.auth.logout(this.principal(request), this.context(request));
-    this.clearSessionCookies(reply);
+    await this.auth.logout(requireAuthPrincipal(request), extractAuthRequestContext(request));
+    clearAuthSessionCookies(reply, this.secureCookies);
   }
 
   @Post('logout-all')
@@ -119,74 +100,74 @@ export class AuthController {
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<void> {
     this.csrf.assertRequest(request);
-    await this.auth.logoutAll(this.principal(request), this.context(request));
-    this.clearSessionCookies(reply);
+    await this.auth.logoutAll(requireAuthPrincipal(request), extractAuthRequestContext(request));
+    clearAuthSessionCookies(reply, this.secureCookies);
   }
 
   @Post('change-password')
   @HttpCode(HttpStatus.NO_CONTENT)
   async changePassword(
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<void> {
-    this.csrf.assertRequest(request);
-    const input = this.parse(ChangePasswordSchema, body);
-    await this.auth.changePassword(
-      this.principal(request),
-      input.currentPassword,
-      input.newPassword,
-      this.context(request),
+  ) {
+    const { input, principal, context } = guardAuthenticatedBody(
+      this.csrf,
+      req,
+      S.ChangePasswordSchema,
+      body,
     );
-    this.clearSessionCookies(reply);
+    await this.auth.changePassword(principal, input.currentPassword, input.newPassword, context);
+    clearAuthSessionCookies(reply, this.secureCookies);
   }
 
   @PublicEndpoint()
   @Post('forgot-password')
   @HttpCode(HttpStatus.ACCEPTED)
-  forgotPassword(
-    @Body() body: unknown,
-    @Req() request: FastifyRequest,
-  ): Promise<{ message: string }> {
-    const input = this.parse(ForgotSchema, body);
-    return this.auth.forgotPassword(input.identifier, this.context(request));
+  forgotPassword(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = S.parseAuthBody(S.ForgotSchema, body);
+    return this.auth.forgotPassword(input.identifier, extractAuthRequestContext(request));
   }
 
   @PublicEndpoint()
   @Post('reset-password')
   @HttpCode(HttpStatus.NO_CONTENT)
   async resetPassword(@Body() body: unknown, @Req() request: FastifyRequest): Promise<void> {
-    const input = this.parse(ResetSchema, body);
-    await this.auth.resetPassword(input.token, input.newPassword, this.context(request));
+    const input = S.parseAuthBody(S.ResetSchema, body);
+    await this.auth.resetPassword(
+      input.token,
+      input.newPassword,
+      extractAuthRequestContext(request),
+    );
   }
 
   @AllowPreMfa()
   @Post('mfa/enroll')
-  async enrollMfa(@Body() body: unknown, @Req() request: FastifyRequest) {
-    this.csrf.assertRequest(request);
-    const input = this.parse(EnrollmentSchema, body);
-    return this.auth.beginMfaEnrollment(
-      this.principal(request),
-      input.label,
-      this.context(request),
+  async enrollMfa(@Body() body: unknown, @Req() req: FastifyRequest) {
+    const { input, principal, context } = guardAuthenticatedBody(
+      this.csrf,
+      req,
+      S.EnrollmentSchema,
+      body,
     );
+    return this.auth.beginMfaEnrollment(principal, input.label, context);
   }
 
   @AllowPreMfa()
   @Post('mfa/enroll/verify')
   async verifyEnrollment(
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ recoveryCodes: string[] }> {
-    this.csrf.assertRequest(request);
-    const input = this.parse(TotpSchema, body);
-    const result = await this.auth.verifyMfaEnrollment(
-      this.principal(request),
-      input.code,
-      this.context(request),
+  ) {
+    const { input, principal, context } = guardAuthenticatedBody(
+      this.csrf,
+      req,
+      S.TotpSchema,
+      body,
     );
-    this.setSessionCookies(reply, result);
+    const result = await this.auth.verifyMfaEnrollment(principal, input.code, context);
+    setAuthSessionCookies(reply, result, this.secureCookies);
     return { recoveryCodes: result.recoveryCodes };
   }
 
@@ -194,50 +175,53 @@ export class AuthController {
   @Post('mfa/verify')
   async verifyMfa(
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ authenticated: true }> {
-    this.csrf.assertRequest(request);
-    const input = this.parse(MfaVerifySchema, body);
-    const result = await this.auth.verifyMfa(
-      this.principal(request),
-      input.code,
-      input.recoveryCode,
-      this.context(request),
+  ) {
+    const { input, principal, context } = guardAuthenticatedBody(
+      this.csrf,
+      req,
+      S.MfaVerifySchema,
+      body,
     );
-    this.setSessionCookies(reply, result);
-    return { authenticated: true };
+    const result = await this.auth.verifyMfa(principal, input.code, input.recoveryCode, context);
+    setAuthSessionCookies(reply, result, this.secureCookies);
+    return { authenticated: true as const };
   }
 
   @AllowPreMfa()
   @Post('mfa/webauthn/register/options')
-  async webauthnRegisterOptions(@Body() body: unknown, @Req() request: FastifyRequest) {
-    this.csrf.assertRequest(request);
-    const input = this.parse(WebAuthnRegistrationOptionsRequestSchema, body);
-    return this.auth.beginWebAuthnEnrollment(
-      this.principal(request),
-      input.label,
-      this.context(request),
+  async webauthnRegisterOptions(@Body() body: unknown, @Req() req: FastifyRequest) {
+    const { input, principal, context } = guardAuthenticatedBody(
+      this.csrf,
+      req,
+      S.WebAuthnRegistrationOptionsRequestSchema,
+      body,
     );
+    return this.auth.beginWebAuthnEnrollment(principal, input.label, context);
   }
 
   @AllowPreMfa()
   @Post('mfa/webauthn/register/verify')
   async webauthnRegisterVerify(
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ recoveryCodes: string[] }> {
-    this.csrf.assertRequest(request);
-    const input = this.parse(WebAuthnVerifyRegistrationRequestSchema, body);
+  ) {
+    const { input, principal, context } = guardAuthenticatedBody(
+      this.csrf,
+      req,
+      S.WebAuthnVerifyRegistrationRequestSchema,
+      body,
+    );
     const result = await this.auth.verifyWebAuthnEnrollment(
-      this.principal(request),
+      principal,
       input.response as unknown as RegistrationResponseJSON,
       input.challengeToken,
       input.label,
-      this.context(request),
+      context,
     );
-    this.setSessionCookies(reply, result);
+    setAuthSessionCookies(reply, result, this.secureCookies);
     return { recoveryCodes: result.recoveryCodes };
   }
 
@@ -245,96 +229,63 @@ export class AuthController {
   @Post('mfa/webauthn/auth/options')
   async webauthnAuthOptions(@Body() body: unknown, @Req() request: FastifyRequest) {
     this.csrf.assertRequest(request);
-    const input = this.parse(WebAuthnAuthOptionsRequestSchema, body);
-    const principal = request.auth;
-    return this.auth.getWebAuthnAuthOptions(principal, input.username, this.context(request));
+    const input = S.parseAuthBody(S.WebAuthnAuthOptionsRequestSchema, body);
+    return this.auth.getWebAuthnAuthOptions(
+      request.auth,
+      input.username,
+      extractAuthRequestContext(request),
+    );
   }
 
   @AllowPreMfa()
   @Post('mfa/webauthn/auth/verify')
   async webauthnAuthVerify(
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ authenticated: true }> {
-    this.csrf.assertRequest(request);
-    const input = this.parse(WebAuthnVerifyAuthRequestSchema, body);
+  ) {
+    const { input, principal, context } = guardAuthenticatedBody(
+      this.csrf,
+      req,
+      S.WebAuthnVerifyAuthRequestSchema,
+      body,
+    );
     const result = await this.auth.verifyWebAuthnAuth(
-      this.principal(request),
+      principal,
       input.response as unknown as AuthenticationResponseJSON,
       input.challengeToken,
-      this.context(request),
+      context,
     );
-    this.setSessionCookies(reply, result);
-    return { authenticated: true };
+    setAuthSessionCookies(reply, result, this.secureCookies);
+    return { authenticated: true as const };
   }
 
   @Delete('mfa')
   @HttpCode(HttpStatus.NO_CONTENT)
   async disableMfa(
-    @Req() request: FastifyRequest,
+    @Body() body: unknown,
+    @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<void> {
-    this.csrf.assertRequest(request);
-    await this.auth.disableMfa(this.principal(request), this.context(request));
-    this.clearSessionCookies(reply);
+    const { input, principal, context } = guardAuthenticatedBody(
+      this.csrf,
+      req,
+      S.DisableMfaSchema,
+      body,
+    );
+    await this.auth.disableMfa(
+      principal,
+      input.currentPassword,
+      input.code,
+      input.recoveryCode,
+      context,
+    );
+    clearAuthSessionCookies(reply, this.secureCookies);
   }
 
   @PublicEndpoint()
   @Get('.well-known/jwks.json')
   jwks() {
     return this.auth.jwks();
-  }
-
-  private setSessionCookies(reply: FastifyReply, result: SessionArtifacts): void {
-    const base = { secure: this.secureCookies, sameSite: 'strict' as const };
-    reply.setCookie('sda_access', result.accessToken, {
-      ...base,
-      httpOnly: true,
-      path: '/api/v1',
-      maxAge: result.accessMaxAge,
-    });
-    if (result.refreshToken) {
-      reply.setCookie('sda_refresh', result.refreshToken, {
-        ...base,
-        httpOnly: true,
-        path: '/api/v1/auth',
-        maxAge: result.refreshMaxAge,
-      });
-    } else {
-      reply.clearCookie('sda_refresh', { ...base, path: '/api/v1/auth' });
-    }
-    reply.setCookie('sda_csrf', result.csrfToken, {
-      ...base,
-      httpOnly: false,
-      path: '/api/v1',
-      maxAge: result.refreshMaxAge,
-    });
-  }
-
-  private clearSessionCookies(reply: FastifyReply): void {
-    const base = { secure: this.secureCookies, sameSite: 'strict' as const };
-    reply.clearCookie('sda_access', { ...base, path: '/api/v1' });
-    reply.clearCookie('sda_refresh', { ...base, path: '/api/v1/auth' });
-    reply.clearCookie('sda_csrf', { ...base, path: '/api/v1' });
-  }
-
-  private context(request: FastifyRequest): RequestContext {
-    return {
-      ip: request.ip,
-      userAgent: request.headers['user-agent'],
-      correlationId: request.correlationId ?? 'unknown',
-    };
-  }
-
-  private principal(request: FastifyRequest): AuthPrincipal {
-    if (!request.auth) throw new BadRequestException('Authentication context is unavailable.');
-    return request.auth;
-  }
-
-  private parse<T>(schema: z.ZodType<T>, body: unknown): T {
-    const result = schema.safeParse(body);
-    if (!result.success) throw new BadRequestException('Request validation failed.');
-    return result.data;
   }
 }

@@ -3,7 +3,7 @@ groups:
     rules:
       # 1. Dependency Readiness Alert
       - alert: ReadinessDegraded
-        expr: http_requests_total{route="/api/v1/health/ready",status_code="503"} > 0
+        expr: rate(http_requests_total{route="/api/v1/health/ready",status_code="503"}[5m]) > 0
         for: 30s
         labels:
           severity: critical
@@ -13,7 +13,7 @@ groups:
 
       # 2. HTTP Error Rate Alert (> 1% 5xx errors)
       - alert: HighHttpErrorRate
-        expr: (sum(rate(http_requests_total{status_code=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))) > 0.01
+        expr: (sum(rate(http_requests_total{status_code=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1e-9)) > 0.01
         for: 2m
         labels:
           severity: high

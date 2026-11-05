@@ -1,5 +1,8 @@
-import { createHmac } from 'node:crypto';
-import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+/**
+ * @module AuditService
+ * Algorithm: Role-Scoped Audit Log Querying (IDOR-Protected), Sanitized Export & Chain Verification Facade.
+ */
+import { ForbiddenException, Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient, type Prisma } from '@sda/database';
 import type {
   QueryAuditLogsInput,
@@ -7,12 +10,17 @@ import type {
   VerifyAuditChainInput,
 } from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
-import { formatCsvRow } from '../reports/csv-formula-sanitizer.js';
 import { AuditWriterService } from './audit-writer.service.js';
 import {
   AuditVerifierService,
   type PartitionVerificationResult,
 } from './audit-verifier.service.js';
+import {
+  applyAuditFilterAllowlist,
+  formatAuditExportPayload,
+  serializeAuditLogRow,
+} from './audit-export.helper.js';
+import { createPartitionAnchor, type CreatedAuditAnchorDto } from './audit-anchor.helper.js';
 
 export interface PaginatedAuditLogs {
   data: Array<Record<string, unknown>>;
@@ -43,8 +51,9 @@ export class AuditService {
   }
 
   /**
-   * Queries audit logs with strict allowlist filtering, stable pagination,
-   * and role-based scope enforcement (Global for Security/Auditor, document-scoped for Owner).
+   * Algorithm / Thuật toán: Truy vấn nhật ký kiểm toán phân trang ổn định kèm cô lập phạm vi chống IDOR (Role-Scoped Paginated Audit Query).
+   *   1. Kiểm tra vai trò (`SECURITY_OFFICER`/`AUDITOR` xem toàn cục; `DOCUMENT_OWNER` bị giới hạn vào tài liệu sở hữu).
+   *   2. Áp bộ lọc danh sách trắng và sắp xếp ổn định có khóa phá hòa `(sortField, id)`.
    */
   async queryAuditLogs(
     principal: AuthPrincipal,
@@ -61,7 +70,6 @@ export class AuditService {
 
     const where: Prisma.AuditLogWhereInput = {};
 
-    // 1. Enforce Document Owner scope restriction (IDOR prevention)
     if (!isGlobalAuditor && isDocumentOwner) {
       if (query.documentId) {
         const doc = await this.database.document.findUnique({
@@ -77,80 +85,28 @@ export class AuditService {
           where: { owner_id: principal.userId },
           select: { id: true },
         });
-        const ownedIds = ownedDocs.map((d) => d.id);
-        where.document_id = { in: ownedIds };
+        where.document_id = { in: ownedDocs.map((d) => d.id) };
       }
     } else if (query.documentId) {
       where.document_id = query.documentId;
     }
 
-    // 2. Apply Allowlist Filters
-    if (query.actorUserId !== undefined) {
-      where.actor_user_id = query.actorUserId;
-    }
-    if (query.action) {
-      where.action = query.action;
-    }
-    if (query.outcome) {
-      where.outcome = query.outcome;
-    }
-    if (query.chainPartition) {
-      where.chain_partition = query.chainPartition;
-    }
-    if (query.from || query.to) {
-      where.occurred_at = {};
-      if (query.from) {
-        where.occurred_at.gte = new Date(query.from);
-      }
-      if (query.to) {
-        where.occurred_at.lte = new Date(query.to);
-      }
-    }
+    applyAuditFilterAllowlist(where, query);
 
-    // 3. Count total matching rows
     const total = await this.database.auditLog.count({ where });
-
-    // 4. Fetch paginated records with stable tie-breaker ordering
     const skip = (query.page - 1) * query.pageSize;
-    const take = query.pageSize;
-
     const sortField = query.sort === 'chain_sequence' ? 'chain_sequence' : 'occurred_at';
     const sortOrder = query.order === 'asc' ? 'asc' : 'desc';
 
     const logs = await this.database.auditLog.findMany({
       where,
       skip,
-      take,
+      take: query.pageSize,
       orderBy: [{ [sortField]: sortOrder }, { id: sortOrder }],
     });
 
-    // 5. Serialize records, converting BigInt to string
-    const data = logs.map((log) => ({
-      id: log.id.toString(),
-      occurredAt: log.occurred_at.toISOString(),
-      actorUserId: log.actor_user_id?.toString() ?? null,
-      actorUsername: log.actor_username,
-      action: log.action,
-      objectType: log.object_type,
-      objectId: log.object_id,
-      documentId: log.document_id,
-      accessSessionId: log.access_session_id,
-      outcome: log.outcome,
-      reasonCode: log.reason_code,
-      ipAddress: log.ip_address,
-      userAgent: log.user_agent,
-      correlationId: log.correlation_id,
-      details: log.details,
-      chainPartition: log.chain_partition,
-      chainSequence: log.chain_sequence.toString(),
-      entryHash: log.entry_hash,
-      previousHash: log.previous_hash,
-      hmacKeyVersion: log.hmac_key_version,
-      chainAlgorithm: log.chain_algorithm,
-    }));
-
     return {
-      data,
+      data: logs.map(serializeAuditLogRow),
       pagination: {
         page: query.page,
         pageSize: query.pageSize,
@@ -161,33 +117,19 @@ export class AuditService {
   }
 
   /**
-   * Exports audit logs in CSV or JSON format.
+   * Algorithm / Thuật toán: Xuất báo cáo nhật ký kiểm toán sang CSV/JSON dành riêng cho `AUDITOR`.
    */
   async exportAuditLogs(
     principal: AuthPrincipal,
     input: ExportAuditLogsInput,
   ): Promise<{ format: 'CSV' | 'JSON'; data: string; count: number }> {
-    const isAuditor = principal.roles.includes('AUDITOR');
-
-    if (!isAuditor) {
+    if (!principal.roles.includes('AUDITOR')) {
       throw new ForbiddenException('Insufficient permissions to export audit logs');
     }
 
     const where: Prisma.AuditLogWhereInput = {};
-
-    if (input.documentId) {
-      where.document_id = input.documentId;
-    }
-
-    if (input.actorUserId !== undefined) where.actor_user_id = input.actorUserId;
-    if (input.action) where.action = input.action;
-    if (input.outcome) where.outcome = input.outcome;
-    if (input.chainPartition) where.chain_partition = input.chainPartition;
-    if (input.from || input.to) {
-      where.occurred_at = {};
-      if (input.from) where.occurred_at.gte = new Date(input.from);
-      if (input.to) where.occurred_at.lte = new Date(input.to);
-    }
+    if (input.documentId) where.document_id = input.documentId;
+    applyAuditFilterAllowlist(where, input);
 
     const logs = await this.database.auditLog.findMany({
       where,
@@ -195,147 +137,18 @@ export class AuditService {
       orderBy: [{ occurred_at: 'desc' }, { id: 'desc' }],
     });
 
-    if (input.format === 'CSV') {
-      const headers = [
-        'id',
-        'occurred_at',
-        'actor_user_id',
-        'actor_username',
-        'action',
-        'object_type',
-        'object_id',
-        'document_id',
-        'access_session_id',
-        'outcome',
-        'reason_code',
-        'ip_address',
-        'correlation_id',
-        'chain_partition',
-        'chain_sequence',
-        'entry_hash',
-      ];
-
-      const rows = [formatCsvRow(headers)];
-      for (const log of logs) {
-        rows.push(
-          formatCsvRow([
-            log.id.toString(),
-            log.occurred_at.toISOString(),
-            log.actor_user_id?.toString() ?? '',
-            log.actor_username,
-            log.action,
-            log.object_type,
-            log.object_id,
-            log.document_id ?? '',
-            log.access_session_id ?? '',
-            log.outcome,
-            log.reason_code,
-            log.ip_address ?? '',
-            log.correlation_id,
-            log.chain_partition,
-            log.chain_sequence.toString(),
-            log.entry_hash,
-          ]),
-        );
-      }
-
-      return {
-        format: 'CSV',
-        data: rows.join('\r\n'),
-        count: logs.length,
-      };
-    }
-
-    // Default JSON export
-    const jsonOutput = logs.map((log) => ({
-      id: log.id.toString(),
-      occurredAt: log.occurred_at.toISOString(),
-      actorUserId: log.actor_user_id?.toString() ?? null,
-      actorUsername: log.actor_username,
-      action: log.action,
-      objectType: log.object_type,
-      objectId: log.object_id,
-      documentId: log.document_id,
-      accessSessionId: log.access_session_id,
-      outcome: log.outcome,
-      reasonCode: log.reason_code,
-      ipAddress: log.ip_address,
-      userAgent: log.user_agent,
-      correlationId: log.correlation_id,
-      details: log.details,
-      chainPartition: log.chain_partition,
-      chainSequence: log.chain_sequence.toString(),
-      entryHash: log.entry_hash,
-      previousHash: log.previous_hash,
-      hmacKeyVersion: log.hmac_key_version,
-      chainAlgorithm: log.chain_algorithm,
-    }));
-
-    return {
-      format: 'JSON',
-      data: JSON.stringify(jsonOutput, null, 2),
-      count: logs.length,
-    };
+    return formatAuditExportPayload(logs, input.format);
   }
 
   /**
-   * Creates a signed checkpoint anchor for a partition.
+   * Algorithm / Thuật toán: Tạo điểm neo chữ ký HMAC cho phân vùng nhật ký kiểm toán.
    */
-  async createAnchor(
-    principal: AuthPrincipal,
-    partition: string,
-  ): Promise<{
-    id: string;
-    chainPartition: string;
-    anchorSequence: string;
-    entryHash: string;
-    signature: string;
-    anchoredAt: string;
-  }> {
-    const isSecurityOfficer = principal.roles.includes('SECURITY_OFFICER');
-    if (!isSecurityOfficer) {
-      throw new ForbiddenException('Only Security Officer can create audit anchors');
-    }
-
-    // Find the latest audit log in this partition
-    const latestLog = await this.database.auditLog.findFirst({
-      where: { chain_partition: partition },
-      orderBy: { chain_sequence: 'desc' },
-    });
-
-    if (!latestLog) {
-      throw new NotFoundException(`No audit logs found for partition ${partition}`);
-    }
-
-    // Sign the anchor with the active HMAC integrity key
-    const anchorKey = this.writerService.getHmacKey(1);
-    const signature = createHmac('sha256', anchorKey)
-      .update(`${partition}:${latestLog.chain_sequence}:${latestLog.entry_hash}`)
-      .digest('hex');
-
-    const created = await this.database.auditAnchor.create({
-      data: {
-        chain_partition: partition,
-        anchor_sequence: latestLog.chain_sequence,
-        entry_hash: latestLog.entry_hash,
-        signature,
-        signer_key_id: 'integrity-key-v1',
-        status: 'VALID',
-      },
-    });
-
-    return {
-      id: created.id.toString(),
-      chainPartition: created.chain_partition,
-      anchorSequence: created.anchor_sequence.toString(),
-      entryHash: created.entry_hash,
-      signature: created.signature,
-      anchoredAt: created.anchored_at.toISOString(),
-    };
+  async createAnchor(principal: AuthPrincipal, partition: string): Promise<CreatedAuditAnchorDto> {
+    return createPartitionAnchor(this.database, this.writerService, principal, partition);
   }
 
   /**
-   * Verifies partition integrity and returns verification report.
+   * Algorithm / Thuật toán: Điều phối kiểm chứng toàn vẹn chuỗi băm cho một hoặc toàn bộ phân vùng.
    */
   async verifyChain(
     principal: AuthPrincipal,

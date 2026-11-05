@@ -1,13 +1,24 @@
+-- Thuật toán tổng quan migration:
+-- Thiết lập cơ chế kiểm soát đồng thời lạc quan (Optimistic Concurrency Control - OCC) và vô hiệu hóa bộ nhớ đệm chính sách ABAC tất định:
+-- 1. Cấp phát số hiệu phiên bản đơn điệu toàn cục qua sequence không quay vòng `abac_policy_version_seq`.
+-- 2. Ràng buộc kiểu dữ liệu JSONB cho trường nghĩa vụ hậu kiểm `obligations` bắt buộc là mảng (`jsonb_typeof(obligations) = 'array'`).
+-- 3. Tự động tăng `version` khi nội dung thực chất của bảng cha thay đổi và lan truyền tăng `version` ngược từ bảng con (`attribute_options`, `policy_rule_conditions`) lên bảng cha.
 CREATE SEQUENCE abac_policy_version_seq AS BIGINT START WITH 1 INCREMENT BY 1 NO CYCLE;
 
 ALTER TABLE attribute_definitions
   ADD COLUMN version BIGINT NOT NULL DEFAULT nextval('abac_policy_version_seq');
 
+-- Thuật toán: Ràng buộc cấu trúc mảng JSONB (`ck_policy_rule_obligations_array`) đảm bảo trình thực thi PDP/PEP luôn đọc `obligations` như danh sách nghĩa vụ tất định.
 ALTER TABLE policy_rules
   ADD COLUMN obligations JSONB NOT NULL DEFAULT '[]'::jsonb,
   ADD COLUMN version BIGINT NOT NULL DEFAULT nextval('abac_policy_version_seq'),
   ADD CONSTRAINT ck_policy_rule_obligations_array CHECK (jsonb_typeof(obligations) = 'array');
 
+-- Thuật toán: Tự động tăng đơn điệu phiên bản hàng chính sách ABAC (`bump_abac_row_version` - Monotonic OCC Version Bump).
+-- Cơ chế:
+-- - Khi `DELETE`: nhảy nhịp sequence toàn cục `abac_policy_version_seq` để đánh dấu tập chính sách đã biến đổi đối với bộ nhớ đệm PDP.
+-- - Khi `UPDATE`: so sánh ảnh JSONB của `NEW` và `OLD` sau khi loại trừ hai trường siêu dữ liệu `updated_at` và `version`;
+--   chỉ cấp số `version` mới từ sequence nếu dữ liệu nghiệp vụ thực sự thay đổi hoặc `version` bị tác động trực tiếp.
 CREATE OR REPLACE FUNCTION bump_abac_row_version()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -34,6 +45,12 @@ CREATE TRIGGER trg_policy_rules_version
 BEFORE UPDATE OR DELETE ON policy_rules
 FOR EACH ROW EXECUTE FUNCTION bump_abac_row_version();
 
+-- Thuật toán: Lan truyền tăng phiên bản từ thực thể con lên thực thể gốc tổng hợp (`bump_abac_parent_version` - Aggregate Root Version Propagation).
+-- Cơ chế:
+-- - Bỏ qua các lệnh `UPDATE` rỗng (`to_jsonb(NEW) IS NOT DISTINCT FROM to_jsonb(OLD)`).
+-- - Khi thêm/sửa/xóa dòng con trên `attribute_options` hoặc `policy_rule_conditions`, tự động cập nhật `version = nextval('abac_policy_version_seq')`
+--   cho bản ghi cha tương ứng trên `attribute_definitions` hoặc `policy_rules` (và cập nhật cả cha cũ lẫn cha mới nếu khóa ngoại bị chuyển đổi),
+--   bảo đảm xung đột ghi đồng thời trên điều kiện con luôn bị phát hiện qua `version` của cha.
 CREATE OR REPLACE FUNCTION bump_abac_parent_version()
 RETURNS trigger
 LANGUAGE plpgsql

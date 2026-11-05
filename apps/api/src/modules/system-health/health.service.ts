@@ -1,26 +1,49 @@
+/**
+ * Module: HealthService — Tổng hợp trạng thái sẵn sàng đa thành phần hạ tầng (PostgreSQL, Redis, S3/MinIO) và ảnh chụp sức khỏe vận hành.
+ */
 import { Injectable } from '@nestjs/common';
-import * as net from 'node:net';
 import { getDatabaseClient } from '@sda/database';
+import type { LivenessResponse, ReadinessResponse } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
-import { tracer } from '../../common/telemetry/tracer.js';
-import type { DependencyHealth, LivenessResponse, ReadinessResponse } from '@sda/contracts';
+import {
+  probeDatabaseEndpoint,
+  probeRedisEndpoint,
+  probeStorageEndpoint,
+} from './dependency-probes.helper.js';
 
 @Injectable()
 export class HealthService {
   constructor(private readonly configService: AppConfigService) {}
 
+  /**
+   * Thuật toán: Kiểm tra sự sống tiến trình tức thời (Zero-Dependency Liveness Probe)
+   * Mục đích: Xác nhận vòng lặp sự kiện Node.js của tiến trình API vẫn phản hồi mà không phụ thuộc vào kết nối hạ tầng bên ngoài.
+   * Cơ chế hoạt động:
+   *   - Trả về hằng trạng thái `{ status: 'ok' }` độ phức tạp `O(1)` để bộ điều phối container (Kubernetes/Docker) tránh khởi động lại dây chuyền khi CSDL bảo trì.
+   */
   checkLiveness(): LivenessResponse {
     return { status: 'ok' };
   }
 
+  /**
+   * Thuật toán: Tổng hợp trạng thái sẵn sàng song song đa thành phần có giới hạn thời gian (Bounded-Timeout Parallel Readiness Aggregation)
+   * Mục đích: Đánh giá đồng thời độ trễ và khả năng kết nối tới PostgreSQL, Redis và Object Storage trước khi nhận lưu lượng truy cập.
+   * Cơ chế hoạt động:
+   *   - Phát đồng thời 3 phép thử qua `Promise.all` với ngưỡng cắt `timeoutMs = 2000ms` (tổng thời gian chờ tối đa bằng nhánh chậm nhất thay vì cộng dồn tuần tự).
+   *   - Áp dụng phép hội logic nghiêm ngặt `isReady = (db === 'up' && redis === 'up' && storage === 'up')`; nếu bất kỳ thành phần nào lỗi, hạ trạng thái tổng thể xuống `'degraded'`.
+   *
+   * Algorithm: Parallel Dependency Readiness Aggregation.
+   * Executes PostgreSQL, Redis, and Object Storage probes concurrently under a 2s timeout
+   * and marks overall status `ready` iff all three dependencies report `up`.
+   */
   async checkReadiness(): Promise<{ isReady: boolean; response: ReadinessResponse }> {
     const timestamp = new Date().toISOString();
     const timeoutMs = 2_000;
 
     const [database, redis, storage] = await Promise.all([
-      this.probeDatabase(timeoutMs),
-      this.probeRedis(timeoutMs),
-      this.probeStorage(timeoutMs),
+      probeDatabaseEndpoint(this.configService, timeoutMs),
+      probeRedisEndpoint(this.configService, timeoutMs),
+      probeStorageEndpoint(this.configService, timeoutMs),
     ]);
 
     const isReady = database.status === 'up' && redis.status === 'up' && storage.status === 'up';
@@ -38,125 +61,16 @@ export class HealthService {
     return { isReady, response };
   }
 
-  private async probeDatabase(timeoutMs: number): Promise<DependencyHealth> {
-    return tracer.withSpan('db.probe', { 'db.system': 'postgresql' }, async () => {
-      const start = Date.now();
-      try {
-        const dbUrl = this.configService.get('DATABASE_URL');
-        const url = new URL(dbUrl);
-        const host = url.hostname;
-        const port = Number(url.port || 5432);
-
-        await this.tcpPing(host, port, timeoutMs);
-        return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
-      } catch {
-        // NEVER leak connection credentials or stack traces
-        return {
-          status: 'down',
-          latencyMs: Date.now() - start,
-          message: 'Database service is unreachable or timed out',
-        };
-      }
-    });
-  }
-
-  private async probeRedis(timeoutMs: number): Promise<DependencyHealth> {
-    return tracer.withSpan('redis.probe', { 'db.system': 'redis' }, async () => {
-      const start = Date.now();
-      try {
-        const redisUrl = this.configService.get('REDIS_URL');
-        const url = new URL(redisUrl);
-        const host = url.hostname;
-        const port = Number(url.port || 6379);
-
-        await this.tcpPing(host, port, timeoutMs);
-        return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
-      } catch {
-        // NEVER leak connection credentials or stack traces
-        return {
-          status: 'down',
-          latencyMs: Date.now() - start,
-          message: 'Redis service is unreachable or timed out',
-        };
-      }
-    });
-  }
-
-  private async probeStorage(timeoutMs: number): Promise<DependencyHealth> {
-    return tracer.withSpan('storage.probe', { 'rpc.system': 's3' }, async () => {
-      const start = Date.now();
-      try {
-        if (process.env['STORAGE_MOCK'] === 'true') {
-          return { status: 'up', latencyMs: 1 };
-        }
-        const rawEndpoint = this.configService.get('STORAGE_ENDPOINT').trim();
-        if (
-          rawEndpoint.includes('.supabase.co') ||
-          rawEndpoint.includes('.r2.cloudflarestorage.com') ||
-          rawEndpoint.startsWith('http://') ||
-          rawEndpoint.startsWith('https://')
-        ) {
-          const parsed = new URL(
-            rawEndpoint.startsWith('http') ? rawEndpoint : `https://${rawEndpoint}`,
-          );
-          const targetPort = parsed.port
-            ? Number(parsed.port)
-            : parsed.protocol === 'https:'
-              ? 443
-              : 80;
-          await this.tcpPing(parsed.hostname, targetPort, timeoutMs);
-          return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
-        }
-        const port = this.configService.get('STORAGE_PORT');
-        const protocol = this.configService.get('STORAGE_USE_SSL') ? 'https' : 'http';
-        const response = await fetch(`${protocol}://${rawEndpoint}:${port}/minio/health/ready`, {
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        await response.body?.cancel();
-        if (!response.ok) throw new Error('Storage readiness endpoint is not healthy');
-        return { status: 'up', latencyMs: Math.max(1, Date.now() - start) };
-      } catch {
-        // NEVER leak storage keys or credentials
-        return {
-          status: 'down',
-          latencyMs: Date.now() - start,
-          message: 'Object storage service is unreachable or timed out',
-        };
-      }
-    });
-  }
-
-  private tcpPing(host: string, port: number, timeoutMs: number): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const socket = new net.Socket();
-      let hasTimedOut = false;
-
-      socket.setTimeout(timeoutMs);
-      socket.once('connect', () => {
-        socket.destroy();
-        resolve();
-      });
-
-      socket.once('timeout', () => {
-        hasTimedOut = true;
-        socket.destroy();
-        reject(new Error('Connection timed out'));
-      });
-
-      socket.once('error', (err) => {
-        if (!hasTimedOut) {
-          socket.destroy();
-          reject(err);
-        }
-      });
-
-      socket.connect(port, host);
-    });
-  }
-
   /**
-   * Reads real-time runtime system operational metrics.
-   * Note: Does not use snapshot table to replace time-series monitoring.
+   * Thuật toán: Thu thập bức tranh vận hành thời gian thực chịu lỗi suy giảm (Degraded-Tolerant Operational Telemetry Snapshot)
+   * Mục đích: Cung cấp thông số bộ nhớ tiến trình (Heap/RSS), số phiên hoạt động, cảnh báo mở và hàng đợi xuất báo cáo cho bảng điều khiển quản trị ngay cả khi CSDL gặp sự cố.
+   * Cơ chế hoạt động:
+   *   - Đọc thống kê bộ nhớ `process.memoryUsage()` quy đổi sang MiB làm tròn 2 chữ số thập phân.
+   *   - Thực thi song song 3 truy vấn `count` (`accessSession`, `securityAlert`, `asyncExportJob`) bên trong khối `try/catch` suy giảm êm (graceful degradation về `0` khi CSDL gián đoạn) kết hợp kết quả `checkReadiness()`.
+   *
+   * Algorithm: Degraded-Tolerant Live Operational Telemetry Snapshot.
+   * Combines Node.js heap/RSS statistics, live database operational counts (gracefully defaulting
+   * to zero when DB is unreachable), and dependency readiness checks.
    */
   async getLiveMetrics() {
     const memory = process.memoryUsage();

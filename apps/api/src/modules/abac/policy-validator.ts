@@ -1,3 +1,8 @@
+/**
+ * @module PolicyValidator
+ * Algorithm: Static DNF Policy Type-Checker & Unreachable Rule Analyzer.
+ * Bộ phân tích ngữ nghĩa tĩnh và phát hiện luật chết chính sách ABAC.
+ */
 import { POLICY_OPERATORS, type AttributeDescriptor } from './abac.types.js';
 import type {
   CompiledPolicy,
@@ -7,6 +12,8 @@ import type {
   PolicyValidationIssue,
   TimeWindow,
 } from './abac.types.js';
+import { parseStrictIsoTimestamp } from './policy-condition-matcher.js';
+import { compareExpectedValues, hasContradiction } from './policy-contradiction-solver.js';
 
 const compatibleOperators: Readonly<
   Record<AttributeDescriptor['type'], ReadonlySet<PolicyOperator>>
@@ -18,6 +25,15 @@ const compatibleOperators: Readonly<
   IP: new Set(['EQ', 'NEQ', 'IN', 'NOT_IN', 'CIDR_MATCH', 'EXISTS']),
 };
 
+/**
+ * Algorithm / Thuật toán: Kiểm chứng tĩnh toàn diện cây chính sách DNF và phát hiện luật chết (Dead/Unreachable Rule Analysis).
+ * Cơ chế hoạt động:
+ *   1. Kiểm tra thuật toán kết hợp (`DENY_OVERRIDES`) và miền hợp lệ của danh sách nghĩa vụ (`validObligations`).
+ *   2. Duyệt từng nhóm hội (AND group): xác thực tên thuộc tính trong từ điển, tính tương thích giữa kiểu thuộc tính
+ *      và toán tử (`compatibleOperators`), cùng cấu trúc miền giá trị kỳ vọng (`validExpected`).
+ *   3. Với mỗi nhóm hợp lệ về cú pháp, gọi bộ giải ràng buộc `hasContradiction` để kiểm tra tính khả thỏa.
+ *   4. Nếu toàn bộ các nhóm tuyển (OR) của một luật đều rỗng, lỗi kiểu hoặc tự mâu thuẫn, đánh dấu `UNREACHABLE_RULE`.
+ */
 export function validatePolicy(
   policy: CompiledPolicy,
   attributes: Readonly<Record<string, AttributeDescriptor>>,
@@ -102,6 +118,9 @@ export function validatePolicy(
   return issues;
 }
 
+/**
+ * Algorithm / Thuật toán: Kiểm tra miền giá trị hợp lệ của danh sách nghĩa vụ (`MAX_SESSION_MINUTES` thuộc `[1, 1440]`).
+ */
 function validObligations(obligations: CompiledPolicy['rules'][number]['obligations']): boolean {
   return obligations.every((obligation) => {
     if (obligation.type === 'MAX_SESSION_MINUTES') {
@@ -115,6 +134,11 @@ function validObligations(obligations: CompiledPolicy['rules'][number]['obligati
   });
 }
 
+/**
+ * Algorithm / Thuật toán: Kiểm chứng kiểu và bất biến miền của giá trị kỳ vọng theo từng toán tử.
+ * Đảm bảo `BETWEEN` nhận đúng cặp `[min, max]` có thứ tự `min <= max`, `IN`/`NOT_IN` không rỗng,
+ * `TIME_BETWEEN` đúng định dạng giờ/múi giờ IANA, và kiểu vô hướng khớp từ điển.
+ */
 function validExpected(condition: PolicyCondition, type: AttributeDescriptor['type']): boolean {
   const value = condition.expected;
   switch (condition.operator) {
@@ -130,7 +154,7 @@ function validExpected(condition: PolicyCondition, type: AttributeDescriptor['ty
         Array.isArray(value) &&
         value.length === 2 &&
         value.every((item) => scalarMatches(item, type)) &&
-        compare(value[0]!, value[1]!) <= 0
+        compareExpectedValues(value[0]!, value[1]!) <= 0
       );
     case 'CIDR_MATCH':
       return (
@@ -146,16 +170,22 @@ function validExpected(condition: PolicyCondition, type: AttributeDescriptor['ty
   }
 }
 
+/**
+ * Algorithm / Thuật toán: Kiểm tra tương thích kiểu vô hướng (Scalar Runtime Type Check).
+ */
 function scalarMatches(
   value: ExpectedValue | string | number | boolean,
   type: AttributeDescriptor['type'],
 ) {
   if (type === 'NUMBER') return typeof value === 'number' && Number.isFinite(value);
   if (type === 'BOOLEAN') return typeof value === 'boolean';
-  if (type === 'DATE') return typeof value === 'string' && Number.isFinite(Date.parse(value));
+  if (type === 'DATE') return typeof value === 'string' && parseStrictIsoTimestamp(value) !== null;
   return typeof value === 'string';
 }
 
+/**
+ * Algorithm / Thuật toán: Xác thực cấu trúc khung giờ `HH:MM[:SS]` 24h và tên múi giờ IANA qua `Intl.DateTimeFormat`.
+ */
 function isTimeWindow(value: ExpectedValue): value is TimeWindow {
   if (Array.isArray(value) || value === null || typeof value !== 'object') return false;
   const candidate = value as Partial<TimeWindow>;
@@ -167,77 +197,4 @@ function isTimeWindow(value: ExpectedValue): value is TimeWindow {
   } catch {
     return false;
   }
-}
-
-function hasContradiction(conditions: PolicyCondition[]): boolean {
-  const byAttribute = new Map<string, PolicyCondition[]>();
-  for (const condition of conditions) {
-    const existing = byAttribute.get(condition.attribute) ?? [];
-    existing.push(condition);
-    byAttribute.set(condition.attribute, existing);
-  }
-  for (const attributeConditions of byAttribute.values()) {
-    const existence = attributeConditions
-      .filter((item) => item.operator === 'EXISTS')
-      .map((item) => item.expected);
-    if (new Set(existence).size > 1) return true;
-    if (
-      existence.includes(false) &&
-      attributeConditions.some((item) => item.operator !== 'EXISTS')
-    ) {
-      return true;
-    }
-    const equals = attributeConditions
-      .filter((item) => item.operator === 'EQ')
-      .map((item) => item.expected);
-    if (new Set(equals.map(canonical)).size > 1) return true;
-    const notEquals = new Set(
-      attributeConditions
-        .filter((item) => item.operator === 'NEQ')
-        .map((item) => canonical(item.expected)),
-    );
-    if (equals.some((value) => notEquals.has(canonical(value)))) return true;
-    const included = attributeConditions
-      .filter((item) => item.operator === 'IN' && Array.isArray(item.expected))
-      .flatMap((item) => item.expected as Array<string | number | boolean>);
-    const excluded = new Set(
-      attributeConditions
-        .filter((item) => item.operator === 'NOT_IN' && Array.isArray(item.expected))
-        .flatMap((item) => item.expected as Array<string | number | boolean>)
-        .map(canonical),
-    );
-    if (
-      equals.some(
-        (value) =>
-          included.length > 0 && !included.some((item) => canonical(item) === canonical(value)),
-      )
-    ) {
-      return true;
-    }
-    if (equals.some((value) => excluded.has(canonical(value)))) return true;
-    const lower = attributeConditions
-      .filter((item) => item.operator === 'GTE')
-      .map((item) => item.expected)
-      .sort(compare)
-      .at(-1);
-    const upper = attributeConditions
-      .filter((item) => item.operator === 'LTE')
-      .map((item) => item.expected)
-      .sort(compare)
-      .at(0);
-    if (lower !== undefined && upper !== undefined && compare(lower, upper) > 0) return true;
-  }
-  return false;
-}
-
-function canonical(value: ExpectedValue): string {
-  return JSON.stringify(value);
-}
-
-function compare(left: ExpectedValue, right: ExpectedValue): number {
-  const a = typeof left === 'string' && Number.isFinite(Date.parse(left)) ? Date.parse(left) : left;
-  const b =
-    typeof right === 'string' && Number.isFinite(Date.parse(right)) ? Date.parse(right) : right;
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  return String(a).localeCompare(String(b));
 }

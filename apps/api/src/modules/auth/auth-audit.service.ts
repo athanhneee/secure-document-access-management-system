@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
-import { appendChainedAuditLog, resolveAuditHmacKey } from '../audit/audit-chain-helper.js';
+import { appendChainedAuditLog, resolveActiveAuditKey } from '../audit/audit-chain-helper.js';
 import type { RequestContext } from './auth.types.js';
 
 interface AuditEvent {
@@ -18,10 +18,14 @@ interface AuditEvent {
 @Injectable()
 export class AuthAuditService {
   private readonly hmacKey: string;
+  private readonly keyVersion: number;
   private readonly database = getDatabaseClient();
 
   constructor(config: AppConfigService) {
-    this.hmacKey = resolveAuditHmacKey(config);
+    // CONFLICT-RESOLVED: Trích xuất đồng thời khóa HMAC đang kích hoạt và hmac_key_version từ vòng khóa xoay vòng thay vì mặc định gắn cứng phiên bản 1.
+    const active = resolveActiveAuditKey(config);
+    this.hmacKey = active.hmacKey;
+    this.keyVersion = active.keyVersion;
   }
 
   async record(event: AuditEvent, context: RequestContext): Promise<void> {
@@ -29,6 +33,7 @@ export class AuthAuditService {
       await appendChainedAuditLog(transaction, {
         partition: 'AUTH',
         hmacKey: this.hmacKey,
+        keyVersion: this.keyVersion,
         action: event.action,
         outcome: event.outcome,
         objectType: 'AUTHENTICATION',

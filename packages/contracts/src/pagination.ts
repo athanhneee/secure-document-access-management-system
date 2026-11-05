@@ -17,6 +17,9 @@ export interface PaginatedResponse<T> {
   readonly totalPages: number;
 }
 
+/**
+ * Thuật toán: Đóng gói siêu dữ liệu phân trang với phép chia làm tròn lên `max(1, ceil(total / limit))`.
+ */
 export function createPaginatedResponse<T>(
   data: readonly T[],
   total: number,

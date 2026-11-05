@@ -1,3 +1,8 @@
+/**
+ * Module: Dịch vụ Mã hóa Tài liệu Phong bì Xác thực (Authenticated Envelope Document Encryption)
+ * Thuật toán: Mã hóa đối xứng xác thực AES-256-GCM với khóa dữ liệu (DEK) 256-bit độc nhất cho từng phiên bản tệp,
+ *   đóng gói khung nhị phân tự mô tả `SDAE v1` (33-byte header) và giải mã xác thực toàn vẹn trước khi xuất bản rõ.
+ */
 import { Injectable, Logger } from '@nestjs/common';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -40,6 +45,13 @@ export class DocumentEncryptionService {
    * - Encrypts using AES-256-GCM
    * - Wraps DEK using KMS interface
    * - Prepends 33-byte header: [Magic 4B][Ver 1B][IV 12B][Tag 16B][Ciphertext...]
+   *
+   * Thuật toán: Mã Hóa Phong Bì AES-256-GCM Độc Lập Theo Phiên Bản & Xóa Trắng Khóa Trong RAM
+   * Mục đích: Đảm bảo tính bí mật và toàn vẹn của nội dung tài liệu lưu trữ trên Object Storage với khóa DEK riêng biệt.
+   * Cơ chế hoạt động:
+   *   - Băm kiểm tra SHA-256 bản rõ, sinh ngẫu nhiên mật mã DEK 32 byte và IV 12 byte mới hoàn toàn.
+   *   - Thực thi `aes-256-gcm` thu bản mã và nhãn xác thực `tag` 16 byte, sau đó gọi KMS bọc DEK và ghi đè `dek.fill(0)` ngay lập tức.
+   *   - Đóng gói định dạng nhị phân chuẩn 33 byte đầu: `[Magic 'SDAE' (4B) || Version 0x01 (1B) || IV (12B) || GCM Tag (16B) || Ciphertext]`.
    */
   async encryptBuffer(plaintext: Buffer): Promise<EncryptedDocumentResult> {
     const sha256Hash = crypto.createHash('sha256').update(plaintext).digest('hex');
@@ -82,6 +94,16 @@ export class DocumentEncryptionService {
    * Requirement 9: No plaintext is emitted before GCM tag is verified.
    * If tag verification fails (e.g. 1 byte modified), the temp file is securely
    * unlinked and an authentication error is thrown.
+   *
+   * Thuật toán: Giải Mã Xác Thực Trước Khi Ghi (Verify-Before-Release Authenticated Decryption)
+   * Mục đích: Khôi phục tài liệu ra tệp tạm cô lập quyền `0o600` chỉ sau khi xác minh chữ ký GCM hợp lệ 100%,
+   *   tuyệt đối không phát tán dữ liệu giải mã dở dang nếu bản mã bị can thiệp dù chỉ 1 bit.
+   * Cơ chế hoạt động:
+   *   - Phân tích header 33 byte kiểm tra chữ ký `SDAE` và phiên bản định dạng `0x01`, tách `iv`, `tag`, `ciphertext`.
+   *   - Giải bọc DEK qua KMS, nạp `tag` vào bộ giải mã `aes-256-gcm` và gọi `decipher.final()` trong bộ nhớ để xác thực toàn vẹn
+   *     trước khi ghi xuống đĩa với chế độ phân quyền `0o600`.
+   *   - Cung cấp hàm dọn dẹp `cleanup()` thực hiện ghi đè byte `0` lên đầu tệp trước khi `unlink` và xóa thư mục tạm riêng biệt;
+   *     đồng thời luôn xóa trắng vùng nhớ `dek.fill(0)` ở cả nhánh thành công lẫn nhánh bắt lỗi.
    */
   async decryptToTempFile(
     encryptedData: Buffer,

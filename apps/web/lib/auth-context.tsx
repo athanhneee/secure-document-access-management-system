@@ -49,6 +49,13 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+/**
+ * Thuật toán: Máy Trạng Thái Phiên Xác Thực & Đồng Bộ Vai Trò Theo Đường Dẫn (Client-Side Session & Role-Path Synchronization)
+ * Mục đích: Duy trì trạng thái định danh người dùng trong bộ nhớ React (không lưu xuống bộ nhớ trình duyệt lâu dài), suy diễn vai trò hoạt động `activeRole` và cung cấp hàm kiểm tra quyền RBAC.
+ * Cơ chế hoạt động:
+ *   - `refreshUser`: Gọi `/users/me`, đối chiếu tiền tố `pathname` với bảng `ROLE_PATHS` để tự động đồng bộ `activeRole` tương ứng phân hệ đang mở; nếu gặp lỗi HTTP 401/403 thì xóa sạch trạng thái phiên.
+ *   - `hasPermission` / `hasRole`: Kiểm tra quan hệ thuộc tập hợp thẩm quyền/vai trò hiện thời của người dùng.
+ */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [activeRole, setActiveRoleState] = useState<RoleType | null>(null);

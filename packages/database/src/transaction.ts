@@ -18,11 +18,24 @@ export interface SerializableTransactionOptions {
   baseDelayMs?: number;
 }
 
+/**
+ * Thuật toán: Tính độ trễ thử lại lũy thừa có trần kết hợp nhiễu ngẫu nhiên mật mã (Capped Exponential Backoff + CSPRNG Jitter).
+ * Algorithm: Capped exponential backoff with CSPRNG jitter.
+ * Computes `min(base * 2^attempt, 1000ms) + uniform_random(0, exponential / 4)` to
+ * decorrelate contending `SERIALIZABLE` transactions under write bursts.
+ */
 function retryDelay(baseDelayMs: number, attempt: number): number {
   const exponential = Math.min(baseDelayMs * 2 ** attempt, 1_000);
   return exponential + randomInt(0, Math.max(1, Math.floor(exponential / 4)));
 }
 
+/**
+ * Thuật toán: Vòng lặp thử lại giao dịch mức cô lập `SERIALIZABLE` cho lỗi xung đột tạm thời (`40001`, `40P01`, `P2034`).
+ * Algorithm: Bounded `SERIALIZABLE` transaction retry loop.
+ * Executes `operation` at PostgreSQL `Serializable` isolation and retries transient
+ * serialization/deadlock failures (`40001`, `40P01`, `P2034`) up to `maxRetries` before
+ * escalating to `DatabaseConflictError`.
+ */
 export async function withSerializableTransaction<T>(
   operation: TransactionOperation<T>,
   options: SerializableTransactionOptions = {},

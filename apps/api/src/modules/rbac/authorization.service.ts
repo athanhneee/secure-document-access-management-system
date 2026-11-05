@@ -1,3 +1,9 @@
+/**
+ * @module AuthorizationService
+ * Dịch vụ phân giải quyền RBAC có phạm vi phân cấp phòng ban (Hierarchical Scoped RBAC):
+ * tính bao đóng bắc cầu cây phòng ban, kiểm tra thống trị ủy quyền chống leo thang đặc quyền
+ * và duyệt ngược tổ tiên có bảo vệ chu trình.
+ */
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import type { AuthPrincipal } from '../auth/auth.types.js';
@@ -9,6 +15,11 @@ export class AuthorizationService {
 
   constructor(private readonly cache: AuthorizationCache) {}
 
+  /**
+   * Thuật toán: Tổng hợp và trải phẳng tập quyền hiệu lực theo cửa sổ thời gian (Temporal Effective-Grant Materialization).
+   * Cơ chế hoạt động: Chỉ lấy các phép gán thỏa `valid_from <= now < valid_to` của người dùng `ACTIVE`, vai trò `is_active`
+   * và phòng ban phạm vi (nếu có) đang `is_active`, sau đó tích Đề-các phẳng qua `role_permissions` và lưu vào cache cắt trần TTL.
+   */
   async effectiveGrants(userId: bigint): Promise<EffectiveGrant[]> {
     const cached = this.cache.get(userId);
     if (cached) return cached;
@@ -48,6 +59,13 @@ export class AuthorizationService {
     return grants;
   }
 
+  /**
+   * Thuật toán: Kiểm tra quyền phân cấp theo tổ tiên phòng ban (Hierarchical Scope Dominance Check).
+   * Cơ chế hoạt động:
+   *   - Nếu đòi phạm vi toàn cục (`requireGlobal`) hoặc không truyền phòng ban đích: bắt buộc có grant `scopeDepartmentId === null`.
+   *   - Nếu có `targetDepartmentId`: thu tập tổ tiên của phòng ban đích (`departmentAncestors`) và chấp nhận nếu người dùng
+   *     nắm grant toàn cục (`null`) hoặc nắm grant tại bất kỳ nút tổ tiên nào bao hàm phòng ban đích.
+   */
   async hasPermission(
     principal: AuthPrincipal,
     resource: string,
@@ -72,6 +90,9 @@ export class AuthorizationService {
     );
   }
 
+  /**
+   * Thuật toán: Cưỡng chế quyền truy cập hoặc ném ngoại lệ HTTP 403 (Fail-Closed Permission Assertion).
+   */
   async assertPermission(
     principal: AuthPrincipal,
     resource: string,
@@ -87,6 +108,11 @@ export class AuthorizationService {
     }
   }
 
+  /**
+   * Thuật toán: Kiểm tra bất biến thống trị ủy quyền chống khuếch đại đặc quyền (Anti-Escalation Grant Dominance Check).
+   * Cơ chế hoạt động: Với MỌI `permissionId` định cấp cho người khác tại phạm vi `targetDepartmentId`, người cấp
+   * bắt buộc phải đang sở hữu chính quyền đó ở phạm vi toàn cục (`null`) hoặc ở một phòng ban tổ tiên bao trùm `targetDepartmentId`.
+   */
   async assertCanDelegate(
     principal: AuthPrincipal,
     permissionIds: bigint[],
@@ -111,6 +137,13 @@ export class AuthorizationService {
     }
   }
 
+  /**
+   * Thuật toán: Tính bao đóng bắc cầu cây con phòng ban bằng lặp điểm bất động tương đương BFS (Transitive Closure Fixed-Point Traversal).
+   * Cơ chế hoạt động:
+   *   1. Nếu có ít nhất một quyền phạm vi toàn cục (`scopeDepartmentId === null`), trả về `null` (không giới hạn phòng ban).
+   *   2. Khởi tạo tập hạt giống `visible` từ các phòng ban gốc được cấp quyền.
+   *   3. Lặp mở rộng biên đồ thị: nạp mọi nút con có `parent_id` thuộc `visible` cho tới khi đạt điểm bất động (`changed === false`).
+   */
   async visibleDepartmentIds(
     principal: AuthPrincipal,
     resource: string,
@@ -153,10 +186,18 @@ export class AuthorizationService {
     this.cache.invalidateAll();
   }
 
+  /**
+   * Thuật toán: Kiểm tra quan hệ bao hàm phòng ban con nằm trong cây con của `scopeDepartmentId`.
+   */
   async departmentWithinScope(departmentId: bigint, scopeDepartmentId: bigint): Promise<boolean> {
     return (await this.departmentAncestors(departmentId)).has(scopeDepartmentId);
   }
 
+  /**
+   * Thuật toán: Duyệt ngược đường đi tổ tiên có tập đánh dấu chống lặp vô hạn khi có chu trình (Cycle-Safe Ancestor Walk).
+   * Cơ chế hoạt động: Đi ngược liên kết `parent_id` từ nút hiện tại lên gốc và ghi nhận vào `Set<bigint>`;
+   * dừng ngay lập tức nếu chạm `null` hoặc gặp đỉnh đã thăm (`!ancestors.has(current)`).
+   */
   private async departmentAncestors(departmentId: bigint): Promise<Set<bigint>> {
     const ancestors = new Set<bigint>();
     let current: bigint | null = departmentId;

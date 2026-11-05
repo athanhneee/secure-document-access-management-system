@@ -2,242 +2,259 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { withSerializableTransaction } from '@sda/database';
+import { AppErrorCode } from '@sda/contracts';
+import { AppConfigService } from '../dist/config/config.service.js';
+import { RedlockService } from '../dist/modules/concurrency/redlock.service.js';
+import { AuthorizationCache } from '../dist/modules/rbac/authorization-cache.js';
+import { AccessRequestsService } from '../dist/modules/access-requests/access-requests.service.js';
+import { AccessGrantsService } from '../dist/modules/access-grants/access-grants.service.js';
+import { DocumentDeliveryService } from '../dist/modules/documents/document-delivery.service.js';
 
-// ── 1. Scenario 1: Hai owner duyệt cùng request đồng thời ─────────────────────
+const ownerPrincipal = {
+  userId: 101n,
+  sessionId: 'sess-101',
+  username: 'owner.concurrent',
+  roles: ['DOCUMENT_OWNER'],
+  mfa: true,
+};
+const ctx = { ip: '10.0.0.99', correlationId: 'corr-concurrency' };
 
-test('Concurrency Scenario 1 — two owners approving same access request concurrently allows exactly one winner', async () => {
-  let requestStatus = 'PENDING';
-  let createdGrants = [];
-  let decisionCount = 0;
-
-  // Atomic decision handler simulating PostgreSQL transaction / conditional UPDATE:
-  // UPDATE access_requests SET status = 'APPROVED' WHERE id = :id AND status = 'PENDING'
-  async function decideRequest(ownerId, decision, delayMs) {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-
-    // Atomic compare-and-swap check
-    if (requestStatus !== 'PENDING') {
-      return { success: false, error: 'REQUEST_ALREADY_DECIDED' };
-    }
-
-    requestStatus = decision;
-    decisionCount += 1;
-    const grant = {
-      id: randomUUID(),
-      ownerId,
-      grantedAt: new Date(),
-    };
-    createdGrants.push(grant);
-    return { success: true, grant };
-  }
-
-  // Two owners simultaneously submit approval
-  const [result1, result2] = await Promise.all([
-    decideRequest(101n, 'APPROVED', 5),
-    decideRequest(102n, 'APPROVED', 5),
-  ]);
-
-  const successes = [result1, result2].filter((r) => r.success);
-  const failures = [result1, result2].filter((r) => !r.success);
-
-  assert.equal(successes.length, 1, 'Exactly one owner approval must succeed.');
-  assert.equal(failures.length, 1, 'Concurrent second approval must be rejected.');
-  assert.equal(failures[0].error, 'REQUEST_ALREADY_DECIDED');
-  assert.equal(createdGrants.length, 1, 'Zero duplicate access grants must be created.');
-  assert.equal(requestStatus, 'APPROVED');
-});
-
-// ── 2. Scenario 2: Version upload đồng thời ───────────────────────────────────
-
-test('Concurrency Scenario 2 — concurrent version uploads generate strictly monotonic distinct version numbers', async () => {
-  let currentMaxVersion = 1;
-  const versions = [];
-  const mutex = { locked: false };
-
-  // Simulates document version sequence lock (SELECT MAX(version_no) FOR UPDATE)
-  async function uploadNewVersion(uploaderId, fileHash) {
-    // Acquire lock
-    while (mutex.locked) {
-      await new Promise((resolve) => setTimeout(resolve, 2));
-    }
-    mutex.locked = true;
-
-    try {
-      // Critical section
-      currentMaxVersion += 1;
-      const assignedVersion = currentMaxVersion;
-      await new Promise((resolve) => setTimeout(resolve, 5)); // simulate I/O
-
-      const versionRecord = {
-        versionNo: assignedVersion,
-        uploaderId,
-        sha256Hash: fileHash,
-        createdAt: new Date(),
-      };
-      versions.push(versionRecord);
-      return versionRecord;
-    } finally {
-      mutex.locked = false;
-    }
-  }
-
-  // Five simultaneous uploads
-  const results = await Promise.all([
-    uploadNewVersion(1n, 'hash-a'),
-    uploadNewVersion(2n, 'hash-b'),
-    uploadNewVersion(3n, 'hash-c'),
-    uploadNewVersion(4n, 'hash-d'),
-    uploadNewVersion(5n, 'hash-e'),
-  ]);
-
-  const versionNumbers = results.map((r) => r.versionNo).sort((a, b) => a - b);
-  assert.deepEqual(
-    versionNumbers,
-    [2, 3, 4, 5, 6],
-    'Version numbers must be strictly sequential with zero duplicates',
-  );
-  assert.equal(new Set(versionNumbers).size, 5);
-});
-
-// ── 3. Scenario 3: Revoke trong lúc mở file ───────────────────────────────────
-
-test('Concurrency Scenario 3 — revoking access grant immediately terminates active streaming and download tickets', async () => {
-  let grantStatus = 'ACTIVE';
-  const activeSessions = new Map();
-  const sessionId = randomUUID();
-
-  // User opens file and creates active session
-  activeSessions.set(sessionId, {
-    id: sessionId,
-    status: 'ACTIVE',
-    userId: 42n,
-    documentId: 'doc-1',
-  });
-
-  function verifyChunkAccess(sId) {
-    const session = activeSessions.get(sId);
-    if (!session || session.status !== 'ACTIVE' || grantStatus !== 'ACTIVE') {
-      throw new Error('ACCESS_DENIED_SESSION_TERMINATED');
-    }
-    return true;
-  }
-
-  // Reading chunk 1 succeeds
-  assert.equal(verifyChunkAccess(sessionId), true);
-
-  // Concurrently revoke grant and terminate sessions
-  async function revokeGrant() {
-    grantStatus = 'REVOKED';
-    for (const session of activeSessions.values()) {
-      if (session.documentId === 'doc-1') {
-        session.status = 'TERMINATED';
-        session.terminatedReason = 'Grant revoked by document owner';
+function createInMemoryRedisNode() {
+  const store = new Map();
+  return {
+    async set(key, token, _px, ttlMs) {
+      const existing = store.get(key);
+      const now = Date.now();
+      if (existing && existing.expiresAt > now) return null;
+      store.set(key, { token, expiresAt: now + ttlMs });
+      return 'OK';
+    },
+    async eval(script, _numKeys, key, token, ttlMs) {
+      const existing = store.get(key);
+      if (!existing || existing.token !== token) return 0;
+      if (script.includes('del')) return Number(store.delete(key));
+      if (script.includes('pexpire')) {
+        existing.expiresAt = Date.now() + Number(ttlMs);
+        return 1;
       }
-    }
-  }
+      return 0;
+    },
+    async ping() {
+      return 'PONG';
+    },
+    async quit() {
+      store.clear();
+      return 'OK';
+    },
+    disconnect() {
+      store.clear();
+    },
+  };
+}
 
-  // Revocation takes effect
-  await revokeGrant();
+test('Concurrency Scenario 1 — real 3-node RedlockService quorum + AccessRequestsService serializes concurrent approvals', async () => {
+  const redlock = new RedlockService(
+    new AppConfigService({
+      NODE_ENV: 'test',
+      REDLOCK_RETRY_COUNT: 15,
+      REDLOCK_RETRY_DELAY_MS: 10,
+      REDLOCK_RETRY_JITTER_MS: 4,
+    }),
+    [createInMemoryRedisNode(), createInMemoryRedisNode(), createInMemoryRedisNode()],
+  );
+  assert.equal(redlock.quorumCount, 2);
 
-  // Subsequent chunk request fails immediately
-  assert.throws(() => verifyChunkAccess(sessionId), /ACCESS_DENIED_SESSION_TERMINATED/u);
-  assert.equal(activeSessions.get(sessionId).status, 'TERMINATED');
-});
-
-// ── 4. Scenario 4: Reclassification trong lúc có active session ───────────────
-
-test('Concurrency Scenario 4 — document reclassification terminates active sessions of users with insufficient clearance', async () => {
-  const classificationRanks = {
-    CONG_KHAI: 1,
-    NOI_BO: 2,
-    MAT: 3,
-    TOI_MAT: 4,
+  const reqId = randomUUID();
+  const docId = randomUUID();
+  const createdGrants = [];
+  const reqState = {
+    id: reqId,
+    document_id: docId,
+    requester_id: 202n,
+    status: 'PENDING',
+    documents: { id: docId, owner_id: 101n },
+    access_request_permissions: [{ permission: 'VIEW' }],
   };
 
-  let documentClassification = 'NOI_BO';
-  const sessions = [
+  const service = new AccessRequestsService(
+    { record: async () => {} },
     {
-      id: 'session-alice',
-      userId: 10n,
-      userClearance: 'NOI_BO', // rank 2
-      status: 'ACTIVE',
+      createGrant: async (input) => {
+        await new Promise((r) => setTimeout(r, 15));
+        reqState.status = 'APPROVED';
+        const grant = { id: randomUUID(), documentId: input.documentId };
+        createdGrants.push(grant);
+        return grant;
+      },
     },
+    { accessRequest: { findUnique: async () => reqState } },
+    redlock,
+  );
+
+  try {
+    const outcomes = await Promise.allSettled([
+      service.decideRequest(reqId, { decision: 'APPROVED', validDays: 5 }, ownerPrincipal, ctx),
+      service.decideRequest(reqId, { decision: 'APPROVED', validDays: 5 }, ownerPrincipal, ctx),
+    ]);
+    const fulfilled = outcomes.filter((o) => o.status === 'fulfilled');
+    const rejected = outcomes.filter((o) => o.status === 'rejected');
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.equal(
+      rejected[0].reason.response?.errorCode,
+      AppErrorCode.ACCESS_REQUEST_ALREADY_DECIDED,
+    );
+    assert.equal(createdGrants.length, 1);
+  } finally {
+    await redlock.onModuleDestroy();
+  }
+});
+
+test('Concurrency Scenario 2 — real withSerializableTransaction retries PostgreSQL 40001 serialization failure with CSPRNG jitter', async () => {
+  let attempts = 0;
+  const fakeClient = {
+    $transaction: async (fn) => {
+      attempts += 1;
+      if (attempts < 3) {
+        throw Object.assign(new Error('could not serialize access'), { code: '40001' });
+      }
+      return fn({ committedAttempt: attempts });
+    },
+  };
+  const result = await withSerializableTransaction(
+    async (tx) => ({ ok: true, attempt: tx.committedAttempt }),
+    { client: fakeClient, maxRetries: 4, baseDelayMs: 2 },
+  );
+  assert.deepEqual(result, { ok: true, attempt: 3 });
+});
+
+test('Concurrency Scenario 3 — real AccessGrantsService.revokeGrant terminates sessions and blocks DocumentDeliveryService ticket issuance', async () => {
+  const grantId = randomUUID();
+  const docId = randomUUID();
+  const sessionId = randomUUID();
+  const now = new Date();
+  const notificationsSent = [];
+  const classHistory = [
     {
-      id: 'session-bob',
-      userId: 20n,
-      userClearance: 'TOI_MAT', // rank 4
-      status: 'ACTIVE',
+      effective_to: null,
+      classification_levels: { allow_download: true, require_watermark: true, rank: 2 },
+      business_categories: { code: 'OPS' },
     },
   ];
-
-  async function reclassifyDocument(newClassification) {
-    documentClassification = newClassification;
-    const requiredRank = classificationRanks[newClassification];
-
-    // Terminate any active session where user's clearance < requiredRank
-    for (const session of sessions) {
-      const userRank = classificationRanks[session.userClearance];
-      if (session.status === 'ACTIVE' && userRank < requiredRank) {
-        session.status = 'TERMINATED';
-        session.terminatedReason = `Document elevated to ${newClassification}; clearance insufficient`;
-      }
-    }
-  }
-
-  // Elevate document from NOI_BO (2) to TOI_MAT (4)
-  await reclassifyDocument('TOI_MAT');
-  assert.equal(documentClassification, 'TOI_MAT');
-
-  // Alice (rank 2) is terminated immediately
-  assert.equal(sessions[0].status, 'TERMINATED');
-  assert.ok(sessions[0].terminatedReason.includes('clearance insufficient'));
-
-  // Bob (rank 4) remains active
-  assert.equal(sessions[1].status, 'ACTIVE');
-});
-
-// ── 5. Scenario 5: Refresh token reuse đồng thời ──────────────────────────────
-
-test('Concurrency Scenario 5 — concurrent refresh token reuse detects breach, revokes token family, and triggers alert', async () => {
-  let tokenState = {
-    activeToken: 'token-v1-original',
-    isRevoked: false,
-    alertEmitted: false,
+  const grantRow = {
+    id: grantId,
+    document_id: docId,
+    principal_type: 'USER',
+    principal_user_id: 42n,
+    principal_role_id: null,
+    status: 'ACTIVE',
+    valid_from: new Date(now.getTime() - 10_000),
+    valid_until: new Date(now.getTime() + 600_000),
+    revoked_at: null,
+    revoked_by: null,
+    revoke_reason: null,
+    granted_by: 101n,
+    granted_at: now,
+    source: 'DIRECT',
+    access_request_id: null,
+    version: 1,
+    access_grant_permissions: [{ permission: 'VIEW' }, { permission: 'DOWNLOAD' }],
+    documents: {
+      owner_id: 101n,
+      department_id: 1n,
+      status: 'ACTIVE',
+      classification_history: classHistory,
+    },
+  };
+  const sessionRow = {
+    id: sessionId,
+    access_grant_id: grantId,
+    user_id: 42n,
+    status: 'ACTIVE',
+    started_at: now,
+    last_activity_at: now,
+    ended_at: null,
+    terminated_reason: null,
+    document_versions: {
+      id: 1n,
+      document_id: docId,
+      version_no: 1,
+      document: { id: docId, classification_history: classHistory },
+    },
   };
 
-  async function refresh(suppliedToken) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
+  const mockDb = {
+    user: { findUnique: async () => ({ status: 'ACTIVE' }) },
+    userAttributeAssignment: {
+      findFirst: async () => ({
+        attribute_definitions: { is_active: true },
+        attribute_options: { is_active: true, numeric_rank: 3 },
+      }),
+    },
+    accessGrant: {
+      findUnique: async () => grantRow,
+      update: async ({ data }) => Object.assign(grantRow, data, { version: grantRow.version + 1 }),
+    },
+    accessSession: {
+      findUnique: async () => sessionRow,
+      findMany: async () => (sessionRow.status === 'ACTIVE' ? [sessionRow] : []),
+      updateMany: async ({ data }) => (Object.assign(sessionRow, data), { count: 1 }),
+    },
+    $executeRawUnsafe: async () => 1,
+    $transaction: async (fn) => fn(mockDb),
+  };
 
-    if (tokenState.isRevoked) {
-      tokenState.alertEmitted = true;
-      throw new Error('TOKEN_FAMILY_ALREADY_REVOKED');
-    }
+  const config = new AppConfigService({
+    GRANT_MAX_DURATION_DAYS: 90,
+    DOWNLOAD_TICKET_TTL_SECONDS: 60,
+  });
+  const grantsService = new AccessGrantsService(
+    { record: async () => {} },
+    { hasPermission: async () => true },
+    new AuthorizationCache(),
+    { evaluate: async () => ({ decision: 'PERMIT', obligations: [] }) },
+    config,
+    mockDb,
+    undefined,
+    {
+      sendNotification: async (p) => (notificationsSent.push(p), { isDuplicate: false }),
+    },
+  );
+  const deliveryService = new DocumentDeliveryService(
+    {
+      enforceSessionPolicy: async () => ({
+        grantedAction: 'DOWNLOAD',
+        forbidDownload: false,
+        expiresAtMs: null,
+      }),
+    },
+    {},
+    {},
+    {},
+    {},
+    grantsService,
+    { record: async () => {} },
+    config,
+    mockDb,
+  );
+  const reader = {
+    userId: 42n,
+    sessionId: 'auth-42',
+    username: 'reader.42',
+    roles: ['DOCUMENT_READER'],
+    mfa: true,
+  };
 
-    if (suppliedToken !== tokenState.activeToken) {
-      // Replay / Reuse detected!
-      tokenState.isRevoked = true;
-      tokenState.alertEmitted = true;
-      throw new Error('REFRESH_TOKEN_REUSE_DETECTED');
-    }
+  const ticketBefore = await deliveryService.createDownloadTicket(docId, sessionId, reader, ctx);
+  assert.ok(ticketBefore.ticket.startsWith('DT-'));
 
-    // Normal rotation
-    const newToken = `token-v2-${randomUUID()}`;
-    tokenState.activeToken = newToken;
-    return newToken;
-  }
+  await grantsService.revokeGrant(grantId, { reason: 'Emergency Incident' }, ownerPrincipal, ctx);
+  assert.equal(sessionRow.status, 'TERMINATED');
+  assert.equal(notificationsSent[0]?.notificationType, 'ACCESS_GRANT_REVOKED');
 
-  // Initial valid refresh rotates token
-  const nextToken = await refresh('token-v1-original');
-  assert.ok(nextToken.startsWith('token-v2-'));
-
-  // Two attackers concurrently replay the old 'token-v1-original'
-  const [attempt1, attempt2] = await Promise.allSettled([
-    refresh('token-v1-original'),
-    refresh('token-v1-original'),
-  ]);
-
-  assert.equal(attempt1.status, 'rejected');
-  assert.equal(attempt2.status, 'rejected');
-  assert.ok(tokenState.isRevoked, 'Token family must be completely revoked');
-  assert.ok(tokenState.alertEmitted, 'Security alert must be emitted upon reuse detection');
+  await assert.rejects(
+    () => deliveryService.createDownloadTicket(docId, sessionId, reader, ctx),
+    (err) => err.response?.errorCode === AppErrorCode.SESSION_TERMINATED,
+  );
 });

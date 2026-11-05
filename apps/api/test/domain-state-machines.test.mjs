@@ -2,18 +2,20 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import {
-  CreateDocumentDraftSchema,
-  CreateAccessRequestSchema,
-  DecideAccessRequestSchema,
-  UpdateAlertStatusSchema,
-  CreateIncidentReportSchema,
-  CompleteIncidentActionSchema,
-} from '../../../packages/contracts/dist/dto.js';
+import { AppErrorCode, CreateDocumentDraftSchema } from '@sda/contracts';
+import { AuthorizationCache } from '../dist/modules/rbac/authorization-cache.js';
+import { DocumentsService } from '../dist/modules/documents/documents.service.js';
 
-// ── 1. Document Lifecycle & State Machine ──────────────────────────────────────
+const ownerPrincipal = {
+  userId: 10n,
+  sessionId: 'sess-owner',
+  username: 'owner.alpha',
+  roles: ['DOCUMENT_OWNER'],
+  mfa: true,
+};
+const ctx = { ip: '10.0.0.12', correlationId: 'corr-state-machine' };
 
-test('Document State Machine — validates draft creation invariants', () => {
+test('Document State Machine — validates draft creation schema invariants', () => {
   const validDraft = {
     title: 'Ke Hoach Bao Mat Thong Tin 2026',
     departmentId: '1',
@@ -27,10 +29,7 @@ test('Document State Machine — validates draft creation invariants', () => {
   assert.equal(parsed.data.departmentId, 1n);
   assert.equal(parsed.data.classificationLevelId, 3n);
 
-  // Rejects empty title
   assert.ok(!CreateDocumentDraftSchema.safeParse({ ...validDraft, title: '   ' }).success);
-
-  // Rejects invalid retention date format
   assert.ok(
     !CreateDocumentDraftSchema.safeParse({ ...validDraft, retentionUntil: '23/09/2026' }).success,
   );
@@ -39,249 +38,201 @@ test('Document State Machine — validates draft creation invariants', () => {
   );
 });
 
-test('Document State Machine — enforces valid transitions DRAFT -> ACTIVE -> ARCHIVED', () => {
-  const allowedTransitions = {
-    DRAFT: ['PENDING_SCAN', 'ACTIVE'],
-    PENDING_SCAN: ['ACTIVE', 'REJECTED'],
-    ACTIVE: ['ARCHIVED'],
-    ARCHIVED: ['ACTIVE', 'DELETED'],
-    DELETED: [],
-    REJECTED: ['DRAFT'],
+test('Document State Machine — real DocumentsService enforces DRAFT -> ACTIVE -> ARCHIVED and blocks invalid transitions', async () => {
+  const docId = randomUUID();
+  let docState = {
+    id: docId,
+    document_code: 'DOC-SM-1',
+    title: 'State Machine Spec',
+    description: null,
+    owner_id: 10n,
+    department_id: 1n,
+    current_version_id: 1n,
+    status: 'DRAFT',
+    discoverable: true,
+    retention_until: null,
+    archived_at: null,
+    version: 0,
+    created_at: new Date(),
+    updated_at: new Date(),
+    users: { id: 10n, status: 'ACTIVE', username: 'owner.alpha', full_name: 'Owner Alpha' },
+    departments: { id: 1n, is_active: true, code: 'SEC', name: 'Security' },
+    current_version: {
+      id: 1n,
+      version_no: 1,
+      original_filename: 'spec.pdf',
+      mime_type: 'application/pdf',
+      file_size_bytes: 1024n,
+      sha256_hash: 'a'.repeat(64),
+      scan_status: 'CLEAN',
+      created_at: new Date(),
+    },
+    classification_history: [
+      {
+        id: 1n,
+        classification_level_id: 2n,
+        business_category_id: 1n,
+        effective_from: new Date(),
+        effective_to: null,
+        classification_levels: {
+          id: 2n,
+          code: 'CONFIDENTIAL',
+          name: 'Mật',
+          rank: 2,
+          allow_download: true,
+          require_watermark: true,
+        },
+        business_categories: { id: 1n, code: 'LEGAL', name: 'Pháp chế' },
+      },
+    ],
   };
 
-  function canTransition(current, next) {
-    return allowedTransitions[current]?.includes(next) ?? false;
-  }
+  const mockDb = {
+    document: {
+      findUnique: async () => docState,
+      update: async ({ data }) => {
+        docState = {
+          ...docState,
+          status: data.status ?? docState.status,
+          archived_at: data.archived_at ?? docState.archived_at,
+          version: docState.version + 1,
+        };
+        return docState;
+      },
+    },
+    accessGrant: {
+      findFirst: async () => null,
+      findMany: async () => [],
+      create: async () => ({ id: randomUUID() }),
+      updateMany: async () => ({ count: 0 }),
+    },
+    documentVersion: {
+      findMany: async () => [{ id: 1n }],
+    },
+    accessSession: {
+      updateMany: async () => ({ count: 0 }),
+    },
+    $transaction: async (fn) => fn(mockDb),
+  };
 
-  // Valid progressions
-  assert.ok(canTransition('DRAFT', 'ACTIVE'));
-  assert.ok(canTransition('ACTIVE', 'ARCHIVED'));
-  assert.ok(canTransition('ARCHIVED', 'DELETED'));
+  const service = new DocumentsService(
+    { record: async () => {} },
+    { hasPermission: async () => true },
+    new AuthorizationCache(),
+    mockDb,
+  );
 
-  // Invalid regressions
-  assert.ok(!canTransition('ARCHIVED', 'DRAFT'));
-  assert.ok(!canTransition('DELETED', 'ACTIVE'));
-  assert.ok(!canTransition('DELETED', 'DRAFT'));
-  assert.ok(!canTransition('ACTIVE', 'DRAFT'));
+  await service.activateDocument(docId, ownerPrincipal, ctx);
+  assert.equal(docState.status, 'ACTIVE');
+
+  await assert.rejects(
+    () => service.activateDocument(docId, ownerPrincipal, ctx),
+    (err) => err.response?.errorCode === AppErrorCode.DOCUMENT_ALREADY_ACTIVE,
+  );
+
+  await service.archiveDocument(docId, { reason: 'End of fiscal cycle' }, ownerPrincipal, ctx);
+  assert.equal(docState.status, 'ARCHIVED');
+
+  await assert.rejects(
+    () => service.activateDocument(docId, ownerPrincipal, ctx),
+    (err) => err.response?.errorCode === AppErrorCode.DOCUMENT_ARCHIVED,
+  );
 });
 
-test('Document State Machine — SCD Type 2 reclassification maintains temporal continuity', () => {
-  const history = [
+test('Document State Machine — real DocumentsService SCD Type 2 reclassification closes prior row and cascades rank increase', async () => {
+  const docId = randomUUID();
+  const historyRows = [
     {
-      documentId: 'doc-1',
-      classificationLevelId: 2n,
-      validFrom: new Date('2026-01-01T00:00:00Z'),
-      validTo: new Date('2026-06-01T00:00:00Z'),
-      isCurrent: false,
-    },
-    {
-      documentId: 'doc-1',
-      classificationLevelId: 3n,
-      validFrom: new Date('2026-06-01T00:00:00Z'),
-      validTo: null,
-      isCurrent: true,
+      id: 1n,
+      document_id: docId,
+      classification_level_id: 2n,
+      business_category_id: 1n,
+      reason: 'Initial',
+      classified_by: 10n,
+      effective_from: new Date('2026-01-01T00:00:00Z'),
+      effective_to: null,
+      classification_levels: { id: 2n, code: 'CONFIDENTIAL', name: 'Mật', rank: 2 },
+      business_categories: { id: 1n, code: 'LEGAL', name: 'Pháp chế' },
     },
   ];
-
-  // Exactly one record is current
-  const currentRecords = history.filter((h) => h.isCurrent && h.validTo === null);
-  assert.equal(currentRecords.length, 1);
-  assert.equal(currentRecords[0].classificationLevelId, 3n);
-
-  // Reclassifying to Level 4 closes previous record
-  const reclassifyDate = new Date('2026-09-23T12:00:00Z');
-  currentRecords[0].isCurrent = false;
-  currentRecords[0].validTo = reclassifyDate;
-
-  history.push({
-    documentId: 'doc-1',
-    classificationLevelId: 4n,
-    validFrom: reclassifyDate,
-    validTo: null,
-    isCurrent: true,
-  });
-
-  const updatedCurrent = history.filter((h) => h.isCurrent && h.validTo === null);
-  assert.equal(updatedCurrent.length, 1);
-  assert.equal(updatedCurrent[0].classificationLevelId, 4n);
-  assert.equal(history.length, 3);
-});
-
-// ── 2. Access Request State Machine ───────────────────────────────────────────
-
-test('Access Request State Machine — validates request creation and reason bounds', () => {
-  const validRequest = {
-    documentId: randomUUID(),
-    requestedAction: 'VIEW',
-    reason: 'Can tham chieu so lieu cho buoi hop hoi dong quan tri ngay mai.',
-    requestedUntil: new Date(Date.now() + 86400 * 1000).toISOString(),
-  };
-
-  const parsed = CreateAccessRequestSchema.safeParse(validRequest);
-  assert.ok(parsed.success);
-
-  // Reason must be at least 10 chars (D-BR12)
-  const shortReason = { ...validRequest, reason: 'Ngan qua' };
-  assert.ok(!CreateAccessRequestSchema.safeParse(shortReason).success);
-
-  // Requested action must be VIEW or DOWNLOAD
-  const invalidAction = { ...validRequest, requestedAction: 'DELETE' };
-  assert.ok(!CreateAccessRequestSchema.safeParse(invalidAction).success);
-
-  // Test DecideAccessRequestSchema
-  assert.ok(DecideAccessRequestSchema.safeParse({ decision: 'APPROVED' }).success);
-  assert.ok(
-    DecideAccessRequestSchema.safeParse({ decision: 'REJECTED', decisionNote: 'Khong phu hop' })
-      .success,
-  );
-  assert.ok(!DecideAccessRequestSchema.safeParse({ decision: 'PENDING' }).success);
-});
-
-test('Access Request State Machine — decisions are terminal and immutable (D-BR13)', () => {
-  const requestState = {
-    id: randomUUID(),
-    status: 'PENDING',
-    decidedBy: null,
-    decidedAt: null,
-    decisionNote: null,
-  };
-
-  function applyDecision(state, decision, deciderId, note) {
-    if (state.status !== 'PENDING') {
-      throw new Error(`Cannot decide request in ${state.status} status.`);
-    }
-    state.status = decision;
-    state.decidedBy = deciderId;
-    state.decidedAt = new Date();
-    state.decisionNote = note;
-    return state;
-  }
-
-  // First decision succeeds
-  applyDecision(requestState, 'APPROVED', 10n, 'Phe duyet cho hop hoi dong');
-  assert.equal(requestState.status, 'APPROVED');
-
-  // Attempting second decision fails
-  assert.throws(
-    () => applyDecision(requestState, 'REJECTED', 20n, 'Tu choi sau'),
-    /Cannot decide request in APPROVED status/u,
-  );
-});
-
-// ── 3. Access Grant State Machine ─────────────────────────────────────────────
-
-test('Access Grant State Machine — enforces temporal bounds and irreversible revocation', () => {
-  const now = new Date();
-  const grant = {
-    id: randomUUID(),
+  const docRow = {
+    id: docId,
+    document_code: 'DOC-SCD2',
+    title: 'SCD2 Doc',
+    description: null,
+    owner_id: 10n,
+    department_id: 1n,
+    current_version_id: null,
     status: 'ACTIVE',
-    validFrom: new Date(now.getTime() - 1000),
-    validUntil: new Date(now.getTime() + 3600 * 1000),
-    revokedAt: null,
-    revocationReason: null,
+    discoverable: true,
+    retention_until: null,
+    archived_at: null,
+    version: 1,
+    created_at: new Date(),
+    updated_at: new Date(),
+    users: { id: 10n, username: 'owner.alpha', full_name: 'Owner Alpha' },
+    departments: { id: 1n, code: 'SEC', name: 'Security' },
+    current_version: null,
+    get classification_history() {
+      return historyRows.filter((r) => r.effective_to === null);
+    },
   };
 
-  function isGrantActive(g, currentTime = new Date()) {
-    return g.status === 'ACTIVE' && g.validFrom <= currentTime && currentTime < g.validUntil;
-  }
-
-  assert.ok(isGrantActive(grant));
-
-  // Revoke grant
-  grant.status = 'REVOKED';
-  grant.revokedAt = new Date();
-  grant.revocationReason = 'Nghi viec dot xuat';
-
-  assert.ok(!isGrantActive(grant));
-
-  // Revocation is terminal (D-BR15)
-  function reactivateGrant(g) {
-    if (g.status === 'REVOKED') {
-      throw new Error('Revoked access grant cannot be reactivated.');
-    }
-    g.status = 'ACTIVE';
-  }
-  assert.throws(() => reactivateGrant(grant), /Revoked access grant cannot be reactivated/u);
-});
-
-// ── 4. Access Session State Machine ───────────────────────────────────────────
-
-test('Access Session State Machine — transitions ACTIVE -> TERMINATED with reason', () => {
-  const session = {
-    id: randomUUID(),
-    status: 'ACTIVE',
-    startedAt: new Date(),
-    endedAt: null,
-    terminatedReason: null,
+  const mockDb = {
+    document: { findUnique: async () => docRow },
+    classificationLevel: {
+      findUnique: async ({ where }) =>
+        where.id === 4n
+          ? {
+              id: 4n,
+              code: 'TOP_SECRET',
+              name: 'Tuyệt mật',
+              rank: 4,
+              is_active: true,
+              allow_download: false,
+            }
+          : null,
+    },
+    businessCategory: {
+      findUnique: async () => ({ id: 1n, code: 'LEGAL', name: 'Pháp chế', is_active: true }),
+    },
+    documentClassificationHistory: {
+      findFirst: async () => historyRows.find((r) => r.effective_to === null) ?? null,
+      update: async ({ where, data }) => {
+        const found = historyRows.find((r) => r.id === where.id);
+        if (found) found.effective_to = data.effective_to;
+      },
+      create: async ({ data }) => {
+        historyRows.push({
+          id: 2n,
+          ...data,
+          classification_levels: { id: 4n, code: 'TOP_SECRET', name: 'Tuyệt mật', rank: 4 },
+          business_categories: { id: 1n, code: 'LEGAL', name: 'Pháp chế' },
+        });
+      },
+    },
+    accessGrant: { findMany: async () => [] },
+    accessGrantPermission: { deleteMany: async () => ({ count: 0 }) },
+    $executeRawUnsafe: async () => 1,
+    $transaction: async (fn) => fn(mockDb),
   };
 
-  function terminateSession(s, reason) {
-    if (s.status === 'TERMINATED') {
-      return s; // Idempotent
-    }
-    s.status = 'TERMINATED';
-    s.endedAt = new Date();
-    s.terminatedReason = reason;
-    return s;
-  }
-
-  terminateSession(session, 'Tài liệu nâng cấp mức mật');
-  assert.equal(session.status, 'TERMINATED');
-  assert.ok(session.endedAt instanceof Date);
-  assert.equal(session.terminatedReason, 'Tài liệu nâng cấp mức mật');
-
-  // Terminal state cannot return to ACTIVE
-  assert.throws(() => {
-    if (session.status === 'TERMINATED') {
-      throw new Error('Terminated session cannot be resumed.');
-    }
-  }, /Terminated session cannot be resumed/u);
-});
-
-// ── 5. Security Alert State Machine ───────────────────────────────────────────
-
-test('Security Alert State Machine — enforces valid transitions and required resolution notes', () => {
-  // INVESTIGATING does not require resolutionNote
-  const validInvestigating = UpdateAlertStatusSchema.safeParse({ status: 'INVESTIGATING' });
-  assert.ok(validInvestigating.success);
-
-  // RESOLVED requires resolutionNote
-  const resolveWithoutNote = UpdateAlertStatusSchema.safeParse({ status: 'RESOLVED' });
-  assert.ok(!resolveWithoutNote.success);
-
-  const resolveWithNote = UpdateAlertStatusSchema.safeParse({
-    status: 'RESOLVED',
-    resolutionNote: 'Đã xác minh hoạt động tải hợp lệ phục vụ kiểm toán.',
-  });
-  assert.ok(resolveWithNote.success);
-
-  // FALSE_POSITIVE requires resolutionNote
-  const fpWithoutNote = UpdateAlertStatusSchema.safeParse({ status: 'FALSE_POSITIVE' });
-  assert.ok(!fpWithoutNote.success);
-
-  const fpWithNote = UpdateAlertStatusSchema.safeParse({
-    status: 'FALSE_POSITIVE',
-    resolutionNote: 'Lỗi cấu hình bot giám sát thử nghiệm.',
-  });
-  assert.ok(fpWithNote.success);
-});
-
-// ── 6. Incident Report State Machine ──────────────────────────────────────────
-
-test('Incident Report State Machine — progression and closure verification', () => {
-  const validIncident = {
-    alertId: randomUUID(),
-    title: 'Phat hien truy cap bat thuong tu dai IP la',
-    summary: 'Tai khoan user 456 dang nhap tu dai IP ngoai gio hanh chinh va tai 10 file.',
-  };
-  const parsed = CreateIncidentReportSchema.safeParse(validIncident);
-  assert.ok(parsed.success);
-
-  // Completing action requires note
-  assert.ok(!CompleteIncidentActionSchema.safeParse({}).success);
-  assert.ok(
-    CompleteIncidentActionSchema.safeParse({
-      completionNote: 'Da chan IP va thu hoi toan bo phien truy cap cua user.',
-    }).success,
+  const service = new DocumentsService(
+    { record: async () => {} },
+    { hasPermission: async () => true },
+    new AuthorizationCache(),
+    mockDb,
   );
+
+  await service.reclassifyDocument(
+    docId,
+    { classificationLevelId: 4n, businessCategoryId: 1n, reason: 'Upgraded to TOP_SECRET' },
+    ownerPrincipal,
+    ctx,
+  );
+
+  assert.equal(historyRows.length, 2);
+  assert.ok(historyRows[0].effective_to instanceof Date);
+  assert.equal(historyRows[1].effective_to, null);
+  assert.equal(historyRows[1].classification_level_id, 4n);
 });

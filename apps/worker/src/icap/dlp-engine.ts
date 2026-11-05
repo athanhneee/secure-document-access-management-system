@@ -1,8 +1,19 @@
 import type { DlpScanResult, DlpViolation, DlpPolicyAction } from './icap.types.js';
 
+/**
+ * Thuật toán / Tổng quan module:
+ * Bộ máy phân tích và phòng chống thất thoát dữ liệu (DLP Engine) kiểm tra tải trọng mạng thời gian thực:
+ * kết hợp đối sánh biểu thức chính quy không quay lui thảm khốc (non-backtracking Regex) cho nhãn độ mật quốc gia,
+ * khóa mật mã PEM/API credential, mã thủy vân pháp chứng 48-hex (`WM-...`), căn cước công dân 12 số, từ khóa tùy chỉnh
+ * và thuật toán kiểm tra tổng kiểm modulo-10 Luhn nhằm triệt tiêu dương tính giả cho dữ liệu thẻ thanh toán PCI-DSS.
+ */
 export class DlpEngine {
   /**
    * Luhn algorithm validation for credit card numbers (prevents false positives).
+   *
+   * Thuật toán: Kiểm tra tổng kiểm Luhn (Modulo-10 Checksum) cho dãy số thẻ thanh toán quốc tế (13..19 chữ số).
+   * - Lọc bỏ ký tự phi số, duyệt ngược từ chữ số hàng đơn vị sang trái; nhân đôi xen kẽ từng chữ số ở vị trí chẵn
+   *   tính từ phải sang và trừ 9 nếu tích lớn hơn 9; hợp lệ khi và chỉ khi tổng tích lũy chia hết cho 10.
    */
   public static isValidLuhn(cardNumber: string): boolean {
     const cleaned = cardNumber.replace(/\D/gu, '');
@@ -32,6 +43,10 @@ export class DlpEngine {
 
   /**
    * Masks sensitive string snippet for secure audit logging without leaking full secret.
+   *
+   * Thuật toán: Che giấu thông tin nhạy cảm (Partial Redaction Masking) cho bằng chứng pháp chứng.
+   * - Nếu chuỗi sau cắt khoảng trắng có độ dài <= 6 ký tự thì thay toàn bộ bằng `'***'`;
+   *   ngược lại chỉ giữ 3 ký tự đầu và 3 ký tự cuối, thay phần giữa bằng `'****'` để chống lộ bí mật trong log/cảnh báo.
    */
   public static maskSnippet(text: string): string {
     const trimmed = text.trim();
@@ -45,6 +60,13 @@ export class DlpEngine {
 
   /**
    * Scans a payload buffer against comprehensive data loss prevention (DLP) rules.
+   *
+   * Thuật toán: Đường ống quét đa tầng nội dung chống thất thoát dữ liệu (Multi-Rule Content Inspection Pipeline).
+   * - Giải mã buffer sang chuỗi UTF-8 và chạy tuần tự 6 nhóm luật phát hiện độc lập:
+   *   (1) Nhãn phân loại độ mật quốc gia/nội bộ, (2) Khóa riêng PEM & thông tin xác thực đám mây,
+   *   (3) Mã thủy vân pháp chứng `WM-<48-hex>`, (4) Chuỗi ứng viên thẻ tín dụng hậu kiểm bằng thuật toán Luhn,
+   *   (5) Số CCCD 12 chữ số Việt Nam, và (6) Đối sánh chuỗi con không phân biệt hoa thường cho từ khóa tổ chức.
+   * - Cuối cùng tổng hợp danh sách vi phạm và ánh xạ sang quyết định cưỡng chế `ALLOW`, `AUDIT` hoặc `BLOCK`.
    */
   public static scanPayload(
     buffer: Buffer,

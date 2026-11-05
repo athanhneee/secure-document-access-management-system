@@ -1,5 +1,9 @@
+/**
+ * Module: Documents Catalog, Search & Lifecycle HTTP Controller
+ * Algorithm: Enforces Zod input schemas, CSRF token verification on state-mutating routes,
+ *   and RBAC permission metadata across document discovery, metadata, version, and classification APIs.
+ */
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
@@ -10,52 +14,38 @@ import {
   Post,
   Query,
   Req,
-  Res,
-  UnauthorizedException,
 } from '@nestjs/common';
-import type { FastifyRequest, FastifyReply } from 'fastify';
-import { randomUUID } from 'node:crypto';
-import { PublicEndpoint } from '../../public-endpoint.js';
+import type { FastifyRequest } from 'fastify';
 import {
+  ArchiveDocumentSchema,
   CreateDocumentDraftSchema,
-  UpdateDocumentMetadataSchema,
+  MyGrantedDocumentsSchema,
   ReclassifyDocumentSchema,
+  SearchDocumentsSchema,
   SetCurrentVersionSchema,
   TransferDocumentOwnerSchema,
-  ArchiveDocumentSchema,
-  SearchDocumentsSchema,
-  MyGrantedDocumentsSchema,
-  CreateAccessSessionSchema,
-  DownloadTicketParamSchema,
-  UuidParamSchema,
-  type CreateDocumentDraftInput,
-  type UpdateDocumentMetadataInput,
-  type ReclassifyDocumentInput,
-  type SetCurrentVersionInput,
-  type TransferDocumentOwnerInput,
-  type ArchiveDocumentInput,
-  type SearchDocumentsInput,
-  type MyGrantedDocumentsInput,
-  type CreateAccessSessionInput,
+  UpdateDocumentMetadataSchema,
 } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
-import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { RequirePermission } from '../rbac/require-permission.js';
 import { DocumentsService, type DocumentDetail } from './documents.service.js';
 import {
   DocumentSearchService,
-  type SearchResult,
   type GrantedDocumentsResult,
+  type SearchResult,
 } from './document-search.service.js';
-import { DocumentDeliveryService } from './document-delivery.service.js';
-import type { PepEvaluationResult } from './document-pep.service.js';
+import {
+  extractDocumentPrincipal as principal,
+  extractDocumentRequestContext as reqCtx,
+  parseBodyOrQuery as parseInput,
+  parseDocumentUuid as parseId,
+} from './documents-controller.helpers.js';
 
 @Controller('documents')
 export class DocumentsController {
   constructor(
     private readonly documentsService: DocumentsService,
     private readonly searchService: DocumentSearchService,
-    private readonly deliveryService: DocumentDeliveryService,
     private readonly csrf: CsrfService,
   ) {}
 
@@ -63,31 +53,23 @@ export class DocumentsController {
   @RequirePermission('DOCUMENT', 'DISCOVER')
   async searchDocuments(
     @Query() query: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<SearchResult> {
-    const parsed = SearchDocumentsSchema.safeParse(query);
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.flatten());
-    }
     return this.searchService.searchDocuments(
-      parsed.data as SearchDocumentsInput,
-      this.principal(request),
-      this.context(request),
+      parseInput(SearchDocumentsSchema, query),
+      principal(req),
+      reqCtx(req),
     );
   }
 
   @Get('my-grants')
   async getMyGrantedDocuments(
     @Query() query: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<GrantedDocumentsResult> {
-    const parsed = MyGrantedDocumentsSchema.safeParse(query);
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.flatten());
-    }
     return this.searchService.getMyGrantedDocuments(
-      parsed.data as MyGrantedDocumentsInput,
-      this.principal(request),
+      parseInput(MyGrantedDocumentsSchema, query),
+      principal(req),
     );
   }
 
@@ -96,54 +78,36 @@ export class DocumentsController {
   @RequirePermission('DOCUMENT', 'UPLOAD')
   async createDocumentDraft(
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<DocumentDetail> {
-    this.csrf.assertRequest(request);
-    const parsed = CreateDocumentDraftSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.flatten());
-    }
-
+    this.csrf.assertRequest(req);
     return this.documentsService.createDocumentDraft(
-      parsed.data as CreateDocumentDraftInput,
-      this.principal(request),
-      this.context(request),
+      parseInput(CreateDocumentDraftSchema, body),
+      principal(req),
+      reqCtx(req),
     );
   }
 
   @Get(':id')
   async getDocumentDetail(
     @Param() params: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<DocumentDetail> {
-    const parsed = UuidParamSchema.safeParse(params);
-    if (!parsed.success) {
-      throw new BadRequestException('Invalid document UUID.');
-    }
-    return this.documentsService.getDocumentById(parsed.data.id, this.principal(request));
+    return this.documentsService.getDocumentById(parseId(params), principal(req));
   }
 
   @Patch(':id')
   async updateDocumentMetadata(
     @Param() params: unknown,
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<DocumentDetail> {
-    this.csrf.assertRequest(request);
-    const parsedParams = UuidParamSchema.safeParse(params);
-    if (!parsedParams.success) {
-      throw new BadRequestException('Invalid document UUID.');
-    }
-    const parsedBody = UpdateDocumentMetadataSchema.safeParse(body);
-    if (!parsedBody.success) {
-      throw new BadRequestException(parsedBody.error.flatten());
-    }
-
+    this.csrf.assertRequest(req);
     return this.documentsService.updateMetadata(
-      parsedParams.data.id,
-      parsedBody.data as UpdateDocumentMetadataInput,
-      this.principal(request),
-      this.context(request),
+      parseId(params),
+      parseInput(UpdateDocumentMetadataSchema, body),
+      principal(req),
+      reqCtx(req),
     );
   }
 
@@ -151,18 +115,10 @@ export class DocumentsController {
   @HttpCode(HttpStatus.OK)
   async activateDocument(
     @Param() params: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<DocumentDetail> {
-    this.csrf.assertRequest(request);
-    const parsed = UuidParamSchema.safeParse(params);
-    if (!parsed.success) {
-      throw new BadRequestException('Invalid document UUID.');
-    }
-    return this.documentsService.activateDocument(
-      parsed.data.id,
-      this.principal(request),
-      this.context(request),
-    );
+    this.csrf.assertRequest(req);
+    return this.documentsService.activateDocument(parseId(params), principal(req), reqCtx(req));
   }
 
   @Post(':id/current-version')
@@ -170,23 +126,14 @@ export class DocumentsController {
   async setCurrentVersion(
     @Param() params: unknown,
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<DocumentDetail> {
-    this.csrf.assertRequest(request);
-    const parsedParams = UuidParamSchema.safeParse(params);
-    if (!parsedParams.success) {
-      throw new BadRequestException('Invalid document UUID.');
-    }
-    const parsedBody = SetCurrentVersionSchema.safeParse(body);
-    if (!parsedBody.success) {
-      throw new BadRequestException(parsedBody.error.flatten());
-    }
-
+    this.csrf.assertRequest(req);
     return this.documentsService.setCurrentVersion(
-      parsedParams.data.id,
-      parsedBody.data as SetCurrentVersionInput,
-      this.principal(request),
-      this.context(request),
+      parseId(params),
+      parseInput(SetCurrentVersionSchema, body),
+      principal(req),
+      reqCtx(req),
     );
   }
 
@@ -196,23 +143,14 @@ export class DocumentsController {
   async reclassifyDocument(
     @Param() params: unknown,
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<DocumentDetail> {
-    this.csrf.assertRequest(request);
-    const parsedParams = UuidParamSchema.safeParse(params);
-    if (!parsedParams.success) {
-      throw new BadRequestException('Invalid document UUID.');
-    }
-    const parsedBody = ReclassifyDocumentSchema.safeParse(body);
-    if (!parsedBody.success) {
-      throw new BadRequestException(parsedBody.error.flatten());
-    }
-
+    this.csrf.assertRequest(req);
     return this.documentsService.reclassifyDocument(
-      parsedParams.data.id,
-      parsedBody.data as ReclassifyDocumentInput,
-      this.principal(request),
-      this.context(request),
+      parseId(params),
+      parseInput(ReclassifyDocumentSchema, body),
+      principal(req),
+      reqCtx(req),
     );
   }
 
@@ -222,23 +160,14 @@ export class DocumentsController {
   async archiveDocument(
     @Param() params: unknown,
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<DocumentDetail> {
-    this.csrf.assertRequest(request);
-    const parsedParams = UuidParamSchema.safeParse(params);
-    if (!parsedParams.success) {
-      throw new BadRequestException('Invalid document UUID.');
-    }
-    const parsedBody = ArchiveDocumentSchema.safeParse(body);
-    if (!parsedBody.success) {
-      throw new BadRequestException(parsedBody.error.flatten());
-    }
-
+    this.csrf.assertRequest(req);
     return this.documentsService.archiveDocument(
-      parsedParams.data.id,
-      parsedBody.data as ArchiveDocumentInput,
-      this.principal(request),
-      this.context(request),
+      parseId(params),
+      parseInput(ArchiveDocumentSchema, body),
+      principal(req),
+      reqCtx(req),
     );
   }
 
@@ -247,253 +176,42 @@ export class DocumentsController {
   async transferOwner(
     @Param() params: unknown,
     @Body() body: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<DocumentDetail> {
-    this.csrf.assertRequest(request);
-    const parsedParams = UuidParamSchema.safeParse(params);
-    if (!parsedParams.success) {
-      throw new BadRequestException('Invalid document UUID.');
-    }
-    const parsedBody = TransferDocumentOwnerSchema.safeParse(body);
-    if (!parsedBody.success) {
-      throw new BadRequestException(parsedBody.error.flatten());
-    }
-
+    this.csrf.assertRequest(req);
     return this.documentsService.transferOwner(
-      parsedParams.data.id,
-      parsedBody.data as TransferDocumentOwnerInput,
-      this.principal(request),
-      this.context(request),
+      parseId(params),
+      parseInput(TransferDocumentOwnerSchema, body),
+      principal(req),
+      reqCtx(req),
     );
   }
 
   @Get(':id/classification-history')
   async getClassificationHistory(
     @Param() params: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<unknown[]> {
-    const parsed = UuidParamSchema.safeParse(params);
-    if (!parsed.success) {
-      throw new BadRequestException('Invalid document UUID.');
-    }
-    return this.documentsService.getClassificationHistory(parsed.data.id, this.principal(request));
+    return this.documentsService.getClassificationHistory(parseId(params), principal(req));
   }
 
   @Get(':id/versions')
   async getDocumentVersions(
     @Param() params: unknown,
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
   ): Promise<unknown[]> {
-    const parsed = UuidParamSchema.safeParse(params);
-    if (!parsed.success) {
-      throw new BadRequestException('Invalid document UUID.');
-    }
-    return this.documentsService.getDocumentVersions(parsed.data.id, this.principal(request));
+    return this.documentsService.getDocumentVersions(parseId(params), principal(req));
   }
 
   @Post('retention/check')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('DOCUMENT', 'CLASSIFY')
-  async checkRetention(@Req() request: FastifyRequest): Promise<unknown> {
-    this.csrf.assertRequest(request);
+  async checkRetention(@Req() req: FastifyRequest): Promise<unknown> {
+    this.csrf.assertRequest(req);
     return this.documentsService.checkRetentionWarnings(
       30,
-      request.auth,
-      request.auth ? this.context(request) : undefined,
+      req.auth,
+      req.auth ? reqCtx(req) : undefined,
     );
-  }
-
-  // ── Controlled Distribution & Delivery Endpoints (Prompt 13) ───────────────
-
-  @Post(':id/sessions')
-  @HttpCode(HttpStatus.CREATED)
-  @RequirePermission('DOCUMENT', 'VIEW')
-  async createAccessSession(
-    @Param() params: unknown,
-    @Body() body: unknown,
-    @Req() request: FastifyRequest,
-  ): Promise<PepEvaluationResult> {
-    this.csrf.assertRequest(request);
-    const parsedParams = UuidParamSchema.safeParse(params);
-    if (!parsedParams.success) throw new BadRequestException('Invalid document UUID.');
-    const parsedBody = CreateAccessSessionSchema.safeParse(body);
-    if (!parsedBody.success) throw new BadRequestException(parsedBody.error.flatten());
-
-    return this.deliveryService.createSession(
-      parsedParams.data.id,
-      parsedBody.data as CreateAccessSessionInput,
-      this.principal(request),
-      this.context(request),
-    );
-  }
-
-  @Get(':id/preview')
-  @RequirePermission('DOCUMENT', 'VIEW')
-  async previewDocument(
-    @Param() params: unknown,
-    @Query('sessionId') sessionId: string | undefined,
-    @Req() request: FastifyRequest,
-    @Res() reply: FastifyReply,
-  ): Promise<void> {
-    const parsedParams = UuidParamSchema.safeParse(params);
-    if (!parsedParams.success) throw new BadRequestException('Invalid document UUID.');
-    const sid = sessionId || (request.headers['x-access-session-id'] as string);
-    if (!sid) {
-      throw new BadRequestException(
-        'sessionId query parameter or X-Access-Session-Id header is required.',
-      );
-    }
-
-    const result = await this.deliveryService.getPreviewPdf(
-      parsedParams.data.id,
-      sid,
-      undefined,
-      this.principal(request),
-      this.context(request),
-    );
-    const safeFilename = this.sanitizeHeaderFilename(result.filename);
-
-    reply
-      .type(result.mimeType)
-      .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
-      .header('Pragma', 'no-cache')
-      .header('X-Total-Pages', (result.totalPages ?? 1).toString())
-      .header('Access-Control-Expose-Headers', 'X-Total-Pages, Content-Disposition')
-      .header('Content-Disposition', `inline; filename="${safeFilename}"`)
-      .send(result.buffer);
-  }
-
-  @Get(':id/preview/page/:pageNumber')
-  @RequirePermission('DOCUMENT', 'VIEW')
-  async previewDocumentPage(
-    @Param() params: unknown,
-    @Query('sessionId') sessionId: string | undefined,
-    @Req() request: FastifyRequest,
-    @Res() reply: FastifyReply,
-  ): Promise<void> {
-    const rawParams = params as Record<string, string>;
-    const parsedId = UuidParamSchema.safeParse({ id: rawParams['id'] });
-    if (!parsedId.success) throw new BadRequestException('Invalid document UUID.');
-    const pageNum = Number(rawParams['pageNumber']);
-    if (isNaN(pageNum) || pageNum < 1) throw new BadRequestException('Invalid page number.');
-    const sid = sessionId || (request.headers['x-access-session-id'] as string);
-    if (!sid) {
-      throw new BadRequestException(
-        'sessionId query parameter or X-Access-Session-Id header is required.',
-      );
-    }
-
-    const result = await this.deliveryService.getPreviewPdf(
-      parsedId.data.id,
-      sid,
-      pageNum,
-      this.principal(request),
-      this.context(request),
-    );
-    const safeFilename = this.sanitizeHeaderFilename(result.filename);
-
-    reply
-      .type(result.mimeType)
-      .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
-      .header('Pragma', 'no-cache')
-      .header('X-Total-Pages', (result.totalPages ?? 1).toString())
-      .header('Access-Control-Expose-Headers', 'X-Total-Pages, Content-Disposition')
-      .header('Content-Disposition', `inline; filename="${safeFilename}"`)
-      .send(result.buffer);
-  }
-
-  @Get(':id/download')
-  @RequirePermission('DOCUMENT', 'DOWNLOAD')
-  async downloadDocument(
-    @Param() params: unknown,
-    @Query('sessionId') sessionId: string | undefined,
-    @Req() request: FastifyRequest,
-    @Res() reply: FastifyReply,
-  ): Promise<void> {
-    const parsedParams = UuidParamSchema.safeParse(params);
-    if (!parsedParams.success) throw new BadRequestException('Invalid document UUID.');
-    const sid = sessionId || (request.headers['x-access-session-id'] as string);
-    if (!sid) {
-      throw new BadRequestException(
-        'sessionId query parameter or X-Access-Session-Id header is required.',
-      );
-    }
-
-    const result = await this.deliveryService.downloadDocument(
-      parsedParams.data.id,
-      sid,
-      this.principal(request),
-      this.context(request),
-    );
-    const safeFilename = this.sanitizeHeaderFilename(result.filename);
-
-    reply
-      .type(result.mimeType)
-      .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
-      .header('Pragma', 'no-cache')
-      .header('Content-Disposition', `attachment; filename="${safeFilename}"`)
-      .send(result.buffer);
-  }
-
-  @Post(':id/download-ticket')
-  @HttpCode(HttpStatus.CREATED)
-  @RequirePermission('DOCUMENT', 'DOWNLOAD')
-  async createDownloadTicket(
-    @Param() params: unknown,
-    @Body('sessionId') sessionId: string | undefined,
-    @Req() request: FastifyRequest,
-  ): Promise<{ ticket: string; expiresAt: string; ttlSeconds: number }> {
-    this.csrf.assertRequest(request);
-    const parsedParams = UuidParamSchema.safeParse(params);
-    if (!parsedParams.success) throw new BadRequestException('Invalid document UUID.');
-    if (!sessionId) throw new BadRequestException('sessionId is required.');
-
-    return this.deliveryService.createDownloadTicket(
-      parsedParams.data.id,
-      sessionId,
-      this.principal(request),
-      this.context(request),
-    );
-  }
-
-  @PublicEndpoint()
-  @Get('download-with-ticket/:ticket')
-  async downloadWithTicket(
-    @Param() params: unknown,
-    @Req() request: FastifyRequest,
-    @Res() reply: FastifyReply,
-  ): Promise<void> {
-    const parsed = DownloadTicketParamSchema.safeParse(params);
-    if (!parsed.success) throw new BadRequestException('Invalid ticket format.');
-
-    const result = await this.deliveryService.redeemDownloadTicket(
-      parsed.data.ticket,
-      this.context(request),
-    );
-    const safeFilename = this.sanitizeHeaderFilename(result.filename);
-
-    reply
-      .type(result.mimeType)
-      .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
-      .header('Pragma', 'no-cache')
-      .header('Content-Disposition', `attachment; filename="${safeFilename}"`)
-      .send(result.buffer);
-  }
-
-  private sanitizeHeaderFilename(filename: string): string {
-    return filename.replace(/["\r\n\\]/g, '_').replace(/[^\x20-\x7E]/g, '_');
-  }
-
-  private principal(request: FastifyRequest): AuthPrincipal {
-    if (!request.auth) throw new UnauthorizedException('Authentication required.');
-    return request.auth;
-  }
-
-  private context(request: FastifyRequest): RequestContext {
-    return {
-      ip: request.ip,
-      ...(request.headers['user-agent'] ? { userAgent: request.headers['user-agent'] } : {}),
-      correlationId: request.correlationId ?? randomUUID(),
-    };
   }
 }

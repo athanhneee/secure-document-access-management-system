@@ -1,0 +1,147 @@
+model BusinessCategory {
+  id                              BigInt                          @id @default(autoincrement())
+  code                            String                          @unique @db.VarChar(50)
+  name                            String                          @db.VarChar(150)
+  department_id                   BigInt?
+  description                     String?
+  is_active                       Boolean                         @default(true)
+  departments                     Department?                     @relation(fields: [department_id], references: [id], onUpdate: NoAction)
+  document_classification_history DocumentClassificationHistory[]
+
+  @@map("business_categories")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ClassificationLevel {
+  id                              BigInt                          @id @default(autoincrement())
+  code                            String                          @unique @db.VarChar(40)
+  name                            String                          @db.VarChar(100)
+  rank                            Int                             @unique
+  description                     String?
+  default_view_days               Int?
+  allow_download                  Boolean                         @default(false)
+  require_watermark               Boolean                         @default(true)
+  is_active                       Boolean                         @default(true)
+  document_classification_history DocumentClassificationHistory[]
+  watermark_configs               WatermarkConfig[]
+
+  @@map("classification_levels")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model DocumentClassificationHistory {
+  id                      BigInt              @id @default(autoincrement())
+  document_id             String              @db.Uuid
+  classification_level_id BigInt
+  business_category_id    BigInt
+  reason                  String?
+  classified_by           BigInt
+  effective_from          DateTime            @default(now()) @db.Timestamptz(6)
+  effective_to            DateTime?           @db.Timestamptz(6)
+  business_categories     BusinessCategory    @relation(fields: [business_category_id], references: [id], onUpdate: NoAction)
+  classification_levels   ClassificationLevel @relation(fields: [classification_level_id], references: [id], onUpdate: NoAction)
+  users                   User                @relation(fields: [classified_by], references: [id], onUpdate: NoAction)
+  documents               Document            @relation(fields: [document_id], references: [id], onUpdate: NoAction)
+
+  @@map("document_classification_history")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model DocumentVersion {
+  id                    BigInt              @id @default(autoincrement())
+  document_id           String              @db.Uuid
+  version_no            Int
+  original_filename     String              @db.VarChar(255)
+  storage_key           String              @unique @db.VarChar(500)
+  mime_type             String              @db.VarChar(150)
+  file_size_bytes       BigInt
+  sha256_hash           String              @db.Char(64)
+  encryption_key_ref    String              @db.VarChar(255)
+  scan_status           scan_status         @default(PENDING)
+  change_note           String?
+  uploaded_by           BigInt
+  created_at            DateTime            @default(now()) @db.Timestamptz(6)
+  access_sessions       AccessSession[]
+  document              Document            @relation("DocumentVersions", fields: [document_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  users                 User                @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
+  current_for_documents Document[]          @relation("CurrentDocumentVersion")
+  watermark_instances   WatermarkInstance[]
+
+  @@unique([document_id, sha256_hash])
+  @@unique([document_id, version_no])
+  @@index([document_id, version_no(sort: Desc)], map: "idx_document_versions_document")
+  @@map("document_versions")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model Document {
+  id                     String                          @id @db.Uuid
+  document_code          String                          @unique @db.VarChar(60)
+  title                  String                          @db.VarChar(255)
+  description            String?
+  owner_id               BigInt
+  department_id          BigInt
+  current_version_id     BigInt?
+  status                 document_status                 @default(DRAFT)
+  discoverable           Boolean                         @default(true)
+  retention_until        DateTime?                       @db.Date
+  archived_at            DateTime?                       @db.Timestamptz(6)
+  created_at             DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime                        @default(now()) @db.Timestamptz(6)
+  version                Int                             @default(0)
+  access_grants          AccessGrant[]
+  access_requests        AccessRequest[]
+  audit_logs             AuditLog[]
+  classification_history DocumentClassificationHistory[]
+  versions               DocumentVersion[]               @relation("DocumentVersions")
+  departments            Department                      @relation(fields: [department_id], references: [id], onUpdate: NoAction)
+  users                  User                            @relation(fields: [owner_id], references: [id], onUpdate: NoAction)
+  current_version        DocumentVersion?                @relation("CurrentDocumentVersion", fields: [current_version_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_documents_current_version")
+  security_alerts        SecurityAlert[]
+
+  @@index([department_id, status], map: "idx_documents_department_status")
+  @@index([owner_id, status], map: "idx_documents_owner_status")
+  @@map("documents")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model WatermarkConfig {
+  id                      BigInt               @id @default(autoincrement())
+  name                    String               @db.VarChar(120)
+  classification_level_id BigInt?
+  is_default              Boolean              @default(false)
+  is_visible              Boolean              @default(true)
+  template_text           String               @db.VarChar(500)
+  opacity_percent         Int                  @default(25) @db.SmallInt
+  rotation_degrees        Int                  @default(-30) @db.SmallInt
+  font_size               Int                  @default(12) @db.SmallInt
+  color_hex               String               @default("#808080") @db.Char(7)
+  include_qr_code         Boolean              @default(true)
+  is_active               Boolean              @default(true)
+  created_by              BigInt
+  created_at              DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime             @default(now()) @db.Timestamptz(6)
+  classification_levels   ClassificationLevel? @relation(fields: [classification_level_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                   User                 @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  watermark_instances     WatermarkInstance[]
+
+  @@map("watermark_configs")
+}
+
+model WatermarkInstance {
+  id                  String          @id @db.Uuid
+  watermark_config_id BigInt
+  access_session_id   String          @db.Uuid
+  document_version_id BigInt
+  user_id             BigInt
+  watermark_token     String          @unique @db.VarChar(128)
+  rendered_text       String          @db.VarChar(1000)
+  output_sha256_hash  String?         @db.Char(64)
+  generated_at        DateTime        @default(now()) @db.Timestamptz(6)
+  access_sessions     AccessSession   @relation(fields: [access_session_id], references: [id], onUpdate: NoAction)
+  document_versions   DocumentVersion @relation(fields: [document_version_id], references: [id], onUpdate: NoAction)
+  users               User            @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+  watermark_configs   WatermarkConfig @relation(fields: [watermark_config_id], references: [id], onUpdate: NoAction)
+
+  @@map("watermark_instances")
+}

@@ -1,4 +1,9 @@
-export { createDatabaseClient, disconnectDatabase, getDatabaseClient } from './client.js';
+export {
+  buildPgPoolConfig,
+  createDatabaseClient,
+  disconnectDatabase,
+  getDatabaseClient,
+} from './client.js';
 export {
   DatabaseConflictError,
   DatabaseConstraintError,
@@ -17,4 +22,8 @@ export * from './generated/prisma/enums.js';
 export type * from './generated/prisma/models.js';
 export { Prisma } from './generated/prisma/client.js';
 
-export const businessTableCount = 31;
+/**
+ * Total business tables defined across `prisma/schema/*.prisma` (31 baseline domain tables
+ * + 8 hardened auth/MFA, audit-anchor, SOC detection, outbox, and async-export tables).
+ */
+export const businessTableCount = 39;

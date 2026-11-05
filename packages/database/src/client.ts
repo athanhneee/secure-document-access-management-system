@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import type tls from 'node:tls';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type pg from 'pg';
 import { PrismaClient } from './generated/prisma/client.js';
@@ -9,12 +11,32 @@ type PrismaGlobal = typeof globalThis & {
 const prismaGlobal = globalThis as PrismaGlobal;
 let processClient: PrismaClient | undefined;
 
-interface ResolvedPgConfig {
+export interface ResolvedPgConfig {
   poolConfig: pg.PoolConfig;
   schema?: string;
 }
 
-function buildPgPoolConfig(connectionString?: string): ResolvedPgConfig {
+/**
+ * Giải thuật nạp chứng chỉ gốc (Root CA) phục vụ xác thực chuỗi tin cậy X.509 cho kết nối TLS PostgreSQL:
+ * - Nếu chuỗi cấu hình bắt đầu bằng header PEM (`-----BEGIN CERTIFICATE-----`), nạp trực tiếp từ biến môi trường (hỗ trợ ký tự xuống dòng `\n` được escape).
+ * - Ngược lại, coi giá trị là đường dẫn tệp chứng chỉ trên đĩa và đọc đồng bộ lúc khởi tạo pool.
+ */
+function resolveCustomCaCertificate(rawCaCert: string | undefined): string | undefined {
+  const trimmed = rawCaCert?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.includes('-----BEGIN CERTIFICATE-----')) {
+    return trimmed.replace(/\\n/gu, '\n');
+  }
+  return fs.readFileSync(trimmed, 'utf8');
+}
+
+/**
+ * Giải thuật chuẩn hóa cấu hình kết nối PostgreSQL & cưỡng chế TLS xác thực chứng chỉ nghiêm ngặt (chống CWE-295 MitM & CWE-319 Cleartext):
+ * 1. Tách các tham số riêng của Prisma (`schema`, `pgbouncer`, `connection_limit`) khỏi chuỗi kết nối trước khi truyền xuống `node-postgres`.
+ * 2. Tự động bật TLS có xác thực chứng chỉ (`rejectUnauthorized: true`, `minVersion: 'TLSv1.2'`) mặc định cho toàn bộ kết nối TCP trên `NODE_ENV=production` (kể cả khi không khai báo `DATABASE_SSL=true`), cho mọi máy chủ đám mây `.supabase.co`/`.supabase.com` (tuyệt đối không hạ `rejectUnauthorized: false`), hoặc khi có `DATABASE_SSL=true` / `DATABASE_CA_CERT` / `sslmode` yêu cầu mã hóa.
+ * 3. Cơ chế Fail-Closed trên `NODE_ENV=production`: Từ chối khởi chạy ngay lập tức nếu phát hiện tắt xác thực chứng chỉ (CWE-295) hoặc ép chạy không mã hóa `DATABASE_SSL=false` / `sslmode=disable` (CWE-319).
+ */
+export function buildPgPoolConfig(connectionString?: string): ResolvedPgConfig {
   const rawValue = connectionString ?? process.env['DATABASE_URL'];
   if (!rawValue) throw new Error('DATABASE_URL is required to initialize the database client.');
 
@@ -23,10 +45,36 @@ function buildPgPoolConfig(connectionString?: string): ResolvedPgConfig {
     throw new Error('DATABASE_URL must use the PostgreSQL protocol.');
   }
 
+  const hostname = url.hostname.toLowerCase();
+  const hostParam = url.searchParams.get('host') ?? '';
+  const isUnixSocket = !hostname || hostname.startsWith('/') || hostParam.startsWith('/');
+  const isSupabaseHost =
+    hostname === 'supabase.co' ||
+    hostname === 'supabase.com' ||
+    hostname.endsWith('.supabase.co') ||
+    hostname.endsWith('.supabase.com');
+
   const schema = url.searchParams.get('schema') ?? undefined;
   const sslMode = url.searchParams.get('sslmode')?.toLowerCase();
-  const isSupabaseHost =
-    url.hostname.endsWith('.supabase.co') || url.hostname.endsWith('.supabase.com');
+  const envSsl = process.env['DATABASE_SSL']?.trim().toLowerCase();
+  const isProduction = process.env['NODE_ENV'] === 'production';
+  const rejectUnauthorizedEnv = process.env['DATABASE_SSL_REJECT_UNAUTHORIZED']
+    ?.trim()
+    .toLowerCase();
+  const explicitDisableVerify = sslMode === 'no-verify' || rejectUnauthorizedEnv === 'false';
+  const explicitDisableSsl = sslMode === 'disable' || envSsl === 'false';
+
+  if (isProduction && explicitDisableVerify) {
+    throw new Error(
+      'SECURITY VIOLATION (CWE-295): Disabling TLS certificate verification is strictly forbidden in production. Configure a valid CA bundle via DATABASE_CA_CERT or NODE_EXTRA_CA_CERTS.',
+    );
+  }
+
+  if (isProduction && !isUnixSocket && explicitDisableSsl) {
+    throw new Error(
+      'SECURITY VIOLATION (CWE-319): Unencrypted PostgreSQL TCP connections (DATABASE_SSL=false or sslmode=disable) are strictly forbidden in production.',
+    );
+  }
 
   // Strip Prisma-specific query parameters before passing URL to node-postgres.
   url.searchParams.delete('schema');
@@ -42,20 +90,28 @@ function buildPgPoolConfig(connectionString?: string): ResolvedPgConfig {
     connectionTimeoutMillis: 10_000,
   };
 
+  const ca = resolveCustomCaCertificate(process.env['DATABASE_CA_CERT']);
+  // CONFLICT-RESOLVED: Enforce verified TLS by default in production TCP deployments and for all
+  // `.supabase.co`/`.supabase.com` hosts without ever defaulting `rejectUnauthorized` to `false`.
   const forceSsl =
-    isSupabaseHost ||
-    process.env['DATABASE_SSL'] === 'true' ||
+    (isProduction && !isUnixSocket) ||
+    (isSupabaseHost && !explicitDisableSsl) ||
+    envSsl === 'true' ||
+    Boolean(ca) ||
     sslMode === 'require' ||
+    sslMode === 'verify-ca' ||
+    sslMode === 'verify-full' ||
     sslMode === 'no-verify';
 
   if (forceSsl) {
     // Remove sslmode from URL so pg-connection-string does not override explicit PoolConfig.ssl.
     url.searchParams.delete('sslmode');
-    const rejectUnauthorized =
-      sslMode === 'no-verify' || process.env['DATABASE_SSL_REJECT_UNAUTHORIZED'] === 'false'
-        ? false
-        : !isSupabaseHost || process.env['DATABASE_SSL_REJECT_UNAUTHORIZED'] === 'true';
-    poolConfig.ssl = { rejectUnauthorized };
+    const sslOptions: tls.ConnectionOptions = {
+      minVersion: 'TLSv1.2',
+      rejectUnauthorized: !explicitDisableVerify,
+      ...(ca ? { ca } : {}),
+    };
+    poolConfig.ssl = sslOptions;
   }
 
   poolConfig.connectionString = url.toString();

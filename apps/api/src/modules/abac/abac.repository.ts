@@ -19,11 +19,15 @@ export class AbacRepository {
       .filter(Boolean);
   }
 
+  /**
+   * Algorithm / Thuật toán: Truy vấn phiên bản tuần tự đơn điệu chính sách ABAC có xét cờ `is_called` (PostgreSQL Sequence State Normalization).
+   * Trả về `0` khi `abac_policy_version_seq` chưa từng được gọi `nextval()` (`is_called = false`), tránh va chạm `1n === 1n` ở lần kích hoạt luật đầu tiên.
+   */
   async currentPolicyVersion(): Promise<bigint> {
-    const rows = await this.database.$queryRawUnsafe<Array<{ version: bigint }>>(
-      'SELECT last_value AS version FROM abac_policy_version_seq',
+    const rows = await this.database.$queryRawUnsafe<Array<{ version: bigint | number | string }>>(
+      'SELECT CASE WHEN is_called THEN last_value ELSE 0 END AS version FROM abac_policy_version_seq',
     );
-    return rows[0]?.version ?? 0n;
+    return BigInt(rows[0]?.version ?? 0);
   }
 
   async loadPolicySource(
@@ -143,6 +147,12 @@ export class AbacRepository {
     });
   }
 
+  /**
+   * Thuật toán: Tái dựng ngữ cảnh thuộc tính lịch sử tại mốc thời gian điểm (Point-in-Time Attribute Context Reconstruction).
+   * Cơ chế hoạt động: Truy vấn song song thông tin chủ thể, tài liệu, các phép gán thuộc tính và lịch sử phân loại mật
+   * thỏa mãn khoảng nửa mở `[effective_from, effective_to)` tại mốc `input.time`, trích xuất thứ bậc độ mật
+   * và đối chiếu IP nguồn với danh sách dải mạng tin cậy CIDR.
+   */
   async simulationInput(input: {
     subjectUserId: bigint;
     resourceDocumentId: string;
@@ -202,7 +212,11 @@ export class AbacRepository {
         assignment.attribute_options?.is_active === true,
     );
     const projects = activeAssignments
-      .filter((assignment) => assignment.attribute_definitions.code === 'PROJECT')
+      .filter(
+        (assignment) =>
+          assignment.attribute_definitions.code === 'PROJECT' &&
+          assignment.attribute_options?.is_active !== false,
+      )
       .map((assignment) => assignment.attribute_options?.value_code ?? assignment.value_text)
       .filter((value): value is string => value !== null && value !== undefined)
       .sort();

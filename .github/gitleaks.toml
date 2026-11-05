@@ -4,13 +4,25 @@ title = "Secure Document Access System - Gitleaks Rules & Allowlists"
 [extend]
 useDefault = true
 
+[[rules]]
+id = "tls-verification-disabled-cwe295"
+description = "TLS certificate verification explicitly disabled (CWE-295 MitM risk)"
+regex = '''(?i)\b(?:DATABASE_SSL_REJECT_UNAUTHORIZED\s*=\s*['"]?false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0)\b'''
+keywords = ["DATABASE_SSL_REJECT_UNAUTHORIZED", "NODE_TLS_REJECT_UNAUTHORIZED"]
+tags = ["security", "tls", "cwe-295"]
+
+[[rules]]
+id = "database-connection-string-credentials"
+description = "Database or cache URI with embedded non-placeholder credentials"
+regex = '''(?i)\b(?:postgres(?:ql)?|redis(?:s)?):\/\/[^:\s<]+:([^@\s<$]{8,})@[^/\s]+'''
+entropy = 3.2
+keywords = ["postgresql://", "postgres://", "redis://", "rediss://"]
+tags = ["database", "credentials"]
+
 [allowlist]
-description = "Scoped allowlist for test suites, synthetic scanner fixtures, and example templates"
+description = "Narrowly scoped allowlist for scanner pattern definitions and synthetic placeholder tokens (test directories and *.test.*/spec.* files are scanned)"
 paths = [
   '''(?i)^\.agents/''',
-  '''(?i)(^|/)test/''',
-  '''(?i).*\.test\.[a-z]+$''',
-  '''(?i).*\.spec\.[a-z]+$''',
   '''(?i)^scripts/scan-secrets\.mjs$''',
   '''(?i)^apps/worker/src/icap/dlp-engine\.ts$''',
   '''(?i)(^|/)\.env\.example$'''
@@ -18,6 +30,7 @@ paths = [
 regexes = [
   '''AKIA[I]OSFODNN7EXAMPLE''',
   '''root-development-token''',
-  '''doNotLeakThis'''
+  '''doNotLeakThis''',
+  '''test-placeholder''',
+  '''<[^>]+>'''
 ]
-

@@ -50,10 +50,16 @@ export const SYSTEM_ROLE_PERMISSION_MATRIX = {
 export const PRIVILEGED_SEPARATION_ROLES = new Set(['SYSTEM_ADMIN', 'SECURITY_OFFICER', 'AUDITOR']);
 const POLICY_SIMULATION_ROLES = new Set(['SYSTEM_ADMIN', 'SECURITY_OFFICER']);
 
+/**
+ * Thuật toán: Kiểm tra quyền mô phỏng chính sách qua tập băm `POLICY_SIMULATION_ROLES` trong O(k).
+ */
 export function canSimulatePolicy(roleCodes: readonly string[]): boolean {
   return roleCodes.some((roleCode) => POLICY_SIMULATION_ROLES.has(roleCode));
 }
 
+/**
+ * Thuật toán: Kiểm tra tính bao hàm tập con quyền được phép đối với vai trò hệ thống bất biến (Subset Ceiling Check).
+ */
 export function systemRoleAllows(roleCode: string, permissionCodes: string[]): boolean {
   const allowed =
     SYSTEM_ROLE_PERMISSION_MATRIX[roleCode as keyof typeof SYSTEM_ROLE_PERMISSION_MATRIX];

@@ -1,0 +1,101 @@
+model AttributeDefinition {
+  id                         BigInt                    @id @default(autoincrement())
+  code                       String                    @unique @db.VarChar(80)
+  name                       String                    @db.VarChar(150)
+  scope                      attribute_scope
+  value_type                 data_type
+  description                String?
+  is_required                Boolean                   @default(false)
+  is_multi_value             Boolean                   @default(false)
+  is_active                  Boolean                   @default(true)
+  created_by                 BigInt?
+  created_at                 DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime                  @default(now()) @db.Timestamptz(6)
+  version                    BigInt                    @default(dbgenerated("nextval('abac_policy_version_seq'::regclass)"))
+  users                      User?                     @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  attribute_options          AttributeOption[]
+  policy_rule_conditions     PolicyRuleCondition[]
+  user_attribute_assignments UserAttributeAssignment[]
+
+  @@map("attribute_definitions")
+}
+
+model AttributeOption {
+  id                         BigInt                    @id @default(autoincrement())
+  attribute_definition_id    BigInt
+  value_code                 String                    @db.VarChar(120)
+  display_name               String                    @db.VarChar(150)
+  numeric_rank               Int?
+  is_active                  Boolean                   @default(true)
+  sort_order                 Int                       @default(0)
+  attribute_definitions      AttributeDefinition       @relation(fields: [attribute_definition_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user_attribute_assignments UserAttributeAssignment[]
+
+  @@unique([attribute_definition_id, value_code])
+  @@map("attribute_options")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model PolicyRuleCondition {
+  id                      BigInt               @id @default(autoincrement())
+  policy_rule_id          BigInt
+  attribute_definition_id BigInt?
+  context_key             String?              @db.VarChar(100)
+  operator                String               @db.VarChar(30)
+  expected_value          Json
+  condition_group         Int                  @default(1)
+  sequence_no             Int                  @default(1)
+  attribute_definitions   AttributeDefinition? @relation(fields: [attribute_definition_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  policy_rules            PolicyRule           @relation(fields: [policy_rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([policy_rule_id, condition_group, sequence_no])
+  @@map("policy_rule_conditions")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model PolicyRule {
+  id                     BigInt                @id @default(autoincrement())
+  code                   String                @unique @db.VarChar(80)
+  name                   String                @db.VarChar(180)
+  description            String?
+  effect                 policy_effect
+  priority               Int                   @default(100)
+  target_resource        String                @default("DOCUMENT") @db.VarChar(80)
+  target_action          permission_code?
+  combining_algorithm    String                @default("DENY_OVERRIDES") @db.VarChar(40)
+  obligations            Json                  @default("[]")
+  is_active              Boolean               @default(true)
+  valid_from             DateTime              @default(now()) @db.Timestamptz(6)
+  valid_to               DateTime?             @db.Timestamptz(6)
+  created_by             BigInt
+  created_at             DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime              @default(now()) @db.Timestamptz(6)
+  version                BigInt                @default(dbgenerated("nextval('abac_policy_version_seq'::regclass)"))
+  policy_rule_conditions PolicyRuleCondition[]
+  users                  User                  @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+
+  @@map("policy_rules")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model UserAttributeAssignment {
+  id                                                  BigInt              @id @default(autoincrement())
+  user_id                                             BigInt
+  attribute_definition_id                             BigInt
+  option_id                                           BigInt?
+  value_text                                          String?
+  value_number                                        Decimal?            @db.Decimal(18, 4)
+  value_boolean                                       Boolean?
+  value_date                                          DateTime?           @db.Date
+  valid_from                                          DateTime            @default(now()) @db.Timestamptz(6)
+  valid_to                                            DateTime?           @db.Timestamptz(6)
+  assigned_by                                         BigInt
+  created_at                                          DateTime            @default(now()) @db.Timestamptz(6)
+  users_user_attribute_assignments_assigned_byTousers User                @relation("user_attribute_assignments_assigned_byTousers", fields: [assigned_by], references: [id], onUpdate: NoAction)
+  attribute_definitions                               AttributeDefinition @relation(fields: [attribute_definition_id], references: [id], onUpdate: NoAction)
+  attribute_options                                   AttributeOption?    @relation(fields: [option_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  users_user_attribute_assignments_user_idTousers     User                @relation("user_attribute_assignments_user_idTousers", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id, attribute_definition_id, valid_from, valid_to], map: "idx_user_attrs_active")
+  @@map("user_attribute_assignments")
+}

@@ -1,54 +1,38 @@
-import {
-  Injectable,
-  ForbiddenException,
-  NotFoundException,
-  BadRequestException,
-  Optional,
-} from '@nestjs/common';
-import crypto from 'node:crypto';
-import fsp from 'node:fs/promises';
+/**
+ * Module: Controlled Document Delivery, Watermarked Preview & Single-Use Ticket Service
+ * Algorithm: Orchestrates PEP session establishment, real-time zero-trust preview rendering,
+ *   watermarked derivative downloads, and short-lived single-use CSPRNG download tickets.
+ */
+import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
-import { AppErrorCode, type CreateAccessSessionInput } from '@sda/contracts';
+import type { CreateAccessSessionInput } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
 import { ObjectStorageService } from './object-storage.service.js';
 import { DocumentEncryptionService } from './document-encryption.service.js';
 import { DocumentPepService, type PepEvaluationResult } from './document-pep.service.js';
 import { OfficeConverterService } from './office-converter.service.js';
-import {
-  WatermarkEngineService,
-  type WatermarkUserData,
-  type WatermarkDocumentData,
-} from '../watermarks/watermark-engine.service.js';
+import { WatermarkEngineService } from '../watermarks/watermark-engine.service.js';
 import { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
-import { PDFDocument } from 'pdf-lib';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import {
+  consumeSingleUseDownloadTicket,
+  issueShortLivedDownloadTicket,
+  type DeliveryFileResult,
+  type DownloadTicketEntry,
+} from './delivery-ticket.helper.js';
+import { executeWatermarkedPreview } from './delivery-preview.helper.js';
+import { executeControlledDownload } from './delivery-download.helper.js';
+
+export type { DeliveryFileResult } from './delivery-ticket.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
-
-interface DownloadTicketEntry {
-  documentId: string;
-  sessionId: string;
-  userId: bigint;
-  principal: AuthPrincipal;
-  createdAt: number;
-  expiresAt: number;
-}
-
-export interface DeliveryFileResult {
-  buffer: Buffer;
-  mimeType: string;
-  filename: string;
-  fileSizeBytes: number;
-  outputSha256Hash: string;
-  watermarkToken?: string | undefined;
-  totalPages?: number | undefined;
-}
 
 @Injectable()
 export class DocumentDeliveryService {
   private readonly database: PrismaClient;
   private readonly ticketTtlSeconds: number;
+  // shortcut: 10,000 short-lived 60s single-use tickets (~3 MB) per replica, move to Redis GETDEL for multi-replica sticky-free redemption
   private readonly downloadTickets = new Map<string, DownloadTicketEntry>();
 
   constructor(
@@ -71,7 +55,7 @@ export class DocumentDeliveryService {
   }
 
   /**
-   * 1. Create a controlled access session via PEP.
+   * Algorithm: Controlled Access Session Creation via PEP
    */
   async createSession(
     documentId: string,
@@ -87,9 +71,7 @@ export class DocumentDeliveryService {
   }
 
   /**
-   * 2. Stream preview of a PDF document (with watermark overlay).
-   * Supports optional pageNumber for page-by-page controlled streaming.
-   * Requirement: Never returns raw unwatermarked file for documents requiring watermark.
+   * Algorithm: Session-Bound Watermarked PDF Preview Delivery
    */
   async getPreviewPdf(
     documentId: string,
@@ -98,250 +80,25 @@ export class DocumentDeliveryService {
     principal: AuthPrincipal,
     context: RequestContext,
   ): Promise<DeliveryFileResult> {
-    const now = new Date();
-
-    // 1. Validate session
-    const session = await this.database.accessSession.findUnique({
-      where: { id: sessionId },
-      include: {
-        document_versions: {
-          include: {
-            document: {
-              include: {
-                classification_history: {
-                  where: { effective_to: null },
-                  include: { classification_levels: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!session) {
-      throw new NotFoundException({
-        errorCode: AppErrorCode.SESSION_NOT_FOUND,
-        message: 'Access session was not found.',
-      });
-    }
-
-    if (session.status !== 'ACTIVE') {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.SESSION_TERMINATED,
-        message: `Session is no longer active (status: ${session.status}).`,
-      });
-    }
-
-    if (session.user_id !== principal.userId) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.SESSION_USER_MISMATCH,
-        message: 'Session does not belong to the calling user.',
-      });
-    }
-
-    if (session.document_versions.document_id !== documentId) {
-      throw new BadRequestException({
-        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
-        message: 'Session is not associated with this document.',
-      });
-    }
-
-    const previewPolicy =
-      typeof this.pep?.getSessionPolicy === 'function'
-        ? this.pep.getSessionPolicy(sessionId)
-        : undefined;
-    if (previewPolicy?.expiresAtMs && now.getTime() > previewPolicy.expiresAtMs) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.SESSION_EXPIRED,
-        message: 'Access session exceeded maximum policy duration.',
-      });
-    }
-
-    // 2. Real-time grant verification (Zero Trust: independent of worker)
-    await this.grantsService.assertGrantValidForAccess(
-      session.access_grant_id,
-      principal.userId,
-      'VIEW',
-      now,
+    return await executeWatermarkedPreview({
+      database: this.database,
+      pep: this.pep,
+      storage: this.storage,
+      encryption: this.encryption,
+      officeConverter: this.officeConverter,
+      watermarkEngine: this.watermarkEngine,
+      grantsService: this.grantsService,
+      audit: this.audit,
       documentId,
-    );
-
-    // Update session last activity
-    await this.database.accessSession.update({
-      where: { id: sessionId },
-      data: { last_activity_at: now },
-    });
-
-    const docVersion = session.document_versions;
-    const document = docVersion.document;
-    const currentClassification = document.classification_history[0];
-    const requireWatermark =
-      currentClassification?.classification_levels?.require_watermark ?? true;
-
-    // 3. Fetch encrypted document bytes from storage
-    const encryptedBytes = await this.storage.getObject(
-      this.storage.documentsBucket,
-      docVersion.storage_key,
-    );
-
-    // 4. Authenticated decryption to private temporary file
-    const decrypted = await this.encryption.decryptToTempFile(
-      encryptedBytes,
-      docVersion.encryption_key_ref,
-    );
-
-    let pdfBuffer: Buffer;
-    try {
-      const rawPlaintext = await fsp.readFile(decrypted.tempFilePath);
-
-      // 5. Office to PDF conversion if needed
-      const ext = docVersion.original_filename.split('.').pop()?.toLowerCase();
-      if (ext === 'pdf') {
-        pdfBuffer = rawPlaintext;
-      } else if (['docx', 'xlsx', 'pptx'].includes(ext ?? '')) {
-        pdfBuffer = await this.officeConverter.convertOfficeToPdf(
-          rawPlaintext,
-          docVersion.original_filename,
-        );
-      } else {
-        throw new BadRequestException({
-          errorCode: AppErrorCode.INVALID_FILE_TYPE,
-          message: `Cannot preview format .${ext}`,
-        });
-      }
-    } finally {
-      // Securely delete plaintext temp file immediately
-      await decrypted.cleanup();
-    }
-
-    let finalPdfBuffer = pdfBuffer;
-    let watermarkToken: string | undefined;
-    let outputSha256Hash = crypto.createHash('sha256').update(finalPdfBuffer).digest('hex');
-
-    // 6. Apply visible watermark if required
-    if (requireWatermark) {
-      const config = await this.watermarkEngine.getWatermarkConfig(
-        currentClassification?.classification_level_id,
-      );
-
-      // Check for existing watermark instance in this session
-      const existingInstance = await this.database.watermarkInstance.findFirst({
-        where: {
-          access_session_id: sessionId,
-          document_version_id: docVersion.id,
-        },
-      });
-
-      const user = await this.database.user.findUnique({
-        where: { id: principal.userId },
-        select: { id: true, username: true, full_name: true, employee_code: true },
-      });
-
-      const userData: WatermarkUserData = {
-        id: principal.userId,
-        username: principal.username,
-        fullName: user?.full_name ?? undefined,
-        employeeCode: user?.employee_code ?? undefined,
-      };
-
-      const docData: WatermarkDocumentData = {
-        id: document.id,
-        documentCode: document.document_code,
-        title: document.title,
-        classificationName: currentClassification?.classification_levels?.name,
-        requireWatermark: true,
-      };
-
-      const wmResult = await this.watermarkEngine.applyWatermarkToPdf(
-        pdfBuffer,
-        userData,
-        docData,
-        config,
-        existingInstance?.watermark_token,
-        now,
-      );
-
-      finalPdfBuffer = wmResult.watermarkedBuffer;
-      watermarkToken = wmResult.watermarkToken;
-      outputSha256Hash = wmResult.outputSha256Hash;
-
-      // Persist watermark instance if not recorded yet
-      if (!existingInstance) {
-        await this.watermarkEngine.recordWatermarkInstance({
-          watermarkConfigId: config.id,
-          accessSessionId: sessionId,
-          documentVersionId: docVersion.id,
-          userId: principal.userId,
-          watermarkToken: wmResult.watermarkToken,
-          renderedText: wmResult.renderedText,
-          outputSha256Hash: wmResult.outputSha256Hash,
-          generatedAt: now,
-        });
-
-        await this.audit.record(
-          {
-            action: 'WATERMARK_GENERATED',
-            outcome: 'SUCCESS',
-            documentId,
-            sessionId,
-            details: {
-              token: wmResult.watermarkToken,
-              outputSha256Hash: wmResult.outputSha256Hash,
-            },
-          },
-          principal,
-          context,
-        );
-      }
-    }
-
-    let totalPages = 1;
-    try {
-      const parsedDoc = await PDFDocument.load(finalPdfBuffer, { ignoreEncryption: true });
-      totalPages = Math.max(1, parsedDoc.getPageCount());
-    } catch {
-      totalPages = 1;
-    }
-
-    // 7. Page extraction if pageNumber specified
-    if (pageNumber !== undefined) {
-      finalPdfBuffer = await this.watermarkEngine.extractPdfPage(finalPdfBuffer, pageNumber);
-      outputSha256Hash = crypto.createHash('sha256').update(finalPdfBuffer).digest('hex');
-    }
-
-    // 8. Audit DOCUMENT_PREVIEWED
-    await this.audit.record(
-      {
-        action: 'DOCUMENT_PREVIEWED',
-        outcome: 'SUCCESS',
-        documentId,
-        sessionId,
-        details: {
-          pageNumber: pageNumber ?? 1,
-          sizeBytes: finalPdfBuffer.length,
-          outputSha256Hash,
-        },
-      },
+      sessionId,
+      pageNumber,
       principal,
       context,
-    );
-
-    return {
-      buffer: finalPdfBuffer,
-      mimeType: 'application/pdf',
-      filename: `preview-${document.document_code || document.id.slice(0, 8)}.pdf`,
-      fileSizeBytes: finalPdfBuffer.length,
-      outputSha256Hash,
-      watermarkToken,
-      totalPages,
-    };
+    });
   }
 
   /**
-   * 3. Download watermarked document with strict DOWNLOAD permission checks.
-   * Requirement 7: Only works if grant has DOWNLOAD and policy does not forbid download.
-   * Requirement 8: Watermarked derivative with no-store headers.
+   * Algorithm: Controlled Derivative Document Download
    */
   async downloadDocument(
     documentId: string,
@@ -349,368 +106,49 @@ export class DocumentDeliveryService {
     principal: AuthPrincipal,
     context: RequestContext,
   ): Promise<DeliveryFileResult> {
-    const now = new Date();
-
-    // 1. Validate session
-    const session = await this.database.accessSession.findUnique({
-      where: { id: sessionId },
-      include: {
-        document_versions: {
-          include: {
-            document: {
-              include: {
-                classification_history: {
-                  where: { effective_to: null },
-                  include: { classification_levels: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!session) {
-      throw new NotFoundException({
-        errorCode: AppErrorCode.SESSION_NOT_FOUND,
-        message: 'Access session was not found.',
-      });
-    }
-
-    if (session.status !== 'ACTIVE') {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.SESSION_TERMINATED,
-        message: `Session is no longer active (status: ${session.status}).`,
-      });
-    }
-
-    if (session.user_id !== principal.userId) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.SESSION_USER_MISMATCH,
-        message: 'Session does not belong to the calling user.',
-      });
-    }
-
-    if (session.document_versions.document_id !== documentId) {
-      throw new BadRequestException({
-        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
-        message: 'Session is not associated with this document.',
-      });
-    }
-
-    const downloadPolicy =
-      typeof this.pep?.getSessionPolicy === 'function'
-        ? this.pep.getSessionPolicy(sessionId)
-        : undefined;
-    if (downloadPolicy?.expiresAtMs && now.getTime() > downloadPolicy.expiresAtMs) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.SESSION_EXPIRED,
-        message: 'Access session exceeded maximum policy duration.',
-      });
-    }
-    if (
-      downloadPolicy &&
-      (downloadPolicy.forbidDownload || downloadPolicy.grantedAction !== 'DOWNLOAD')
-    ) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
-        message: 'Session does not permit downloading this document.',
-      });
-    }
-
-    // 2. Strict DOWNLOAD permission check at runtime
-    await this.grantsService.assertGrantValidForAccess(
-      session.access_grant_id,
-      principal.userId,
-      'DOWNLOAD',
-      now,
+    return await executeControlledDownload({
+      database: this.database,
+      pep: this.pep,
+      storage: this.storage,
+      encryption: this.encryption,
+      officeConverter: this.officeConverter,
+      watermarkEngine: this.watermarkEngine,
+      grantsService: this.grantsService,
+      audit: this.audit,
       documentId,
-    );
-
-    const docVersion = session.document_versions;
-    const document = docVersion.document;
-    const currentClassification = document.classification_history[0];
-
-    // Check classification allow_download
-    if (!currentClassification?.classification_levels?.allow_download) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
-        message: 'Document classification level does not allow downloads.',
-      });
-    }
-
-    const requireWatermark =
-      currentClassification?.classification_levels?.require_watermark ?? true;
-
-    // 3. Fetch encrypted document bytes
-    const encryptedBytes = await this.storage.getObject(
-      this.storage.documentsBucket,
-      docVersion.storage_key,
-    );
-
-    // 4. Authenticated decryption to private temporary file
-    const decrypted = await this.encryption.decryptToTempFile(
-      encryptedBytes,
-      docVersion.encryption_key_ref,
-    );
-
-    let fileBuffer: Buffer;
-    let mimeType = docVersion.mime_type;
-    let filename = docVersion.original_filename;
-    let watermarkToken: string | undefined;
-
-    try {
-      const rawPlaintext = await fsp.readFile(decrypted.tempFilePath);
-
-      if (requireWatermark) {
-        // Document requires watermark: deliver watermarked PDF derivative
-        const ext = docVersion.original_filename.split('.').pop()?.toLowerCase();
-        let pdfForWatermark: Buffer = rawPlaintext;
-
-        if (ext !== 'pdf') {
-          // Office file: convert to PDF first
-          pdfForWatermark = Buffer.from(
-            await this.officeConverter.convertOfficeToPdf(
-              rawPlaintext,
-              docVersion.original_filename,
-            ),
-          );
-        }
-
-        const config = await this.watermarkEngine.getWatermarkConfig(
-          currentClassification?.classification_level_id,
-        );
-
-        const user = await this.database.user.findUnique({
-          where: { id: principal.userId },
-          select: { id: true, username: true, full_name: true, employee_code: true },
-        });
-
-        const userData: WatermarkUserData = {
-          id: principal.userId,
-          username: principal.username,
-          fullName: user?.full_name ?? undefined,
-          employeeCode: user?.employee_code ?? undefined,
-        };
-
-        const docData: WatermarkDocumentData = {
-          id: document.id,
-          documentCode: document.document_code,
-          title: document.title,
-          classificationName: currentClassification?.classification_levels?.name,
-          requireWatermark: true,
-        };
-
-        const wmResult = await this.watermarkEngine.applyWatermarkToPdf(
-          pdfForWatermark,
-          userData,
-          docData,
-          config,
-          undefined,
-          now,
-        );
-
-        fileBuffer = wmResult.watermarkedBuffer;
-        mimeType = 'application/pdf';
-        filename = `${document.document_code || 'doc'}-watermarked.pdf`;
-        watermarkToken = wmResult.watermarkToken;
-
-        // Record watermark instance
-        await this.watermarkEngine.recordWatermarkInstance({
-          watermarkConfigId: config.id,
-          accessSessionId: sessionId,
-          documentVersionId: docVersion.id,
-          userId: principal.userId,
-          watermarkToken: wmResult.watermarkToken,
-          renderedText: wmResult.renderedText,
-          outputSha256Hash: wmResult.outputSha256Hash,
-          generatedAt: now,
-        });
-
-        await this.audit.record(
-          {
-            action: 'WATERMARK_GENERATED',
-            outcome: 'SUCCESS',
-            documentId,
-            sessionId,
-            details: {
-              token: wmResult.watermarkToken,
-              outputSha256Hash: wmResult.outputSha256Hash,
-            },
-          },
-          principal,
-          context,
-        );
-      } else {
-        // Watermark not required: deliver decrypted original file bytes
-        fileBuffer = rawPlaintext;
-      }
-    } finally {
-      await decrypted.cleanup();
-    }
-
-    const outputSha256Hash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-
-    // 5. Audit DOCUMENT_DOWNLOADED
-    await this.audit.record(
-      {
-        action: 'DOCUMENT_DOWNLOADED',
-        outcome: 'SUCCESS',
-        documentId,
-        sessionId,
-        details: {
-          filename,
-          sizeBytes: fileBuffer.length,
-          outputSha256Hash,
-        },
-      },
+      sessionId,
       principal,
       context,
-    );
-
-    return {
-      buffer: fileBuffer,
-      mimeType,
-      filename,
-      fileSizeBytes: fileBuffer.length,
-      outputSha256Hash,
-      watermarkToken,
-    };
+    });
   }
 
   /**
-   * 4. Generate a short-lived, single-use download ticket bound to session.
-   * Requirement 8: One-time or very short TTL (60s).
+   * Algorithm: Short-Lived Single-Use Download Ticket Issuance
    */
   async createDownloadTicket(
     documentId: string,
     sessionId: string,
     principal: AuthPrincipal,
-    _context: RequestContext,
+    context: RequestContext,
   ): Promise<{ ticket: string; expiresAt: string; ttlSeconds: number }> {
-    const nowDate = new Date();
-    const now = nowDate.getTime();
-
-    // Prune expired tickets to prevent unbounded memory growth
-    for (const [key, existing] of this.downloadTickets.entries()) {
-      if (now > existing.expiresAt) {
-        this.downloadTickets.delete(key);
-      }
-    }
-
-    // Verify session belongs to user, is ACTIVE, and matches documentId
-    const session = await this.database.accessSession.findUnique({
-      where: { id: sessionId },
-      include: {
-        document_versions: {
-          include: {
-            document: {
-              include: {
-                classification_history: {
-                  where: { effective_to: null },
-                  include: { classification_levels: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!session || session.status !== 'ACTIVE' || session.user_id !== principal.userId) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.SESSION_TERMINATED,
-        message: 'Active session required to generate download ticket.',
-      });
-    }
-
-    if (session.document_versions && session.document_versions.document_id !== documentId) {
-      throw new BadRequestException({
-        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
-        message: 'Session is not associated with this document.',
-      });
-    }
-
-    const sessionPolicy =
-      typeof this.pep?.getSessionPolicy === 'function'
-        ? this.pep.getSessionPolicy(sessionId)
-        : undefined;
-    if (sessionPolicy?.expiresAtMs && now > sessionPolicy.expiresAtMs) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.SESSION_EXPIRED,
-        message: 'Access session exceeded maximum policy duration.',
-      });
-    }
-    if (
-      sessionPolicy &&
-      (sessionPolicy.forbidDownload || sessionPolicy.grantedAction !== 'DOWNLOAD')
-    ) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
-        message: 'Session does not permit downloading this document.',
-      });
-    }
-
-    const currentClassification = session.document_versions?.document?.classification_history?.[0];
-    if (currentClassification?.classification_levels?.allow_download === false) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.GRANT_DOWNLOAD_FORBIDDEN,
-        message: 'Document classification level does not allow downloads.',
-      });
-    }
-
-    if (typeof this.grantsService?.assertGrantValidForAccess === 'function') {
-      await this.grantsService.assertGrantValidForAccess(
-        session.access_grant_id,
-        principal.userId,
-        'DOWNLOAD',
-        nowDate,
-        documentId,
-      );
-    }
-
-    const ticket = `DT-${crypto.randomBytes(32).toString('hex')}`;
-    const expiresAtMs = now + this.ticketTtlSeconds * 1000;
-
-    this.downloadTickets.set(ticket, {
+    return await issueShortLivedDownloadTicket({
+      database: this.database,
+      pep: this.pep,
+      grantsService: this.grantsService,
+      downloadTickets: this.downloadTickets,
+      ticketTtlSeconds: this.ticketTtlSeconds,
       documentId,
       sessionId,
-      userId: principal.userId,
       principal,
-      createdAt: now,
-      expiresAt: expiresAtMs,
+      context,
     });
-
-    return {
-      ticket,
-      expiresAt: new Date(expiresAtMs).toISOString(),
-      ttlSeconds: this.ticketTtlSeconds,
-    };
   }
 
   /**
-   * 5. Redeem single-use download ticket.
-   * Ticket is consumed immediately (one-time use).
+   * Algorithm: Atomic Single-Use Download Ticket Redemption
    */
   async redeemDownloadTicket(ticket: string, context: RequestContext): Promise<DeliveryFileResult> {
-    const entry = this.downloadTickets.get(ticket);
-    if (!entry) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.DOWNLOAD_TICKET_INVALID,
-        message: 'Download ticket is invalid or has already been used.',
-      });
-    }
-
-    // Immediately consume ticket (Single-Use Guarantee)
-    this.downloadTickets.delete(ticket);
-
-    if (Date.now() > entry.expiresAt) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.DOWNLOAD_TICKET_EXPIRED,
-        message: 'Download ticket has expired.',
-      });
-    }
-
+    const entry = consumeSingleUseDownloadTicket(this.downloadTickets, ticket);
     return await this.downloadDocument(entry.documentId, entry.sessionId, entry.principal, context);
   }
 }

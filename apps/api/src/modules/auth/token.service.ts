@@ -1,3 +1,8 @@
+/**
+ * @module TokenService
+ * Dịch vụ ký số bất đối xứng JWT trên đường cong xoắn Ed25519 (EdDSA - RFC 8037),
+ * hỗ trợ xoay vòng khóa công khai JWKS (RFC 7517) theo định danh `kid` và băm SHA-256 cho Opaque Refresh Token.
+ */
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { SignJWT, exportJWK, importPKCS8, importSPKI, jwtVerify, type JWTPayload } from 'jose';
@@ -23,6 +28,11 @@ export class TokenService {
   private readonly issuer: string;
   private readonly audience: string;
 
+  /**
+   * Thuật toán: Nạp vòng khóa bất đối xứng Ed25519 (PKCS#8 Private Key & Multi-KID SPKI Keyring).
+   * Cơ chế hoạt động: Xác thực khóa ký hiện hành `activeKid` phải nằm trong tập khóa công khai xác minh,
+   * cho phép duy trì song song nhiều khóa công khai cũ trong quá trình xoay vòng khóa không gián đoạn phiên.
+   */
   constructor(config: AppConfigService) {
     this.activeKid = config.get('AUTH_ACTIVE_KID');
     this.accessTtlSeconds = config.get('AUTH_ACCESS_TTL_SECONDS');
@@ -56,6 +66,11 @@ export class TokenService {
     }
   }
 
+  /**
+   * Thuật toán: Phát hành và ký số JWT bằng thuật toán chữ ký đường cong Edwards EdDSA (Ed25519).
+   * Cơ chế hoạt động: Đóng gói protected header `{ alg: 'EdDSA', kid, typ: 'JWT' }` chống tấn công hạ cấp `alg: none`,
+   * gắn định danh duy nhất `jti` (UUIDv4), trạng thái `mfa` và thời hạn ngắn `accessTtlSeconds`.
+   */
   async issueAccessToken(userId: bigint, sessionId: string, mfa: boolean): Promise<string> {
     return new SignJWT({ sid: sessionId, mfa })
       .setProtectedHeader({ alg: 'EdDSA', kid: this.activeKid, typ: 'JWT' })
@@ -68,6 +83,13 @@ export class TokenService {
       .sign(await this.privateKeyPromise);
   }
 
+  /**
+   * Thuật toán: Xác minh chữ ký JWT EdDSA tra cứu khóa động theo `kid` chống tấn công Algorithm Confusion.
+   * Cơ chế hoạt động:
+   *   1. Khóa cứng danh sách thuật toán chỉ chấp nhận `['EdDSA']` và đối chiếu `header.kid` trong bảng băm khóa công khai.
+   *   2. Kiểm chứng chữ ký mật mã, `issuer`, `audience`, các claim bắt buộc (`sub`, `sid`, `iat`, `exp`, `jti`)
+   *      với sai số đồng hồ tối đa 5 giây (`clockTolerance: 5`).
+   */
   async verifyAccessToken(token: string): Promise<AccessClaims> {
     try {
       const verified = await jwtVerify(
@@ -100,6 +122,9 @@ export class TokenService {
     }
   }
 
+  /**
+   * Thuật toán: Xuất tập khóa công khai định dạng chuẩn JSON Web Key Set (JWKS - RFC 7517 / RFC 8037 OKP).
+   */
   async jwks(): Promise<{ keys: Array<Record<string, unknown>> }> {
     const keys = await Promise.all(
       [...this.publicKeyPromises.entries()].map(async ([kid, key]) => ({
@@ -112,10 +137,16 @@ export class TokenService {
     return { keys };
   }
 
+  /**
+   * Thuật toán: Sinh chuỗi token mờ 256-bit ngẫu nhiên an toàn mật mã (CSPRNG Base64URL Opaque Token).
+   */
   newOpaqueToken(): string {
     return randomBytes(32).toString('base64url');
   }
 
+  /**
+   * Thuật toán: Băm một chiều SHA-256 cho Opaque Refresh / Reset Token trước khi lưu trữ hoặc tra cứu DB.
+   */
   hashOpaqueToken(token: string): string {
     return createHash('sha256').update(token, 'utf8').digest('hex');
   }

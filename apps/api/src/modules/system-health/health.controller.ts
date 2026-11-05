@@ -1,3 +1,7 @@
+/**
+ * Module: HealthController — Điểm cuối kiểm tra sức khỏe tiến trình (Liveness/Readiness Probes), thu thập chỉ số Prometheus và chụp ảnh trạng thái vận hành.
+ * Bảo vệ đường lấy mẫu `/health/metrics` bằng so khớp mã xác thực hằng thời gian (`timingSafeEqual`) hoặc giới hạn dải mạng nội bộ RFC 1918 / Loopback.
+ */
 import { timingSafeEqual } from 'node:crypto';
 import {
   BadRequestException,
@@ -37,6 +41,17 @@ const CaptureSnapshotSchema = z
   })
   .strict();
 
+/**
+ * Thuật toán: Phân loại địa chỉ IP mạng nội bộ RFC 1918, Loopback & IPv4-mapped IPv6 (Private & Loopback Network Classifier)
+ * Mục đích: Xác minh yêu cầu thu thập chỉ số Prometheus đến từ hạ tầng giám sát nội bộ khi không cấu hình thẻ Bearer riêng.
+ * Cơ chế hoạt động:
+ *   - Gỡ tiền tố ánh xạ IPv4-mapped IPv6 `::ffff:` (nếu có) để chuẩn hóa về biểu diễn IPv4 thuần.
+ *   - Chấp nhận địa chỉ Loopback (`127.0.0.1`, IPv6 `::1`) và kiểm tra 3 dải mạng riêng chuẩn RFC 1918:
+ *     + Lớp A `10.0.0.0/8` (`10.*`)
+ *     + Lớp C `192.168.0.0/16` (`192.168.*`)
+ *     + Lớp B `172.16.0.0/12` bằng trích xuất octet thứ hai qua biểu thức chính quy `^172\.(\d{1,3})\.` và kiểm tra miền giá trị `16 <= secondOctet <= 31`.
+ *   - Mặc định từ chối (`false`) đối với mọi địa chỉ công cộng hoặc chuỗi rỗng.
+ */
 function isPrivateOrLoopbackIp(rawIp: string | undefined): boolean {
   if (!rawIp) return false;
   const ip = rawIp.startsWith('::ffff:') ? rawIp.slice(7) : rawIp;
@@ -147,6 +162,13 @@ export class HealthController {
     });
   }
 
+  /**
+   * Thuật toán: Bảo vệ điểm cuối Prometheus bằng so sánh hằng thời gian & rào chắn mạng nội bộ (Constant-Time Scrape Token & Private-IP Gate)
+   * Mục đích: Ngăn chặn rò rỉ thông tin vận hành nhạy cảm trên `/health/metrics` ra mạng công cộng đồng thời chống tấn công đo thời gian (Timing Attack).
+   * Cơ chế hoạt động:
+   *   - Nếu hệ thống cấu hình `METRICS_SCRAPE_TOKEN`: trích xuất giá trị sau tiền tố `Bearer `, chuyển sang `Buffer` UTF-8, kiểm tra độ dài bằng nhau và đối chiếu bằng `crypto.timingSafeEqual` trong thời gian hằng số.
+   *   - Nếu không cấu hình token trong môi trường `production`: bắt buộc địa chỉ nguồn `request.ip` phải thuộc mạng nội bộ hoặc loopback qua `isPrivateOrLoopbackIp`.
+   */
   private assertMetricsAccess(request?: FastifyRequest): void {
     if (!request) return;
     const scrapeToken = this.config?.get('METRICS_SCRAPE_TOKEN');

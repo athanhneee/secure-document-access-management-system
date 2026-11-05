@@ -1,8 +1,11 @@
+/**
+ * Module: Dịch vụ Bù trừ Saga Dọn dẹp Tài nguyên Mồ côi (Saga Orphan Compensation Service)
+ * Thuật toán: Theo dõi tài nguyên ngoại vi (Object Storage keys & tệp/thư mục tạm trên đĩa) theo phiên tải lên
+ *   và thực thi giao dịch bù trừ (Compensating Transaction) chịu lỗi khi quy trình tiếp nhận bị hủy bỏ.
+ */
 import { Injectable, Logger } from '@nestjs/common';
 import fsp from 'node:fs/promises';
 import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import { ObjectStorageService } from './object-storage.service.js';
 
 export interface UploadSessionCompensation {
@@ -18,6 +21,11 @@ export class OrphanCompensationService {
 
   /**
    * Creates a new compensation tracker for an active upload session.
+   *
+   * Thuật toán: Khởi Tạo Ngữ Cảnh Theo Dõi Bù Trừ Saga (Saga Compensation Log Initialization)
+   * Mục đích: Cấp phát danh sách rỗng ghi nhận các đối tượng lưu trữ và đường dẫn tạm phát sinh trong phiên tải lên.
+   * Cơ chế hoạt động:
+   *   - Trả về cấu trúc `UploadSessionCompensation` độc lập cho từng yêu cầu để tránh xung đột trạng thái đồng thời.
    */
   createSession(): UploadSessionCompensation {
     return {
@@ -28,6 +36,13 @@ export class OrphanCompensationService {
 
   /**
    * Rolls back all tracked storage objects and temp files for a failed upload session.
+   *
+   * Thuật toán: Thực Thi Giao Dịch Bù Trừ Chịu Lỗi Từng Phần (Best-Effort Saga Compensation Rollback)
+   * Mục đích: Thu hồi toàn bộ đối tượng S3/MinIO và tệp tạm chưa kịp gắn kết vào cơ sở dữ liệu khi luồng chính thất bại.
+   * Cơ chế hoạt động:
+   *   - Pha 1: Duyệt tuần tự `storageKeysToDelete` gọi `deleteObject`, bắt và ghi cảnh báo riêng từng mục để lỗi một mục
+   *     không làm ngắt quãng việc dọn dẹp các mục tiếp theo.
+   *   - Pha 2: Duyệt `tempFilesToDelete`, kiểm tra `stat` để phân biệt thư mục (`rm` đệ quy) hay tệp đơn (`unlink`) và xóa sạch.
    */
   async compensate(session: UploadSessionCompensation): Promise<void> {
     // 1. Delete tracked storage objects
@@ -58,40 +73,5 @@ export class OrphanCompensationService {
         this.logger.warn(`Compensation failed to delete temp file ${filePath}: ${msg}`);
       }
     }
-  }
-
-  /**
-   * Cleanup job for temporary files older than maxAgeMs.
-   */
-  async cleanupStaleTempFiles(maxAgeMs = 3_600_000): Promise<number> {
-    let deletedCount = 0;
-    try {
-      const tempDir = os.tmpdir();
-      const entries = await fsp.readdir(tempDir);
-      const now = Date.now();
-
-      for (const entry of entries) {
-        if (entry.startsWith('sda-') || entry.startsWith('sda_')) {
-          const fullPath = path.join(tempDir, entry);
-          try {
-            const stats = await fsp.stat(fullPath);
-            if (now - stats.mtimeMs > maxAgeMs) {
-              if (stats.isDirectory()) {
-                await fsp.rm(fullPath, { recursive: true, force: true });
-              } else {
-                await fsp.unlink(fullPath);
-              }
-              deletedCount++;
-            }
-          } catch {
-            // Ignore if file was already removed
-          }
-        }
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`Stale temp file cleanup encountered error: ${msg}`);
-    }
-    return deletedCount;
   }
 }

@@ -8,6 +8,12 @@ const setupClient =
   'mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; ' +
   'mc ready local >/dev/null; ';
 
+/**
+ * Thuật toán: Thực thi Lệnh Kiểm tra MinIO Cô lập Qua Container Ngắn hạn (Ephemeral `mc` Admin Probe)
+ * Mục đích: Chạy chuỗi lệnh quản trị `mc` bên trong mạng nội bộ Docker để xác minh trạng thái versioning và quyền riêng tư của bucket.
+ * Cơ chế hoạt động:
+ *   - Khởi chạy container tạm thời (`docker compose run --rm --no-deps`) từ image `minio-bootstrap`, thiết lập alias nội bộ và thu kết quả đầu ra tiêu chuẩn.
+ */
 function runClient(command) {
   return dockerCompose([
     'run',

@@ -1,62 +1,40 @@
+/**
+ * @module RedlockService
+ * Algorithm: Distributed Mutual Exclusion via Multi-Node Redlock Quorum Consensus & Clock-Drift Compensation.
+ * Thuật toán khóa phân tán Redlock (Salvatore Sanfilippo):
+ *   - Đồng thuận đa số tối thiểu `quorum = floor(N / 2) + 1` trên `N` nút Redis độc lập.
+ *   - Bù trôi đồng hồ vật lý: `drift = round(ttlMs * 0.01) + 2ms`; hiệu lực thực `validityTimeMs = ttlMs - elapsed - drift`.
+ *   - Thử lại lùi ngẫu nhiên (Randomized Jitter Backoff) và giải phóng/gia hạn nguyên tử bằng Lua CAS.
+ *   - Kiểm soát đồng thời lai hai tầng (Hybrid Concurrency): hỗ trợ chuyển sang khóa bi quan DB (`SELECT ... FOR UPDATE`) khi Redis sự cố.
+ */
 import {
+  ConflictException,
   Injectable,
   Logger,
-  type OnModuleDestroy,
-  ConflictException,
   Optional,
+  type OnModuleDestroy,
 } from '@nestjs/common';
 import crypto from 'node:crypto';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import { AppConfigService } from '../../config/config.service.js';
+import {
+  createRedlockClients,
+  extendQuorumLocks,
+  lockRedisInstance,
+  probeAnyRedisHealthy,
+  releaseQuorumLocks,
+  unlockAllRedisInstances,
+  type RedlockAcquireOptions,
+  type RedlockExecutionOptions,
+  type RedlockHandle,
+} from './redlock-node.helper.js';
 
-export interface RedlockHandle {
-  readonly resource: string;
-  readonly token: string;
-  readonly validityTimeMs: number;
-  readonly acquiredAt: number;
-  release(): Promise<boolean>;
-  extend(additionalTtlMs: number): Promise<boolean>;
-}
+export type {
+  RedlockAcquireOptions,
+  RedlockExecutionOptions,
+  RedlockHandle,
+} from './redlock-node.helper.js';
 
-export interface RedlockAcquireOptions {
-  retryCount?: number;
-  retryDelayMs?: number;
-  retryJitterMs?: number;
-}
-
-export interface RedlockExecutionOptions extends RedlockAcquireOptions {
-  failClosed?: boolean;
-}
-
-// Atomic Lua script for safe unlock: only delete if current value matches our unique random token
-const UNLOCK_LUA_SCRIPT = `
-if redis.call("get", KEYS[1]) == ARGV[1] then
-  return redis.call("del", KEYS[1])
-else
-  return 0
-end
-`;
-
-// Atomic Lua script for safe lock extension / heartbeat: only extend if current value matches token
-const EXTEND_LUA_SCRIPT = `
-if redis.call("get", KEYS[1]) == ARGV[1] then
-  return redis.call("pexpire", KEYS[1], ARGV[2])
-else
-  return 0
-end
-`;
-
-/**
- * REDLOCK DISTRIBUTED LOCK SERVICE
- * Implements the Redlock algorithm for distributed mutual exclusion across Redis instances/clusters.
- * Complies with Martin Kleppmann & Salvatore Sanfilippo (Antirez) specification:
- * - Multi-node Quorum consensus: N/2 + 1 nodes must agree within validity window
- * - Clock drift calculation: drift = validityTime * 0.01 + 2ms
- * - Atomic release via Lua script (prevents releasing locks that expired and were acquired by another worker)
- * - Atomic extension via Lua script (heartbeat/renewal)
- * - Randomized jitter backoff retry mechanism
- * - Two-tier Hybrid Concurrency Control (Redlock at application layer + SELECT ... FOR UPDATE at database layer)
- */
 @Injectable()
 export class RedlockService implements OnModuleDestroy {
   private readonly logger = new Logger(RedlockService.name);
@@ -70,30 +48,10 @@ export class RedlockService implements OnModuleDestroy {
   private readonly driftFactor = 0.01;
 
   constructor(config: AppConfigService, @Optional() customClients?: Redis[]) {
-    if (customClients && customClients.length > 0) {
-      this.clients = customClients;
-    } else {
-      const clusterNodes = config.get('REDLOCK_CLUSTER_NODES');
-      const urls: string[] = clusterNodes
-        ? clusterNodes
-            .split(',')
-            .map((u) => u.trim())
-            .filter((u) => u.length > 0)
-        : [config.get('REDIS_URL')];
-
-      this.clients = urls.map((url) => {
-        const client = new Redis(url, {
-          lazyConnect: true,
-          enableOfflineQueue: false,
-          maxRetriesPerRequest: 1,
-          connectTimeout: 1_000,
-        });
-        client.on('error', (err) => {
-          this.logger.debug(`Redis node (${url}) error: ${err.message}`);
-        });
-        return client;
-      });
-    }
+    this.clients =
+      customClients && customClients.length > 0
+        ? customClients
+        : createRedlockClients(config, this.logger);
 
     this.quorum = Math.floor(this.clients.length / 2) + 1;
     this.defaultRetryCount = config.get('REDLOCK_RETRY_COUNT') ?? 10;
@@ -115,16 +73,16 @@ export class RedlockService implements OnModuleDestroy {
     return this.quorum;
   }
 
-  /**
-   * Helper to format Redis lock key
-   */
   getLockKey(resource: string): string {
     return `sda:lock:${resource}`;
   }
 
   /**
-   * Acquires a distributed lock on a resource using the Redlock algorithm.
-   * Returns a RedlockHandle if successful, or null if quorum cannot be achieved.
+   * Algorithm / Thuật toán: Chiếm khóa phân tán Redlock có bù độ lệch đồng hồ và thử lại ngẫu nhiên (Quorum Lock Acquisition with Clock-Drift Compensation).
+   * Cơ chế hoạt động:
+   *   1. Sinh định danh ngẫu nhiên `token = UUIDv4`, ghi mốc `startTime` và gửi song song `SET NX PX` tới mọi nút với timeout nhỏ (`ttlMs / 10`).
+   *   2. Đếm số phiếu thành công `successfulVotes` và tính thời gian còn hiệu lực `validityTimeMs = ttlMs - elapsed - (round(ttlMs * 0.01) + 2)`.
+   *   3. Nếu `successfulVotes >= quorum && validityTimeMs > 0` thì trả về `RedlockHandle`; ngược lại giải phóng ngay trên mọi nút và ngủ `retryDelayMs + jitter`.
    */
   async acquire(
     resource: string,
@@ -139,14 +97,13 @@ export class RedlockService implements OnModuleDestroy {
     for (let attempt = 0; attempt <= retryCount; attempt++) {
       const token = crypto.randomUUID();
       const startTime = Date.now();
-
-      // Attempt to acquire lock on all instances in parallel
       const nodeTimeoutMs = Math.max(10, Math.min(150, Math.floor(ttlMs / 10)));
-      const lockPromises = this.clients.map((client) =>
-        this.lockInstance(client, lockKey, token, ttlMs, nodeTimeoutMs),
-      );
 
-      const results = await Promise.allSettled(lockPromises);
+      const results = await Promise.allSettled(
+        this.clients.map((client) =>
+          lockRedisInstance(client, lockKey, token, ttlMs, nodeTimeoutMs),
+        ),
+      );
       const successfulVotes = results.filter(
         (r) => r.status === 'fulfilled' && r.value === true,
       ).length;
@@ -155,22 +112,20 @@ export class RedlockService implements OnModuleDestroy {
       const drift = Math.round(ttlMs * this.driftFactor) + 2;
       const validityTimeMs = ttlMs - elapsed - drift;
 
-      // Quorum achieved and lock is still valid in time window
       if (successfulVotes >= this.quorum && validityTimeMs > 0) {
         return {
           resource,
           token,
           validityTimeMs,
           acquiredAt: startTime,
-          release: () => this.releaseLock(lockKey, token),
-          extend: (additionalTtlMs: number) => this.extendLock(lockKey, token, additionalTtlMs),
+          release: () => releaseQuorumLocks(this.clients, this.quorum, lockKey, token),
+          extend: (additionalTtlMs: number) =>
+            extendQuorumLocks(this.clients, this.quorum, lockKey, token, additionalTtlMs),
         };
       }
 
-      // Failed to reach quorum or validity expired: unlock all instances immediately
-      await this.unlockAllInstances(lockKey, token);
+      await unlockAllRedisInstances(this.clients, lockKey, token);
 
-      // If more retries left, wait with randomized jitter
       if (attempt < retryCount) {
         const jitter = Math.floor(Math.random() * retryJitterMs);
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs + jitter));
@@ -181,8 +136,10 @@ export class RedlockService implements OnModuleDestroy {
   }
 
   /**
-   * Executes a callback function with distributed mutual exclusion.
-   * Automatically acquires the lock, executes the function, and releases the lock in a finally block.
+   * Algorithm / Thuật toán: Thực thi miền găng phân tán tự động giải phóng khóa và chuyển đổi dự phòng hai tầng (Hybrid Critical-Section Guard).
+   *   - Nếu chiếm được khóa: thực thi `fn(handle)` và luôn giải phóng khóa trong khối `finally`.
+   *   - Nếu không chiếm được khóa do cụm Redis mất kết nối và `failClosed === false`: hạ cấp an toàn xuống khóa dòng DB (`SELECT ... FOR UPDATE`).
+   *   - Nếu đang có tranh chấp thật trên Redis hoặc bật `failClosed`: ném `409 DISTRIBUTED_LOCK_TIMEOUT`.
    */
   async withLock<T>(
     resource: string,
@@ -196,30 +153,27 @@ export class RedlockService implements OnModuleDestroy {
       try {
         return await fn(handle);
       } finally {
-        await handle.release().catch((err) => {
+        await handle.release().catch((err: Error) => {
           this.logger.warn(`Failed to release lock on resource "${resource}": ${err.message}`);
         });
       }
     }
 
-    // Lock acquisition failed
     const failClosed = options?.failClosed ?? this.defaultFailClosed;
     const isRedisReachable = await this.checkRedisHealth();
 
-    // If Redis is down and failClosed is false, gracefully fallback to DB-level locking
     if (!isRedisReachable && !failClosed) {
       this.logger.warn(
         `[Redlock Degraded Mode] Redis lock unavailable for "${resource}"; proceeding with database-level row lock (SELECT ... FOR UPDATE).`,
       );
-      const mockHandle: RedlockHandle = {
+      return await fn({
         resource,
         token: 'fallback-token',
         validityTimeMs: ttlMs,
         acquiredAt: Date.now(),
         release: async () => true,
         extend: async () => true,
-      };
-      return await fn(mockHandle);
+      });
     }
 
     throw new ConflictException({
@@ -228,111 +182,8 @@ export class RedlockService implements OnModuleDestroy {
     });
   }
 
-  /**
-   * Lock a single Redis instance with PX and NX
-   */
-  private async lockInstance(
-    client: Redis,
-    key: string,
-    token: string,
-    ttlMs: number,
-    timeoutMs: number,
-  ): Promise<boolean> {
-    return new Promise((resolve) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          resolve(false);
-        }
-      }, timeoutMs);
-
-      client
-        .set(key, token, 'PX', ttlMs, 'NX')
-        .then((res) => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timer);
-            resolve(res === 'OK');
-          }
-        })
-        .catch(() => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(timer);
-            resolve(false);
-          }
-        });
-    });
-  }
-
-  /**
-   * Releases lock from all Redis instances using atomic Lua script
-   */
-  private async releaseLock(key: string, token: string): Promise<boolean> {
-    const promises = this.clients.map(async (client) => {
-      try {
-        const result = await client.eval(UNLOCK_LUA_SCRIPT, 1, key, token);
-        return result === 1;
-      } catch {
-        return false;
-      }
-    });
-
-    const results = await Promise.allSettled(promises);
-    const unlockedCount = results.filter(
-      (r) => r.status === 'fulfilled' && r.value === true,
-    ).length;
-    return unlockedCount >= this.quorum;
-  }
-
-  /**
-   * Extends lock TTL across all Redis instances using atomic Lua script
-   */
-  private async extendLock(key: string, token: string, additionalTtlMs: number): Promise<boolean> {
-    const promises = this.clients.map(async (client) => {
-      try {
-        const result = await client.eval(EXTEND_LUA_SCRIPT, 1, key, token, additionalTtlMs);
-        return result === 1;
-      } catch {
-        return false;
-      }
-    });
-
-    const results = await Promise.allSettled(promises);
-    const extendedCount = results.filter(
-      (r) => r.status === 'fulfilled' && r.value === true,
-    ).length;
-    return extendedCount >= this.quorum;
-  }
-
-  /**
-   * Unlock all instances regardless of individual success (used on failure to reach quorum)
-   */
-  private async unlockAllInstances(key: string, token: string): Promise<void> {
-    await Promise.allSettled(
-      this.clients.map((client) =>
-        client.eval(UNLOCK_LUA_SCRIPT, 1, key, token).catch(() => undefined),
-      ),
-    );
-  }
-
-  /**
-   * Quick probe to test if at least one Redis node is alive
-   */
-  async checkRedisHealth(): Promise<boolean> {
-    try {
-      const pingPromises = this.clients.map((c) =>
-        Promise.race([
-          c.ping(),
-          new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 500)),
-        ]),
-      );
-      const results = await Promise.allSettled(pingPromises);
-      return results.some((r) => r.status === 'fulfilled');
-    } catch {
-      return false;
-    }
+  checkRedisHealth(): Promise<boolean> {
+    return probeAnyRedisHealthy(this.clients);
   }
 
   onModuleDestroy(): void {

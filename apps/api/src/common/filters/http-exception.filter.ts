@@ -1,3 +1,8 @@
+/**
+ * Module: Bộ lọc Ngoại lệ HTTP Toàn cục (Global Fail-Safe HTTP Exception Filter)
+ * Thuật toán: Chuẩn hóa phản hồi lỗi đa hình sang cấu trúc `ErrorEnvelope` thống nhất
+ *   kết hợp ngăn chặn rò rỉ chi tiết nội bộ (Stack Trace / SQL Error Masking).
+ */
 import {
   type ArgumentsHost,
   type ExceptionFilter,
@@ -17,6 +22,22 @@ const SAFE_CORRELATION_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new JsonLoggerService(HttpExceptionFilter.name);
 
+  /**
+   * Thuật toán: Phân loại Ngoại lệ Đa hình & Ánh xạ Mã lỗi Chuẩn hóa (Polymorphic Exception Mapping)
+   * Mục đích: Biến đổi mọi ngoại lệ phát sinh trong pipeline thành cấu trúc JSON `ErrorEnvelope`
+   *   nhất quán mà không làm lộ stack trace hoặc chi tiết hệ thống nội bộ cho phía client.
+   * Cơ chế hoạt động:
+   *   - Giải quyết `correlationId` an toàn: Ưu tiên giá trị đã gắn trên request; nếu đọc từ header
+   *     thì kiểm tra khớp biểu thức chính quy whitelist `SAFE_CORRELATION_ID_RE` để chống HTTP Response
+   *     Splitting / Log Injection, ngược lại sinh mới UUIDv4 ngẫu nhiên.
+   *   - Phân nhánh xử lý theo kiểu ngoại lệ:
+   *     1. `HttpException`: Trích xuất `statusCode`, `errorCode`, `message`, `details`; nếu chưa có
+   *        `errorCode` riêng thì ánh xạ tất định từ HTTP status sang `AppErrorCode`.
+   *     2. `ZodError`: Chuyển thành lỗi 400 `VALIDATION_FAILED` kèm danh sách đường dẫn trường lỗi phẳng hóa.
+   *     3. Lỗi không xác định khác: Ghi log mức `error` nội bộ kèm `stack` và `correlationId`, nhưng chỉ
+   *        trả thông báo 500 tổng quát cho client.
+   *   - Đính kèm header truy vết và `cache-control: no-store` để ngăn bộ nhớ đệm lưu trữ phản hồi lỗi.
+   */
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const reply = ctx.getResponse<FastifyReply>();

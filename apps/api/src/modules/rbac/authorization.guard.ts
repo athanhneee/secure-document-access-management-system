@@ -17,6 +17,11 @@ export class AuthorizationGuard implements CanActivate {
     private readonly authorization: AuthorizationService,
   ) {}
 
+  /**
+   * Thuật toán: Cổng kiểm tra quyền siêu dữ liệu khai báo (Declarative Resource-Action Authorization Guard).
+   * Cơ chế hoạt động: Đọc siêu dữ liệu `@RequirePermission(resource, action, global)` qua `Reflector`,
+   * bỏ qua endpoint công khai tường minh và ủy quyền cho `AuthorizationService.assertPermission` kiểm tra phạm vi.
+   */
   async canActivate(context: ExecutionContext): Promise<boolean> {
     if (this.reflector.get<unknown>(PUBLIC_ENDPOINT_METADATA, context.getHandler()) === true)
       return true;

@@ -1,106 +1,28 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
 import { after, before, test } from 'node:test';
-import { fileURLToPath } from 'node:url';
-import pg from 'pg';
+import { createEphemeralDatabaseHarness } from '../helpers/postgres-integration-harness.mjs';
 
-const devEnvUrl = new URL('../../../../.local/dev.env', import.meta.url);
-if (existsSync(devEnvUrl)) {
-  for (const line of readFileSync(devEnvUrl, 'utf8').split(/\r?\n/u)) {
-    const separator = line.indexOf('=');
-    if (separator > 0) process.env[line.slice(0, separator)] ??= line.slice(separator + 1);
-  }
-}
-
-const sourceUrl = new URL(
-  process.env.DATABASE_URL ?? 'postgresql://127.0.0.1:5432/secure_docs?schema=public',
-);
-const adminUrl = new URL(sourceUrl);
-adminUrl.pathname = '/postgres';
-adminUrl.search = '';
-const databaseName = `sda_auth_${randomUUID().replaceAll('-', '')}`;
-const targetUrl = new URL(sourceUrl);
-targetUrl.pathname = `/${databaseName}`;
-let database;
+const dbHarness = createEphemeralDatabaseHarness('sda_auth', { coerceBigIntId: true });
 let repository;
-let disconnectDatabase;
-let dbAvailable = false;
-
-async function isDatabaseReachable() {
-  const client = new pg.Client({
-    connectionString: adminUrl.toString(),
-    connectionTimeoutMillis: 1000,
-  });
-  try {
-    await client.connect();
-    await client.end();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function adminQuery(sql) {
-  const client = new pg.Client({ connectionString: adminUrl.toString() });
-  await client.connect();
-  try {
-    await client.query(sql);
-  } finally {
-    await client.end();
-  }
-}
 
 before(async () => {
-  dbAvailable = await isDatabaseReachable();
-  if (!dbAvailable) return;
-
-  assert.match(databaseName, /^sda_auth_[a-f0-9]{32}$/u);
-  await adminQuery(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
-  await adminQuery(`CREATE DATABASE "${databaseName}"`);
-  const prismaCli = fileURLToPath(import.meta.resolve('prisma')).replace(
-    /[\\/]build[\\/]types\.js$/u,
-    '/build/index.js',
-  );
-  const migration = spawnSync(
-    process.execPath,
-    [prismaCli, 'migrate', 'deploy', '--config', 'prisma.config.ts'],
-    {
-      cwd: fileURLToPath(new URL('../../../../packages/database/', import.meta.url)),
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        DATABASE_URL: targetUrl.toString(),
-        DIRECT_URL: targetUrl.toString(),
-        NODE_ENV: 'test',
-      },
-      shell: false,
-    },
-  );
-  assert.equal(migration.status, 0, 'auth integration migrations must apply');
-  process.env.DATABASE_URL = targetUrl.toString();
-  process.env.DIRECT_URL = targetUrl.toString();
+  const ready = await dbHarness.setup();
+  if (!ready) return;
   const authModule = await import('../../dist/modules/auth/auth.repository.js');
-  ({ disconnectDatabase } = await import('@sda/database'));
   repository = new authModule.AuthRepository();
-  database = new pg.Client({ connectionString: targetUrl.toString() });
-  await database.connect();
 });
 
 after(async () => {
-  if (!dbAvailable) return;
-  await database?.end();
-  await disconnectDatabase?.();
-  await adminQuery(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+  await dbHarness.teardown();
 });
 
 test('refresh rotation rejects reuse, revokes the family and creates an alert', async (t) => {
-  if (!dbAvailable) {
+  if (!dbHarness.dbAvailable) {
     t.skip('Live PostgreSQL server not reachable at 127.0.0.1:5432 (run pnpm infra:up)');
     return;
   }
-  const user = await database.query(
+  const user = await dbHarness.insertOne(
     `INSERT INTO users(username,email,password_hash,full_name,status)
      VALUES ('active.auth','active.auth@example.invalid','argon2-fixture','Active auth','ACTIVE') RETURNING id`,
   );
@@ -108,7 +30,7 @@ test('refresh rotation rejects reuse, revokes the family and creates an alert', 
   const familyId = randomUUID();
   const oldToken = 'old-refresh-token-value';
   await repository.createSession({
-    userId: user.rows[0].id,
+    userId: user.id,
     sessionId,
     familyId,
     refreshTokenId: randomUUID(),
@@ -138,22 +60,22 @@ test('refresh rotation rejects reuse, revokes the family and creates an alert', 
     },
   );
   assert.equal(reuse.kind, 'reuse');
-  const state = await database.query(
+  const state = await dbHarness.sql.query(
     `SELECT
        (SELECT status::text FROM auth_sessions WHERE id=$1) AS session_status,
        (SELECT count(*)::int FROM refresh_tokens WHERE token_family_id=$2 AND revoked_at IS NULL) AS live_tokens,
        (SELECT count(*)::int FROM security_alerts WHERE detected_user_id=$3 AND alert_type='REFRESH_TOKEN_REUSE') AS alerts`,
-    [sessionId, familyId, user.rows[0].id],
+    [sessionId, familyId, user.id],
   );
   assert.deepEqual(state.rows[0], { session_status: 'REVOKED', live_tokens: 0, alerts: 1 });
 });
 
 test('DISABLED account cannot refresh and its family is revoked', async (t) => {
-  if (!dbAvailable) {
+  if (!dbHarness.dbAvailable) {
     t.skip('Live PostgreSQL server not reachable at 127.0.0.1:5432 (run pnpm infra:up)');
     return;
   }
-  const user = await database.query(
+  const user = await dbHarness.insertOne(
     `INSERT INTO users(username,email,password_hash,full_name,status,disabled_at)
      VALUES ('disabled.auth','disabled.auth@example.invalid','argon2-fixture','Disabled auth','DISABLED',now()) RETURNING id`,
   );
@@ -161,7 +83,7 @@ test('DISABLED account cannot refresh and its family is revoked', async (t) => {
   const familyId = randomUUID();
   const tokenHash = createHash('sha256').update('disabled-refresh-token').digest('hex');
   await repository.createSession({
-    userId: user.rows[0].id,
+    userId: user.id,
     sessionId,
     familyId,
     refreshTokenId: randomUUID(),
@@ -177,7 +99,7 @@ test('DISABLED account cannot refresh and its family is revoked', async (t) => {
     expiresAt: new Date(Date.now() + 3_600_000),
   });
   assert.equal(result.kind, 'disabled');
-  const session = await database.query('SELECT status::text FROM auth_sessions WHERE id=$1', [
+  const session = await dbHarness.sql.query('SELECT status::text FROM auth_sessions WHERE id=$1', [
     sessionId,
   ]);
   assert.equal(session.rows[0].status, 'REVOKED');

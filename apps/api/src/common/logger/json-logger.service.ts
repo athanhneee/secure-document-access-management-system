@@ -1,3 +1,7 @@
+/**
+ * Module: Dịch vụ Nhật ký Cấu trúc JSON (Structured NDJSON Logger Service)
+ * Thuật toán: Hợp nhất siêu dữ liệu ngữ cảnh, che dấu đệ quy dữ liệu nhạy cảm và điều phối luồng xuất chuẩn.
+ */
 import { Injectable, type LoggerService } from '@nestjs/common';
 import { redactSensitiveData } from './redaction.js';
 
@@ -42,6 +46,17 @@ export class JsonLoggerService implements LoggerService {
     this.writeLog('trace', message, optionalParams);
   }
 
+  /**
+   * Thuật toán: Tổng hợp Ngữ cảnh, Che dấu Dữ liệu Nhạy cảm và Tuần tự hóa NDJSON
+   * Mục đích: Chuẩn hóa các tham số log đa kiểu của NestJS thành một dòng JSON duy nhất (NDJSON)
+   *   đã được lọc sạch thông tin mật và gắn mã tương quan truy vết.
+   * Cơ chế hoạt động:
+   *   - Duyệt tuần tự `optionalParams`: tham số kiểu chuỗi được nhận diện làm tên ngữ cảnh (`context`),
+   *     còn tham số kiểu đối tượng được gộp vào `extraData` đồng thời trích xuất `correlationId` nếu có.
+   *   - Áp dụng `redactSensitiveData` cho cả `message` dạng đối tượng và `extraData` trước khi đóng gói.
+   *   - Tuần tự hóa bản ghi `LogEntry` kèm dấu thời gian ISO-8601 và định tuyến xuất ra `stderr` đối với
+   *     mức `error`, hoặc `stdout` đối với các mức độ còn lại.
+   */
   private writeLog(level: string, message: unknown, optionalParams: unknown[]): void {
     let context = this.context;
     let correlationId: string | undefined;

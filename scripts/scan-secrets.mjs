@@ -1,3 +1,12 @@
+/**
+ * Thuật toán: Quét Cây Tệp Git & Đối Sánh Biểu Thức Chính Quy Phát Hiện Rò Rỉ Bí Mật (Git-Tree Secret Hygiene Scanner)
+ * Mục đích: Ngăn chặn việc vô tình đưa tệp cấu hình môi trường thật, khóa riêng tư mật mã, tài liệu giải mã hoặc chuỗi thông tin xác thực cứng vào kho mã nguồn.
+ * Cơ chế hoạt động:
+ *   - Bước 1: Liệt kê danh sách tệp phân tách bằng byte rỗng (`git ls-files -z`) gồm cả tệp đã theo dõi và tệp mới chưa bị loại trừ, khử trùng lặp qua `Set`.
+ *   - Bước 2: Kiểm tra chống leo thang đường dẫn ra ngoài gốc kho chứa (`path.relative`) và từ chối liên kết tượng trưng (`isSymbolicLink`) chưa kiểm duyệt.
+ *   - Bước 3: Đối sánh tên đường dẫn với `pathRules` (loại trừ các tệp mẫu `.example`/`.sample`/`.template`), bỏ qua tệp nhị phân chứa byte `0x00`, sau đó quét nội dung UTF-8 bằng tập mẫu nhận diện khóa/mã thông báo `contentRules` và bộ phát hiện phép gán hằng số có đối chiếu mẫu giữ chỗ hợp lệ `placeholder`.
+ *   - Bước 4: Chỉ in tên tệp và tên quy tắc vi phạm (tuyệt đối không in giá trị nhạy cảm ra nhật ký CI) để bảo toàn bí mật trong đầu ra kiểm tra.
+ */
 import { execFileSync } from 'node:child_process';
 import { readFile, lstat } from 'node:fs/promises';
 import path from 'node:path';

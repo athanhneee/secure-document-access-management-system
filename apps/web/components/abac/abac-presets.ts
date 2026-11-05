@@ -1,0 +1,198 @@
+/**
+ * Thuật toán & Cấu hình: Từ Điển Siêu Dữ Liệu Thuộc Tính ABAC (ABAC Attribute Metadata Registry)
+ * Mục đích: Khai báo miền giá trị hợp lệ, kiểu tĩnh và toán tử cho phép đối với 15 thuộc tính Subject/Resource/Environment.
+ */
+import type { AttributeMetadata, AttributeOption } from './abac-models';
+
+// CONFLICT-RESOLVED: Đồng bộ danh mục cấp bậc độ mật ABAC (1 = INTERNAL .. 4 = TOP_SECRET) khớp với CSDL và ClassificationRank trong @sda/contracts.
+export const CLEARANCE_OPTIONS: AttributeOption[] = [
+  { label: 'Cấp 1 - Nội bộ (INTERNAL)', value: 1 },
+  { label: 'Cấp 2 - Mật (CONFIDENTIAL)', value: 2 },
+  { label: 'Cấp 3 - Tối mật (SECRET)', value: 3 },
+  { label: 'Cấp 4 - Tuyệt mật (TOP_SECRET)', value: 4 },
+];
+
+export const DEPARTMENT_OPTIONS: AttributeOption[] = [
+  { label: 'Phòng An ninh Thông tin (SECURITY_DEPT)', value: 'SECURITY_DEPT' },
+  { label: 'Phòng Công nghệ & Kỹ thuật (IT_DEPT)', value: 'IT_DEPT' },
+  { label: 'Phòng Tài chính - Kế toán (FINANCE_DEPT)', value: 'FINANCE_DEPT' },
+  { label: 'Phòng Pháp chế & Tuân thủ (LEGAL_DEPT)', value: 'LEGAL_DEPT' },
+  { label: 'Phòng Nhân sự & Hành chính (HR_DEPT)', value: 'HR_DEPT' },
+  { label: 'Ban Kiểm toán Độc lập (AUDIT_DEPT)', value: 'AUDIT_DEPT' },
+  { label: 'Khối Nghiên cứu & Phát triển (RD_DEPT)', value: 'RD_DEPT' },
+];
+
+export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
+  'subject.clearanceRank': {
+    key: 'subject.clearanceRank',
+    label: 'Cấp bậc An ninh Nhân sự (Clearance Rank)',
+    category: 'SUBJECT',
+    type: 'NUMBER',
+    options: CLEARANCE_OPTIONS,
+    defaultValue: 2,
+    description:
+      'Cấp độ phân quyền an ninh tối đa của người dùng (1 = Unclassified, 4 = Top Secret)',
+    supportedOperators: ['EQ', 'NEQ', 'GTE', 'LTE', 'BETWEEN', 'IN'],
+  },
+  'subject.departmentId': {
+    key: 'subject.departmentId',
+    label: 'Phòng ban Người dùng (Subject Department)',
+    category: 'SUBJECT',
+    type: 'STRING',
+    options: DEPARTMENT_OPTIONS,
+    defaultValue: 'IT_DEPT',
+    description: 'Mã phòng ban trực thuộc hiện tại của nhân sự thao tác',
+    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
+  },
+  'subject.employmentStatus': {
+    key: 'subject.employmentStatus',
+    label: 'Trạng thái Nhân sự (Employment Status)',
+    category: 'SUBJECT',
+    type: 'STRING',
+    defaultValue: 'ACTIVE',
+    description: 'Trạng thái công tác của người dùng trong hệ thống',
+    supportedOperators: ['EQ', 'NEQ', 'IN'],
+    options: [
+      { label: 'Đang làm việc (ACTIVE)', value: 'ACTIVE' },
+      { label: 'Đang thử việc (PROBATION)', value: 'PROBATION' },
+      { label: 'Tạm đình chỉ (SUSPENDED)', value: 'SUSPENDED' },
+    ],
+  },
+  'subject.projects': {
+    key: 'subject.projects',
+    label: 'Dự án Phụ trách (Assigned Projects)',
+    category: 'SUBJECT',
+    type: 'STRING',
+    defaultValue: ['PROJECT_ALPHA'],
+    description: 'Mã danh mục dự án mà nhân viên đang được điều động tham gia',
+    supportedOperators: ['IN', 'NOT_IN', 'EXISTS'],
+  },
+  'resource.classificationRank': {
+    key: 'resource.classificationRank',
+    label: 'Cấp độ Mật Tài liệu (Classification Rank)',
+    category: 'RESOURCE',
+    type: 'NUMBER',
+    options: CLEARANCE_OPTIONS,
+    defaultValue: 3,
+    description: 'Mức độ bảo mật của tài liệu (1 = Không mật đến 4 = Tuyệt mật)',
+    supportedOperators: ['EQ', 'NEQ', 'GTE', 'LTE', 'BETWEEN', 'IN'],
+  },
+  'resource.departmentId': {
+    key: 'resource.departmentId',
+    label: 'Phòng ban Sở hữu Tài liệu (Resource Department)',
+    category: 'RESOURCE',
+    type: 'STRING',
+    options: DEPARTMENT_OPTIONS,
+    defaultValue: 'FINANCE_DEPT',
+    description: 'Đơn vị ban hành và nắm giữ chủ quyền quản lý tài liệu',
+    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN'],
+  },
+  'resource.category': {
+    key: 'resource.category',
+    label: 'Danh mục Tài liệu (Resource Category)',
+    category: 'RESOURCE',
+    type: 'STRING',
+    defaultValue: 'FINANCE',
+    description: 'Phân loại nghiệp vụ của tệp tài liệu',
+    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN'],
+    options: [
+      { label: 'Tài liệu Tài chính (FINANCE)', value: 'FINANCE' },
+      { label: 'Tài liệu Pháp chế & Hợp đồng (LEGAL)', value: 'LEGAL' },
+      { label: 'Hồ sơ Nhân sự (HR)', value: 'HR' },
+      { label: 'Chính sách An toàn Thông tin (SECURITY)', value: 'SECURITY' },
+      { label: 'Nghiên cứu & Thiết kế (R_AND_D)', value: 'R_AND_D' },
+      { label: 'Tài liệu Nghiệp vụ Chung (GENERAL)', value: 'GENERAL' },
+    ],
+  },
+  'resource.status': {
+    key: 'resource.status',
+    label: 'Trạng thái Tài liệu (Resource Status)',
+    category: 'RESOURCE',
+    type: 'STRING',
+    defaultValue: 'ACTIVE',
+    description: 'Vòng đời hiện tại của tài liệu trong hệ thống',
+    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN'],
+    options: [
+      { label: 'Bản thảo (DRAFT)', value: 'DRAFT' },
+      { label: 'Đang ban hành hiệu lực (ACTIVE)', value: 'ACTIVE' },
+      { label: 'Lưu trữ lịch sử (ARCHIVED)', value: 'ARCHIVED' },
+      { label: 'Đã thu hồi hủy bỏ (REVOKED)', value: 'REVOKED' },
+    ],
+  },
+  'resource.ownerId': {
+    key: 'resource.ownerId',
+    label: 'Mã Định danh Người tạo (Owner ID)',
+    category: 'RESOURCE',
+    type: 'STRING',
+    defaultValue: '1',
+    description: 'ID tài khoản tác giả tải lên hoặc khởi tạo tài liệu',
+    supportedOperators: ['EQ', 'NEQ', 'EXISTS'],
+  },
+  'environment.trustedNetwork': {
+    key: 'environment.trustedNetwork',
+    label: 'Mạng Tin cậy Cơ quan (Trusted Network)',
+    category: 'ENVIRONMENT',
+    type: 'BOOLEAN',
+    defaultValue: true,
+    description: 'Truy cập xuất phát từ dải IP nội bộ hoặc VPN chuyên dụng của tổ chức',
+    supportedOperators: ['EQ'],
+    options: [
+      { label: 'Nằm trong mạng nội bộ (true)', value: true },
+      { label: 'Từ mạng Internet công cộng bên ngoài (false)', value: false },
+    ],
+  },
+  'environment.deviceTrust': {
+    key: 'environment.deviceTrust',
+    label: 'Thiết bị Hợp chuẩn MDM (Device Trust)',
+    category: 'ENVIRONMENT',
+    type: 'BOOLEAN',
+    defaultValue: true,
+    description: 'Máy trạm có chứng chỉ quản trị an ninh thiết bị của cơ quan',
+    supportedOperators: ['EQ'],
+    options: [
+      { label: 'Thiết bị tin cậy đã kiểm định (true)', value: true },
+      { label: 'Thiết bị cá nhân BYOD chưa kiểm định (false)', value: false },
+    ],
+  },
+  'environment.mfa': {
+    key: 'environment.mfa',
+    label: 'Xác thực Đa yếu tố Đang bật (MFA Active)',
+    category: 'ENVIRONMENT',
+    type: 'BOOLEAN',
+    defaultValue: true,
+    description: 'Phiên đăng nhập đã hoàn thành xác thực FIDO2 / YubiKey / TOTP',
+    supportedOperators: ['EQ'],
+    options: [
+      { label: 'Đã hoàn thành bước xác thực MFA (true)', value: true },
+      { label: 'Chỉ đăng nhập mật khẩu đơn (false)', value: false },
+    ],
+  },
+  'environment.riskScore': {
+    key: 'environment.riskScore',
+    label: 'Điểm Rủi ro Hành vi (Risk Score: 0 - 100)',
+    category: 'ENVIRONMENT',
+    type: 'NUMBER',
+    defaultValue: 30,
+    description:
+      'Điểm đánh giá rủi ro phiên theo Machine Learning (0 = An toàn, 100 = Nguy cơ cao)',
+    supportedOperators: ['LTE', 'GTE', 'BETWEEN', 'EQ'],
+  },
+  'environment.currentTime': {
+    key: 'environment.currentTime',
+    label: 'Khung giờ Truy cập Cho phép (Time Window)',
+    category: 'ENVIRONMENT',
+    type: 'DATE',
+    description: 'Ràng buộc giờ hành chính hoặc khoảng thời gian hợp lệ trong ngày',
+    supportedOperators: ['TIME_BETWEEN'],
+    defaultValue: { start: '08:00', end: '17:30', timeZone: 'Asia/Ho_Chi_Minh' },
+  },
+  'environment.ip': {
+    key: 'environment.ip',
+    label: 'Dải Địa chỉ IP Nguồn (Source IP / CIDR)',
+    category: 'ENVIRONMENT',
+    type: 'IP',
+    defaultValue: '192.168.1.0/24',
+    description: 'Khớp dải mạng IP theo ký hiệu CIDR (VD: 192.168.1.0/24 hoặc 10.0.0.0/8)',
+    supportedOperators: ['CIDR_MATCH', 'EQ', 'NEQ'],
+  },
+};

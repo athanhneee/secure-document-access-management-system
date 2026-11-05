@@ -1,3 +1,8 @@
+/**
+ * Module: Dịch vụ Lưu trữ Đối tượng Tương thích S3 Đa Môi trường (S3-Compatible Object Storage Adapter)
+ * Thuật toán: Chuẩn hóa điểm cuối nhà cung cấp (MinIO / AWS S3 / Cloudflare R2 / Supabase S3),
+ *   phân tách tiền tố bucket ảo (`bucket/prefix` -> `{ bucket, key }`) và chuyển đổi liền mạch sang kho RAM khi kiểm thử.
+ */
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import {
   S3Client,
@@ -14,6 +19,7 @@ import { AppConfigService } from '../../config/config.service.js';
 export class ObjectStorageService implements OnModuleInit {
   private readonly logger = new Logger(ObjectStorageService.name);
   private readonly s3Client: S3Client | null;
+  // shortcut: test-only in-memory blob map (~64 MB), disabled in production where S3/MinIO/R2 client is enforced
   private readonly inMemoryStorage = new Map<string, Buffer>();
   private readonly isMock: boolean;
 
@@ -76,6 +82,14 @@ export class ObjectStorageService implements OnModuleInit {
     }
   }
 
+  /**
+   * Thuật toán: Phân Giải Đặc Tả Bucket Kèm Tiền Tố Đường Dẫn Ảo (Virtual Bucket-Prefix Path Resolution)
+   * Mục đích: Hỗ trợ cấu hình chung một bucket vật lý nhưng cách ly logic các phân vùng (`quarantine`, `documents`, `derivatives`)
+   *   thông qua tiền tố thư mục.
+   * Cơ chế hoạt động:
+   *   - Cắt bỏ dấu gạch chéo thừa ở hai đầu `bucketSpec`; nếu không chứa `/` thì giữ nguyên cặp `{ bucket, key }`.
+   *   - Nếu chứa `/`, tách phần trước dấu `/` đầu tiên làm tên bucket S3 thực tế và ghép phần sau làm tiền tố đứng trước `key`.
+   */
   private resolveTarget(bucketSpec: string, key: string): { bucket: string; key: string } {
     const trimmed = bucketSpec.trim().replace(/^\/+|\/+$/g, '');
     const slashIndex = trimmed.indexOf('/');

@@ -1,3 +1,6 @@
+'use client';
+// CONFLICT-RESOLVED: Khai báo ranh giới Client Component tường minh để các Server Component (như trang chủ) import được Button có dùng React Hooks phản hồi tức thì khi chạy next build.
+
 import * as React from 'react';
 import { ArrowRight, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';

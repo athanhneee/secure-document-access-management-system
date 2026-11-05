@@ -90,11 +90,11 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
         aria-label="Thanh điều hướng phân hệ"
       >
         <div className="mb-3 px-2">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-[#717171]">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#717171]">
             <Shield size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
             <span>Phân hệ theo vai trò</span>
           </div>
-          <p className="mt-0.5 text-[11px] text-[#717171] leading-normal">
+          <p className="mt-0.5 text-xs text-[#717171] leading-normal">
             Kiểm soát truy cập Zero Trust &amp; RBAC
           </p>
         </div>
@@ -136,13 +136,13 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
                   <div className="flex items-center justify-between">
                     <span className="font-semibold truncate">{item.title}</span>
                     {!hasAccess && (
-                      <span className="flex items-center gap-1 text-[10px] text-[#b0b0b0]">
+                      <span className="flex items-center gap-1 text-[13px] text-[#b0b0b0]">
                         <Lock size={16} strokeWidth={1.75} aria-hidden="true" />
                         <span>Chưa gán</span>
                       </span>
                     )}
                   </div>
-                  <p className="mt-0.5 text-[11px] text-[#717171] line-clamp-1 leading-normal">
+                  <p className="mt-0.5 text-xs text-[#717171] line-clamp-1 leading-normal">
                     {item.description}
                   </p>
                 </div>

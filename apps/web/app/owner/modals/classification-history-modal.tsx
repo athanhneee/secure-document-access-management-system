@@ -70,17 +70,17 @@ export function ClassificationHistoryModal({
                         {ch.businessCategoryName}
                       </span>
                     </div>
-                    <span className="text-[10px] text-[#717171]">
+                    <span className="text-[13px] text-[#717171]">
                       {ch.effectiveTo ? (
                         `Hiệu lực đến: ${new Date(ch.effectiveTo).toLocaleDateString('vi-VN')}`
                       ) : (
-                        <Badge variant="success" className="text-[10px]">
+                        <Badge variant="success" className="text-[13px]">
                           Đang hiệu lực
                         </Badge>
                       )}
                     </span>
                   </div>
-                  <div className="text-[11px] text-[#717171]">
+                  <div className="text-xs text-[#717171]">
                     <div>Hiệu lực từ: {new Date(ch.effectiveFrom).toLocaleString('vi-VN')}</div>
                     <div>
                       Lý do: <span className="text-[#222222]">{ch.reason || '—'}</span>

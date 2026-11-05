@@ -148,7 +148,7 @@ export function AuditTrailTab({
                   <TableCell className="font-bold text-xs text-[#717171]">
                     {log.ipAddress || '—'}
                   </TableCell>
-                  <TableCell className="font-bold text-[11px] text-[#717171] max-w-xs truncate">
+                  <TableCell className="font-bold text-xs text-[#717171] max-w-xs truncate">
                     {log.correlationId}
                   </TableCell>
                 </TableRow>

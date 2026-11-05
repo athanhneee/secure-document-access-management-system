@@ -73,7 +73,7 @@ export function HomeHeader() {
                 <span className="text-sm font-extrabold tracking-tight text-[#222222]">
                   Secure<span className="font-light text-[#FF385C]">Document</span>
                 </span>
-                <span className="text-[9px] sm:text-[10px] text-[#717171] font-bold tracking-wider">
+                <span className="text-[12px] sm:text-[13px] text-[#717171] font-bold tracking-wider">
                   ENTERPRISE v1.0
                 </span>
               </div>
@@ -156,7 +156,7 @@ export function HomeHeader() {
           >
             {/* Quick Navigation Links */}
             <div className="space-y-1">
-              <div className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-wider text-[#717171]">
+              <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-[#717171]">
                 Nội dung hệ thống
               </div>
               <a
@@ -228,7 +228,7 @@ export function HomeHeader() {
 
             {/* Quick Role Shortcuts */}
             <div className="mt-4 pt-4 border-t border-[#ebebeb]">
-              <div className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-wider text-[#717171]">
+              <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-[#717171]">
                 Cổng truy cập vai trò
               </div>
               <div className="grid grid-cols-2 gap-2">

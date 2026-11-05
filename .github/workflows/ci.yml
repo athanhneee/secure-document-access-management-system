@@ -96,7 +96,24 @@ jobs:
         run: pnpm db:migrate && pnpm db:seed
 
       - name: Run mandatory quality, integration, infrastructure, and security gates
-        run: pnpm check
+        run: |
+          run_gate() {
+            echo "=== Running gate: $1 ==="
+            if ! pnpm "$1"; then
+              echo "::error title=CI Gate Failed::pnpm $1 failed"
+              exit 1
+            fi
+          }
+          run_gate format:check
+          run_gate lint
+          run_gate typecheck
+          run_gate test
+          run_gate test:integration
+          run_gate build
+          run_gate test:e2e
+          run_gate test:infra
+          run_gate db:validate
+          run_gate security:scan
 
       - name: Show container status and logs on failure
         if: failure()

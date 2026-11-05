@@ -94,7 +94,7 @@ export function RolePortalsSection() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-5 sm:mb-10">
           <div>
-            <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-[#008489]">
+            <p className="text-xs sm:text-xs font-semibold uppercase tracking-wider text-[#008489]">
               KHÔNG GIAN LÀM VIỆC CHUYÊN BIỆT
             </p>
             <h2 className="text-lg sm:text-2xl lg:text-3xl font-bold tracking-tight text-[#222222] mt-0.5 sm:mt-1 text-balance">
@@ -129,7 +129,7 @@ export function RolePortalsSection() {
                     <div className="text-xs font-bold text-[#222222] truncate">{portal.title}</div>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <span className={`dot ${portal.dotClass}`} aria-hidden="true" />
-                      <span className={`text-[10px] font-bold ${portal.badgeColor}`}>
+                      <span className={`text-[13px] font-bold ${portal.badgeColor}`}>
                         {portal.roleShort}
                       </span>
                     </div>

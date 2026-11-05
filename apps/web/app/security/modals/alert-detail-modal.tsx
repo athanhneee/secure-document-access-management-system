@@ -221,7 +221,7 @@ function AlertDetailForm({
             ))}
           </select>
           {isTerminalStatus && (
-            <p className="text-[11px] text-[#717171]">
+            <p className="text-xs text-[#717171]">
               Cảnh báo đã ở trạng thái kết thúc; bạn vẫn có thể lưu thêm ghi chú điều tra bên dưới.
             </p>
           )}

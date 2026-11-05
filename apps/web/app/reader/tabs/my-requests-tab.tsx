@@ -69,12 +69,12 @@ export function MyRequestsTab({
                     </TableCell>
                     <TableCell className="text-xs text-[#222222]">
                       {req.requestedFrom && req.requestedUntil ? (
-                        <div className="flex flex-col text-[11px]">
+                        <div className="flex flex-col text-xs">
                           <span className="font-medium text-[#222222]">
                             {new Date(req.requestedFrom).toLocaleDateString('vi-VN')} &rarr;{' '}
                             {new Date(req.requestedUntil).toLocaleDateString('vi-VN')}
                           </span>
-                          <span className="text-[10px] text-[#717171]">
+                          <span className="text-[13px] text-[#717171]">
                             ({computeRequestSpanDays(req.requestedFrom, req.requestedUntil)} ngày)
                           </span>
                         </div>

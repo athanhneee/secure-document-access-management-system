@@ -72,7 +72,7 @@ export function RevokeGrantModal({
               placeholder="Ví dụ: Dự án đã hoàn thành trước hạn; hoặc có dấu hiệu rò rỉ thông tin..."
               className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
             />
-            <p className="text-[10px] text-[#717171]">
+            <p className="text-[13px] text-[#717171]">
               Tối thiểu 10 ký tự ({revokeReason.trim().length}/10)
             </p>
           </div>

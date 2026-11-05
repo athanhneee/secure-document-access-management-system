@@ -52,13 +52,13 @@ export function RolesTab({
                 <CardTitle className="text-sm font-semibold text-[#222222]">{role.name}</CardTitle>
                 <div className="flex items-center gap-2">
                   {role.isSystemRole && (
-                    <Badge variant="secondary" className="text-[10px]">
+                    <Badge variant="secondary" className="text-[13px]">
                       Hệ thống
                     </Badge>
                   )}
                   <Badge
                     variant={role.isActive ? 'success' : 'destructive'}
-                    className="text-[10px]"
+                    className="text-[13px]"
                   >
                     {role.isActive ? 'Active' : 'Disabled'}
                   </Badge>
@@ -68,11 +68,11 @@ export function RolesTab({
                 {role.code}
               </CardDescription>
               {role.description && (
-                <p className="text-[11px] text-[#717171] line-clamp-2 mt-1">{role.description}</p>
+                <p className="text-xs text-[#717171] line-clamp-2 mt-1">{role.description}</p>
               )}
             </CardHeader>
             <CardContent className="pt-0 space-y-3">
-              <div className="text-[11px] font-medium text-[#717171]">
+              <div className="text-xs font-medium text-[#717171]">
                 Quyền hạn ({role.permissions.length}):
               </div>
               <div className="flex flex-wrap gap-x-3 gap-y-1 max-h-24 overflow-y-auto pr-1">
@@ -80,7 +80,7 @@ export function RolesTab({
                   // CONFLICT-RESOLVED: Phẳng hóa nhãn quyền RBAC theo chuẩn staff-001 (không bọc nền #f7f7f7 / viền #ebebeb) tại rules/ui-design-system.md.
                   <span
                     key={idx}
-                    className="staff-badge inline-flex items-center gap-1 font-mono text-[10px] text-[#008489]"
+                    className="staff-badge inline-flex items-center gap-1 font-mono text-[13px] text-[#008489]"
                   >
                     <span className="dot dot-info" aria-hidden="true" />
                     <span>{p.code}</span>

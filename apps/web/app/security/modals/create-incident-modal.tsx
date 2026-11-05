@@ -107,7 +107,7 @@ export function CreateIncidentModal({
               placeholder="Mô tả sự việc, các bằng chứng sơ bộ và mức độ rủi ro đối với tổ chức..."
               className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
             />
-            <p className="text-[10px] text-[#717171]">
+            <p className="text-[13px] text-[#717171]">
               Tối thiểu 10 ký tự ({incSummary.trim().length}/10)
             </p>
           </div>

@@ -112,7 +112,7 @@ export function ReaderWorkspace() {
                 <FileSearch size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
                 <span className="hidden sm:inline">Khám phá danh mục</span>
                 <span className="sm:hidden">Khám phá</span>
-                <span className="text-[11px] opacity-80">({catalog.discoverDocs.length})</span>
+                <span className="text-xs opacity-80">({catalog.discoverDocs.length})</span>
               </TabsTrigger>
               <TabsTrigger
                 value="my-docs"
@@ -121,7 +121,7 @@ export function ReaderWorkspace() {
                 <BookOpen size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
                 <span className="hidden sm:inline">Tài liệu được xem</span>
                 <span className="sm:hidden">Được xem</span>
-                <span className="text-[11px] opacity-80">({catalog.myDocs.length})</span>
+                <span className="text-xs opacity-80">({catalog.myDocs.length})</span>
               </TabsTrigger>
               <TabsTrigger
                 value="my-requests"
@@ -130,7 +130,7 @@ export function ReaderWorkspace() {
                 <Clock size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
                 <span className="hidden sm:inline">Theo dõi yêu cầu</span>
                 <span className="sm:hidden">Yêu cầu</span>
-                <span className="text-[11px] opacity-80">({catalog.myRequests.length})</span>
+                <span className="text-xs opacity-80">({catalog.myRequests.length})</span>
               </TabsTrigger>
             </TabsList>
 

@@ -31,7 +31,7 @@ export function SimulatorTracePanel({ result }: SimulatorTracePanelProps) {
 
       {result.obligations.length > 0 && (
         <div>
-          <span className="text-[11px] font-semibold text-[#222222] block mb-1.5">
+          <span className="text-xs font-semibold text-[#222222] block mb-1.5">
             Nghĩa vụ đi kèm (Obligations):
           </span>
           <div className="flex flex-wrap gap-3">
@@ -45,7 +45,7 @@ export function SimulatorTracePanel({ result }: SimulatorTracePanelProps) {
       )}
 
       <div className="space-y-2">
-        <span className="text-[11px] font-semibold text-[#222222] block">
+        <span className="text-xs font-semibold text-[#222222] block">
           Phân tích cây điều kiện logic (Evaluation Tree):
         </span>
         <div className="space-y-2">
@@ -61,18 +61,18 @@ export function SimulatorTracePanel({ result }: SimulatorTracePanelProps) {
                   Nhóm điều kiện #{group.groupId} (Mệnh đề liên hội AND)
                 </span>
                 {group.satisfied ? (
-                  <span className="text-[11px] font-bold text-[#008A05] flex items-center gap-1">
+                  <span className="text-xs font-bold text-[#008A05] flex items-center gap-1">
                     <CheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" />
                     <span>Thỏa mãn (TRUE)</span>
                   </span>
                 ) : (
-                  <span className="text-[11px] font-bold text-[#C13515] flex items-center gap-1">
+                  <span className="text-xs font-bold text-[#C13515] flex items-center gap-1">
                     <XCircle size={16} strokeWidth={1.75} aria-hidden="true" />
                     <span>Chưa đạt (FALSE)</span>
                   </span>
                 )}
               </div>
-              <div className="space-y-1 pl-2 font-mono text-[11px]">
+              <div className="space-y-1 pl-2 font-mono text-xs">
                 {group.conditionResults.map((c) => (
                   <div
                     key={c.conditionId}

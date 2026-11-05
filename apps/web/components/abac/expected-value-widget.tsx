@@ -225,7 +225,7 @@ export function ExpectedValueWidget({
               // CONFLICT-RESOLVED: Phẳng hóa nhãn giá trị tập hợp sang chuẩn staff-001 (không bọc viền/nền trắng capsule) và bo tròn nút xóa chuẩn pill.
               <span
                 key={idx}
-                className="staff-badge inline-flex items-center gap-1 text-[11px] font-mono text-[#008489]"
+                className="staff-badge inline-flex items-center gap-1 text-xs font-mono text-[#008489]"
               >
                 <span className="dot dot-info" aria-hidden="true" />
                 <span>{item}</span>

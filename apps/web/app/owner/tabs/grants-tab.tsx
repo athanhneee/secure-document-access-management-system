@@ -73,7 +73,7 @@ export function GrantsTab({ grants, onOpenDirectGrant, onOpenRevoke }: GrantsTab
                       <div className="font-semibold text-xs text-[#222222]">
                         {grant.principalName}
                       </div>
-                      <div className="text-[10px] font-bold text-[#717171]">
+                      <div className="text-[13px] font-bold text-[#717171]">
                         {grant.principalType}
                       </div>
                     </TableCell>
@@ -84,7 +84,7 @@ export function GrantsTab({ grants, onOpenDirectGrant, onOpenRevoke }: GrantsTab
                       {/* CONFLICT-RESOLVED: Gỡ bỏ lớp viền/nền hộp khỏi Badge quyền hạn để tuân thủ chuẩn nhãn phẳng staff-001 (rules/ui-design-system.md §3) */}
                       <div className="flex flex-wrap gap-3">
                         {grant.permissions.map((p) => (
-                          <Badge key={p} variant="secondary" className="text-[10px]">
+                          <Badge key={p} variant="secondary" className="text-[13px]">
                             {p}
                           </Badge>
                         ))}
@@ -99,7 +99,7 @@ export function GrantsTab({ grants, onOpenDirectGrant, onOpenRevoke }: GrantsTab
                     <TableCell>
                       <Badge
                         variant={grant.status === 'ACTIVE' ? 'success' : 'destructive'}
-                        className="text-[10px]"
+                        className="text-[13px]"
                       >
                         {grant.status}
                       </Badge>

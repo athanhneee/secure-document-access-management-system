@@ -49,9 +49,7 @@ export function NetworkDlpTab({ dlpAlerts, onSelectAlert }: NetworkDlpTabProps) 
             <h3 className="text-xs font-bold text-[#222222] uppercase tracking-wider">
               Cảnh báo rò rỉ dữ liệu tầng mạng gần đây ({dlpAlerts.length})
             </h3>
-            <span className="text-[11px] text-[#717171]">
-              Tự động đồng bộ từ sự kiện ICAP Gateway
-            </span>
+            <span className="text-xs text-[#717171]">Tự động đồng bộ từ sự kiện ICAP Gateway</span>
           </div>
 
           <div className="overflow-x-auto rounded-[16px] border border-[#ebebeb]">
@@ -80,7 +78,7 @@ export function NetworkDlpTab({ dlpAlerts, onSelectAlert }: NetworkDlpTabProps) 
                         <span className="font-medium text-[#222222]">
                           Cổng Network DLP ICAP Server đang bảo vệ an toàn luồng dữ liệu Egress
                         </span>
-                        <span className="text-[11px] text-[#717171]">
+                        <span className="text-xs text-[#717171]">
                           Chưa ghi nhận sự cố rò rỉ dữ liệu mật hoặc khóa bí mật ra ngoài thiết bị
                           biên.
                         </span>
@@ -108,7 +106,7 @@ export function NetworkDlpTab({ dlpAlerts, onSelectAlert }: NetworkDlpTabProps) 
                       </TableCell>
                       <TableCell>
                         <div className="font-semibold text-xs text-[#222222]">{alert.title}</div>
-                        <div className="text-[11px] font-mono text-[#717171]">{alert.ruleCode}</div>
+                        <div className="text-xs font-mono text-[#717171]">{alert.ruleCode}</div>
                       </TableCell>
                       <TableCell className="text-xs text-[#222222]">
                         {alert.detectedUserName || 'Chưa định danh'}

@@ -97,7 +97,7 @@ export function WatermarkForensicsTab({
             />
           </form>
 
-          <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 text-[#717171] text-[11px] leading-relaxed">
+          <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 text-[#717171] text-xs leading-relaxed">
             <p>
               <strong>Nguyên lý:</strong> Mỗi lần người dùng bấm xem hoặc tải tài liệu, hệ thống
               sinh ra một Watermark Instance gắn với phiên Access Session và Document Version cụ
@@ -155,7 +155,7 @@ export function WatermarkForensicsTab({
                   <span className="font-bold text-[#222222]">{wmTraceResult.generatedAtUtc}</span>
 
                   <span className="text-[#717171]">Session ID:</span>
-                  <span className="font-bold text-[10px] text-[#717171]">
+                  <span className="font-bold text-[13px] text-[#717171]">
                     {wmTraceResult.sessionId}
                   </span>
                 </div>
@@ -166,7 +166,7 @@ export function WatermarkForensicsTab({
                   <AlertTriangle size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Chưa xác thực · Không đủ căn cứ pháp chứng</span>
                 </div>
-                <p className="text-[#717171] text-[11px]">
+                <p className="text-[#717171] text-xs">
                   Phản hồi không chứa xác nhận mật mã hợp lệ từ sổ cái đối soát. Hệ thống từ chối
                   hiển thị thông tin quy kết (Fail-Closed).
                 </p>

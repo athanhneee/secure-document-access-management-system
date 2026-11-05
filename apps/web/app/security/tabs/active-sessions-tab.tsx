@@ -63,13 +63,13 @@ export function ActiveSessionsTab({
                   >
                     <TableCell className="font-semibold text-xs text-[#222222]">
                       <div>{sess.documentTitle}</div>
-                      <div className="text-[10px] text-[#717171] font-normal">
+                      <div className="text-[13px] text-[#717171] font-normal">
                         {sess.documentCode} · v{sess.versionNo}
                       </div>
                     </TableCell>
                     <TableCell className="text-xs text-[#222222]">
                       <div className="font-medium">{sess.fullName}</div>
-                      <div className="text-[10px] text-[#717171]">{sess.username}</div>
+                      <div className="text-[13px] text-[#717171]">{sess.username}</div>
                     </TableCell>
                     <TableCell className="text-xs font-mono text-[#717171]">
                       {sess.ipAddress}

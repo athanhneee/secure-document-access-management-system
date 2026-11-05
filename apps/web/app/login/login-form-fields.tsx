@@ -55,7 +55,7 @@ export function LoginFormFields({
           />
         </div>
         {fieldErrors.identifier && (
-          <p id="identifier-error" className="text-[11px] text-[#C13515] font-medium">
+          <p id="identifier-error" className="text-xs text-[#C13515] font-medium">
             {fieldErrors.identifier}
           </p>
         )}
@@ -68,7 +68,7 @@ export function LoginFormFields({
           </label>
           <Link
             href="/reset-password"
-            className="text-[11px] font-medium text-[#FF385C] hover:underline transition-colors"
+            className="text-xs font-medium text-[#FF385C] hover:underline transition-colors"
           >
             Quên mật khẩu?
           </Link>
@@ -92,7 +92,7 @@ export function LoginFormFields({
           />
         </div>
         {fieldErrors.password && (
-          <p id="password-error" className="text-[11px] text-[#C13515] font-medium">
+          <p id="password-error" className="text-xs text-[#C13515] font-medium">
             {fieldErrors.password}
           </p>
         )}

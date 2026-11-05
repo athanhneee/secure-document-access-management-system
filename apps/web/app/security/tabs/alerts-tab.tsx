@@ -64,7 +64,7 @@ export function AlertsTab({ alerts, onSelectAlert }: AlertsTabProps) {
                   </TableCell>
                   <TableCell>
                     <div className="font-semibold text-xs text-[#222222]">{alert.title}</div>
-                    <div className="text-[11px] font-bold text-[#717171]">{alert.ruleCode}</div>
+                    <div className="text-xs font-bold text-[#717171]">{alert.ruleCode}</div>
                   </TableCell>
                   <TableCell className="text-xs text-[#222222]">
                     {alert.detectedUserName || 'Chưa định danh'}

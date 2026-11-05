@@ -103,7 +103,7 @@ export function MfaMethodCards({
 
             <div className="relative flex py-1 items-center">
               <div className="grow border-t border-[#ebebeb]"></div>
-              <span className="shrink mx-3 text-[11px] font-semibold text-[#717171] uppercase tracking-wider">
+              <span className="shrink mx-3 text-xs font-semibold text-[#717171] uppercase tracking-wider">
                 Hoặc nhập mã ứng dụng
               </span>
               <div className="grow border-t border-[#ebebeb]"></div>
@@ -132,7 +132,7 @@ export function MfaMethodCards({
                 className="text-center font-bold text-xl tracking-[0.4em] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
                 aria-label="Mã xác thực 6 chữ số"
               />
-              <p className="text-[11px] text-[#717171] text-center">
+              <p className="text-xs text-[#717171] text-center">
                 Mã TOTP làm mới mỗi 30 giây từ Google/Microsoft Authenticator
               </p>
             </div>
@@ -153,7 +153,7 @@ export function MfaMethodCards({
                 className="text-center font-bold text-sm tracking-wider bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
                 aria-label="Mã khôi phục khẩn cấp"
               />
-              <p className="text-[11px] text-[#E07912] text-center">
+              <p className="text-xs text-[#E07912] text-center">
                 Lưu ý: Mỗi mã khôi phục chỉ sử dụng được duy nhất một lần
               </p>
             </div>

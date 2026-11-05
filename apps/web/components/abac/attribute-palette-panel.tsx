@@ -38,10 +38,10 @@ export function AttributePalettePanel({
           />
           <span>Bảng Khối Thuộc Tính (Palette)</span>
         </div>
-        <span className="text-[11px] text-[#717171]">{filteredAttributes.length} thuộc tính</span>
+        <span className="text-xs text-[#717171]">{filteredAttributes.length} thuộc tính</span>
       </div>
 
-      <div className="flex flex-wrap gap-1 text-[11px]">
+      <div className="flex flex-wrap gap-1 text-xs">
         {(['ALL', 'SUBJECT', 'RESOURCE', 'ENVIRONMENT'] as const).map((cat) => (
           <button
             key={cat}
@@ -136,12 +136,12 @@ export function AttributePalettePanel({
                 </Button>
               </div>
 
-              <div className="mt-1 flex items-center justify-between text-[11px] text-[#717171]">
-                <span className="font-mono text-[10px] text-[#717171]">{attr.key}</span>
-                <span className="text-[10px] uppercase font-bold text-[#b0b0b0]">{attr.type}</span>
+              <div className="mt-1 flex items-center justify-between text-xs text-[#717171]">
+                <span className="font-mono text-[13px] text-[#717171]">{attr.key}</span>
+                <span className="text-[13px] uppercase font-bold text-[#b0b0b0]">{attr.type}</span>
               </div>
 
-              <p className="mt-1 text-[11px] text-[#717171] line-clamp-2">{attr.description}</p>
+              <p className="mt-1 text-xs text-[#717171] line-clamp-2">{attr.description}</p>
             </div>
           );
         })}

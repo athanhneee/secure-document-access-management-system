@@ -70,7 +70,7 @@ export function GrantedDocumentsTab({
                     >
                       <TableCell>
                         <div className="font-semibold text-xs text-[#222222]">{doc.title}</div>
-                        <div className="text-[11px] font-bold text-[#717171]">
+                        <div className="text-xs font-bold text-[#717171]">
                           {doc.documentCode || 'DOC-' + doc.id.slice(0, 8)}
                         </div>
                       </TableCell>

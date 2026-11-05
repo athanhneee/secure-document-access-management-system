@@ -121,7 +121,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                 className="absolute left-0 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-[24px] border border-[#ebebeb] bg-[#ffffff] p-2 shadow-[0_12px_36px_rgba(0,0,0,0.1)] backdrop-blur-xl z-50 animate-in fade-in zoom-in-95 duration-100"
                 role="menu"
               >
-                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#717171]">
+                <div className="px-2.5 py-1 text-[13px] font-semibold uppercase tracking-wider text-[#717171]">
                   Góc nhìn theo vai trò (RBAC)
                 </div>
                 {roleNavItems.map((item) => {
@@ -153,9 +153,9 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                         <span>{item.label}</span>
                       </div>
                       {hasAccess ? (
-                        <span className="text-[10px] text-[#008A05] font-bold">Được cấp</span>
+                        <span className="text-[13px] text-[#008A05] font-bold">Được cấp</span>
                       ) : (
-                        <span className="text-[10px] text-[#b0b0b0]">Khóa</span>
+                        <span className="text-[13px] text-[#b0b0b0]">Khóa</span>
                       )}
                     </button>
                   );

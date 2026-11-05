@@ -117,7 +117,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                     setRequestDurationDays(opt.days);
                     setIsCustomDuration(false);
                   }}
-                  className={`px-2.5 py-1.5 rounded-full border text-[11px] font-semibold transition-all cursor-pointer ${
+                  className={`px-2.5 py-1.5 rounded-full border text-xs font-semibold transition-all cursor-pointer ${
                     !isCustomDuration && requestDurationDays === opt.days
                       ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#FF385C]'
                       : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
@@ -132,7 +132,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
               <button
                 type="button"
                 onClick={() => setIsCustomDuration(!isCustomDuration)}
-                className="rounded-full px-2 py-0.5 text-[11px] text-[#008489] hover:underline font-medium cursor-pointer"
+                className="rounded-full px-2 py-0.5 text-xs text-[#008489] hover:underline font-medium cursor-pointer"
               >
                 {isCustomDuration
                   ? '← Chọn thời hạn nhanh'
@@ -145,7 +145,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                 <div>
                   <label
                     htmlFor="custom-requested-from"
-                    className="text-[10px] text-[#717171] block mb-0.5"
+                    className="text-[13px] text-[#717171] block mb-0.5"
                   >
                     Từ ngày:
                   </label>
@@ -154,13 +154,13 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                     type="datetime-local"
                     value={customRequestedFrom}
                     onChange={(e) => setCustomRequestedFrom(e.target.value)}
-                    className="w-full text-[11px] px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+                    className="w-full text-xs px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
                   />
                 </div>
                 <div>
                   <label
                     htmlFor="custom-requested-until"
-                    className="text-[10px] text-[#717171] block mb-0.5"
+                    className="text-[13px] text-[#717171] block mb-0.5"
                   >
                     Đến ngày:
                   </label>
@@ -169,7 +169,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                     type="datetime-local"
                     value={customRequestedUntil}
                     onChange={(e) => setCustomRequestedUntil(e.target.value)}
-                    className="w-full text-[11px] px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+                    className="w-full text-xs px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
                   />
                 </div>
               </div>
@@ -189,7 +189,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
               placeholder="Mô tả nhiệm vụ hoặc dự án cụ thể cần đối chiếu thông tin này..."
               className="text-xs bg-[#f7f7f7] border-[#ebebeb] text-[#222222]"
             />
-            <p className="text-[10px] text-[#717171]">
+            <p className="text-[13px] text-[#717171]">
               Tối thiểu 10 ký tự ({justification.trim().length}/10)
             </p>
           </div>

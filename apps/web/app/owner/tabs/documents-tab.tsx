@@ -112,13 +112,13 @@ export function DocumentsTab({
                   >
                     <TableCell>
                       <div className="font-semibold text-xs text-[#222222]">{doc.title}</div>
-                      <div className="text-[11px] font-bold text-[#717171]">
+                      <div className="text-xs font-bold text-[#717171]">
                         {doc.documentCode || 'DOC-' + doc.id.slice(0, 8)}
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="text-xs text-[#222222]">{doc.departmentName || '—'}</div>
-                      <div className="text-[11px] text-[#717171]">
+                      <div className="text-xs text-[#717171]">
                         {doc.businessCategoryName || 'Nghiệp vụ chung'}
                       </div>
                     </TableCell>
@@ -127,12 +127,12 @@ export function DocumentsTab({
                     </TableCell>
                     <TableCell>
                       {doc.allowDownload ? (
-                        <span className="flex items-center gap-1.5 text-[11px] text-[#008A05]">
+                        <span className="flex items-center gap-1.5 text-xs text-[#008A05]">
                           <Download size={16} strokeWidth={1.75} aria-hidden="true" />
                           <span>Cho phép tải kèm Watermark</span>
                         </span>
                       ) : (
-                        <span className="flex items-center gap-1.5 text-[11px] text-[#E07912]">
+                        <span className="flex items-center gap-1.5 text-xs text-[#E07912]">
                           <Eye size={16} strokeWidth={1.75} aria-hidden="true" />
                           <span>Chỉ xem trực tuyến</span>
                         </span>

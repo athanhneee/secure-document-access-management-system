@@ -152,12 +152,12 @@ export function AbacTab({
                         </TableCell>
                         <TableCell>
                           {p.isActive ? (
-                            <span className="flex items-center gap-1 text-[11px] text-[#008A05]">
+                            <span className="flex items-center gap-1 text-xs text-[#008A05]">
                               <Check size={16} strokeWidth={1.75} aria-hidden="true" />
                               <span>Đang thực thi</span>
                             </span>
                           ) : (
-                            <Badge variant="secondary" className="text-[10px]">
+                            <Badge variant="secondary" className="text-[13px]">
                               Chờ kích hoạt
                             </Badge>
                           )}

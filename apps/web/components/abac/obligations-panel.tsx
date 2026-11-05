@@ -57,7 +57,7 @@ export function ObligationsPanel({
         <Badge variant="success">PDP Enforcement</Badge>
       </div>
 
-      <p className="text-[11px] text-[#717171]">
+      <p className="text-xs text-[#717171]">
         Các hành động bảo mật mà hệ thống và giao diện bắt buộc phải thực thi ngay khi quy tắc cho
         phép (PERMIT) hoặc từ chối (DENY).
       </p>
@@ -79,7 +79,7 @@ export function ObligationsPanel({
               <label htmlFor={item.id} className="font-bold text-[#222222] block cursor-pointer">
                 {item.title}
               </label>
-              <span className="text-[11px] text-[#717171] block">{item.description}</span>
+              <span className="text-xs text-[#717171] block">{item.description}</span>
             </div>
           </div>
         ))}
@@ -99,7 +99,7 @@ export function ObligationsPanel({
             >
               Giới Hạn Thời Gian Phiên (Max Session Time)
             </label>
-            <span className="text-[11px] text-[#717171] block">
+            <span className="text-xs text-[#717171] block">
               Tự động thu hồi quyền xem sau số phút chỉ định:
             </span>
             {hasObligation('MAX_SESSION_MINUTES') && (
@@ -119,7 +119,7 @@ export function ObligationsPanel({
                   onChange={(e) => onSetSessionMinutes(Number(e.target.value))}
                   className="w-24 h-7 text-xs rounded-full border-[#dddddd]"
                 />
-                <label htmlFor="ob-session-minutes-input" className="text-[11px] text-[#717171]">
+                <label htmlFor="ob-session-minutes-input" className="text-xs text-[#717171]">
                   phút
                 </label>
               </div>

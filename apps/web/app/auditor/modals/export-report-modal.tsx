@@ -157,7 +157,7 @@ export function ExportReportModal({
             </div>
           </fieldset>
 
-          <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 text-[#717171] text-[11px] leading-relaxed">
+          <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 text-[#717171] text-xs leading-relaxed">
             <div className="flex items-center gap-1.5 text-[#008489] font-semibold">
               <Shield size={16} strokeWidth={1.75} aria-hidden="true" />
               <span>Chống CSV Formula Injection:</span>

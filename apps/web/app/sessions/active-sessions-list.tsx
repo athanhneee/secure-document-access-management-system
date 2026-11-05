@@ -143,7 +143,7 @@ export function ActiveSessionsList({
                     </Badge>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[#717171]">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#717171]">
                     <span className="inline-flex items-center gap-1 font-medium text-[#222222]">
                       <Globe
                         size={16}
@@ -228,13 +228,11 @@ export function SessionSecurityOverview({
             </div>
             <div className="flex justify-between items-center">
               <span className="text-[#717171]">Bảo mật Cookie:</span>
-              <span className="font-bold text-[#008A05] text-[11px]">
-                HttpOnly · SameSite=Strict
-              </span>
+              <span className="font-bold text-[#008A05] text-xs">HttpOnly · SameSite=Strict</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-[#717171]">Phòng chống CSRF:</span>
-              <span className="font-bold text-[#008A05] text-[11px]">
+              <span className="font-bold text-[#008A05] text-xs">
                 Double-Submit Cookie (sda_csrf)
               </span>
             </div>

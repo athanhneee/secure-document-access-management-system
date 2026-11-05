@@ -1,3 +1,6 @@
+'use client';
+// CONFLICT-RESOLVED: Khai báo ranh giới Client Component tường minh để các Server Component (HeroSection, RolePortalsSection) import được InteractiveHoverButton có dùng React Hooks khi chạy next build.
+
 import * as React from 'react';
 import Link from 'next/link';
 import { ArrowRight, Loader2 } from 'lucide-react';

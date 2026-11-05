@@ -11,7 +11,7 @@ import type { AuthPrincipal, RequestContext } from './auth.types.js';
 import type { CsrfService } from './csrf.service.js';
 
 /**
- * Algorithm / Thuật toán: Thiết lập bộ ba cookie phiên (`sda_access` HttpOnly, `sda_refresh` HttpOnly giới hạn đường dẫn, `sda_csrf` đọc được bởi client).
+ * Algorithm / Thuật toán: Thiết lập bộ ba cookie phiên (`sda_access` HttpOnly giới hạn `/api/v1`, `sda_refresh` HttpOnly giới hạn `/api/v1/auth`, và `sda_csrf` đặt tại `/` để client đọc qua `document.cookie` trên mọi route giao diện theo mẫu Double-Submit Cookie, đồng thời dọn bỏ bản ghi `sda_csrf` đường dẫn `/api/v1` cũ tránh che khuất theo RFC 6265 §5.4).
  */
 export function setAuthSessionCookies(
   reply: FastifyReply,
@@ -35,22 +35,25 @@ export function setAuthSessionCookies(
   } else {
     reply.clearCookie('sda_refresh', { ...base, path: '/api/v1/auth' });
   }
+  // CONFLICT-RESOLVED: Đặt sda_csrf tại path '/' (và xóa bản ghi '/api/v1' kế thừa) để document.cookie trên mọi route giao diện đọc được mã Double-Submit CSRF.
+  reply.clearCookie('sda_csrf', { ...base, path: '/api/v1' });
   reply.setCookie('sda_csrf', result.csrfToken, {
     ...base,
     httpOnly: false,
-    path: '/api/v1',
+    path: '/',
     maxAge: result.refreshMaxAge,
   });
 }
 
 /**
- * Algorithm / Thuật toán: Thu hồi đồng bộ toàn bộ cookie xác thực và CSRF trên trình duyệt.
+ * Algorithm / Thuật toán: Thu hồi đồng bộ toàn bộ cookie xác thực và CSRF (cả đường dẫn gốc `/` lẫn đường dẫn kế thừa `/api/v1`) trên trình duyệt.
  */
 export function clearAuthSessionCookies(reply: FastifyReply, secureCookies: boolean): void {
   const base = { secure: secureCookies, sameSite: 'strict' as const };
   reply.clearCookie('sda_access', { ...base, path: '/api/v1' });
   reply.clearCookie('sda_refresh', { ...base, path: '/api/v1/auth' });
   reply.clearCookie('sda_csrf', { ...base, path: '/api/v1' });
+  reply.clearCookie('sda_csrf', { ...base, path: '/' });
 }
 
 /**

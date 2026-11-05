@@ -13,7 +13,7 @@ export function NetworkDlpOverview() {
             <Cpu size={16} strokeWidth={1.75} className="text-[#008489]" aria-hidden="true" />
           </div>
           <div className="text-sm font-bold text-[#222222]">ICAP/1.0 (RFC 3507)</div>
-          <p className="text-[11px] text-[#717171]">Lắng nghe cổng TCP 1344 (IANA Standard)</p>
+          <p className="text-xs text-[#717171]">Lắng nghe cổng TCP 1344 (IANA Standard)</p>
         </div>
 
         <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-1">
@@ -22,7 +22,7 @@ export function NetworkDlpOverview() {
             <Activity size={16} strokeWidth={1.75} className="text-[#008A05]" aria-hidden="true" />
           </div>
           <div className="text-sm font-bold text-[#222222]">RESPMOD &amp; REQMOD</div>
-          <p className="text-[11px] text-[#717171]">Hỗ trợ Preview Chunks &amp; 204 No-Mod</p>
+          <p className="text-xs text-[#717171]">Hỗ trợ Preview Chunks &amp; 204 No-Mod</p>
         </div>
 
         <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-1">
@@ -36,7 +36,7 @@ export function NetworkDlpOverview() {
             />
           </div>
           <div className="text-sm font-bold text-[#C13515]">HTTP 403 Forbidden</div>
-          <p className="text-[11px] text-[#717171]">Chặn luồng vi phạm kèm trang cảnh báo SDA</p>
+          <p className="text-xs text-[#717171]">Chặn luồng vi phạm kèm trang cảnh báo SDA</p>
         </div>
 
         <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-1">
@@ -50,9 +50,7 @@ export function NetworkDlpOverview() {
             />
           </div>
           <div className="text-sm font-bold text-[#008A05]">204 No modifications</div>
-          <p className="text-[11px] text-[#717171]">
-            Chuyển tiếp tức thì, không giữ buffer dữ liệu
-          </p>
+          <p className="text-xs text-[#717171]">Chuyển tiếp tức thì, không giữ buffer dữ liệu</p>
         </div>
       </div>
 
@@ -68,7 +66,7 @@ export function NetworkDlpOverview() {
               </span>
               <Badge variant="danger">BẮT BUỘC</Badge>
             </div>
-            <p className="text-[11px] text-[#717171]">
+            <p className="text-xs text-[#717171]">
               Quét nội dung chứa nhãn <span className="font-mono font-medium">TUYỆT MẬT</span>,{' '}
               <span className="font-mono font-medium">TỐI MẬT</span>,{' '}
               <span className="font-mono font-medium">TOP SECRET</span>,{' '}
@@ -83,7 +81,7 @@ export function NetworkDlpOverview() {
               </span>
               <Badge variant="primary">PHÁP CHỨNG</Badge>
             </div>
-            <p className="text-[11px] text-[#717171]">
+            <p className="text-xs text-[#717171]">
               Phát hiện các mã token thủy ấn bí mật định dạng{' '}
               <span className="font-mono font-medium">{'WM-[a-f0-9]{48}'}</span> bị người dùng cố ý
               sao chép hoặc tuồn qua đường mạng biên.
@@ -97,7 +95,7 @@ export function NetworkDlpOverview() {
               </span>
               <Badge variant="warning">BẢO VỆ KHÓA</Badge>
             </div>
-            <p className="text-[11px] text-[#717171]">
+            <p className="text-xs text-[#717171]">
               Ngăn chặn rò rỉ <span className="font-mono font-medium">PEM RSA/EC Private Keys</span>
               , <span className="font-mono font-medium">AWS Access Key (AKIA...)</span>,{' '}
               <span className="font-mono font-medium">GitHub Personal Access Token (ghp_...)</span>.
@@ -111,7 +109,7 @@ export function NetworkDlpOverview() {
               </span>
               <Badge variant="info">DỮ LIỆU CÁ NHÂN</Badge>
             </div>
-            <p className="text-[11px] text-[#717171]">
+            <p className="text-xs text-[#717171]">
               Kiểm tra số thẻ Visa / MasterCard / Amex bằng{' '}
               <span className="font-medium">thuật toán Luhn Checksum</span> và số Căn cước công dân
               12 chữ số theo quy chuẩn quốc gia.
@@ -134,7 +132,7 @@ export function NetworkDlpBlueprint() {
         Để kết nối Squid Proxy hoặc các cổng biên mạng (Symantec, Forcepoint, BlueCoat, F5) với máy
         chủ ICAP của hệ thống, thêm định tuyến ICAP service vào cấu hình proxy:
       </p>
-      <div className="p-3 bg-[#222222] text-[#f7f7f7] rounded-[12px] font-mono text-[11px] overflow-x-auto space-y-1">
+      <div className="p-3 bg-[#222222] text-[#f7f7f7] rounded-[12px] font-mono text-xs overflow-x-auto space-y-1">
         <div># squid.conf - Network DLP ICAP Service Integration</div>
         <div className="text-[#008489]">icap_enable on</div>
         <div>icap_service sda_dlp respmod_precache icap://127.0.0.1:1344/dlp-respmod bypass=0</div>

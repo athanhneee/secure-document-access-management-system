@@ -59,7 +59,7 @@ export function RequestsTab({ requests, onOpenApprove, onReject }: RequestsTabPr
                       <div className="font-semibold text-xs text-[#222222]">
                         {req.requestorName}
                       </div>
-                      <div className="text-[11px] text-[#717171]">{req.requestorDepartment}</div>
+                      <div className="text-xs text-[#717171]">{req.requestorDepartment}</div>
                     </TableCell>
                     <TableCell className="text-xs text-[#222222] max-w-xs truncate">
                       {req.documentTitle}
@@ -101,7 +101,7 @@ export function RequestsTab({ requests, onOpenApprove, onReject }: RequestsTabPr
                           />
                         </div>
                       ) : (
-                        <Badge variant="outline" className="text-[10px] text-[#717171]">
+                        <Badge variant="outline" className="text-[13px] text-[#717171]">
                           {req.status}
                         </Badge>
                       )}

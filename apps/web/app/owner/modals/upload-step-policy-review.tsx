@@ -134,7 +134,7 @@ export function UploadStepPolicyReview({
         </div>
       </div>
 
-      <p className="text-[11px] text-[#717171] leading-relaxed">
+      <p className="text-xs text-[#717171] leading-relaxed">
         Tài liệu sẽ được quét mã độc, trích xuất magic bytes, phân trang an toàn và lưu vào bộ lưu
         trữ mã hóa độc lập. Dấu bản quyền (Watermark) sẽ được nhúng động mỗi khi có yêu cầu truy
         cập.

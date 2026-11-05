@@ -266,7 +266,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
             </span>
           </div>
 
-          <div className="flex flex-wrap gap-3 text-[11px] text-[#717171]">
+          <div className="flex flex-wrap gap-3 text-xs text-[#717171]">
             <span>
               Quy tắc khớp:{' '}
               <strong className="font-mono text-[#222222]">

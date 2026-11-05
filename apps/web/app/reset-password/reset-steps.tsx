@@ -108,12 +108,12 @@ export function ConfirmResetStepForm({
             <div className="flex h-1.5 w-full gap-1 overflow-hidden rounded-full bg-[#ebebeb]">
               <div className={`h-full transition-all ${strength.barClassName}`} />
             </div>
-            <p className="text-[10px] text-[#717171]">Độ mạnh: {strength.strengthLabel}</p>
+            <p className="text-[13px] text-[#717171]">Độ mạnh: {strength.strengthLabel}</p>
             <div className="grid grid-cols-1 gap-1 pt-0.5">
               {requirements.map((req) => (
                 <div
                   key={req.label}
-                  className={`flex items-center gap-1.5 text-[10px] ${
+                  className={`flex items-center gap-1.5 text-[13px] ${
                     req.met ? 'text-[#008A05] font-medium' : 'text-[#717171]'
                   }`}
                 >

@@ -56,6 +56,7 @@ test('production cookies are HttpOnly, Secure, SameSite strict and path-scoped',
     [true, true, '/api/v1/auth'],
   );
   assert.equal(csrf.options.httpOnly, false);
+  assert.equal(csrf.options.path, '/');
   assert.equal(JSON.stringify(response).includes('secret'), false);
 });
 

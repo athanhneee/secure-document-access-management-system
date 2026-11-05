@@ -186,7 +186,7 @@ export function PolicyPresetsBar({
                   </Button>
                 </div>
                 <p className="text-xs text-[#717171]">{tpl.summary}</p>
-                <div className="flex flex-wrap gap-2 text-[11px] text-[#717171] font-mono">
+                <div className="flex flex-wrap gap-2 text-xs text-[#717171] font-mono">
                   <span>Mã: {tpl.rule.code}</span>
                   <span>•</span>
                   <span>

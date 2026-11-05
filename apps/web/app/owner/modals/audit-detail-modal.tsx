@@ -47,7 +47,7 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
                 Kết quả:{' '}
                 <Badge
                   variant={auditLog.outcome === 'SUCCESS' ? 'success' : 'destructive'}
-                  className="text-[10px]"
+                  className="text-[13px]"
                 >
                   {auditLog.outcome}
                 </Badge>
@@ -62,7 +62,7 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
 
             <div className="space-y-1">
               <span className="font-medium text-[#222222]">Hash chuỗi kiểm toán (Entry Hash):</span>
-              <div className="p-2 rounded bg-[#f7f7f7] border font-mono text-[10px] break-all text-[#717171]">
+              <div className="p-2 rounded bg-[#f7f7f7] border font-mono text-[13px] break-all text-[#717171]">
                 {auditLog.entryHash}
               </div>
             </div>
@@ -70,7 +70,7 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
             {auditLog.details && Object.keys(auditLog.details).length > 0 && (
               <div className="space-y-1">
                 <span className="font-medium text-[#222222]">Thuộc tính chi tiết (Details):</span>
-                <pre className="p-2 rounded bg-[#f7f7f7] border font-mono text-[10px] text-[#222222] overflow-x-auto max-h-36">
+                <pre className="p-2 rounded bg-[#f7f7f7] border font-mono text-[13px] text-[#222222] overflow-x-auto max-h-36">
                   {JSON.stringify(auditLog.details, null, 2)}
                 </pre>
               </div>

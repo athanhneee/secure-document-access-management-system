@@ -154,7 +154,7 @@ export function CreateGrantModal({
           )}
 
           {isClearanceWarning && (
-            <div className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/5 p-3 text-[11px] text-[#C13515] space-y-1">
+            <div className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/5 p-3 text-xs text-[#C13515] space-y-1">
               <div className="flex items-center gap-1.5 font-bold">
                 <AlertTriangle size={16} strokeWidth={1.75} aria-hidden="true" />
                 <span>Cảnh báo Clearance (D-BR04):</span>

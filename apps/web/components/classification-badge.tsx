@@ -34,7 +34,7 @@ export function ClassificationBadge({
   const normalized = (level ?? code ?? '').toUpperCase();
 
   const sizeClasses = {
-    sm: 'text-[11px] gap-1',
+    sm: 'text-xs gap-1',
     md: 'text-xs gap-1.5',
     lg: 'text-sm gap-2',
   };
@@ -63,7 +63,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>KHÔNG MẬT</span>
-          {showRank && <span className="opacity-70 font-bold text-[10px]">· R0</span>}
+          {showRank && <span className="opacity-70 font-bold text-[13px]">· R0</span>}
         </span>
       );
 
@@ -87,7 +87,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>NỘI BỘ</span>
-          {showRank && <span className="opacity-75 font-bold text-[10px]">· R1</span>}
+          {showRank && <span className="opacity-75 font-bold text-[13px]">· R1</span>}
         </span>
       );
 
@@ -106,7 +106,7 @@ export function ClassificationBadge({
         >
           <Lock size={iconPixelSize} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
           <span>MẬT</span>
-          {showRank && <span className="opacity-75 font-bold text-[10px]">· R2</span>}
+          {showRank && <span className="opacity-75 font-bold text-[13px]">· R2</span>}
         </span>
       );
 
@@ -129,7 +129,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>TỐI MẬT</span>
-          {showRank && <span className="opacity-75 font-bold text-[10px]">· R3</span>}
+          {showRank && <span className="opacity-75 font-bold text-[13px]">· R3</span>}
         </span>
       );
 
@@ -152,7 +152,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>TUYỆT MẬT</span>
-          {showRank && <span className="opacity-80 font-bold text-[10px]">· R4</span>}
+          {showRank && <span className="opacity-80 font-bold text-[13px]">· R4</span>}
         </span>
       );
 

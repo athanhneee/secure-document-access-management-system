@@ -79,12 +79,12 @@ export function VersionHistoryModal({
                     <span className="font-bold text-[#222222]">Phiên bản v{v.versionNo}.0</span>
                     <Badge
                       variant={v.scanStatus === 'CLEAN' ? 'success' : 'destructive'}
-                      className="text-[10px]"
+                      className="text-[13px]"
                     >
                       {v.scanStatus}
                     </Badge>
                   </div>
-                  <div className="grid grid-cols-2 gap-1 text-[11px] text-[#717171]">
+                  <div className="grid grid-cols-2 gap-1 text-xs text-[#717171]">
                     <div>
                       Tệp: <strong className="text-[#222222]">{v.originalFilename}</strong>
                     </div>
@@ -92,7 +92,7 @@ export function VersionHistoryModal({
                     <div>Thời điểm: {new Date(v.createdAt).toLocaleString('vi-VN')}</div>
                     <div>Ghi chú: {v.changeNote || '—'}</div>
                   </div>
-                  <div className="text-[10px] text-[#717171] font-mono truncate">
+                  <div className="text-[13px] text-[#717171] font-mono truncate">
                     SHA-256: {v.sha256Hash}
                   </div>
                 </div>

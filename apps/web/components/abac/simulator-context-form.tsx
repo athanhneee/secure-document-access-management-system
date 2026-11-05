@@ -32,7 +32,7 @@ export function SimulatorContextForm({
 }: SimulatorContextFormProps) {
   const selectCls =
     'w-full text-xs h-8 rounded-full border border-[#dddddd] px-2.5 bg-[#ffffff] focus:border-[#FF385C]';
-  const labelCls = 'block text-[11px] font-medium text-[#717171] mb-1';
+  const labelCls = 'block text-xs font-medium text-[#717171] mb-1';
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
@@ -244,7 +244,7 @@ export function SimulatorContextForm({
             type="text"
             value={environment.ip}
             onChange={(e) => setEnvironment((env) => ({ ...env, ip: e.target.value }))}
-            className={`${selectCls} font-mono text-[11px]`}
+            className={`${selectCls} font-mono text-xs`}
           />
         </div>
       </div>

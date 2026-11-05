@@ -56,7 +56,7 @@ export function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTa
   return (
     <th
       className={cn(
-        'h-10 px-4 text-left align-middle text-[11px] font-semibold uppercase tracking-wider text-[#717171] [&:has([role=checkbox])]:pr-0 select-none',
+        'h-10 px-4 text-left align-middle text-xs font-semibold uppercase tracking-wider text-[#717171] [&:has([role=checkbox])]:pr-0 select-none',
         className,
       )}
       {...props}

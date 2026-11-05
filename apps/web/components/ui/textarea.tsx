@@ -28,12 +28,12 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           {...props}
         />
         {helperText && !error && (
-          <p id={helperId} className="mt-1 text-[11px] text-[#717171]">
+          <p id={helperId} className="mt-1 text-xs text-[#717171]">
             {helperText}
           </p>
         )}
         {error && (
-          <p id={errorId} className="mt-1 text-[11px] text-[#C13515] font-medium">
+          <p id={errorId} className="mt-1 text-xs text-[#C13515] font-medium">
             {error}
           </p>
         )}

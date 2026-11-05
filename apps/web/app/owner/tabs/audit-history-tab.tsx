@@ -107,22 +107,22 @@ export function AuditHistoryTab({
                         {log.actorUsername || 'system'}
                       </div>
                       {log.actorUserId && (
-                        <div className="text-[10px] text-[#717171]">ID: {log.actorUserId}</div>
+                        <div className="text-[13px] text-[#717171]">ID: {log.actorUserId}</div>
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary" className="text-[10px]">
+                      <Badge variant="secondary" className="text-[13px]">
                         {log.action}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-[#222222]">
                       {log.documentId && (
-                        <div className="text-[11px] font-mono text-[#717171]">
+                        <div className="text-xs font-mono text-[#717171]">
                           Doc: {log.documentId.slice(0, 8)}...
                         </div>
                       )}
                       {log.accessSessionId && (
-                        <div className="text-[10px] text-[#008489]">
+                        <div className="text-[13px] text-[#008489]">
                           Sess: {log.accessSessionId.slice(0, 12)}
                         </div>
                       )}
@@ -133,7 +133,7 @@ export function AuditHistoryTab({
                     <TableCell>
                       <Badge
                         variant={log.outcome === 'SUCCESS' ? 'success' : 'destructive'}
-                        className="text-[10px]"
+                        className="text-[13px]"
                       >
                         {log.outcome}
                       </Badge>

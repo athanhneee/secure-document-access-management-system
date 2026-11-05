@@ -26,7 +26,7 @@ export default function HomePage() {
                 <span className="text-xs font-bold tracking-tight text-[#222222]">
                   Secure<span className="text-[#FF385C]">Document</span> Access System
                 </span>
-                <span className="staff-badge inline-flex items-center gap-1 text-[10px] font-bold text-[#008A05]">
+                <span className="staff-badge inline-flex items-center gap-1 text-[13px] font-bold text-[#008A05]">
                   <span className="dot dot-success" aria-hidden="true" />
                   <span>ONLINE</span>
                 </span>
@@ -38,22 +38,22 @@ export default function HomePage() {
             </div>
 
             <div className="flex flex-col items-center sm:items-start md:items-end gap-1.5 sm:gap-2 text-xs text-[#717171]">
-              <div className="flex flex-wrap items-center justify-center sm:justify-start md:justify-end gap-x-2.5 sm:gap-x-3 gap-y-1 text-[11px]">
+              <div className="flex flex-wrap items-center justify-center sm:justify-start md:justify-end gap-x-2.5 sm:gap-x-3 gap-y-1 text-xs">
                 <span>Enterprise v1.0</span>
                 <span className="text-[#ebebeb]">·</span>
                 <span>Bảo mật 2FA</span>
                 <span className="text-[#ebebeb]">·</span>
                 <span className="font-bold text-[#008A05]">STATUS: NORMAL</span>
               </div>
-              <p className="hidden sm:block text-[10px] text-[#b0b0b0]">
+              <p className="hidden sm:block text-[13px] text-[#b0b0b0]">
                 Mã hóa AES-256-GCM · Kiểm toán chuỗi bất biến HMAC-SHA256
               </p>
             </div>
           </div>
 
-          <div className="mt-4 sm:mt-6 pt-4 sm:pt-6 border-t border-[#ebebeb] flex flex-col sm:flex-row items-center justify-between gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] text-[#717171] text-center sm:text-left">
+          <div className="mt-4 sm:mt-6 pt-4 sm:pt-6 border-t border-[#ebebeb] flex flex-col sm:flex-row items-center justify-between gap-1.5 sm:gap-2 text-[13px] sm:text-xs text-[#717171] text-center sm:text-left">
             <span>© 2026 Secure Document Access System.</span>
-            <span className="hidden sm:inline text-[10px] text-[#717171]">
+            <span className="hidden sm:inline text-[13px] text-[#717171]">
               Quyền tối thiểu · Trách nhiệm rõ ràng
             </span>
           </div>

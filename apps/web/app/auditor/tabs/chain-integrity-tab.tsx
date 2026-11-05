@@ -125,7 +125,7 @@ export function ChainIntegrityTab({
                     </span>
                   </div>
                   {verificationReport.brokenSequences.length > 0 && (
-                    <ul className="mt-2 max-h-28 overflow-y-auto space-y-1 border-t border-[#C13515]/15 pt-2 text-[11px] text-[#C13515]">
+                    <ul className="mt-2 max-h-28 overflow-y-auto space-y-1 border-t border-[#C13515]/15 pt-2 text-xs text-[#C13515]">
                       {verificationReport.brokenSequences.map((violation, idx) => (
                         <li key={idx}>• {String(violation)}</li>
                       ))}

@@ -24,8 +24,8 @@ const OPACITY_CLASS_MAP: Record<number, string> = {
 };
 
 const FONT_SIZE_CLASS_MAP: Record<number, string> = {
-  10: 'text-[10px]',
-  11: 'text-[11px]',
+  10: 'text-[13px]',
+  11: 'text-xs',
   12: 'text-[12px]',
   13: 'text-[13px]',
   14: 'text-[14px]',
@@ -130,7 +130,7 @@ export function WatermarkTab({
             <span className="font-medium text-[#222222] block">
               Thành phần bắt buộc trên watermark:
             </span>
-            <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 font-bold text-[11px] text-[#717171]">
+            <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 font-bold text-xs text-[#717171]">
               <div className="flex items-center gap-2 text-[#008A05]">
                 <Check size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
                 <span>Họ tên đầy đủ &amp; Mã định danh nhân viên (Employee Code)</span>
@@ -210,7 +210,7 @@ export function WatermarkTab({
         </CardHeader>
         <CardContent className="flex-1 flex items-center justify-center p-6">
           <div className="relative w-full aspect-[4/3] rounded-[20px] border border-[#ebebeb] bg-[#ffffff] p-4 shadow-inner overflow-hidden flex flex-col justify-between">
-            <div className="space-y-2 opacity-20 pointer-events-none select-none text-[10px] text-[#717171]">
+            <div className="space-y-2 opacity-20 pointer-events-none select-none text-[13px] text-[#717171]">
               <div className="h-3 w-1/3 bg-[#dddddd] rounded" />
               <div className="h-2 w-full bg-[#ebebeb] rounded" />
               <div className="h-2 w-5/6 bg-[#ebebeb] rounded" />
@@ -226,7 +226,7 @@ export function WatermarkTab({
               >
                 <div>NGUYEN VAN A · EMP-882190</div>
                 <div>DOC-TOPSECRET-001 · 2026-09-23 12:45:00 UTC</div>
-                <div className="text-[10px] text-[#008A05]">WM-8f3a9b2c1e7d4410</div>
+                <div className="text-[13px] text-[#008A05]">WM-8f3a9b2c1e7d4410</div>
               </div>
 
               {showQr && (
@@ -240,7 +240,7 @@ export function WatermarkTab({
               )}
             </div>
 
-            <div className="text-[10px] font-bold text-[#b0b0b0] text-right">Trang 1 / 1</div>
+            <div className="text-[13px] font-bold text-[#b0b0b0] text-right">Trang 1 / 1</div>
           </div>
         </CardContent>
       </Card>

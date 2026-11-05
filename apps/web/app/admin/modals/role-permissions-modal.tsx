@@ -137,8 +137,8 @@ function RolePermissionsForm({
                   className="mt-0.5 rounded border-[#dddddd] text-[#FF385C] focus:ring-[#FF385C]"
                 />
                 <div>
-                  <div className="font-mono font-bold text-[11px] text-[#222222]">{perm.code}</div>
-                  <div className="text-[10px] text-[#717171]">
+                  <div className="font-mono font-bold text-xs text-[#222222]">{perm.code}</div>
+                  <div className="text-[13px] text-[#717171]">
                     {perm.resource || perm.resourceType} : {perm.action}
                   </div>
                 </div>

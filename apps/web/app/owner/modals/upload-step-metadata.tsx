@@ -60,7 +60,7 @@ export function UploadStepMetadata({
           className="w-full text-xs text-[#717171] file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-[#f7f7f7] file:text-xs file:font-medium file:text-[#222222] hover:file:bg-[#ebebeb] cursor-pointer"
         />
         {docFile ? (
-          <div className="flex items-center gap-2 pt-1 text-[11px] text-[#008A05]">
+          <div className="flex items-center gap-2 pt-1 text-xs text-[#008A05]">
             <CheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" />
             <span>
               Đã chọn: <strong className="text-[#222222]">{docFile.name}</strong> (
@@ -68,7 +68,7 @@ export function UploadStepMetadata({
             </span>
           </div>
         ) : (
-          <div className="text-[11px] text-[#C13515]">
+          <div className="text-xs text-[#C13515]">
             * Bạn phải chọn một tệp tài liệu trước khi tiếp tục
           </div>
         )}

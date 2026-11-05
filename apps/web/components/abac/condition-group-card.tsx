@@ -70,7 +70,7 @@ export function ConditionGroupCard({
               <h3 className="font-bold text-xs text-[#222222]">
                 Nhóm Điều Kiện #{group.id} (Mệnh đề liên hội AND)
               </h3>
-              <p className="text-[11px] text-[#717171]">
+              <p className="text-xs text-[#717171]">
                 Tất cả {group.conditions.length} điều kiện dưới đây phải ĐỒNG THỜI đúng.
               </p>
             </div>

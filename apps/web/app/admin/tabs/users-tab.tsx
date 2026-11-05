@@ -85,7 +85,7 @@ export function UsersTab({
                   <TableRow key={u.id} className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60">
                     <TableCell>
                       <div className="font-semibold text-xs text-[#222222]">{u.fullName}</div>
-                      <div className="text-[11px] text-[#717171]">@{u.username}</div>
+                      <div className="text-xs text-[#717171]">@{u.username}</div>
                     </TableCell>
                     <TableCell className="text-xs text-[#717171]">{u.email}</TableCell>
                     <TableCell className="text-xs text-[#222222]">
@@ -100,7 +100,7 @@ export function UsersTab({
                               ? 'warning'
                               : 'destructive'
                         }
-                        className="text-[10px]"
+                        className="text-[13px]"
                       >
                         {u.status}
                       </Badge>

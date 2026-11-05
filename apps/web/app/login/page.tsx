@@ -169,7 +169,7 @@ function LoginForm() {
           </CardContent>
 
           <CardFooter className="flex flex-col space-y-3 pt-2 border-t border-[#ebebeb] text-center">
-            <div className="flex items-center justify-center gap-1.5 text-[11px] text-[#717171]">
+            <div className="flex items-center justify-center gap-1.5 text-xs text-[#717171]">
               <KeyRound
                 size={16}
                 strokeWidth={1.75}

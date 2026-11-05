@@ -17,13 +17,13 @@ export function AppFooter() {
             <span>Secure Document Access System</span>
           </div>
           <span className="hidden sm:inline text-[#ebebeb]">·</span>
-          <span className="flex items-center gap-1 text-[11px] text-[#717171]">
+          <span className="flex items-center gap-1 text-xs text-[#717171]">
             <Lock size={16} strokeWidth={1.75} className="text-[#E07912]" aria-hidden="true" />
             <span>Chính sách kiểm soát quyền tối thiểu (Least Privilege)</span>
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 text-[11px] text-[#717171]">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-[#717171]">
           <span className="flex items-center gap-1">
             <Hash size={16} strokeWidth={1.75} className="text-[#008489]" aria-hidden="true" />
             <span>HMAC-SHA256 Audit Trail</span>

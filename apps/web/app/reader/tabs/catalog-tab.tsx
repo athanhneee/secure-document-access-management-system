@@ -111,7 +111,7 @@ export function CatalogTab({
                     >
                       <TableCell>
                         <div className="font-semibold text-xs text-[#222222]">{doc.title}</div>
-                        <div className="text-[11px] font-bold text-[#717171]">
+                        <div className="text-xs font-bold text-[#717171]">
                           {doc.documentCode || 'DOC-' + doc.id.slice(0, 8)}
                         </div>
                       </TableCell>
@@ -123,11 +123,9 @@ export function CatalogTab({
                       </TableCell>
                       <TableCell>
                         {doc.allowDownload ? (
-                          <span className="text-[11px] text-[#008A05] font-medium">
-                            Cho phép tải
-                          </span>
+                          <span className="text-xs text-[#008A05] font-medium">Cho phép tải</span>
                         ) : (
-                          <span className="text-[11px] text-[#E07912] font-medium">
+                          <span className="text-xs text-[#E07912] font-medium">
                             Chỉ xem trực tuyến
                           </span>
                         )}

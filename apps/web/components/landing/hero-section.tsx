@@ -32,7 +32,7 @@ export function HeroSection() {
     <section className="relative border-b border-[#ebebeb] bg-linear-to-b from-[#ffffff] via-[#ffffff] to-[#f7f7f7] py-8 sm:py-16 lg:py-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="max-w-3xl">
-          <div className="inline-flex items-center gap-2 text-[11px] sm:text-xs font-bold text-[#008489] mb-3 sm:mb-5 select-none animate-fade-in-down">
+          <div className="inline-flex items-center gap-2 text-xs sm:text-xs font-bold text-[#008489] mb-3 sm:mb-5 select-none animate-fade-in-down">
             <span className="dot dot-info animate-pulse-subtle" aria-hidden="true" />
             <span className="sm:hidden">BẢO MẬT ĐA TẦNG</span>
             <span className="hidden sm:inline">KIỂM SOÁT TRUY CẬP TÀI LIỆU MẬT TỔ CHỨC</span>
@@ -76,13 +76,13 @@ export function HeroSection() {
               key={metric.label}
               className={`rounded-[16px] sm:rounded-[24px] border border-[#ebebeb] bg-[#ffffff] p-2.5 sm:p-5 shadow-[0_2px_12px_rgba(0,0,0,0.02)] hover-card animate-fade-in-up ${metric.delay}`}
             >
-              <div className="text-[10px] sm:text-[11px] font-medium text-[#717171] uppercase tracking-wider truncate">
+              <div className="text-[13px] sm:text-xs font-medium text-[#717171] uppercase tracking-wider truncate">
                 {metric.label}
               </div>
               <div className="mt-0.5 sm:mt-1 text-xs sm:text-base font-bold text-[#222222] truncate">
                 {metric.value}
               </div>
-              <div className="hidden sm:block mt-0.5 text-[11px] text-[#717171] leading-tight line-clamp-2">
+              <div className="hidden sm:block mt-0.5 text-xs text-[#717171] leading-tight line-clamp-2">
                 {metric.subtext}
               </div>
             </div>

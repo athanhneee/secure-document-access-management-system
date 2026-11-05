@@ -15,7 +15,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
         <div>
           <label
             htmlFor="abac-rule-code"
-            className="block text-[11px] font-semibold text-[#717171] mb-1"
+            className="block text-xs font-semibold text-[#717171] mb-1"
           >
             Mã Chính sách (Rule Code):
           </label>
@@ -31,7 +31,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
         <div className="md:col-span-2">
           <label
             htmlFor="abac-rule-name"
-            className="block text-[11px] font-semibold text-[#717171] mb-1"
+            className="block text-xs font-semibold text-[#717171] mb-1"
           >
             Tên Chính sách:
           </label>
@@ -45,7 +45,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
         </div>
 
         <fieldset className="border-0 p-0 m-0 min-w-0">
-          <legend className="block text-[11px] font-semibold text-[#717171] mb-1">
+          <legend className="block text-xs font-semibold text-[#717171] mb-1">
             Hiệu lực Thực thi (Effect):
           </legend>
           <div className="flex gap-2">
@@ -81,7 +81,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
         <div>
           <label
             htmlFor="abac-target-action"
-            className="block text-[11px] font-semibold text-[#717171] mb-1"
+            className="block text-xs font-semibold text-[#717171] mb-1"
           >
             Hành động áp dụng (Target Action):
           </label>
@@ -105,7 +105,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
         <div>
           <label
             htmlFor="abac-rule-priority"
-            className="block text-[11px] font-semibold text-[#717171] mb-1"
+            className="block text-xs font-semibold text-[#717171] mb-1"
           >
             Mức độ Ưu tiên (Priority: 1 - 100):
           </label>
@@ -123,7 +123,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
         <div className="md:col-span-2">
           <label
             htmlFor="abac-rule-description"
-            className="block text-[11px] font-semibold text-[#717171] mb-1"
+            className="block text-xs font-semibold text-[#717171] mb-1"
           >
             Mô tả mục đích an ninh:
           </label>

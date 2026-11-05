@@ -18,14 +18,23 @@ export class VaultTransitKmsService implements KmsService {
   readonly transitMount: string;
   private readonly fallbackKek: Buffer;
   private readonly allowDevFallback: boolean;
+  private readonly isProduction: boolean;
 
   constructor(config: AppConfigService) {
+    this.isProduction = config.get('NODE_ENV') === 'production';
     this.vaultAddr = config.get('VAULT_ADDR') ?? 'http://127.0.0.1:8200';
-    this.vaultToken = config.get('VAULT_TOKEN') ?? 'dev-mock-vault-token';
+    // CONFLICT-RESOLVED: Gỡ bỏ token mặc định gắn cứng `'dev-mock-vault-token'` và chặn chạy cấu hình giả lập trong Production (HIGH-09).
+    this.vaultToken = config.get('VAULT_TOKEN') ?? '';
     this.keyName = config.get('VAULT_KEY_NAME') ?? 'sda-document-kek';
     this.transitMount = config.get('VAULT_TRANSIT_MOUNT') ?? 'transit';
-    this.allowDevFallback =
-      config.get('NODE_ENV') !== 'production' && this.vaultToken === 'dev-mock-vault-token';
+    this.allowDevFallback = !this.isProduction && this.vaultToken === 'dev-mock-vault-token';
+    if (
+      this.isProduction &&
+      config.get('KMS_PROVIDER') === 'vault' &&
+      (!this.vaultToken || this.vaultToken === 'dev-mock-vault-token')
+    ) {
+      throw new Error('VAULT_TOKEN must be configured with a non-mock token in production.');
+    }
 
     const masterKey = config.get('APP_ENCRYPTION_MASTER_KEY');
     this.fallbackKek = Buffer.from(
@@ -52,6 +61,9 @@ export class VaultTransitKmsService implements KmsService {
   async wrapKey(plaintextDek: Buffer): Promise<KmsWrapResult> {
     if (plaintextDek.length !== 32) {
       throw new Error('DEK must be exactly 32 bytes (256 bits).');
+    }
+    if (!this.vaultToken || (this.isProduction && this.vaultToken === 'dev-mock-vault-token')) {
+      throw new Error('Vault Transit KMS token is missing or invalid.');
     }
 
     try {
@@ -103,6 +115,9 @@ export class VaultTransitKmsService implements KmsService {
   async unwrapKey(wrappedDek: string, keyRef: string): Promise<Buffer> {
     if (!keyRef.startsWith('vault-kms:')) {
       throw new Error(`Unsupported KMS keyRef format: ${keyRef}`);
+    }
+    if (!this.vaultToken || (this.isProduction && this.vaultToken === 'dev-mock-vault-token')) {
+      throw new Error('Vault Transit KMS token is missing or invalid.');
     }
 
     const payload = Buffer.from(wrappedDek, 'base64url');

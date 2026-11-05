@@ -1,10 +1,12 @@
 /**
  * Module: HealthService — Tổng hợp trạng thái sẵn sàng đa thành phần hạ tầng (PostgreSQL, Redis, S3/MinIO) và ảnh chụp sức khỏe vận hành.
  */
+import * as path from 'node:path';
 import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import type { LivenessResponse, ReadinessResponse } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
+import { unlinkContainedExportArtifact } from '../reports/export-disk-cipher.helper.js';
 import {
   probeDatabaseEndpoint,
   probeRedisEndpoint,
@@ -158,15 +160,33 @@ export class HealthService {
   }
 
   /**
-   * Thuật toán: Thu dọn có giới hạn thời gian lưu trữ các ảnh chụp sức khỏe cũ và công việc xuất báo cáo hết hạn.
+   * Thuật toán: Thu dọn có giới hạn thời gian lưu trữ các ảnh chụp sức khỏe cũ và công việc xuất báo cáo hết hạn (bao gồm xóa tệp vật lý `.dat` trên đĩa).
    */
   async runRetentionCleanup(retentionDays = 90) {
     const db = this.getDb();
     if (!db) {
-      return { deletedSnapshots: 0, deletedExpiredExports: 0 };
+      return { deletedSnapshots: 0, deletedExpiredExports: 0, deletedExportFiles: 0 };
     }
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
     const now = new Date();
+    const exportBaseDir = path.resolve(
+      process.env['EXPORT_STORAGE_DIR']?.trim() || path.join(process.cwd(), '.local', 'exports'),
+    );
+    let deletedExportFiles = 0;
+
+    // CONFLICT-RESOLVED: Thu hồi tệp `.dat` vật lý trên đĩa trước khi xóa bản ghi `asyncExportJob` trong CSDL (HIGH-07).
+    if (typeof db.asyncExportJob.findMany === 'function') {
+      const expiredJobs = await db.asyncExportJob.findMany({
+        where: { expires_at: { lt: now } },
+        select: { id: true, file_path: true },
+      });
+      for (const job of expiredJobs) {
+        if (job.file_path && unlinkContainedExportArtifact(exportBaseDir, job.file_path)) {
+          deletedExportFiles++;
+        }
+      }
+    }
+
     const [snapshots, exports] = await Promise.all([
       db.systemHealthSnapshot.deleteMany({ where: { captured_at: { lt: cutoff } } }),
       db.asyncExportJob.deleteMany({ where: { expires_at: { lt: now } } }),
@@ -174,6 +194,7 @@ export class HealthService {
     return {
       deletedSnapshots: snapshots.count,
       deletedExpiredExports: exports.count,
+      deletedExportFiles,
     };
   }
 

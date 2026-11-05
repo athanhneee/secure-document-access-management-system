@@ -101,6 +101,7 @@ export async function queryDocumentDetailById(
   authorization: AuthorizationService,
   id: string,
   principal?: AuthPrincipal,
+  options?: { internalTrustedRead?: boolean },
 ): Promise<DocumentDetail> {
   const doc = await database.document.findUnique({
     where: { id },
@@ -122,7 +123,7 @@ export async function queryDocumentDetailById(
     });
   }
 
-  await assertDocumentReadAccess(database, authorization, doc, principal, true);
+  await assertDocumentReadAccess(database, authorization, doc, principal, true, options);
 
   const activeClassification = doc.classification_history?.[0];
   return {

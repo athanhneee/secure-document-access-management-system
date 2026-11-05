@@ -36,6 +36,7 @@ import {
 } from './incident-transitions.helper.js';
 import {
   applyIncidentScopeToWhere,
+  assertAlertInDepartmentScope,
   assertIncidentInDepartmentScope,
   resolveIncidentDepartmentScope,
 } from './security-operations-scope.helper.js';
@@ -66,8 +67,17 @@ export class IncidentsService {
     input: CreateIncidentReportInput,
     actor: AuthPrincipal,
   ): Promise<IncidentReportDetail> {
+    if (input.alertId) {
+      await assertAlertInDepartmentScope(
+        this.database,
+        this.authorization,
+        actor,
+        input.alertId,
+        'MANAGE',
+      );
+    }
     const id = await executeCreateIncidentReport(this.database, this.auditWriter, input, actor);
-    return this.getIncidentReportById(id);
+    return this.getIncidentReportById(id, actor);
   }
 
   /**
@@ -150,7 +160,7 @@ export class IncidentsService {
       input,
       actor,
     );
-    return this.getIncidentReportById(updatedId);
+    return this.getIncidentReportById(updatedId, actor);
   }
 
   async submitIncidentReport(
@@ -166,7 +176,7 @@ export class IncidentsService {
       input,
       actor,
     );
-    return this.getIncidentReportById(updatedId);
+    return this.getIncidentReportById(updatedId, actor);
   }
 
   async closeIncidentReport(
@@ -182,7 +192,7 @@ export class IncidentsService {
       input,
       actor,
     );
-    return this.getIncidentReportById(updatedId);
+    return this.getIncidentReportById(updatedId, actor);
   }
 
   async addIncidentAction(

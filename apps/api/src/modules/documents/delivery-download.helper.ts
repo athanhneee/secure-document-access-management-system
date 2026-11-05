@@ -92,6 +92,7 @@ export async function executeControlledDownload(params: {
   const decrypted = await encryption.decryptToTempFile(
     encryptedBytes,
     docVersion.encryption_key_ref,
+    document.id,
   );
 
   let fileBuffer: Buffer;

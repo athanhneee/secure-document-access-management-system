@@ -9,9 +9,14 @@
 
 # Local secrets, certificates, and runtime state
 .local
+**/.local
 .env
+**/.env
 .env.*
+**/.env.*
 !.env.example
+!**/.env.example
+**/*.dat
 secrets
 .secrets
 credentials

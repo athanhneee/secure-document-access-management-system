@@ -203,7 +203,49 @@ export async function verifyDatabaseInvariants(database) {
     option.rows[0].id,
   ]);
   await database.query(grantSql, [firstDocId, userId]);
-  checks.push('Bell-LaPadula clearance trigger and ABAC monotonic version bump triggers hold');
+
+  const adminRole = await database.query(
+    "INSERT INTO roles (code, name, is_system_role) VALUES ('SYSTEM_ADMIN', 'System Admin', TRUE) RETURNING id",
+  );
+  const readerRole = await database.query(
+    "INSERT INTO roles (code, name, is_system_role) VALUES ('DOCUMENT_READER', 'Document Reader', TRUE) RETURNING id",
+  );
+  const roleGrantSql = `INSERT INTO access_grants
+    (id, document_id, principal_type, principal_role_id, source, valid_from, valid_until, granted_by)
+    VALUES ($1, $2, 'ROLE', $3, 'DIRECT', now(), now() + interval '1 hour', $4)`;
+
+  await assert.rejects(
+    database.query(roleGrantSql, [
+      '30000000-0000-4000-8000-000000000002',
+      firstDocId,
+      adminRole.rows[0].id,
+      userId,
+    ]),
+    /Separation of duties violation/,
+  );
+  await assert.rejects(
+    database.query(roleGrantSql, [
+      '30000000-0000-4000-8000-000000000003',
+      firstDocId,
+      readerRole.rows[0].id,
+      userId,
+    ]),
+    /Clearance level is insufficient/,
+  );
+  await database.query(
+    'INSERT INTO user_roles (user_id, role_id, assigned_by) VALUES ($1, $2, $1)',
+    [userId, readerRole.rows[0].id],
+  );
+  await database.query(roleGrantSql, [
+    '30000000-0000-4000-8000-000000000004',
+    firstDocId,
+    readerRole.rows[0].id,
+    userId,
+  ]);
+
+  checks.push(
+    'Bell-LaPadula clearance trigger (USER + ROLE Lattice Meet + SoD) and ABAC monotonic version bump triggers hold',
+  );
 
   return checks;
 }

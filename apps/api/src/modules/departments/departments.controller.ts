@@ -11,12 +11,13 @@ import {
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import { PositiveBigIntSchema } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
-import { RequirePermission } from '../rbac/require-permission.js';
+import { RequireAnyPermission, RequirePermission } from '../rbac/require-permission.js';
 import { DepartmentsService } from './departments.service.js';
 
-const IdSchema = z.string().regex(/^\d+$/u).transform(BigInt);
+const IdSchema = PositiveBigIntSchema;
 const CreateSchema = z
   .object({
     code: z
@@ -26,14 +27,14 @@ const CreateSchema = z
       .max(30)
       .regex(/^[A-Z0-9_]+$/u),
     name: z.string().trim().min(1).max(150),
-    parentId: z.string().regex(/^\d+$/u).transform(BigInt).nullable().optional(),
+    parentId: PositiveBigIntSchema.nullable().optional(),
   })
   .strict();
 const UpdateSchema = z
   .object({
     expectedVersion: z.number().int().min(0),
     name: z.string().trim().min(1).max(150).optional(),
-    parentId: z.string().regex(/^\d+$/u).transform(BigInt).nullable().optional(),
+    parentId: PositiveBigIntSchema.nullable().optional(),
   })
   .strict();
 const VersionSchema = z.object({ expectedVersion: z.number().int().min(0) }).strict();
@@ -52,6 +53,14 @@ export class DepartmentsController {
   }
 
   @Get('lookup')
+  @RequireAnyPermission([
+    { resource: 'DOCUMENT', action: 'UPLOAD' },
+    { resource: 'DOCUMENT', action: 'DISCOVER' },
+    { resource: 'DEPARTMENT', action: 'MANAGE' },
+    { resource: 'USER', action: 'MANAGE' },
+    { resource: 'SYSTEM_REPORT', action: 'EXPORT' },
+    { resource: 'AUDIT_LOG', action: 'EXPORT' },
+  ])
   lookup(@Req() request: FastifyRequest) {
     this.principal(request);
     return this.departments.lookup();

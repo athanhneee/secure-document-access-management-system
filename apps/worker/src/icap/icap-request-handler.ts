@@ -53,9 +53,14 @@ async function notifyDlpViolation(
 export async function executeIcapDlpEvaluation(ctx: IcapRequestHandlerContext): Promise<void> {
   const { socket, request, state, config, metrics, onViolationCallback } = ctx;
 
+  const isIncompletePreviewPhase = Boolean(
+    request.isPreview && !request.isPreviewIof && !state.continuedAfterPreview,
+  );
   const scanResult = DlpEngine.scanPayload(request.body, {
     customKeywords: config.customKeywords,
     action: config.action,
+    contentEncoding: request.httpHeaders?.['content-encoding'],
+    allowTruncatedPreview: isIncompletePreviewPhase,
   });
 
   if (

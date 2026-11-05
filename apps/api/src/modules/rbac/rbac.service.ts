@@ -12,6 +12,7 @@ import {
 import { getDatabaseClient, withSerializableTransaction } from '@sda/database';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { AuthorizationService } from './authorization.service.js';
+import { isPrivilegedSeparationRoleOrCapability } from './permission-matrix.js';
 import { RbacAuditService } from './rbac-audit.service.js';
 import {
   actorHoldsActiveRole,
@@ -43,14 +44,34 @@ export class RbacService {
     return { data: roles.map((role) => presentRoleDto(role)) };
   }
 
-  async lookupRoles() {
+  async lookupRoles(principal?: AuthPrincipal) {
     const roles = await this.database.role.findMany({
       where: { is_active: true },
       orderBy: { code: 'asc' },
-      select: { id: true, code: true, name: true, description: true },
+      take: 200,
+      include: {
+        role_permissions: {
+          include: { permissions: { select: { code: true, resource_type: true, action: true } } },
+        },
+      },
     });
+    const canViewPrivilegedRoles = principal
+      ? (await this.authorization.hasPermission(principal, 'ROLE', 'MANAGE', {
+          requireGlobal: true,
+        })) ||
+        (await this.authorization.hasPermission(principal, 'USER', 'MANAGE', { anyScope: true }))
+      : false;
+    const filtered = canViewPrivilegedRoles
+      ? roles
+      : roles.filter(
+          (r) =>
+            !isPrivilegedSeparationRoleOrCapability(
+              r.code,
+              r.role_permissions.map((rp) => rp.permissions),
+            ),
+        );
     return {
-      data: roles.map((r) => ({
+      data: filtered.map((r) => ({
         id: r.id.toString(),
         code: r.code,
         name: r.name,
@@ -149,33 +170,38 @@ export class RbacService {
     expectedVersion: number,
     context: RequestContext,
   ) {
-    const role = await withSerializableTransaction(async (transaction) => {
-      const before = await transaction.role.findUnique({ where: { id } });
-      if (!before) throw new NotFoundException('Role not found.');
-      if (before.is_system_role) throw new ForbiddenException('System roles cannot be disabled.');
-      if (await actorHoldsActiveRole(this.database, principal.userId, id)) {
-        throw new ForbiddenException('Administrators cannot disable a role they hold.');
-      }
-      const changed = await transaction.role.updateMany({
-        where: { id, version: expectedVersion },
-        data: { is_active: false, updated_at: new Date(), version: { increment: 1 } },
-      });
-      if (changed.count !== 1) throw new ConflictException('Role was changed by another request.');
-      const after = await transaction.role.findUniqueOrThrow({ where: { id } });
-      await this.audit.record(
-        transaction,
-        {
-          action: 'ROLE_DISABLED',
-          objectType: 'ROLE',
-          objectId: id.toString(),
-          before: auditRoleSnapshot(before),
-          after: auditRoleSnapshot(after),
-        },
-        principal,
-        context,
-      );
-      return after;
-    });
+    const role = await withSerializableTransaction(
+      async (transaction) => {
+        const before = await transaction.role.findUnique({ where: { id } });
+        if (!before) throw new NotFoundException('Role not found.');
+        if (before.is_system_role) throw new ForbiddenException('System roles cannot be disabled.');
+        // CONFLICT-RESOLVED: Chạy `actorHoldsActiveRole` bên trong giao dịch `transaction` để giữ cô lập SERIALIZABLE chống tự nâng quyền/khóa vai trò (HIGH-02).
+        if (await actorHoldsActiveRole(transaction, principal.userId, id)) {
+          throw new ForbiddenException('Administrators cannot disable a role they hold.');
+        }
+        const changed = await transaction.role.updateMany({
+          where: { id, version: expectedVersion },
+          data: { is_active: false, updated_at: new Date(), version: { increment: 1 } },
+        });
+        if (changed.count !== 1)
+          throw new ConflictException('Role was changed by another request.');
+        const after = await transaction.role.findUniqueOrThrow({ where: { id } });
+        await this.audit.record(
+          transaction,
+          {
+            action: 'ROLE_DISABLED',
+            objectType: 'ROLE',
+            objectId: id.toString(),
+            before: auditRoleSnapshot(before),
+            after: auditRoleSnapshot(after),
+          },
+          principal,
+          context,
+        );
+        return after;
+      },
+      { client: this.database },
+    );
     this.authorization.invalidateAll();
     return this.getRole(role.id);
   }

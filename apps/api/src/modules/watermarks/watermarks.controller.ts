@@ -12,12 +12,12 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { WatermarkTokenParamSchema } from '@sda/contracts';
+import { PositiveBigIntSchema, WatermarkTokenParamSchema } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
 import { RequirePermission } from '../rbac/require-permission.js';
 import { WatermarksService, type WatermarkVerificationResult } from './watermarks.service.js';
 
-const WatermarkConfigIdSchema = z.string().regex(/^\d+$/u).transform(BigInt);
+const WatermarkConfigIdSchema = PositiveBigIntSchema;
 
 const UpdateWatermarkConfigSchema = z
   .object({

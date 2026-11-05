@@ -27,10 +27,15 @@ export interface DecryptedDocumentResult {
 
 // 4 bytes magic: 'SDAE' (Secure Document Access Encrypted)
 const MAGIC_BYTES = Buffer.from([0x53, 0x44, 0x41, 0x45]);
-const FORMAT_VERSION = 0x01; // 1 byte version
+const FORMAT_VERSION = 0x01; // 1 byte legacy envelope version
+const FORMAT_VERSION_AAD = 0x02; // 1 byte context-bound AAD envelope version
 const IV_LENGTH = 12; // 96 bits
 const TAG_LENGTH = 16; // 128 bits
 const HEADER_LENGTH = MAGIC_BYTES.length + 1 + IV_LENGTH + TAG_LENGTH; // 4 + 1 + 12 + 16 = 33 bytes
+
+function encodeDocumentAad(aadContext: string): Buffer {
+  return Buffer.from(`sda-doc-v2:${aadContext}`, 'utf8');
+}
 
 @Injectable()
 export class DocumentEncryptionService {
@@ -53,16 +58,21 @@ export class DocumentEncryptionService {
    *   - Thực thi `aes-256-gcm` thu bản mã và nhãn xác thực `tag` 16 byte, sau đó gọi KMS bọc DEK và ghi đè `dek.fill(0)` ngay lập tức.
    *   - Đóng gói định dạng nhị phân chuẩn 33 byte đầu: `[Magic 'SDAE' (4B) || Version 0x01 (1B) || IV (12B) || GCM Tag (16B) || Ciphertext]`.
    */
-  async encryptBuffer(plaintext: Buffer): Promise<EncryptedDocumentResult> {
+  async encryptBuffer(plaintext: Buffer, aadContext?: string): Promise<EncryptedDocumentResult> {
     const sha256Hash = crypto.createHash('sha256').update(plaintext).digest('hex');
     const fileSizeBytes = plaintext.length;
 
     // 1. Fresh random DEK (256-bit) and IV (96-bit)
     const dek = crypto.randomBytes(32);
     const iv = crypto.randomBytes(IV_LENGTH);
+    const hasAad = typeof aadContext === 'string' && aadContext.length > 0;
 
     // 2. Encrypt plaintext
     const cipher = crypto.createCipheriv('aes-256-gcm', dek, iv);
+    if (hasAad) {
+      // CONFLICT-RESOLVED: Gắn ngữ cảnh AAD (`documentId`) vào thẻ xác thực AES-256-GCM để chặn tấn công hoán đổi bản mã giữa các tài liệu (HIGH-09).
+      cipher.setAAD(encodeDocumentAad(aadContext));
+    }
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     const tag = cipher.getAuthTag();
 
@@ -75,7 +85,7 @@ export class DocumentEncryptionService {
     // 4. Construct encrypted binary format
     const header = Buffer.alloc(HEADER_LENGTH);
     MAGIC_BYTES.copy(header, 0);
-    header.writeUInt8(FORMAT_VERSION, 4);
+    header.writeUInt8(hasAad ? FORMAT_VERSION_AAD : FORMAT_VERSION, 4);
     iv.copy(header, 5);
     tag.copy(header, 5 + IV_LENGTH);
 
@@ -108,6 +118,7 @@ export class DocumentEncryptionService {
   async decryptToTempFile(
     encryptedData: Buffer,
     encryptionKeyRef: string,
+    expectedAadContext?: string,
   ): Promise<DecryptedDocumentResult> {
     if (encryptedData.length < HEADER_LENGTH) {
       throw new Error('Encrypted payload is too small to contain valid header.');
@@ -120,8 +131,16 @@ export class DocumentEncryptionService {
     }
 
     const version = encryptedData.readUInt8(4);
-    if (version !== FORMAT_VERSION) {
+    if (version !== FORMAT_VERSION && version !== FORMAT_VERSION_AAD) {
       throw new Error(`Unsupported encrypted document format version: ${version}`);
+    }
+    if (
+      version === FORMAT_VERSION_AAD &&
+      (!expectedAadContext || expectedAadContext.length === 0)
+    ) {
+      throw new Error(
+        'Document decryption failed: Authentication tag verification failed or missing AAD context.',
+      );
     }
 
     const iv = encryptedData.subarray(5, 5 + IV_LENGTH);
@@ -138,6 +157,9 @@ export class DocumentEncryptionService {
     const decipher = crypto.createDecipheriv('aes-256-gcm', dek, iv, {
       authTagLength: TAG_LENGTH,
     });
+    if (version === FORMAT_VERSION_AAD && expectedAadContext) {
+      decipher.setAAD(encodeDocumentAad(expectedAadContext));
+    }
     decipher.setAuthTag(tag);
 
     const cleanup = async () => {

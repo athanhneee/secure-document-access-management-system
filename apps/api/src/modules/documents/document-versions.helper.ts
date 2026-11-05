@@ -116,24 +116,22 @@ export async function queryDocumentVersions(
   documentId: string,
   principal?: AuthPrincipal,
 ): Promise<DocumentVersionItem[]> {
-  if (principal) {
-    const doc = await database.document.findUnique({
-      where: { id: documentId },
-      include: {
-        classification_history: {
-          where: { effective_to: null },
-          include: { classification_levels: true },
-        },
+  const doc = await database.document.findUnique({
+    where: { id: documentId },
+    include: {
+      classification_history: {
+        where: { effective_to: null },
+        include: { classification_levels: true },
       },
+    },
+  });
+  if (!doc) {
+    throw new NotFoundException({
+      errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+      message: 'Document not found.',
     });
-    if (!doc) {
-      throw new NotFoundException({
-        errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
-        message: 'Document not found.',
-      });
-    }
-    await assertDocumentReadAccess(database, authorization, doc, principal, false);
   }
+  await assertDocumentReadAccess(database, authorization, doc, principal, false);
 
   const versions = await database.documentVersion.findMany({
     where: { document_id: documentId },

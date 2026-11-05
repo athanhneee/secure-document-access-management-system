@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
@@ -44,6 +46,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
@@ -51,6 +54,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .github/gitleaks.toml
           GITLEAKS_ENABLE_SUMMARY: true
+          GITLEAKS_ENABLE_COMMENTS: false
 
   semgrep:
     name: Semgrep SAST Analysis
@@ -59,11 +63,14 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    # CONFLICT-RESOLVED: Ghim phiên bản kèm mã băm SHA-256 bất biến cho container Semgrep thay vì thẻ `:latest` có thể bị trôi chuỗi cung ứng (HIGH-12 / MED-07).
     container:
-      image: semgrep/semgrep:latest
+      image: semgrep/semgrep:1.119.0@sha256:f552de9f1ad268552aaea0487a9c1694eb08071b01ff3e51fbdb02420ce828a6
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Run Semgrep OWASP Top 10 Rules
         run: semgrep scan --config auto --error --sarif --output semgrep.sarif
@@ -84,6 +91,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -111,6 +120,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js & pnpm
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

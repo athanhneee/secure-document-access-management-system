@@ -15,13 +15,21 @@ export class HsmPkcs11KmsService implements KmsService {
   readonly slotIndex: number;
   readonly keyLabel: string;
   private readonly pin: string;
+  private readonly isProduction: boolean;
   private readonly hsmKek: Buffer;
   private readonly nistIv = Buffer.from('a6a6a6a6a6a6a6a6', 'hex');
 
   constructor(config: AppConfigService) {
+    this.isProduction = config.get('NODE_ENV') === 'production';
     this.slotIndex = config.get('HSM_SLOT_INDEX') ?? 0;
     this.keyLabel = config.get('HSM_KEY_LABEL') ?? 'SDA-MASTER-KEK-v1';
-    this.pin = config.get('HSM_PIN') ?? '123456';
+    // CONFLICT-RESOLVED: Loại bỏ hoàn toàn PIN mặc định gắn cứng `'123456'` và chặn bộ giả lập phần mềm PKCS#11 trong môi trường Production (HIGH-09).
+    this.pin = config.get('HSM_PIN') ?? '';
+    if (this.isProduction && config.get('KMS_PROVIDER') === 'hsm-pkcs11') {
+      throw new Error(
+        'Software HSM PKCS#11 emulator is prohibited in production; configure a hardware KMS provider.',
+      );
+    }
 
     const masterKey = config.get('APP_ENCRYPTION_MASTER_KEY');
     this.hsmKek = Buffer.from(
@@ -47,6 +55,9 @@ export class HsmPkcs11KmsService implements KmsService {
    * Hashes both configured slot PIN and caller-supplied PIN with SHA-256 and compares fixed 32-byte digests via `crypto.timingSafeEqual`.
    */
   private verifyPin(inputPin?: string): void {
+    if (this.isProduction) {
+      throw new Error('Software HSM PKCS#11 emulator cannot wrap or unwrap keys in production.');
+    }
     const pinToCheck = inputPin ?? this.pin;
     if (
       !pinToCheck ||

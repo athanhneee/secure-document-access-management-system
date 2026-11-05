@@ -13,8 +13,9 @@
  *   3. Dịch phải (`>>`) cả địa chỉ lẫn mạng đi `bits - prefix` bit để so sánh phần tiền tố mạng.
  */
 export function cidrMatch(ip: string, cidr: string): boolean {
-  const [networkText, prefixText, extra] = cidr.split('/');
+  const [networkText, prefixText, extra] = cidr.trim().split('/');
   if (!networkText || extra !== undefined) return false;
+  if (prefixText !== undefined && !/^\d{1,3}$/u.test(prefixText)) return false;
   let address = parseAddress(ip);
   const network = parseAddress(networkText);
   if (!address || !network) return false;
@@ -28,6 +29,22 @@ export function cidrMatch(ip: string, cidr: string): boolean {
   if (!Number.isInteger(prefix) || prefix < 0 || prefix > address.bits) return false;
   const shift = BigInt(address.bits - prefix);
   return address.value >> shift === network.value >> shift;
+}
+
+/**
+ * Algorithm / Thuật toán: Xác thực cú pháp nghiêm ngặt chuỗi mạng con IPv4/IPv6 CIDR khi biên dịch chính sách ABAC (HIGH-11).
+ */
+export function isValidCidr(cidr: string): boolean {
+  const trimmed = cidr.trim();
+  if (trimmed.length === 0) return false;
+  const [networkText, prefixText, extra] = trimmed.split('/');
+  if (!networkText || extra !== undefined) return false;
+  const network = parseAddress(networkText);
+  if (!network) return false;
+  if (prefixText === undefined) return true;
+  if (!/^\d{1,3}$/u.test(prefixText)) return false;
+  const prefix = Number(prefixText);
+  return Number.isInteger(prefix) && prefix >= 0 && prefix <= network.bits;
 }
 
 /**

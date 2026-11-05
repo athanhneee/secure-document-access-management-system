@@ -47,6 +47,22 @@ else
 end
 `;
 
+const REDACTED_MARKER = '[REDACTED]';
+
+/**
+ * Algorithm / Thuật toán: Ẩn thông tin xác thực trong chuỗi kết nối Redis trước khi ghi nhật ký chẩn đoán (`redactRedisEndpointUrl`).
+ */
+export function redactRedisEndpointUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.username) parsed.username = REDACTED_MARKER;
+    if (parsed.password) parsed.password = REDACTED_MARKER;
+    return parsed.toString();
+  } catch {
+    return rawUrl.replace(/(:\/\/[^@/?#]*)@/gu, `://${REDACTED_MARKER}@`);
+  }
+}
+
 /**
  * Algorithm / Thuật toán: Khởi tạo danh sách kết nối Redis độc lập cho cụm đồng thuận Redlock.
  */
@@ -60,6 +76,7 @@ export function createRedlockClients(config: AppConfigService, logger: Logger): 
     : [config.get('REDIS_URL')];
 
   return urls.map((url) => {
+    const safeUrl = redactRedisEndpointUrl(url);
     const client = new Redis(url, {
       lazyConnect: true,
       enableOfflineQueue: false,
@@ -67,7 +84,7 @@ export function createRedlockClients(config: AppConfigService, logger: Logger): 
       connectTimeout: 1_000,
     });
     client.on('error', (err) => {
-      logger.debug(`Redis node (${url}) error: ${err.message}`);
+      logger.debug(`Redis node (${safeUrl}) error: ${err.message}`);
     });
     return client;
   });

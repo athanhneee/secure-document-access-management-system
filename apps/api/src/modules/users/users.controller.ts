@@ -14,7 +14,11 @@ import { randomUUID } from 'node:crypto';
 import { PositiveBigIntSchema } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
-import { RequirePermission } from '../rbac/require-permission.js';
+import {
+  AllowAuthenticatedSelf,
+  RequireAnyPermission,
+  RequirePermission,
+} from '../rbac/require-permission.js';
 import { UsersService } from './users.service.js';
 
 // CONFLICT-RESOLVED: Chuẩn hóa định danh số nguyên 64-bit dương có trần PostgreSQL BIGINT (HIGH-12)
@@ -53,11 +57,17 @@ export class UsersController {
   ) {}
 
   @Get('me')
+  @AllowAuthenticatedSelf()
   me(@Req() request: FastifyRequest) {
     return this.users.currentUser(this.principal(request));
   }
 
   @Get('lookup')
+  @RequireAnyPermission([
+    { resource: 'ACCESS_GRANT', action: 'CREATE' },
+    { resource: 'DOCUMENT', action: 'MANAGE' },
+    { resource: 'USER', action: 'MANAGE' },
+  ])
   lookup(@Req() request: FastifyRequest) {
     return this.users.lookup(this.principal(request));
   }

@@ -171,7 +171,7 @@ export class SecurityAlertsService {
       });
     }
 
-    return this.getAlertById(updated.id);
+    return this.getAlertById(updated.id, actor);
   }
 
   /**
@@ -216,7 +216,7 @@ export class SecurityAlertsService {
       });
     }
 
-    return this.getAlertById(updated.id);
+    return this.getAlertById(updated.id, actor);
   }
 
   /**
@@ -248,7 +248,7 @@ export class SecurityAlertsService {
       });
     }
 
-    return this.getAlertById(id);
+    return this.getAlertById(id, actor);
   }
 
   private async requireAlert(id: string) {

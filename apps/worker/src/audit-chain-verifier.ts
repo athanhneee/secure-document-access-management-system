@@ -90,7 +90,7 @@ export function verifyAuditChainEntry(
         message: `First entry in partition ${partition} must have null previous_hash`,
       });
     }
-  } else if (previousHash !== null && !safeTimingEqual(log.previous_hash, previousHash)) {
+  } else if (previousHash === null || !safeTimingEqual(log.previous_hash, previousHash)) {
     violations.push({
       code: 'AUDIT_CHAIN_BROKEN',
       sequence: log.chain_sequence,

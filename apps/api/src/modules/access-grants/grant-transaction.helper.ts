@@ -214,12 +214,25 @@ async function markLinkedAccessRequestApproved(
   approvedUntil: Date,
   now: Date,
 ): Promise<void> {
-  // CONFLICT-RESOLVED: Unified duplicate linked accessRequest + accessRequestDecision approval persistence across create and extend branches
+  // CONFLICT-RESOLVED: Cưỡng chế CAS nguyên tử `status = 'PENDING'` khi chuyển `accessRequestId` sang `APPROVED` để tự động rollback grant nếu yêu cầu đã bị hủy đồng thời (HIGH-11).
   if (!accessRequestId) return;
-  await tx.accessRequest.update({
-    where: { id: accessRequestId },
-    data: { status: 'APPROVED', updated_at: now },
-  });
+  if (typeof tx.accessRequest.updateMany === 'function') {
+    const updated = await tx.accessRequest.updateMany({
+      where: { id: accessRequestId, status: 'PENDING' },
+      data: { status: 'APPROVED', updated_at: now, version: { increment: 1 } },
+    });
+    if (updated.count === 0) {
+      throw new ConflictException({
+        errorCode: AppErrorCode.ACCESS_REQUEST_ALREADY_DECIDED,
+        message: 'Linked access request is no longer in PENDING status.',
+      });
+    }
+  } else {
+    await tx.accessRequest.update({
+      where: { id: accessRequestId },
+      data: { status: 'APPROVED', updated_at: now, version: { increment: 1 } },
+    });
+  }
   await tx.accessRequestDecision.create({
     data: {
       access_request_id: accessRequestId,

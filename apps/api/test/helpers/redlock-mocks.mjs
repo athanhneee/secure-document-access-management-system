@@ -78,7 +78,7 @@ export function createMockConfig(overrides = {}) {
     REDLOCK_RETRY_DELAY_MS: 10,
     REDLOCK_RETRY_JITTER_MS: 5,
     REDLOCK_DEFAULT_TTL_MS: 2000,
-    REDLOCK_FAIL_CLOSED: false,
+    REDLOCK_FAIL_CLOSED: true,
     ...overrides,
   };
   return {

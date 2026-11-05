@@ -67,14 +67,31 @@ export async function executeAccessRequestDecision(
 
   if (input.decision === 'REJECTED') {
     await database.$transaction(async (tx) => {
-      await tx.accessRequest.update({
-        where: { id },
-        data: {
-          status: 'REJECTED',
-          updated_at: now,
-          version: { increment: 1 },
-        },
-      });
+      if (typeof tx.accessRequest.updateMany === 'function') {
+        const updated = await tx.accessRequest.updateMany({
+          where: { id, status: 'PENDING' },
+          data: {
+            status: 'REJECTED',
+            updated_at: now,
+            version: { increment: 1 },
+          },
+        });
+        if (updated.count === 0) {
+          throw new BadRequestException({
+            errorCode: AppErrorCode.ACCESS_REQUEST_ALREADY_DECIDED,
+            message: 'Access request is no longer in PENDING status.',
+          });
+        }
+      } else {
+        await tx.accessRequest.update({
+          where: { id },
+          data: {
+            status: 'REJECTED',
+            updated_at: now,
+            version: { increment: 1 },
+          },
+        });
+      }
 
       await tx.accessRequestDecision.create({
         data: {

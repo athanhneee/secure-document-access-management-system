@@ -23,7 +23,7 @@ export interface SessionTokensInput {
 export type RotationResult =
   | { kind: 'rotated'; user: AuthUser; sessionId: string; mfa: boolean }
   | { kind: 'reuse'; userId: bigint; sessionId: string }
-  | { kind: 'invalid' | 'disabled' };
+  | { kind: 'invalid' | 'disabled' | 'locked' };
 
 /**
  * Algorithm / Thuật toán: Thu hồi lan truyền toàn bộ cây họ Refresh Token và phiên xác thực cha (Cascade Token-Family Revocation).
@@ -158,10 +158,21 @@ export async function rotateSessionRefreshToken(
       include: { auth_sessions: { include: { users: true } } },
     });
     if (!current) return { kind: 'invalid' };
+    const now = new Date();
     const session = current.auth_sessions;
     if (session.users.status === 'DISABLED') {
       await revokeTokenFamily(transaction, current.token_family_id, session.id, 'ACCOUNT_DISABLED');
       return { kind: 'disabled' };
+    }
+    // CONFLICT-RESOLVED: Chặn cấp mới Refresh Token khi tài khoản đang LOCKED, chưa kích hoạt hoặc còn trong thời hạn locked_until, đồng thời thu hồi họ token ngay lập tức (MED-01).
+    if (
+      session.users.status !== 'ACTIVE' ||
+      (session.users.locked_until !== null &&
+        session.users.locked_until !== undefined &&
+        session.users.locked_until > now)
+    ) {
+      await revokeTokenFamily(transaction, current.token_family_id, session.id, 'ACCOUNT_LOCKED');
+      return { kind: 'locked' };
     }
     if (current.used_at || current.revoked_at) {
       await revokeTokenFamily(transaction, current.token_family_id, session.id, 'REFRESH_REUSE');
@@ -177,16 +188,12 @@ export async function rotateSessionRefreshToken(
       });
       return { kind: 'reuse', userId: session.user_id, sessionId: session.id };
     }
-    if (
-      current.expires_at <= new Date() ||
-      session.expires_at <= new Date() ||
-      session.status !== 'ACTIVE'
-    ) {
+    if (current.expires_at <= now || session.expires_at <= now || session.status !== 'ACTIVE') {
       return { kind: 'invalid' };
     }
     const claimed = await transaction.refreshToken.updateMany({
       where: { id: current.id, used_at: null, revoked_at: null },
-      data: { used_at: new Date(), revoked_at: new Date(), revocation_reason: 'ROTATED' },
+      data: { used_at: now, revoked_at: now, revocation_reason: 'ROTATED' },
     });
     if (claimed.count !== 1) {
       await revokeTokenFamily(transaction, current.token_family_id, session.id, 'REFRESH_REUSE');
@@ -214,12 +221,14 @@ export async function rotateSessionRefreshToken(
     });
     await transaction.authSession.update({
       where: { id: session.id },
-      data: { last_seen_at: new Date() },
+      data: { last_seen_at: now },
     });
     const user = await findUserById(session.user_id);
-    return user
-      ? { kind: 'rotated', user, sessionId: session.id, mfa: session.mfa_verified_at !== null }
-      : { kind: 'invalid' };
+    if (!user || user.status !== 'ACTIVE' || (user.lockedUntil && user.lockedUntil > now)) {
+      await revokeTokenFamily(transaction, current.token_family_id, session.id, 'ACCOUNT_LOCKED');
+      return { kind: 'locked' };
+    }
+    return { kind: 'rotated', user, sessionId: session.id, mfa: session.mfa_verified_at !== null };
   });
 }
 

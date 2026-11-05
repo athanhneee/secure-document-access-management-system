@@ -21,10 +21,19 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { CreateExportJobSchema } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
+import { RequireAnyPermission } from '../rbac/require-permission.js';
 import { resolveExportAuthorizationScope } from './export-filter-scope.helper.js';
 import { ExportJobService } from './export-job.service.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EXPORT_CONTROLLER_PERMISSIONS = [
+  { resource: 'AUDIT_LOG', action: 'EXPORT' },
+  { resource: 'SECURITY_ALERT', action: 'MANAGE' },
+  { resource: 'SECURITY_ALERT', action: 'VIEW' },
+  { resource: 'INCIDENT_REPORT', action: 'MANAGE' },
+  { resource: 'SYSTEM_REPORT', action: 'EXPORT' },
+  { resource: 'SYSTEM_HEALTH', action: 'VIEW', global: true },
+] as const;
 
 /**
  * Thuật toán: Kiểm tra định dạng UUID hợp lệ cho tham số đường dẫn `jobId`.
@@ -38,6 +47,7 @@ function assertJobUuid(jobId: string): string {
 
 @ApiTags('reports')
 @ApiBearerAuth()
+@RequireAnyPermission(EXPORT_CONTROLLER_PERMISSIONS)
 @Controller('reports')
 export class ReportsController {
   constructor(

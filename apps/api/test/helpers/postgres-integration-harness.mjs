@@ -11,6 +11,19 @@ import pg from 'pg';
  * Cơ chế hoạt động:
  *   - Tách từng dòng và cắt tại dấu `=` đầu tiên (`indexOf('=')`) để bảo toàn các chuỗi kết nối chứa nhiều dấu `=` trong tham số truy vấn.
  */
+const ALLOWED_EPHEMERAL_DB_HOSTS = new Set([
+  '127.0.0.1',
+  'localhost',
+  '::1',
+  '[::1]',
+  'postgres',
+  'host.docker.internal',
+]);
+
+function isSafeLocalDatabaseHost(hostname) {
+  return ALLOWED_EPHEMERAL_DB_HOSTS.has(String(hostname ?? '').toLowerCase());
+}
+
 export function loadLocalDevEnv() {
   const devEnvUrl = new URL('../../../../.local/dev.env', import.meta.url);
   if (existsSync(devEnvUrl)) {
@@ -57,6 +70,13 @@ export function createEphemeralDatabaseHarness(prefix, { coerceBigIntId = false 
   let usingPglite = false;
 
   async function isDatabaseReachable() {
+    // CONFLICT-RESOLVED: Chặn tuyệt đối lệnh CREATE/DROP DATABASE trên máy chủ đám mây từ xa (Supabase/RDS) nếu DATABASE_URL vô tình nạp từ .env (CRIT-06).
+    if (
+      !isSafeLocalDatabaseHost(sourceUrl.hostname) &&
+      process.env.ALLOW_REMOTE_TEST_DB_DROP !== 'true'
+    ) {
+      return false;
+    }
     const client = new pg.Client({
       connectionString: adminUrl.toString(),
       connectionTimeoutMillis: 1000,

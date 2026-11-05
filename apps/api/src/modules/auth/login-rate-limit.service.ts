@@ -93,19 +93,27 @@ export class LoginRateLimitService {
   }
 
   /**
-   * Thuật toán: Dọn dẹp bộ nhớ hai tầng theo ngưỡng dung lượng (Two-Tier TTL + FIFO Bounded-Capacity Eviction).
-   * Cơ chế hoạt động: Khi số mục đạt >= 10.000, quét loại bỏ các khóa quá 30 phút; nếu vẫn chạm trần cứng 10.000 mục
-   * (tấn công ngập lụt trong 30 phút), trục xuất các khóa cũ nhất theo thứ tự FIFO để bảo vệ tuyệt đối trần RAM.
+   * Thuật toán: Dọn dẹp bộ nhớ ưu tiên giữ nguyên các khóa đang bị khóa phạt (`blockedUntil > now`) chống làm tràn bộ nhớ đệm (HIGH-10).
    */
   private prune(now: number): void {
     if (this.states.size < 10_000) return;
     for (const [key, state] of this.states) {
       if (now - state.lastFailure > 30 * 60_000) this.states.delete(key);
     }
-    while (this.states.size >= 10_000) {
-      const oldestKey = this.states.keys().next().value;
-      if (!oldestKey) break;
-      this.states.delete(oldestKey);
+    if (this.states.size < 10_000) return;
+
+    // CONFLICT-RESOLVED: Ưu tiên thu hồi các khóa chưa chạm ngưỡng phạt (`failures < 3` và `blockedUntil <= now`), tuyệt đối không xóa tài khoản đang bị khóa phạt bởi 10.000 khóa giả (HIGH-10).
+    for (const [key, state] of this.states) {
+      if (this.states.size < 10_000) break;
+      if (state.blockedUntil <= now && state.failures < 3) {
+        this.states.delete(key);
+      }
+    }
+    for (const [key, state] of this.states) {
+      if (this.states.size < 10_000) break;
+      if (state.blockedUntil <= now) {
+        this.states.delete(key);
+      }
     }
   }
 }

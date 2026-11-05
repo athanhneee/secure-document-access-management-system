@@ -102,12 +102,13 @@ export async function verifyPartitionAnchors(
       .digest('hex');
 
     if (!safeTimingEqualString(anchor.signature, expectedSignature)) {
+      // CONFLICT-RESOLVED: Ẩn chữ ký điểm neo hợp lệ khỏi trường expected để ngăn lộ Signing Oracle qua bảng security_alerts và API (CRIT-02).
       violations.push({
         code: AppErrorCode.AUDIT_ANCHOR_MISMATCH,
         partition,
         sequence: anchor.anchor_sequence,
-        expected: expectedSignature,
-        actual: anchor.signature,
+        expected: '[REDACTED_HMAC]',
+        actual: '[INVALID_ANCHOR_SIGNATURE]',
         message: `Anchor signature verification failed for sequence ${anchor.anchor_sequence}`,
       });
     }

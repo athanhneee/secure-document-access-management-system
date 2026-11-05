@@ -47,7 +47,7 @@ test('DocumentDeliveryController — downloadWithTicket is marked @PublicEndpoin
   assert.equal(isPublic, true, 'downloadWithTicket must have @PublicEndpoint() metadata');
 });
 
-test('DocumentsController — checkRetention enforces CSRF protection', async () => {
+test('DocumentsController — checkRetention enforces CSRF protection and authentication', async () => {
   let csrfChecked = false;
   const mockCsrf = {
     assertRequest: () => {
@@ -60,8 +60,16 @@ test('DocumentsController — checkRetention enforces CSRF protection', async ()
 
   const controller = new DocumentsController(mockDocsService, null, mockCsrf);
 
-  await controller.checkRetention({});
+  await assert.rejects(
+    () => controller.checkRetention({ auth: null }),
+    (err) => err instanceof UnauthorizedException,
+  );
   assert.equal(csrfChecked, true, 'checkRetention must assert CSRF token');
+
+  const res = await controller.checkRetention({
+    auth: { userId: 1n, username: 'owner', roles: ['DOCUMENT_OWNER'], mfa: true },
+  });
+  assert.deepEqual(res, { checked: 10 });
 });
 
 test('SecurityOperationsController — mutation endpoints enforce CSRF and throw UnauthorizedException when unauthenticated', async () => {

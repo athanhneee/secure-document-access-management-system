@@ -162,7 +162,10 @@ export class DocumentIngestionService {
     let encryptedResult: { encryptedBuffer: Buffer; dekReference: string };
     const documentStorageKey = `documents/${targetDocId}/${randomUUID()}.enc`;
     try {
-      encryptedResult = await this.encryption.encryptBuffer(await fsp.readFile(spoolFilePath));
+      encryptedResult = await this.encryption.encryptBuffer(
+        await fsp.readFile(spoolFilePath),
+        targetDocId,
+      );
       await this.storage.putObject(
         this.storage.documentsBucket,
         documentStorageKey,

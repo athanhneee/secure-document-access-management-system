@@ -68,6 +68,7 @@ export class DepartmentsService {
     const departments = await this.database.department.findMany({
       where: { is_active: true },
       orderBy: [{ code: 'asc' }, { id: 'asc' }],
+      take: 500,
       select: { id: true, code: true, name: true },
     });
     return {

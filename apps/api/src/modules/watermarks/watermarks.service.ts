@@ -11,6 +11,7 @@ import {
 import { getDatabaseClient } from '@sda/database';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
+import { AuthorizationService } from '../rbac/authorization.service.js';
 import {
   traceWatermarkToken,
   type WatermarkVerificationResult,
@@ -28,6 +29,7 @@ export class WatermarksService {
   constructor(
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -115,6 +117,18 @@ export class WatermarksService {
     ) {
       throw new BadRequestException('Watermark opacity must be between 10% and 90%.');
     }
+    if (input.colorHex !== undefined) {
+      const hex = input.colorHex.slice(1);
+      const r = Number.parseInt(hex.slice(0, 2), 16) / 255;
+      const g = Number.parseInt(hex.slice(2, 4), 16) / 255;
+      const b = Number.parseInt(hex.slice(4, 6), 16) / 255;
+      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      if (luminance > 0.88) {
+        throw new BadRequestException(
+          'Watermark color cannot be near-white; sufficient contrast on light pages is required.',
+        );
+      }
+    }
 
     const existing = await this.database.watermarkConfig.findUnique({
       where: { id },
@@ -187,6 +201,13 @@ export class WatermarksService {
     token: string,
     actor?: AuthPrincipal,
   ): Promise<WatermarkVerificationResult> {
-    return traceWatermarkToken(this.database, this.auditWriter, this.logger, token, actor);
+    return traceWatermarkToken(
+      this.database,
+      this.auditWriter,
+      this.logger,
+      token,
+      actor,
+      this.authorization,
+    );
   }
 }

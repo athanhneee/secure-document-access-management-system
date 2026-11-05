@@ -55,7 +55,7 @@ test('Document Lifecycle: SCD Type 2 classification history preserves past rows 
     context,
   );
 
-  const history = await service.getClassificationHistory(docId);
+  const history = await service.getClassificationHistory(docId, principal);
   assert.equal(history.length, 3, 'All 3 classification rows are preserved');
 
   const activeRows = history.filter((h) => h.effectiveTo === null);

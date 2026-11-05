@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { DefaultDenyGuard } from './default-deny.guard.js';
 import { AuthGuard } from './modules/auth/auth.guard.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { AppConfigModule } from './config/config.module.js';
@@ -44,6 +45,8 @@ import { ConcurrencyModule } from './modules/concurrency/concurrency.module.js';
     SystemHealthModule,
   ],
   providers: [
+    // CONFLICT-RESOLVED: Đăng ký tường minh DefaultDenyGuard vào DI container để AuthGuard sử dụng trực tiếp thay vì mã chết (HIGH-03).
+    DefaultDenyGuard,
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: AuthorizationGuard },
   ],

@@ -12,6 +12,7 @@ import type {
   PolicyValidationIssue,
   TimeWindow,
 } from './abac.types.js';
+import { isValidCidr } from './cidr.js';
 import { parseStrictIsoTimestamp } from './policy-condition-matcher.js';
 import { compareExpectedValues, hasContradiction } from './policy-contradiction-solver.js';
 
@@ -157,11 +158,12 @@ function validExpected(condition: PolicyCondition, type: AttributeDescriptor['ty
         compareExpectedValues(value[0]!, value[1]!) <= 0
       );
     case 'CIDR_MATCH':
+      // CONFLICT-RESOLVED: Kiểm tra cú pháp dải mạng IPv4/IPv6 CIDR ngay lúc biên dịch để ngăn luật `DENY` sai cú pháp bị vô hiệu hóa âm thầm Fail-Open (HIGH-11).
       return (
-        typeof value === 'string' ||
+        (typeof value === 'string' && isValidCidr(value)) ||
         (Array.isArray(value) &&
           value.length > 0 &&
-          value.every((item) => typeof item === 'string'))
+          value.every((item) => typeof item === 'string' && isValidCidr(item)))
       );
     case 'TIME_BETWEEN':
       return isTimeWindow(value);

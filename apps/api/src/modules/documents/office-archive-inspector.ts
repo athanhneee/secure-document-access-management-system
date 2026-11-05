@@ -9,6 +9,7 @@ import { AppErrorCode } from '@sda/contracts';
 import {
   createXmlStreamingSecurityScanner,
   inspectOoxmlEntryPathSecurity,
+  normalizeArchiveEntryPath,
 } from './zip-xml-security.helper.js';
 
 const MAX_CONVERSION_ENTRIES = 10_000;
@@ -81,16 +82,17 @@ export async function inspectOfficeArchiveSecurity(officeBuffer: Buffer): Promis
           );
         }
 
-        const lower = entry.fileName.toLowerCase();
+        // CONFLICT-RESOLVED: Chuẩn hóa \ thành / và cưỡng chế kiểm tra Zip-Slip (..) ngay trong inspectOfficeArchiveSecurity trước khi chuyển đổi Gotenberg (CRIT-05).
+        const lower = normalizeArchiveEntryPath(entry.fileName);
         const pathIssue = inspectOoxmlEntryPathSecurity(
-          lower,
+          entry.fileName,
           'Office document contains prohibited executable VBA macros.',
         );
         if (pathIssue) {
           return finishReject(pathIssue);
         }
 
-        if (entry.fileName.endsWith('/')) {
+        if (lower.endsWith('/')) {
           zipfile.readEntry();
           return;
         }

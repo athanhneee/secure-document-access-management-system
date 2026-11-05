@@ -12,6 +12,7 @@ import type { AuthorizationService } from '../rbac/authorization.service.js';
 import {
   buildGrantResourceAttributes,
   buildGrantSubjectAttributes,
+  buildRoleGrantSubjectAttributes,
   fetchUserClearanceRank,
   isTrustedClientNetwork,
 } from './grant-pip.helper.js';
@@ -128,11 +129,33 @@ export async function validateCreateGrantPreconditions(
     });
   }
 
-  const subjectUserId =
-    input.principalType === 'USER' && input.principalUserId
-      ? input.principalUserId
-      : principal.userId;
-  const subjectAttributes = await buildGrantSubjectAttributes(database, subjectUserId, now);
+  // CONFLICT-RESOLVED: Chấm điểm ABAC và kiểm tra độ mật Bell-LaPadula theo tập người nhận của vai trò đích thay vì mượn độ mật của người cấp khi `principalType === 'ROLE'` (HIGH-11).
+  let subjectAttributes: {
+    clearanceRank: number | null;
+    departmentId: string | null;
+    employmentStatus: string | null;
+    projects: string[];
+  };
+  if (input.principalType === 'USER' && input.principalUserId) {
+    subjectAttributes = await buildGrantSubjectAttributes(database, input.principalUserId, now);
+  } else if (input.principalType === 'ROLE' && input.principalRoleId) {
+    const roleSubject = await buildRoleGrantSubjectAttributes(database, input.principalRoleId, now);
+    if ((roleSubject.clearanceRank ?? 0) < documentRank) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.GRANT_CLEARANCE_INSUFFICIENT,
+        message:
+          'Target role holders do not all satisfy the clearance level required for this document classification.',
+      });
+    }
+    subjectAttributes = roleSubject;
+  } else {
+    subjectAttributes = {
+      clearanceRank: 0,
+      departmentId: null,
+      employmentStatus: null,
+      projects: [],
+    };
+  }
   const resourceAttributes = buildGrantResourceAttributes(document, currentClassification);
   const trustedNetwork = isTrustedClientNetwork(config, context.ip);
 

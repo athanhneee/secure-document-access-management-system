@@ -43,7 +43,8 @@ services:
       AUTH_SIGNING_PUBLIC_KEYS_JSON: ${AUTH_SIGNING_PUBLIC_KEYS_JSON:?Ed25519 public keys required}
       STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-minio}
       STORAGE_PORT: ${STORAGE_PORT:-9000}
-      STORAGE_USE_SSL: ${STORAGE_USE_SSL:-false}
+      # CONFLICT-RESOLVED: Bật mã hóa TLS mặc định (STORAGE_USE_SSL=true) cho kết nối Object Storage trên môi trường Production (HIGH-12).
+      STORAGE_USE_SSL: ${STORAGE_USE_SSL:-true}
       STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?Object storage access key required}
       STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?Object storage secret key required}
       CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
@@ -79,7 +80,9 @@ services:
       dockerfile: apps/worker/Dockerfile
     image: secure-document-access-worker:1.0.0
     user: '10001:10001'
+    # CONFLICT-RESOLVED: Gắn thêm edge_loopback cho worker để duy trì kết nối tới Supabase/Redis/R2/SMTP bên ngoài nhưng không mở bất kỳ host port nào (HIGH-12).
     networks:
+      - edge_loopback
       - backend_isolated
     tmpfs:
       - /tmp:size=64m,noexec,nosuid,nodev
@@ -95,23 +98,30 @@ services:
       AUTH_AUDIT_HMAC_KEY: ${AUTH_AUDIT_HMAC_KEY:?Auth audit HMAC key required}
       STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-minio}
       STORAGE_PORT: ${STORAGE_PORT:-9000}
-      STORAGE_USE_SSL: ${STORAGE_USE_SSL:-false}
+      # CONFLICT-RESOLVED: Bật mã hóa TLS mặc định (STORAGE_USE_SSL=true) cho kết nối Object Storage trên môi trường Production (HIGH-12).
+      STORAGE_USE_SSL: ${STORAGE_USE_SSL:-true}
       STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?Object storage access key required}
       STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?Object storage secret key required}
       EXPORT_STORAGE_DIR: /var/lib/sda/exports
       SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-1025}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
       SMTP_FROM: ${SMTP_FROM:-no-reply@sda.internal}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
-      ICAP_SERVER_HOST: '0.0.0.0'
+      ICAP_SERVER_HOST: ${ICAP_SERVER_HOST:-127.0.0.1}
       ICAP_SERVER_PORT: '1344'
       ICAP_DLP_ACTION: ${ICAP_DLP_ACTION:-BLOCK}
     cpus: 1.0
     mem_limit: 512m
     mem_reservation: 128m
     pids_limit: 128
+    healthcheck:
+      test: ['CMD', 'node', '-e', 'process.exit(0)']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   web:
     <<: *prod-defaults

@@ -105,9 +105,10 @@ export function registerFastifyHooks(fastify: FastifyInstance): void {
   // Thuật toán: Đo độ trễ yêu cầu, chuẩn hóa nhãn Prometheus và xuất nhật ký cấu trúc đã che dấu
   fastify.addHook('onResponse', async (request, reply) => {
     const rawUrl = request.url;
+    const [rawPath = '/'] = rawUrl.split('?', 1);
     const safeUrl = sanitizeLoggedUrl(rawUrl);
-    const metricRoute =
-      request.routeOptions?.url || (reply.statusCode === 404 ? '/unmatched' : rawUrl);
+    // CONFLICT-RESOLVED: Chuẩn hóa mọi tuyến đường không khớp về '/unmatched' trên mọi mã trạng thái để chống bùng nổ nhãn Prometheus (HIGH-04).
+    const metricRoute = request.routeOptions?.url || '/unmatched';
     const durationMs = request.startTime ? performance.now() - request.startTime : 0;
     const durationSeconds = durationMs / 1000;
 
@@ -119,7 +120,13 @@ export function registerFastifyHooks(fastify: FastifyInstance): void {
       durationSeconds,
     );
 
-    const isSilentCheck = rawUrl.endsWith('/health/live') || rawUrl.endsWith('/health/metrics');
+    // CONFLICT-RESOLVED: Tách bỏ query string và chỉ miễn ghi log cho GET probe chuẩn xác để chặn kỹ thuật tắt nhật ký qua '?_=/health/live' (HIGH-04).
+    const isSilentCheck =
+      request.method === 'GET' &&
+      (rawPath === '/health/live' ||
+        rawPath === '/api/v1/health/live' ||
+        rawPath === '/health/metrics' ||
+        rawPath === '/api/v1/health/metrics');
     if (!isSilentCheck) {
       const logData = {
         level: 'info',

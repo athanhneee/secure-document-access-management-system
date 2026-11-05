@@ -1,7 +1,19 @@
+/**
+ * Module: Visual Policy Builder End-to-End Backend AST Pipeline Tests
+ * Thuật toán: Kiểm chứng trực tiếp chuỗi xử lý thật `UpsertAbacPolicySchema` -> `buildPolicyConditionRows`
+ *   -> `serializeAbacPolicyRow` -> `validatePolicyDraft` -> `compilePolicy` -> `evaluatePolicy`.
+ */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import {
+  UpsertAbacPolicySchema,
+  buildPolicyConditionRows,
+  serializeAbacPolicyRow,
+} from '../dist/modules/abac/abac-policy-dto.helper.js';
+import { CONTEXT_ATTRIBUTES } from '../dist/modules/abac/attribute-registry.js';
 import { compilePolicy } from '../dist/modules/abac/policy-compiler.js';
 import { evaluatePolicy } from '../dist/modules/abac/policy-engine.js';
+import { validatePolicy } from '../dist/modules/abac/policy-validator.js';
 
 function evaluateVisualRule(rule, flatContext) {
   const compiled = compilePolicy(
@@ -89,43 +101,48 @@ test('Visual Policy Builder — correctly evaluates multi-group OR logic with ne
     obligations: [{ type: 'REQUIRE_WATERMARK' }],
   };
 
-  const contextA = {
-    'environment.trustedNetwork': true,
-    'subject.clearanceRank': 3,
-    'subject.projects': ['OTHER_PROJECT'],
-    'environment.mfa': false,
-  };
-  assert.equal(evaluateVisualRule(multiGroupRule, contextA).decision, 'PERMIT');
+  assert.equal(
+    evaluateVisualRule(multiGroupRule, {
+      'environment.trustedNetwork': true,
+      'subject.clearanceRank': 3,
+      'subject.projects': ['OTHER_PROJECT'],
+      'environment.mfa': false,
+    }).decision,
+    'PERMIT',
+  );
 
-  const contextB = {
-    'environment.trustedNetwork': false,
-    'subject.clearanceRank': 1,
-    'subject.projects': ['PROJECT_ALPHA'],
-    'environment.mfa': true,
-  };
-  assert.equal(evaluateVisualRule(multiGroupRule, contextB).decision, 'PERMIT');
+  assert.equal(
+    evaluateVisualRule(multiGroupRule, {
+      'environment.trustedNetwork': false,
+      'subject.clearanceRank': 1,
+      'subject.projects': ['PROJECT_ALPHA'],
+      'environment.mfa': true,
+    }).decision,
+    'PERMIT',
+  );
 
-  const contextC = {
-    'environment.trustedNetwork': false,
-    'subject.clearanceRank': 1,
-    'subject.projects': ['OTHER_PROJECT'],
-    'environment.mfa': false,
-  };
-  assert.equal(evaluateVisualRule(multiGroupRule, contextC).decision, 'DENY');
+  assert.equal(
+    evaluateVisualRule(multiGroupRule, {
+      'environment.trustedNetwork': false,
+      'subject.clearanceRank': 1,
+      'subject.projects': ['OTHER_PROJECT'],
+      'environment.mfa': false,
+    }).decision,
+    'DENY',
+  );
 });
 
-test('Visual Policy Builder — preserves lossless round-trip JSON AST sync', () => {
-  const originalRule = {
-    id: 'rule-test-roundtrip',
+test('Visual Policy Builder — lossless round-trip through UpsertAbacPolicySchema, buildPolicyConditionRows, validatePolicyDraft & serializeAbacPolicyRow', async () => {
+  const visualBuilderPayload = {
     code: 'POL_ROUNDTRIP_SYNC',
     name: 'Kiểm thử Đồng bộ Hai Chiều JSON AST',
     description:
-      'Bảo toàn cấu trúc cây điều kiện khi chuyển qua lại giữa Visual Blocks và JSON DSL.',
+      'Bảo toàn cấu trúc cây điều kiện khi ánh xạ qua tầng DTO, hàng CSDL quan hệ và trình biên dịch ABAC.',
     effect: 'PERMIT',
     priority: 15,
     targetResource: 'DOCUMENT',
     targetAction: 'DOWNLOAD',
-    combiningAlgorithm: 'DENY_OVERRIDES',
+    obligations: [{ type: 'REQUIRE_WATERMARK' }, { type: 'MAX_SESSION_MINUTES', minutes: 45 }],
     groups: [
       {
         id: 1,
@@ -145,18 +162,92 @@ test('Visual Policy Builder — preserves lossless round-trip JSON AST sync', ()
           { id: 'c3', attribute: 'environment.riskScore', operator: 'BETWEEN', expected: [0, 40] },
         ],
       },
+      {
+        id: 2,
+        conditions: [{ id: 'c4', attribute: 'environment.mfa', operator: 'EQ', expected: true }],
+      },
     ],
-    obligations: [{ type: 'REQUIRE_WATERMARK' }, { type: 'MAX_SESSION_MINUTES', minutes: 45 }],
   };
 
-  const serialized = JSON.stringify(originalRule, null, 2);
-  const deserialized = JSON.parse(serialized);
+  // 1. Validate DTO boundary with real Zod schema
+  const parsedDto = UpsertAbacPolicySchema.parse(visualBuilderPayload);
 
-  assert.deepEqual(
-    deserialized,
-    originalRule,
-    'Parsed AST must strictly match original rule structure',
+  // 2. Transform DNF groups into relational policy_rule_conditions rows
+  const mockTx = { attributeDefinition: { findMany: async () => [] } };
+  const relationalRows = await buildPolicyConditionRows(mockTx, parsedDto.groups);
+  assert.equal(relationalRows.length, 4);
+  assert.ok(
+    relationalRows.every((r) => (r.attribute_definition_id !== null) !== (r.context_key !== null)),
   );
-  assert.equal(deserialized.groups[0].conditions.length, 3);
-  assert.equal(deserialized.obligations[1].minutes, 45);
+
+  // 3. Compile & validate semantic rules + CIDR/BETWEEN bounds via real PolicyValidator
+  const compiledRoundTrip = compilePolicy(
+    42n,
+    [],
+    [
+      {
+        id: 42n,
+        code: parsedDto.code,
+        effect: parsedDto.effect,
+        priority: parsedDto.priority,
+        targetResource: 'DOCUMENT',
+        targetAction: 'DOWNLOAD',
+        combiningAlgorithm: 'DENY_OVERRIDES',
+        obligations: parsedDto.obligations,
+        validFrom: new Date('2026-01-01T00:00:00.000Z'),
+        validTo: null,
+        conditions: relationalRows.map((row, idx) => ({
+          id: BigInt(idx + 1),
+          definitionCode: null,
+          group: row.condition_group,
+          sequence: row.sequence_no,
+          contextKey: row.context_key,
+          operator: row.operator,
+          expectedValue: row.expected_value,
+        })),
+      },
+    ],
+  );
+  const validationIssues = validatePolicy(compiledRoundTrip, CONTEXT_ATTRIBUTES);
+  assert.deepEqual(validationIssues, []);
+
+  // 4. Serialize DB row back to Visual Builder DTO and assert lossless DNF reconstruction
+  const roundTripped = serializeAbacPolicyRow({
+    id: 42n,
+    code: parsedDto.code,
+    name: parsedDto.name,
+    description: parsedDto.description ?? null,
+    effect: parsedDto.effect,
+    priority: parsedDto.priority,
+    target_resource: 'DOCUMENT',
+    target_action: 'DOWNLOAD',
+    combining_algorithm: 'DENY_OVERRIDES',
+    obligations: parsedDto.obligations,
+    is_active: true,
+    valid_from: new Date('2026-01-01T00:00:00.000Z'),
+    valid_to: null,
+    version: 1n,
+    policy_rule_conditions: relationalRows.map((row, idx) => ({
+      id: BigInt(100 + idx),
+      policy_rule_id: 42n,
+      ...row,
+    })),
+  });
+
+  assert.equal(roundTripped.id, '42');
+  assert.equal(roundTripped.targetAction, 'DOWNLOAD');
+  assert.equal(roundTripped.groups.length, 2);
+  assert.deepEqual(
+    roundTripped.groups[0].conditions.map((c) => ({
+      attribute: c.attribute,
+      operator: c.operator,
+      expected: c.expected,
+    })),
+    [
+      { attribute: 'environment.ip', operator: 'CIDR_MATCH', expected: '192.168.1.0/24' },
+      { attribute: 'resource.category', operator: 'IN', expected: ['FINANCE', 'LEGAL'] },
+      { attribute: 'environment.riskScore', operator: 'BETWEEN', expected: [0, 40] },
+    ],
+  );
+  assert.equal(roundTripped.obligations[1].minutes, 45);
 });

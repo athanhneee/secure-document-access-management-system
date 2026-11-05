@@ -58,7 +58,8 @@ export class RedlockService implements OnModuleDestroy {
     this.defaultRetryDelayMs = config.get('REDLOCK_RETRY_DELAY_MS') ?? 100;
     this.defaultRetryJitterMs = config.get('REDLOCK_RETRY_JITTER_MS') ?? 50;
     this.defaultTtlMs = config.get('REDLOCK_DEFAULT_TTL_MS') ?? 5000;
-    this.defaultFailClosed = config.get('REDLOCK_FAIL_CLOSED') ?? false;
+    // CONFLICT-RESOLVED: Chuyển chính sách khóa phân tán mặc định sang Fail-Closed (true) chống vượt rào đồng thời khi cụm Redis sự cố (MED-04).
+    this.defaultFailClosed = config.get('REDLOCK_FAIL_CLOSED') ?? true;
 
     this.logger.log(
       `RedlockService initialized with ${this.clients.length} node(s) (Quorum: ${this.quorum}/${this.clients.length})`,

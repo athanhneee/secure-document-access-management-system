@@ -76,6 +76,7 @@ export async function lookupUsersWithClearance(
   const users = await database.user.findMany({
     where: { status: 'ACTIVE' },
     orderBy: { username: 'asc' },
+    take: 500,
     select: {
       id: true,
       username: true,
@@ -184,14 +185,30 @@ export async function expirePreviousDepartmentRoles(
   });
 }
 
+const SAFE_USER_RECORD_KEYS = new Set([
+  'id',
+  'username',
+  'email',
+  'full_name',
+  'employee_code',
+  'department_id',
+  'status',
+  'locked_until',
+  'last_login_at',
+  'failed_login_count',
+  'version',
+  'created_at',
+  'updated_at',
+]);
+
 /**
- * Algorithm: Snake-to-Camel Safe User DTO Projection.
- * Strips sensitive fields (`password_hash`, `created_by`) and normalizes BigInt/Date values.
+ * Algorithm / Thuật toán: Chiếu danh sách trắng DTO người dùng an toàn (`SAFE_USER_RECORD_KEYS`) và chuẩn hóa `BigInt`/`Date`.
+ * Loại bỏ tuyệt đối mọi trường bí mật (`password_hash`, `mfa_methods`, `refresh_tokens`, `password_reset_tokens`, `created_by`).
  */
 export function presentUserRecord(user: Record<string, unknown> & { id: bigint }) {
   return Object.fromEntries(
     Object.entries(user)
-      .filter(([key]) => !['password_hash', 'created_by'].includes(key))
+      .filter(([key]) => SAFE_USER_RECORD_KEYS.has(key))
       .map(([key, value]) => [
         key.replace(/_([a-z])/gu, (_, letter: string) => letter.toUpperCase()),
         typeof value === 'bigint'

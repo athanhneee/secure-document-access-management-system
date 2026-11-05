@@ -10,7 +10,9 @@ import { AppConfigService } from '../../config/config.service.js';
 import type { AllowedExtension } from './file-validation.service.js';
 import {
   inflateAndInspectZipEntry,
+  inspectArchiveEntryPathTraversal,
   inspectOoxmlEntryPathSecurity,
+  normalizeArchiveEntryPath,
   openYauzlZip,
 } from './zip-xml-security.helper.js';
 
@@ -96,22 +98,14 @@ export class ZipBombGuardService {
         }
 
         const fileName = entry.fileName;
-        if (
-          fileName.includes('..') ||
-          fileName.startsWith('/') ||
-          fileName.startsWith('\\') ||
-          /^[a-zA-Z]:/u.test(fileName)
-        ) {
-          return finishReject(
-            new BadRequestException({
-              errorCode: AppErrorCode.INVALID_FILE_TYPE,
-              message: 'Zip archive contains dangerous path traversal entry names.',
-            }),
-          );
-        }
+        const traversalIssue = inspectArchiveEntryPathTraversal(fileName);
+        if (traversalIssue) return finishReject(traversalIssue);
 
         const segments = fileName.split(/[/\\]+/u).filter((seg) => seg.length > 0);
-        const depth = fileName.endsWith('/') ? segments.length : Math.max(0, segments.length - 1);
+        const depth =
+          fileName.endsWith('/') || fileName.endsWith('\\')
+            ? segments.length
+            : Math.max(0, segments.length - 1);
         if (depth > maxDepth) {
           return finishReject(
             new BadRequestException({
@@ -144,13 +138,13 @@ export class ZipBombGuardService {
           }
         }
 
-        const lowerName = fileName.toLowerCase();
-        const pathIssue = inspectOoxmlEntryPathSecurity(lowerName);
+        const lowerName = normalizeArchiveEntryPath(fileName);
+        const pathIssue = inspectOoxmlEntryPathSecurity(fileName);
         if (pathIssue) return finishReject(pathIssue);
 
         if (lowerName === '[content_types].xml') hasContentTypes = true;
         if (lowerName.startsWith(requiredDir)) hasOfficeSpecificDir = true;
-        if (fileName.endsWith('/')) {
+        if (lowerName.endsWith('/')) {
           zipFile.readEntry();
           return;
         }

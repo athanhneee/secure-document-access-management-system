@@ -18,7 +18,17 @@ export async function resolveAlertDepartmentScope(
   actor: AuthPrincipal | undefined,
   action: 'VIEW' | 'MANAGE',
 ): Promise<bigint[] | null> {
-  if (!authorization || !actor) return null;
+  // CONFLICT-RESOLVED: Chặn Fail-Open thành phạm vi toàn cục (`null`) khi thiếu `actor` hoặc dịch vụ phân quyền trong môi trường chạy thật (HIGH-08).
+  if (!actor) return [];
+  if (!authorization) {
+    if (process.env['NODE_ENV'] === 'production') return [];
+    const roles = actor.roles ?? [];
+    return roles.includes('SECURITY_OFFICER') ||
+      roles.includes('SYSTEM_ADMIN') ||
+      (action === 'VIEW' && roles.includes('AUDITOR'))
+      ? null
+      : [];
+  }
   if (action === 'MANAGE') {
     return authorization.visibleDepartmentIds(actor, 'SECURITY_ALERT', 'MANAGE');
   }
@@ -90,7 +100,16 @@ export async function resolveIncidentDepartmentScope(
   actor: AuthPrincipal | undefined,
   mode: 'VIEW' | 'MANAGE',
 ): Promise<bigint[] | null> {
-  if (!authorization || !actor) return null;
+  if (!actor) return [];
+  if (!authorization) {
+    if (process.env['NODE_ENV'] === 'production') return [];
+    const roles = actor.roles ?? [];
+    return roles.includes('SECURITY_OFFICER') ||
+      roles.includes('SYSTEM_ADMIN') ||
+      (mode === 'VIEW' && roles.includes('AUDITOR'))
+      ? null
+      : [];
+  }
   if (mode === 'MANAGE') {
     return authorization.visibleDepartmentIds(actor, 'INCIDENT_REPORT', 'MANAGE');
   }

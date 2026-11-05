@@ -9,6 +9,7 @@ import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import type { RedlockService } from '../concurrency/redlock.service.js';
+import { getUserClearanceRank } from './document-access-guard.helper.js';
 import type { ValidatedFileInfo } from './file-validation.service.js';
 import type { IngestDocumentInput } from './ingestion-validation.helper.js';
 
@@ -43,7 +44,19 @@ export async function persistCleanIngestedVersion(params: {
     dekReference,
   } = params;
 
-  const deptId = input.departmentId ?? 1n;
+  let callerDeptId = (input.principal as { departmentId?: bigint }).departmentId;
+  if (
+    input.departmentId === undefined &&
+    callerDeptId === undefined &&
+    typeof database?.user?.findUnique === 'function'
+  ) {
+    const caller = await database.user.findUnique({
+      where: { id: input.principal.userId },
+      select: { department_id: true },
+    });
+    callerDeptId = caller?.department_id ?? undefined;
+  }
+  const deptId = input.departmentId ?? callerDeptId ?? 1n;
   const title = input.title ?? validatedInfo.sanitizedFilename;
   const docCode = input.documentCode ?? `DOC-${randomUUID().substring(0, 8).toUpperCase()}`;
 
@@ -107,6 +120,43 @@ export async function persistCleanIngestedVersion(params: {
       }
 
       if (!existingDoc) {
+        if (authorization && typeof authorization.hasPermission === 'function') {
+          const scope = { targetDepartmentId: deptId };
+          const [canUpload, canClassify, canManage] = await Promise.all([
+            authorization.hasPermission(input.principal, 'DOCUMENT', 'UPLOAD', scope),
+            authorization.hasPermission(input.principal, 'DOCUMENT', 'CLASSIFY', scope),
+            authorization.hasPermission(input.principal, 'DOCUMENT', 'MANAGE', scope),
+          ]);
+          if (!canUpload && !canClassify && !canManage) {
+            throw new ForbiddenException({
+              errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+              message: 'Caller is not authorized to upload documents into the target department.',
+            });
+          }
+        }
+        if (
+          input.classificationLevelId &&
+          typeof database?.classificationLevel?.findUnique === 'function'
+        ) {
+          const level = await database.classificationLevel.findUnique({
+            where: { id: input.classificationLevelId },
+          });
+          if (!level || !level.is_active) {
+            throw new BadRequestException({
+              errorCode: AppErrorCode.VALIDATION_FAILED,
+              message: 'Target classification level does not exist or is inactive.',
+            });
+          }
+          if (typeof database?.userAttributeAssignment?.findFirst === 'function') {
+            const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
+            if (rank < level.rank) {
+              throw new ForbiddenException({
+                errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+                message: `Insufficient clearance level (${rank}) to upload document at rank ${level.rank}.`,
+              });
+            }
+          }
+        }
         await tx.document.create({
           data: {
             id: targetDocId,

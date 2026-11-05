@@ -10,6 +10,11 @@ import { AppErrorCode, type ExportFormat, type ExportType } from '@sda/contracts
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { generateCsv } from './csv-formula-sanitizer.js';
+import {
+  decryptAndVerifyExportArtifactBuffer,
+  encryptExportArtifactBuffer,
+  readContainedExportArtifactBuffer,
+} from './export-disk-cipher.helper.js';
 import { resolveExportAuthorizationScope } from './export-filter-scope.helper.js';
 import { generateExcelTable, generatePdfTable, type ExportColumn } from './export-formatter.js';
 
@@ -45,17 +50,12 @@ export async function renderExportBuffer(
   dataset: ExportDatasetPayload,
 ): Promise<{ contentBuffer: Buffer; mimeType: string }> {
   if (format === 'JSON') {
-    return {
-      mimeType: 'application/json',
-      contentBuffer: Buffer.from(
-        JSON.stringify(
-          dataset.rawRecords,
-          (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
-          2,
-        ),
-        'utf-8',
-      ),
-    };
+    const json = JSON.stringify(
+      dataset.rawRecords,
+      (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+      2,
+    );
+    return { mimeType: 'application/json', contentBuffer: Buffer.from(json, 'utf-8') };
   }
   if (format === 'PDF') {
     return {
@@ -147,17 +147,18 @@ export async function assertCrossUserExportScope(
       ? (job.filter_params as Record<string, unknown>)
       : null;
   const rawFilterDept = filterParams?.['departmentId'];
+  // CONFLICT-RESOLVED: Chặn kiểm toán viên phạm vi phòng ban tải chéo tác vụ xuất đa phòng ban khi `filterParams.departmentId` để trống hoặc không hợp lệ (HIGH-07).
   if (
-    rawFilterDept !== undefined &&
-    rawFilterDept !== null &&
-    /^\d+$/.test(String(rawFilterDept))
+    rawFilterDept === undefined ||
+    rawFilterDept === null ||
+    rawFilterDept === '' ||
+    !/^\d+$/.test(String(rawFilterDept)) ||
+    !allowedDepartmentIds.includes(BigInt(String(rawFilterDept)))
   ) {
-    if (!allowedDepartmentIds.includes(BigInt(String(rawFilterDept)))) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
-        message: 'Export job filter scope is outside your authorized departments.',
-      });
-    }
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
+      message: 'Export job filter scope must explicitly target an authorized department.',
+    });
   }
 
   const requester = await database.user?.findUnique({
@@ -221,7 +222,8 @@ export function persistBoundedExportArtifact(
 
   try {
     const filePath = path.join(exportDir, `${jobId}.dat`);
-    fs.writeFileSync(filePath, contentBuffer);
+    // CONFLICT-RESOLVED: Mã hóa AES-256-GCM và giới hạn quyền tệp 0o600 cho tệp xuất `.dat` trên đĩa (HIGH-07).
+    fs.writeFileSync(filePath, encryptExportArtifactBuffer(jobId, contentBuffer), { mode: 0o600 });
     return filePath;
   } catch {
     return null;
@@ -229,7 +231,7 @@ export function persistBoundedExportArtifact(
 }
 
 /**
- * Algorithm: Canonical Path-Traversal & Symlink-Hardened Artifact Reader
+ * Algorithm: Canonical Path-Traversal, Symlink-Hardened & SHA-256 Verified Artifact Reader
  */
 export function readVerifiedExportArtifact(
   exportDir: string,
@@ -237,9 +239,12 @@ export function readVerifiedExportArtifact(
   id: string,
   filePath: string | null,
   logger: Logger,
+  expectedSha256Hash?: string | null,
 ): Buffer | null {
   const cached = memoryStorage.get(id);
-  if (cached) return cached;
+  if (cached) {
+    return decryptAndVerifyExportArtifactBuffer(id, cached, expectedSha256Hash);
+  }
   if (!filePath) return null;
 
   const resolvedBase = path.resolve(exportDir);
@@ -251,10 +256,10 @@ export function readVerifiedExportArtifact(
       message: 'Export artifact path is invalid.',
     });
   }
-  if (fs.existsSync(resolvedTarget) && !fs.lstatSync(resolvedTarget).isSymbolicLink()) {
-    return fs.readFileSync(resolvedTarget);
-  }
-  return null;
+  const rawDiskBuffer = readContainedExportArtifactBuffer(resolvedTarget);
+  return rawDiskBuffer
+    ? decryptAndVerifyExportArtifactBuffer(id, rawDiskBuffer, expectedSha256Hash, true)
+    : null;
 }
 
 /**

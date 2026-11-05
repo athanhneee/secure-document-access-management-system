@@ -104,16 +104,36 @@ export function resolveGrantSortColumn(sort: string): Prisma.Sql {
   }
 }
 
+const DOWNLOAD_PERMITTED_CODES = new Set([
+  'PUBLIC',
+  'INTERNAL',
+  'CONFIDENTIAL',
+  'RESTRICTED',
+  'CFD',
+]);
+
+/**
+ * Thuật toán: Suy diễn quyền tải xuống Fail-Closed từ cấu hình phân loại tài liệu (HIGH-08).
+ */
+export function resolveFailClosedAllowDownload(
+  allowDownload: boolean | null | undefined,
+  classificationCode: string | null | undefined,
+): boolean {
+  if (typeof allowDownload === 'boolean') return allowDownload;
+  if (!classificationCode) return false;
+  return DOWNLOAD_PERMITTED_CODES.has(classificationCode.toUpperCase());
+}
+
 /**
  * Algorithm: Subject Bell-LaPadula Clearance Lookup
- * Resolves the highest active `CLEARANCE_LEVEL` numeric rank for `userId` (or `null` when DB mock lacks attributes).
+ * Resolves the highest active `CLEARANCE_LEVEL` numeric rank for `userId` (defaults Fail-Closed to `0` when missing).
  */
 export async function queryUserClearanceRank(
   database: ReturnType<typeof getDatabaseClient>,
   userId: bigint,
-): Promise<number | null> {
+): Promise<number> {
   if (typeof database?.userAttributeAssignment?.findFirst !== 'function') {
-    return null;
+    return 0;
   }
   const now = new Date();
   const clearance = await database.userAttributeAssignment.findFirst({
@@ -162,10 +182,9 @@ export function buildSearchWhereClause(params: {
     input,
     sanitizedQuery,
   } = params;
-  const clearanceSql =
-    userClearanceRank !== null
-      ? Prisma.sql` AND (cl."rank" IS NULL OR cl."rank" <= ${userClearanceRank})`
-      : Prisma.empty;
+  // CONFLICT-RESOLVED: Luôn áp dụng bộ lọc trần độ mật Bell-LaPadula (mặc định `0` khi thiếu thuộc tính) để chặn rò rỉ tiêu đề/trích đoạn 200 ký tự vượt thẩm quyền (HIGH-08).
+  const effectiveClearanceRank = userClearanceRank ?? 0;
+  const clearanceSql = Prisma.sql` AND (cl."rank" IS NULL OR cl."rank" <= ${effectiveClearanceRank})`;
 
   const visibility: Prisma.Sql[] = [Prisma.sql`d."owner_id" = ${userId}`];
   if (hasGlobalDiscover) {

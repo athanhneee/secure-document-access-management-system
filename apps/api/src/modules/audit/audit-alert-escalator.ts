@@ -10,6 +10,20 @@ import type { AuditViolation } from './audit-verifier.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
+const HEX_DIGEST_64_RE = /^[0-9a-f]{64}$/i;
+
+/**
+ * Algorithm / Thuật toán: Khử rò rỉ chữ ký HMAC-SHA256 khỏi dữ liệu cảnh báo lưu trong PostgreSQL (Oracle-Safe Violation Redaction).
+ * Chặn mọi chuỗi hex 64 ký tự trong `expected` của lỗi giả mạo HMAC để kẻ tấn công có quyền ghi DB không thể trục lợi làm Signing Oracle.
+ */
+export function redactOracleField(code: string, expected?: string): string | undefined {
+  if (expected === undefined) return undefined;
+  if (code === 'AUDIT_LOG_TAMPERED' || HEX_DIGEST_64_RE.test(expected)) {
+    return '[REDACTED_HMAC]';
+  }
+  return expected;
+}
+
 /**
  * Algorithm / Thuật toán: Leo thang cảnh báo an ninh khẩn cấp khử trùng lặp (Deduplicated Critical Alert Escalation).
  * Cơ chế hoạt động:
@@ -69,8 +83,8 @@ export async function raiseAuditIntegrityAlert(
             partition: v.partition,
             sequence: v.sequence.toString(),
             logId: v.logId?.toString(),
-            expected: v.expected,
-            actual: v.actual,
+            expected: redactOracleField(v.code, v.expected),
+            actual: v.code === 'AUDIT_LOG_TAMPERED' ? '[TAMPERED_ENTRY_HASH]' : v.actual,
             message: v.message,
           })),
           detectedAt: new Date().toISOString(),

@@ -22,10 +22,12 @@ export class AntivirusScannerService {
   private readonly logger = new Logger(AntivirusScannerService.name);
   private readonly host: string;
   private readonly port: number;
+  private readonly configuredEnv: string;
 
   constructor(config: AppConfigService) {
     this.host = config.get('CLAMAV_HOST');
     this.port = config.get('CLAMAV_PORT');
+    this.configuredEnv = String(config.get('NODE_ENV') ?? 'development');
   }
 
   /**
@@ -66,9 +68,9 @@ export class AntivirusScannerService {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.warn(`ClamAV socket communication failed: ${msg}`);
 
-        // If ClamAV daemon is unreachable in dev/test, check if buffer had EICAR (done above)
-        // Otherwise in production unreachable AV means scan FAILED
-        if (process.env['NODE_ENV'] === 'production') {
+        // CONFLICT-RESOLVED: Chặn Fail-Closed trên cả staging lẫn production khi ClamAV daemon mất kết nối thay vì chỉ chặn trên production (MED-06).
+        const activeEnv = (process.env['NODE_ENV'] ?? this.configuredEnv).trim().toLowerCase();
+        if (activeEnv === 'production' || activeEnv === 'staging') {
           return {
             status: 'FAILED' as const,
             durationMs: Date.now() - startTime,

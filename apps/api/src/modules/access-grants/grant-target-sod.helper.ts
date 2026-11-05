@@ -5,14 +5,14 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode, type CreateAccessGrantInput } from '@sda/contracts';
-import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
+import { isPrivilegedSeparationRoleOrCapability } from '../rbac/permission-matrix.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
  * Algorithm / Thuật toán: Xác thực chủ thể nhận quyền (`USER`/`ROLE`), quy tắc Phân tách nhiệm vụ (SoD) và liên kết `accessRequestId`.
- *   1. Với `USER`: kiểm tra tài khoản tồn tại, đang `ACTIVE`, và không mang thuần túy vai trò quản trị/kiểm toán (`SYSTEM_ADMIN`/`AUDITOR`) không kèm vai trò nghiệp vụ.
- *   2. Với `ROLE`: kiểm tra vai trò tồn tại, đang kích hoạt và cấm cấp quyền nội dung cho `SYSTEM_ADMIN` hoặc `AUDITOR`.
+ *   1. Với `USER`: kiểm tra tài khoản tồn tại, đang `ACTIVE`, và không giữ vai trò quản trị/SOC/kiểm toán (kể cả Custom Role mang quyền quản trị/SOC/kiểm toán).
+ *   2. Với `ROLE`: kiểm tra vai trò tồn tại, đang kích hoạt và cấm cấp quyền nội dung cho vai trò hệ thống hoặc Custom Role mang quyền quản trị/SOC/kiểm toán.
  *   3. Với `accessRequestId`: xác minh yêu cầu đang `PENDING` khớp chính xác tài liệu và người nhận.
  */
 export async function validateGrantTargetAndSod(
@@ -47,17 +47,41 @@ export async function validateGrantTargetAndSod(
       const recipientRoles = await database.userRole.findMany({
         where: {
           user_id: input.principalUserId,
-          valid_from: { lte: now },
           OR: [{ valid_to: null }, { valid_to: { gt: now } }],
           roles: { is_active: true },
         },
-        include: { roles: { select: { code: true } } },
+        include: {
+          roles: {
+            select: {
+              code: true,
+              role_permissions: {
+                select: {
+                  permissions: { select: { code: true, resource_type: true, action: true } },
+                },
+              },
+            },
+          },
+        },
       });
-      const roleCodes = recipientRoles
-        .map((r) => (r as { roles?: { code?: string } }).roles?.code)
-        .filter((c): c is string => typeof c === 'string');
-      // CONFLICT-RESOLVED: Unconditionally forbid granting document content access to any account holding PRIVILEGED_SEPARATION_ROLES (including SECURITY_OFFICER).
-      if (roleCodes.some((code) => PRIVILEGED_SEPARATION_ROLES.has(code))) {
+      // CONFLICT-RESOLVED: Kiểm tra Phân tách Nhiệm vụ trên cả mã vai trò lẫn tập quyền thực tế của Custom Role khi cấp AccessGrant cho USER (HIGH-01).
+      const holdsPrivilegedCapability = recipientRoles.some((r) => {
+        const roleObj = (
+          r as {
+            roles?: {
+              code?: string;
+              role_permissions?: Array<{
+                permissions?: { code: string; resource_type?: string; action?: string };
+              }>;
+            };
+          }
+        ).roles;
+        if (!roleObj) return false;
+        const perms = (roleObj.role_permissions ?? [])
+          .map((rp) => rp.permissions)
+          .filter((p): p is NonNullable<typeof p> => Boolean(p));
+        return isPrivilegedSeparationRoleOrCapability(roleObj.code, perms);
+      });
+      if (holdsPrivilegedCapability) {
         throw new ForbiddenException({
           errorCode: AppErrorCode.FORBIDDEN,
           message:
@@ -74,7 +98,16 @@ export async function validateGrantTargetAndSod(
     }
     const targetRole = await database.role.findUnique({
       where: { id: input.principalRoleId },
-      select: { id: true, code: true, is_active: true },
+      select: {
+        id: true,
+        code: true,
+        is_active: true,
+        role_permissions: {
+          select: {
+            permissions: { select: { code: true, resource_type: true, action: true } },
+          },
+        },
+      },
     });
     if (!targetRole) {
       throw new NotFoundException({
@@ -88,11 +121,23 @@ export async function validateGrantTargetAndSod(
         message: 'Target role is not active.',
       });
     }
-    if (PRIVILEGED_SEPARATION_ROLES.has(targetRole.code)) {
+    const targetRolePerms = (
+      (
+        targetRole as {
+          role_permissions?: Array<{
+            permissions?: { code: string; resource_type?: string; action?: string };
+          }>;
+        }
+      ).role_permissions ?? []
+    )
+      .map((rp) => rp.permissions)
+      .filter((p): p is NonNullable<typeof p> => Boolean(p));
+    // CONFLICT-RESOLVED: Chặn cấp AccessGrant cho cả vai trò hệ thống lẫn Custom Role mang quyền quản trị/SOC/kiểm toán (HIGH-01).
+    if (isPrivilegedSeparationRoleOrCapability(targetRole.code, targetRolePerms)) {
       throw new ForbiddenException({
         errorCode: AppErrorCode.FORBIDDEN,
         message:
-          'Separation of duties: cannot grant document content access to SYSTEM_ADMIN, SECURITY_OFFICER, or AUDITOR role.',
+          'Separation of duties: cannot grant document content access to privileged administrative, security, or auditor roles.',
       });
     }
   }

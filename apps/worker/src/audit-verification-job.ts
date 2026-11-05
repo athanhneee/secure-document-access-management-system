@@ -48,14 +48,26 @@ export async function runAuditVerificationSweep(
     alertsCreated: 0,
   };
 
-  const partitions = await database.auditLog.findMany({
+  const logPartitions = await database.auditLog.findMany({
     select: { chain_partition: true },
     distinct: ['chain_partition'],
   });
+  const anchorPartitions =
+    typeof database.auditAnchor?.findMany === 'function'
+      ? await database.auditAnchor.findMany({
+          select: { chain_partition: true },
+          distinct: ['chain_partition'],
+        })
+      : [];
+  const partitionSet = new Set<string>();
+  for (const row of logPartitions) partitionSet.add(row.chain_partition);
+  for (const row of anchorPartitions) {
+    if (row?.chain_partition) partitionSet.add(row.chain_partition);
+  }
 
   const VERIFY_BATCH_SIZE = 1000;
 
-  for (const { chain_partition: partition } of partitions) {
+  for (const partition of partitionSet) {
     summary.partitionsChecked++;
 
     const violations: AuditChainViolation[] = [];

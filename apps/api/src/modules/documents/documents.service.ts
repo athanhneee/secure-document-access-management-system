@@ -78,12 +78,15 @@ export class DocumentsService {
   ): Promise<DocumentDetail> {
     const documentId = await executeCreateDocumentDraft({
       database: this.database,
+      authorization: this.authorization,
       audit: this.audit,
       input,
       principal,
       context,
     });
-    return this.getDocumentById(documentId);
+    return queryDocumentDetailById(this.database, this.authorization, documentId, undefined, {
+      internalTrustedRead: true,
+    });
   }
 
   async updateMetadata(
@@ -101,7 +104,9 @@ export class DocumentsService {
       principal,
       context,
     });
-    return this.getDocumentById(documentId);
+    return queryDocumentDetailById(this.database, this.authorization, documentId, undefined, {
+      internalTrustedRead: true,
+    });
   }
 
   async setCurrentVersion(
@@ -119,7 +124,9 @@ export class DocumentsService {
       principal,
       context,
     });
-    return this.getDocumentById(documentId);
+    return queryDocumentDetailById(this.database, this.authorization, documentId, undefined, {
+      internalTrustedRead: true,
+    });
   }
 
   async reclassifyDocument(
@@ -138,7 +145,9 @@ export class DocumentsService {
       principal,
       context,
     });
-    return this.getDocumentById(documentId);
+    return queryDocumentDetailById(this.database, this.authorization, documentId, undefined, {
+      internalTrustedRead: true,
+    });
   }
 
   async activateDocument(
@@ -154,7 +163,9 @@ export class DocumentsService {
       principal,
       context,
     });
-    return this.getDocumentById(documentId);
+    return queryDocumentDetailById(this.database, this.authorization, documentId, undefined, {
+      internalTrustedRead: true,
+    });
   }
 
   async archiveDocument(
@@ -173,7 +184,9 @@ export class DocumentsService {
       principal,
       context,
     });
-    return this.getDocumentById(documentId);
+    return queryDocumentDetailById(this.database, this.authorization, documentId, undefined, {
+      internalTrustedRead: true,
+    });
   }
 
   async transferOwner(
@@ -192,13 +205,16 @@ export class DocumentsService {
       principal,
       context,
     });
-    return this.getDocumentById(documentId);
+    return queryDocumentDetailById(this.database, this.authorization, documentId, undefined, {
+      internalTrustedRead: true,
+    });
   }
 
   async checkRetentionWarnings(
     daysThreshold = 30,
     principal?: AuthPrincipal,
     context?: RequestContext,
+    options?: { systemScan?: boolean },
   ): Promise<RetentionCheckResult> {
     return executeCheckRetentionWarnings({
       database: this.database,
@@ -207,6 +223,7 @@ export class DocumentsService {
       daysThreshold,
       principal,
       context,
+      systemScan: options?.systemScan,
     });
   }
 

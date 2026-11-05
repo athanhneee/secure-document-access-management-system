@@ -93,6 +93,7 @@ export async function executeWatermarkedPreview(params: {
   const decrypted = await encryption.decryptToTempFile(
     encryptedBytes,
     docVersion.encryption_key_ref,
+    document.id,
   );
 
   let pdfBuffer: Buffer;

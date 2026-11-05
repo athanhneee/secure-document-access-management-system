@@ -97,7 +97,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                 } disabled:opacity-40 disabled:cursor-not-allowed`}
               >
                 <Download size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>Xem & Tải bản sao</span>
+                <span>Xem &amp; Tải bản sao</span>
               </button>
             </div>
           </fieldset>

@@ -21,8 +21,8 @@ export function NetworkDlpOverview() {
             <span>Cơ chế kiểm tra</span>
             <Activity size={16} strokeWidth={1.75} className="text-[#008A05]" aria-hidden="true" />
           </div>
-          <div className="text-sm font-bold text-[#222222]">RESPMOD & REQMOD</div>
-          <p className="text-[11px] text-[#717171]">Hỗ trợ Preview Chunks & 204 No-Mod</p>
+          <div className="text-sm font-bold text-[#222222]">RESPMOD &amp; REQMOD</div>
+          <p className="text-[11px] text-[#717171]">Hỗ trợ Preview Chunks &amp; 204 No-Mod</p>
         </div>
 
         <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-1">
@@ -64,7 +64,7 @@ export function NetworkDlpOverview() {
           <div className="rounded-[16px] border border-[#ebebeb] p-3 space-y-1.5 bg-[#ffffff]">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-[#222222]">
-                Nhãn phân loại mật quốc gia & doanh nghiệp
+                Nhãn phân loại mật quốc gia &amp; doanh nghiệp
               </span>
               <Badge variant="danger">BẮT BUỘC</Badge>
             </div>
@@ -93,7 +93,7 @@ export function NetworkDlpOverview() {
           <div className="rounded-[16px] border border-[#ebebeb] p-3 space-y-1.5 bg-[#ffffff]">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-[#222222]">
-                Khóa bí mật & Tokens truy cập (Secrets/Keys)
+                Khóa bí mật &amp; Tokens truy cập (Secrets/Keys)
               </span>
               <Badge variant="warning">BẢO VỆ KHÓA</Badge>
             </div>
@@ -107,7 +107,7 @@ export function NetworkDlpOverview() {
           <div className="rounded-[16px] border border-[#ebebeb] p-3 space-y-1.5 bg-[#ffffff]">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-[#222222]">
-                Thẻ tài chính quốc tế & CCCD Việt Nam (PII)
+                Thẻ tài chính quốc tế &amp; CCCD Việt Nam (PII)
               </span>
               <Badge variant="info">DỮ LIỆU CÁ NHÂN</Badge>
             </div>

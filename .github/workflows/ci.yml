@@ -15,11 +15,51 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Check Dependency Graph availability
+        id: dep_graph
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "${GITHUB_API_URL}/repos/${REPO}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}" || echo "000")
+          if [ "${STATUS}" = "200" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GitHub Dependency Graph returned HTTP ${STATUS}; falling back to pnpm audit --audit-level=high."
+          fi
+
       - name: Dependency Review Action
-        uses: actions/dependency-review-action@v4
+        if: steps.dep_graph.outputs.enabled == 'true'
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
           fail-on-severity: high
+
+      - name: Install pnpm for fallback audit
+        if: steps.dep_graph.outputs.enabled != 'true'
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 12.4.1
+
+      - name: Set up Node.js for fallback audit
+        if: steps.dep_graph.outputs.enabled != 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+
+      - name: Audit dependencies via pnpm audit
+        if: steps.dep_graph.outputs.enabled != 'true'
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm audit --audit-level=high
 
   service-containers:
     runs-on: ubuntu-latest
@@ -30,15 +70,15 @@ jobs:
       INFRA_RESET_TARGET: secure-document-access-system-local-data
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 12.4.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.14.0
           cache: pnpm
@@ -68,6 +108,8 @@ jobs:
 
       - name: Remove CI-only containers and volumes
         if: always()
+        env:
+          NODE_ENV: test
         run: |
           if [ -f .local/dev.env ]; then
             pnpm infra:reset-safe

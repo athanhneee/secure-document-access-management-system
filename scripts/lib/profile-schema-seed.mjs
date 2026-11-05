@@ -227,13 +227,14 @@ export async function createAndSeedProfileDatabase() {
 
   const seqByPart = { DOCUMENT: 0, AUTH: 0 };
   const prevByPart = { DOCUMENT: null, AUTH: null };
+  const auditSeedHmacKey = crypto.randomBytes(32);
   const auditRows = [];
   for (let i = 1; i <= 20000; i++) {
     const part = i % 2 === 0 ? 'DOCUMENT' : 'AUTH';
     const seq = ++seqByPart[part];
     const prevHash = prevByPart[part];
     const entryHash = crypto
-      .createHmac('sha256', 'k')
+      .createHmac('sha256', auditSeedHmacKey)
       .update(`${prevHash ?? 'GENESIS'}:${seq}`)
       .digest('hex');
     const docId = docIds[i % docIds.length];

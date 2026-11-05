@@ -37,13 +37,13 @@
 }
 
 .active-press {
-  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 80ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .active-press:active {
   transform: scale(0.97);
 }
 
-/* Interactive Hover Button Engine (Zero Glitch, Full Red Solid & Smooth Motion) */
+/* Interactive Hover Button Engine (Sub-100ms Instant Tactile Feedback & Smooth Motion) */
 .ihb-button {
   position: relative;
   display: inline-flex;
@@ -56,10 +56,10 @@
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   transition:
-    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    transform 80ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 95ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 95ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 95ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .ihb-button:active {

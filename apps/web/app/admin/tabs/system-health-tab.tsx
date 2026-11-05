@@ -86,7 +86,7 @@ export function SystemHealthTab({ healthData }: SystemHealthTabProps) {
       <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_4px_16px_rgba(0,0,0,0.03)]">
         <CardHeader className="pb-2">
           <CardDescription className="text-xs text-[#717171]">
-            Bộ nhớ đệm phiên & Chính sách (Redis)
+            Bộ nhớ đệm phiên &amp; Chính sách (Redis)
           </CardDescription>
           <CardTitle
             className={`text-xl font-bold flex items-center gap-2 ${cacheTheme.textClass}`}

@@ -87,13 +87,13 @@ export function DocumentsTab({
             <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
               <TableRow>
                 <TableHead className="text-xs text-[#717171]">Tên tài liệu / Mã số</TableHead>
-                <TableHead className="text-xs text-[#717171]">Phòng ban & Danh mục</TableHead>
+                <TableHead className="text-xs text-[#717171]">Phòng ban &amp; Danh mục</TableHead>
                 <TableHead className="text-xs text-[#717171]">Mức độ mật</TableHead>
                 <TableHead className="text-xs text-[#717171]">Chính sách tải</TableHead>
                 <TableHead className="text-xs text-[#717171]">Phiên bản</TableHead>
                 <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
                 <TableHead className="text-xs text-[#717171] text-right">
-                  Thao tác & Vòng đời
+                  Thao tác &amp; Vòng đời
                 </TableHead>
               </TableRow>
             </TableHeader>

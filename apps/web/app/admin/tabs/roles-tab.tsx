@@ -26,7 +26,7 @@ export function RolesTab({
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-base font-semibold text-[#222222]">
-            Quản trị Vai trò & Quyền hạn (RBAC)
+            Quản trị Vai trò &amp; Quyền hạn (RBAC)
           </h3>
           <p className="text-xs text-[#717171]">
             Thiết lập vai trò, ma trận phân quyền và liên kết người dùng

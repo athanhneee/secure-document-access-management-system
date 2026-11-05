@@ -36,7 +36,7 @@ export function AbacAttributesPanel({ attributes }: AbacAttributesPanelProps) {
                 <TableHead className="text-xs text-[#717171]">Tên thuộc tính</TableHead>
                 <TableHead className="text-xs text-[#717171]">Kiểu dữ liệu</TableHead>
                 <TableHead className="text-xs text-[#717171]">
-                  Các tùy chọn & Thứ tự bậc (Rank)
+                  Các tùy chọn &amp; Thứ tự bậc (Rank)
                 </TableHead>
               </TableRow>
             </TableHeader>

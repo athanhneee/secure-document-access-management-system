@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, type FormEvent } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { applyOptimisticStatusById } from '@/lib/optimistic-state';
 import {
   buildRequestWindowIso,
   isActiveReaderGrant,
@@ -150,24 +151,26 @@ export function useReaderCatalog() {
     }
   }
 
-  // CONFLICT-RESOLVED: Loại bỏ hộp thoại xác nhận thô của trình duyệt, chuyển sang ConfirmDialog chuẩn WCAG 2.1 AA (rules/ui-design-system.md §6.3)
+  // CONFLICT-RESOLVED: Loại bỏ hộp thoại xác nhận thô của trình duyệt, chuyển sang ConfirmDialog chuẩn WCAG 2.1 AA (rules/ui-design-system.md §6.3) kèm cập nhật lạc quan dưới 16ms
   async function handleCancelRequest(explicitId?: string) {
     const requestId = explicitId ?? pendingCancelRequestId;
     if (!requestId) {
       return;
     }
+    const previousRequests = myRequests;
     setCancellingRequestId(requestId);
+    setPendingCancelRequestId(null);
     setErrorMessage(null);
+    setMyRequests((prev) => applyOptimisticStatusById(prev, requestId, 'CANCELLED'));
+    setMessage('Đã hủy yêu cầu cấp quyền thành công.');
+
     try {
       await apiClient(`/access-requests/${requestId}/cancel`, {
         method: 'POST',
       });
-      setMessage('Đã hủy yêu cầu cấp quyền thành công.');
-      setMyRequests((prev) =>
-        prev.map((r) => (r.id === requestId ? { ...r, status: 'CANCELLED' } : r)),
-      );
-      setPendingCancelRequestId(null);
     } catch (err) {
+      setMyRequests(previousRequests);
+      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể hủy yêu cầu truy cập.'

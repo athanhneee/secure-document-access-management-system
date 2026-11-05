@@ -66,7 +66,7 @@ async function ensureEnvironment() {
  */
 async function confirmReset() {
   const nonInteractiveAllowed =
-    ['local', 'test'].includes(process.env['NODE_ENV'] ?? '') &&
+    (['local', 'test'].includes(process.env['NODE_ENV'] ?? '') || process.env['CI'] === 'true') &&
     process.env['INFRA_RESET_TARGET'] === resetTarget;
   if (nonInteractiveAllowed) return true;
   if (!process.stdin.isTTY || !process.stdout.isTTY) return false;

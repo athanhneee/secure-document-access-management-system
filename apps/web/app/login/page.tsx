@@ -134,7 +134,7 @@ function LoginForm() {
           <CardHeader className="space-y-1 pb-4">
             <CardTitle className="text-lg font-bold text-[#222222]">Đăng nhập tài khoản</CardTitle>
             <CardDescription className="text-xs text-[#717171]">
-              <span className="sm:hidden">Nhập định danh & mật khẩu được cấp</span>
+              <span className="sm:hidden">Nhập định danh &amp; mật khẩu được cấp</span>
               <span className="hidden sm:inline">
                 Nhập định danh và mật khẩu được cấp bởi quản trị viên
               </span>
@@ -176,7 +176,7 @@ function LoginForm() {
                 className="text-[#717171]"
                 aria-hidden="true"
               />
-              <span className="sm:hidden">Bảo mật HttpOnly Cookie & CSRF</span>
+              <span className="sm:hidden">Bảo mật HttpOnly Cookie &amp; CSRF</span>
               <span className="hidden sm:inline">
                 Phiên đăng nhập được bảo vệ bằng HttpOnly Cookie và CSRF token
               </span>

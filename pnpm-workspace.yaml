@@ -4,6 +4,13 @@ packages:
 
 autoInstallPeers: false
 strictPeerDependencies: true
+blockExoticSubdeps: true
+minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - fastify@5.12.8
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  - prisma@7.10.0
 peerDependencyRules:
   allowedVersions:
     typescript: '7'

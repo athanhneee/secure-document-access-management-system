@@ -1,21 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { removeOptimisticById } from '@/lib/optimistic-state';
 import { calculateRequestedDays, expandGrantPermissions } from '../helpers';
 import type { AccessRequestItem } from '../types';
 
 interface UseOwnerRequestsParams {
-  refreshData: () => Promise<void>;
+  requests: AccessRequestItem[];
+  setRequests: Dispatch<SetStateAction<AccessRequestItem[]>>;
+  refreshData: (options?: { silent?: boolean }) => Promise<void>;
   setMessage: (msg: string | null) => void;
   setErrorMessage: (msg: string | null) => void;
 }
 
 /**
- * Thuật toán: Phán quyết Phê duyệt / Từ chối Yêu cầu Truy cập (`useOwnerRequests`)
- * Khởi tạo khoảng ngày hiệu lực từ yêu cầu của người đọc và đảm bảo quyết định `APPROVED` cho `DOWNLOAD` luôn gửi kèm quyền nền `VIEW`.
+ * Thuật toán: Phán Quyết Phê Duyệt / Từ Chối Lạc Quan Kèm Hoàn Tác Tự Động (`useOwnerRequests`)
+ * Mục đích: Đóng hộp thoại và rút ngay yêu cầu đã xử lý khỏi hàng đợi `PENDING` trong `< 16ms`, bảo toàn quyền nền `DOWNLOAD => ['VIEW', 'DOWNLOAD']` và tự động hoàn trả bản ghi nếu máy chủ báo lỗi.
  */
 export function useOwnerRequests({
+  requests,
+  setRequests,
   refreshData,
   setMessage,
   setErrorMessage,
@@ -35,28 +40,35 @@ export function useOwnerRequests({
 
   async function handleConfirmApprove() {
     if (!selectedRequest) return;
+    const target = selectedRequest;
+    const previousRequests = requests;
+    const actionSnapshot = grantAction;
+    const daysSnapshot = grantValidDays;
+
     setIsApproving(true);
     setErrorMessage(null);
+    setApproveOpen(false);
+    setSelectedRequest(null);
+    setRequests((prev) => removeOptimisticById(prev, target.id));
+    setMessage(
+      `Đã phê duyệt yêu cầu và cấp quyền ${actionSnapshot} tài liệu cho ${target.requestorName} trong ${daysSnapshot} ngày.`,
+    );
 
     try {
       // CONFLICT-RESOLVED: Khi phê duyệt mức DOWNLOAD, gửi đầy đủ ['VIEW', 'DOWNLOAD'] để người nhận vừa xem trực tuyến vừa tải bản sao.
-      const grantedPermissions = expandGrantPermissions(grantAction);
-      await apiClient(`/access-requests/${selectedRequest.id}/decide`, {
+      const grantedPermissions = expandGrantPermissions(actionSnapshot);
+      await apiClient(`/access-requests/${target.id}/decide`, {
         method: 'POST',
         body: JSON.stringify({
           decision: 'APPROVED',
-          validDays: grantValidDays,
+          validDays: daysSnapshot,
           permissions: grantedPermissions,
         }),
       });
-
-      setMessage(
-        `Đã phê duyệt yêu cầu và cấp quyền ${grantAction} tài liệu cho ${selectedRequest.requestorName} trong ${grantValidDays} ngày.`,
-      );
-      setApproveOpen(false);
-      setSelectedRequest(null);
-      await refreshData();
+      void refreshData({ silent: true });
     } catch (err) {
+      setRequests(previousRequests);
+      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể phê duyệt yêu cầu.'
@@ -68,7 +80,11 @@ export function useOwnerRequests({
   }
 
   async function handleRejectRequest(req: AccessRequestItem) {
+    const previousRequests = requests;
     setErrorMessage(null);
+    setRequests((prev) => removeOptimisticById(prev, req.id));
+    setMessage(`Đã từ chối yêu cầu truy cập của ${req.requestorName}.`);
+
     try {
       await apiClient(`/access-requests/${req.id}/decide`, {
         method: 'POST',
@@ -77,9 +93,10 @@ export function useOwnerRequests({
           decisionNote: 'Chủ sở hữu từ chối cấp quyền truy cập.',
         }),
       });
-      setMessage(`Đã từ chối yêu cầu truy cập của ${req.requestorName}.`);
-      await refreshData();
+      void refreshData({ silent: true });
     } catch (err) {
+      setRequests(previousRequests);
+      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể từ chối yêu cầu.'

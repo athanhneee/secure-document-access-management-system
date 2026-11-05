@@ -135,7 +135,9 @@ export class DocumentEncryptionService {
     const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sda-dec-'));
     const tempFilePath = path.join(tempDir, `doc-${crypto.randomBytes(8).toString('hex')}.tmp`);
 
-    const decipher = crypto.createDecipheriv('aes-256-gcm', dek, iv);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', dek, iv, {
+      authTagLength: TAG_LENGTH,
+    });
     decipher.setAuthTag(tag);
 
     const cleanup = async () => {

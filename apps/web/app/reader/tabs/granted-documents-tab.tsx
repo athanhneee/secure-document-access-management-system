@@ -48,7 +48,7 @@ export function GrantedDocumentsTab({
                 <TableHead className="text-xs text-[#717171]">Mức độ mật</TableHead>
                 <TableHead className="text-xs text-[#717171]">Quyền được cấp</TableHead>
                 <TableHead className="text-xs text-[#717171]">Hiệu lực đến</TableHead>
-                <TableHead className="text-xs text-[#717171] text-right">Xem & Tải</TableHead>
+                <TableHead className="text-xs text-[#717171] text-right">Xem &amp; Tải</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

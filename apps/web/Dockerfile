@@ -28,6 +28,7 @@ RUN pnpm install --frozen-lockfile --config.node-linker=hoisted
 # Copy package sources
 COPY packages/ ./packages/
 COPY apps/web/ ./apps/web/
+RUN mkdir -p /app/apps/web/public
 
 # Build contracts and Next.js web application (same-origin /api/v1 proxied to internal API service)
 ARG NEXT_PUBLIC_API_BASE_URL=/api/v1

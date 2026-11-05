@@ -51,7 +51,7 @@ export function ObligationsPanel({
         <div className="flex items-center gap-2">
           <FileCheck2 size={16} strokeWidth={1.75} className="text-[#008A05]" aria-hidden="true" />
           <h3 className="font-bold text-xs text-[#222222]">
-            Nghĩa Vụ & Ràng Buộc Bắt Buộc Đi Kèm (Policy Obligations)
+            Nghĩa Vụ &amp; Ràng Buộc Bắt Buộc Đi Kèm (Policy Obligations)
           </h3>
         </div>
         <Badge variant="success">PDP Enforcement</Badge>

@@ -33,7 +33,7 @@ export async function runDetectionCycle(options?: {
     try {
       alertsCreated += await evaluateDetectionRule(database, rule, now, windowStart, cooldownStart);
     } catch (err) {
-      console.warn(`Error evaluating rule ${rule.ruleCode}:`, err);
+      console.warn('Error evaluating rule %s:', rule.ruleCode, err);
     }
   }
 
@@ -59,10 +59,10 @@ export function startSecurityDetectionJob(intervalMs: number, signal: AbortSigna
     try {
       const result = await runDetectionCycle();
       if (result.alertsCreated > 0) {
-        console.info(`Security detection job generated ${result.alertsCreated} alert(s).`);
+        console.info('Security detection job generated %d alert(s).', result.alertsCreated);
       }
     } catch (err) {
-      console.error(`Security detection cycle failed: ${err}`);
+      console.error('Security detection cycle failed:', err);
     } finally {
       isRunning = false;
     }

@@ -80,8 +80,10 @@ export function useOwnerData() {
     }
   }, []);
 
-  const refreshData = useCallback(async () => {
-    setIsLoading(true);
+  const refreshData = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setIsLoading(true);
+    }
     setErrorMessage(null);
 
     const [
@@ -147,7 +149,9 @@ export function useOwnerData() {
       setClassificationLevels(levelsResult.value.data || []);
     }
 
-    setIsLoading(false);
+    if (!options?.silent) {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -167,8 +171,11 @@ export function useOwnerData() {
 
   return {
     documents,
+    setDocuments,
     requests,
+    setRequests,
     grants,
+    setGrants,
     departments,
     businessCategories,
     classificationLevels,

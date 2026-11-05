@@ -164,7 +164,7 @@ export function SimulatorContextForm({
       <div className="p-3.5 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-3 shadow-xs">
         <div className="flex items-center gap-1.5 font-bold text-[#222222] border-b border-[#ebebeb] pb-2">
           <Network size={16} strokeWidth={1.75} className="text-[#008A05]" aria-hidden="true" />
-          <span>3. Môi trường & Thiết bị</span>
+          <span>3. Môi trường &amp; Thiết bị</span>
         </div>
 
         <div className="grid grid-cols-2 gap-2">

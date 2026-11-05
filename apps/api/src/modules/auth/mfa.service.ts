@@ -124,7 +124,9 @@ export class MfaService {
   decrypt(value: string): string {
     const packed = Buffer.from(value, 'base64url');
     if (packed.length < 29) throw new Error('Invalid encrypted MFA secret.');
-    const decipher = createDecipheriv('aes-256-gcm', this.encryptionKey, packed.subarray(0, 12));
+    const decipher = createDecipheriv('aes-256-gcm', this.encryptionKey, packed.subarray(0, 12), {
+      authTagLength: 16,
+    });
     decipher.setAuthTag(packed.subarray(12, 28));
     return Buffer.concat([decipher.update(packed.subarray(28)), decipher.final()]).toString('utf8');
   }

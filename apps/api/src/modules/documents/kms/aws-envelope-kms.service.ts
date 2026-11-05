@@ -52,7 +52,9 @@ export function unwrapDekWithAes256Gcm(
   const tag = payload.subarray(12, 28);
   const ciphertext = payload.subarray(28);
 
-  const decipher = crypto.createDecipheriv('aes-256-gcm', kek, iv);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', kek, iv, {
+    authTagLength: 16,
+  });
   decipher.setAuthTag(tag);
 
   try {

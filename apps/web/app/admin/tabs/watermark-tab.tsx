@@ -133,7 +133,7 @@ export function WatermarkTab({
             <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 font-bold text-[11px] text-[#717171]">
               <div className="flex items-center gap-2 text-[#008A05]">
                 <Check size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-                <span>Họ tên đầy đủ & Mã định danh nhân viên (Employee Code)</span>
+                <span>Họ tên đầy đủ &amp; Mã định danh nhân viên (Employee Code)</span>
               </div>
               <div className="flex items-center gap-2 text-[#008A05]">
                 <Check size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
@@ -141,7 +141,7 @@ export function WatermarkTab({
               </div>
               <div className="flex items-center gap-2 text-[#008A05]">
                 <Check size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-                <span>Mã tài liệu & Mã token ngẫu nhiên CSPRNG (WM-...)</span>
+                <span>Mã tài liệu &amp; Mã token ngẫu nhiên CSPRNG (WM-...)</span>
               </div>
             </div>
           </div>

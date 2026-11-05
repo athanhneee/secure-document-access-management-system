@@ -215,7 +215,7 @@ export function HomeHeader() {
                     className="text-[#008A05]"
                     aria-hidden="true"
                   />
-                  <span>Tiêu chuẩn tuân thủ & pháp lý</span>
+                  <span>Tiêu chuẩn tuân thủ &amp; pháp lý</span>
                 </span>
                 <ArrowRight
                   size={16}

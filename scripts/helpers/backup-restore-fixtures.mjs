@@ -72,7 +72,7 @@ export const DRILL_SCHEMA_SQL = `
   );
 `;
 
-const DRILL_HMAC_SECRET = 'drill-secret';
+const DRILL_HMAC_SECRET = crypto.randomBytes(32);
 
 /**
  * Thuật toán: Sinh Dữ Liệu Gốc & Chuỗi Băm Liên Kết Kiểm Toán `HMAC-SHA256` (Chained Audit Seed Generator)

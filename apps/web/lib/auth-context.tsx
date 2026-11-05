@@ -50,15 +50,18 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 /**
- * Thuật toán: Máy Trạng Thái Phiên Xác Thực & Đồng Bộ Vai Trò Theo Đường Dẫn (Client-Side Session & Role-Path Synchronization)
- * Mục đích: Duy trì trạng thái định danh người dùng trong bộ nhớ React (không lưu xuống bộ nhớ trình duyệt lâu dài), suy diễn vai trò hoạt động `activeRole` và cung cấp hàm kiểm tra quyền RBAC.
+ * Thuật toán: Máy Trạng Thái Phiên Xác Thực Không Chặn Điều Hướng & Suy Diễn Vai Trò Tức Thì (`AuthProvider`)
+ * Mục đích: Duy trì trạng thái định danh người dùng trong bộ nhớ React mà không gọi lại `/users/me` mỗi khi chuyển tuyến đường Sidebar, giúp chuyển trang nội bộ phản hồi dưới `100ms`.
  * Cơ chế hoạt động:
- *   - `refreshUser`: Gọi `/users/me`, đối chiếu tiền tố `pathname` với bảng `ROLE_PATHS` để tự động đồng bộ `activeRole` tương ứng phân hệ đang mở; nếu gặp lỗi HTTP 401/403 thì xóa sạch trạng thái phiên.
- *   - `hasPermission` / `hasRole`: Kiểm tra quan hệ thuộc tập hợp thẩm quyền/vai trò hiện thời của người dùng.
+ *   - `refreshUser`: Nạp `/users/me` đúng một lần khi khởi tạo phiên (hoặc khi gọi làm mới tường minh sau đăng nhập/MFA), xóa sạch trạng thái nếu gặp HTTP 401/403.
+ *   - `activeRole`: Suy diễn đồng bộ trong bộ nhớ `O(1)` (`useMemo`) từ lựa chọn vai trò tức thời (`roleOverride`) và tiền tố `pathname` khớp bảng `ROLE_PATHS`, không phát sinh hiệu ứng phụ hay truy vấn mạng khi bấm chuyển trang.
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [activeRole, setActiveRoleState] = useState<RoleType | null>(null);
+  const [roleOverride, setRoleOverride] = useState<{
+    role: RoleType;
+    fromPath: string | null;
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
@@ -67,52 +70,62 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await apiClient<AuthUser>('/users/me');
       setUser(data);
-
-      // Determine default active role
-      if (data.roles && data.roles.length > 0) {
-        // If current path matches a role, set that role as active
-        const pathRole = Object.entries(ROLE_PATHS).find(([, path]) =>
-          pathname?.startsWith(path),
-        )?.[0] as RoleType | undefined;
-
-        if (pathRole && data.roles.includes(pathRole)) {
-          setActiveRoleState(pathRole);
-        } else {
-          setActiveRoleState((prev) =>
-            prev && data.roles.includes(prev) ? prev : (data.roles[0] as RoleType),
-          );
-        }
-      }
       return data;
     } catch (err) {
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         setUser(null);
-        setActiveRoleState(null);
+        setRoleOverride(null);
       }
       return null;
     } finally {
       setIsLoading(false);
     }
-  }, [pathname]);
+  }, []);
 
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect
     void refreshUser();
   }, [refreshUser]);
 
-  const setActiveRole = useCallback((role: RoleType) => {
-    setActiveRoleState(role);
-  }, []);
+  const activeRole = useMemo<RoleType | null>(() => {
+    if (!user || !user.roles || user.roles.length === 0) {
+      return null;
+    }
+    if (
+      roleOverride &&
+      roleOverride.fromPath === pathname &&
+      user.roles.includes(roleOverride.role)
+    ) {
+      return roleOverride.role;
+    }
+    const pathRole = Object.entries(ROLE_PATHS).find(([, path]) =>
+      pathname?.startsWith(path),
+    )?.[0] as RoleType | undefined;
+    if (pathRole && user.roles.includes(pathRole)) {
+      return pathRole;
+    }
+    if (roleOverride && user.roles.includes(roleOverride.role)) {
+      return roleOverride.role;
+    }
+    return user.roles[0] as RoleType;
+  }, [user, pathname, roleOverride]);
+
+  const setActiveRole = useCallback(
+    (role: RoleType) => {
+      setRoleOverride({ role, fromPath: pathname });
+    },
+    [pathname],
+  );
 
   const logout = useCallback(async () => {
+    const logoutPromise = apiClient('/auth/logout', { method: 'POST' });
+    setUser(null);
+    setRoleOverride(null);
+    router.push('/login');
     try {
-      await apiClient('/auth/logout', { method: 'POST' });
+      await logoutPromise;
     } catch {
       // Ignore errors on logout
-    } finally {
-      setUser(null);
-      setActiveRoleState(null);
-      router.push('/login');
     }
   }, [router]);
 

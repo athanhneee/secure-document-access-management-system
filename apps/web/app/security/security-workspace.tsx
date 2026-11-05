@@ -59,6 +59,7 @@ export function SecurityWorkspace() {
     setErrorMessage,
     refreshData,
     runDetection,
+    applyOptimisticAlertStatus,
     terminateSession,
   } = useSecurityData();
 
@@ -71,7 +72,7 @@ export function SecurityWorkspace() {
 
   async function handleModalSuccess(msg: string) {
     setMessage(msg);
-    await refreshData();
+    void refreshData({ silent: true });
   }
 
   return (
@@ -85,7 +86,7 @@ export function SecurityWorkspace() {
                 <span className="text-xs text-[#717171]">Phân hệ An ninh Thông tin</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
-                Giám sát An ninh & Điều tra Sự cố
+                Giám sát An ninh &amp; Điều tra Sự cố
               </h1>
               <p className="text-xs text-[#717171]">
                 Xử lý cảnh báo xâm phạm, điều tra provenance watermark, xử lý sự cố và luật phát
@@ -193,10 +194,7 @@ export function SecurityWorkspace() {
             </TabsContent>
 
             <TabsContent value="detection" className="space-y-4">
-              <DetectionRulesTab
-                detectionRules={detectionRules}
-                onRunDetection={() => void runDetection()}
-              />
+              <DetectionRulesTab detectionRules={detectionRules} onRunDetection={runDetection} />
             </TabsContent>
 
             <TabsContent value="sessions" className="space-y-4">
@@ -220,6 +218,7 @@ export function SecurityWorkspace() {
             }}
             alert={selectedAlert}
             onClearError={() => setErrorMessage(null)}
+            onOptimisticStatusChange={applyOptimisticAlertStatus}
             onSuccess={handleModalSuccess}
             onError={setErrorMessage}
           />

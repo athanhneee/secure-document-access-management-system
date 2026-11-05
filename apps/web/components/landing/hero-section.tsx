@@ -38,7 +38,7 @@ export function HeroSection() {
             <span className="hidden sm:inline">KIỂM SOÁT TRUY CẬP TÀI LIỆU MẬT TỔ CHỨC</span>
           </div>
           <h1 className="text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-[#222222] leading-[1.25] sm:leading-tight text-balance animate-fade-in-up">
-            <span className="sm:hidden">Kiểm soát & Bảo vệ Tài liệu Tối mật</span>
+            <span className="sm:hidden">Kiểm soát &amp; Bảo vệ Tài liệu Tối mật</span>
             <span className="hidden sm:inline">
               Bảo vệ tài liệu tối mật với kiến trúc phân quyền đa tầng.
             </span>

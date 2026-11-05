@@ -20,6 +20,9 @@ interface AlertDetailModalProps {
   onOpenChange: (open: boolean) => void;
   alert: SecurityAlertItem | null;
   onClearError: () => void;
+  // CONFLICT-RESOLVED: Bổ sung `| undefined` tường minh để tương thích `exactOptionalPropertyTypes: true` khi truyền callback cập nhật lạc quan xuống AlertDetailForm.
+  onOptimisticStatusChange?:
+    ((alertId: string, nextStatus: SecurityAlertItem['status']) => () => void) | undefined;
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
 }
@@ -29,6 +32,7 @@ export function AlertDetailModal({
   onOpenChange,
   alert,
   onClearError,
+  onOptimisticStatusChange,
   onSuccess,
   onError,
 }: AlertDetailModalProps) {
@@ -50,6 +54,7 @@ export function AlertDetailModal({
             alert={alert}
             onClose={() => onOpenChange(false)}
             onClearError={onClearError}
+            onOptimisticStatusChange={onOptimisticStatusChange}
             onSuccess={onSuccess}
             onError={onError}
           />
@@ -87,6 +92,9 @@ interface AlertDetailFormProps {
   alert: SecurityAlertItem;
   onClose: () => void;
   onClearError: () => void;
+  // CONFLICT-RESOLVED: Bổ sung `| undefined` tường minh để tương thích `exactOptionalPropertyTypes: true` khi truyền callback cập nhật lạc quan xuống AlertDetailForm.
+  onOptimisticStatusChange?:
+    ((alertId: string, nextStatus: SecurityAlertItem['status']) => () => void) | undefined;
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
 }
@@ -95,6 +103,7 @@ function AlertDetailForm({
   alert,
   onClose,
   onClearError,
+  onOptimisticStatusChange,
   onSuccess,
   onError,
 }: AlertDetailFormProps) {
@@ -138,6 +147,8 @@ function AlertDetailForm({
 
     setIsUpdatingAlert(true);
     onClearError();
+    const rollback = statusChanged ? onOptimisticStatusChange?.(alert.id, newStatus) : undefined;
+    onClose();
 
     try {
       if (statusChanged) {
@@ -157,13 +168,13 @@ function AlertDetailForm({
         });
       }
 
-      onClose();
       await onSuccess(
         statusChanged
           ? `Đã cập nhật trạng thái cảnh báo thành ${newStatus}.`
           : 'Đã lưu ghi chú điều tra nội bộ cho cảnh báo.',
       );
     } catch (err) {
+      rollback?.();
       if (err instanceof ApiError) {
         onError(err.message || 'Không thể cập nhật cảnh báo.');
       } else {

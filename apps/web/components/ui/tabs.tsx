@@ -105,7 +105,7 @@ export function TabsTrigger({ id, className, value, children, ...props }: TabsTr
       tabIndex={isSelected ? 0 : -1}
       onClick={() => context.onValueChange(value)}
       className={cn(
-        'inline-flex items-center justify-center whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
+        'inline-flex items-center justify-center whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
         isSelected
           ? 'bg-[#ffffff] text-[#222222] shadow-xs font-semibold'
           : 'text-[#717171] hover:text-[#222222] hover:bg-[#ffffff]/80',
@@ -138,7 +138,7 @@ export function TabsContent({ id, className, value, children, ...props }: TabsCo
       aria-labelledby={tabId}
       tabIndex={0}
       className={cn(
-        'mt-2 ring-offset-background focus-visible:outline-none animate-fade-in-up',
+        'mt-2 ring-offset-background focus-visible:outline-none animate-tab-enter',
         className,
       )}
       {...props}

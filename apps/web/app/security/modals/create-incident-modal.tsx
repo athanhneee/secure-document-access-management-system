@@ -96,7 +96,7 @@ export function CreateIncidentModal({
 
           <div className="space-y-1">
             <label htmlFor="inc-summary" className="font-medium text-[#222222]">
-              Tóm tắt diễn biến & đánh giá tác động <span className="text-[#C13515]">*</span>
+              Tóm tắt diễn biến &amp; đánh giá tác động <span className="text-[#C13515]">*</span>
             </label>
             <Textarea
               id="inc-summary"

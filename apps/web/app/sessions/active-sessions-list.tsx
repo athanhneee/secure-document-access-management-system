@@ -83,7 +83,7 @@ export function ActiveSessionsList({
       <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3">
         <div>
           <CardTitle className="text-base font-bold text-[#222222]">
-            Danh sách thiết bị & phiên đang hoạt động ({sessions.length})
+            Danh sách thiết bị &amp; phiên đang hoạt động ({sessions.length})
           </CardTitle>
           <CardDescription className="text-xs text-[#717171]">
             Kiểm tra địa chỉ IP, thời điểm tương tác cuối và thu hồi riêng từng phiên từ xa mà không

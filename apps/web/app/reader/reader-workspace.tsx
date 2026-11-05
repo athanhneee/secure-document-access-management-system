@@ -54,7 +54,7 @@ export function ReaderWorkspace() {
                 <span className="text-xs text-[#717171]">Phân hệ Người đọc</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
-                Khám phá & Đọc Tài liệu Mật
+                Khám phá &amp; Đọc Tài liệu Mật
               </h1>
               <p className="text-xs text-[#717171]">
                 Tìm kiếm danh mục tài liệu, gửi yêu cầu cấp quyền, xem trước an toàn và tải bản sao

@@ -18,6 +18,7 @@ export { createAndSeedLoadTestFixture } from './load-test-fixture.mjs';
  *   đánh giá quyết định ABAC PDP, kiểm tra quyền cấp phát Zero-Trust (`principal_user_id`), đóng dấu thủy vân PDF động và truy vấn phân vùng kiểm toán (`chain_sequence`).
  */
 export function buildLoadTestScenarios({ db, docIds, samplePdfBytes, totalOps, concurrency }) {
+  const jwtSigningKey = crypto.randomBytes(32);
   return [
     {
       name: '1. Login & Token Verification',
@@ -32,14 +33,11 @@ export function buildLoadTestScenarios({ db, docIds, samplePdfBytes, totalOps, c
           exp: Date.now() + 3600000,
           jti: crypto.randomUUID(),
         });
-        const sig = crypto
-          .createHmac('sha256', 'jwt-secret-key-32-chars-minimum')
-          .update(payload)
-          .digest('base64url');
+        const sig = crypto.createHmac('sha256', jwtSigningKey).update(payload).digest('base64url');
         const token = `${Buffer.from(payload).toString('base64url')}.${sig}`;
         const [b64, signature] = token.split('.');
         const expectedSig = crypto
-          .createHmac('sha256', 'jwt-secret-key-32-chars-minimum')
+          .createHmac('sha256', jwtSigningKey)
           .update(Buffer.from(b64, 'base64url').toString('utf8'))
           .digest('base64url');
         if (signature !== expectedSig) throw new Error('Invalid signature');

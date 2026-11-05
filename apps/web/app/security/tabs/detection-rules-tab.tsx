@@ -16,7 +16,7 @@ import type { DetectionRuleItem } from '../types';
 
 interface DetectionRulesTabProps {
   detectionRules: DetectionRuleItem[];
-  onRunDetection: () => void;
+  onRunDetection: () => void | Promise<void>;
 }
 
 export function DetectionRulesTab({ detectionRules, onRunDetection }: DetectionRulesTabProps) {

@@ -94,6 +94,19 @@ const sizeStyles: Record<'sm' | 'md' | 'lg', string> = {
   lg: 'h-11 px-6 text-sm font-semibold min-w-[8.5rem]',
 };
 
+/**
+ * Thuật toán: Nhận diện Lời gọi Bất đồng bộ Tức thì cho Nút Viên Thuốc (`isPromiseLike`)
+ * Mục đích: Tự động bật con quay `Loader2` và khóa nhấn đúp ngay dưới `1ms` khi `onClick` trả về `Promise`, đảm bảo phản hồi thị giác `< 0,1s` cho mọi thao tác mạng.
+ */
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'then' in value &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
 const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHoverButtonProps>(
   (
     {
@@ -106,10 +119,42 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
       isLoading = false,
       icon,
       disabled,
+      onClick,
       ...props
     },
     ref,
   ) => {
+    const [autoPending, setAutoPending] = React.useState(false);
+    const mountedRef = React.useRef(true);
+
+    React.useEffect(() => {
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+      };
+    }, []);
+
+    const effectiveLoading = isLoading || autoPending;
+
+    const handleInstantClick = React.useCallback(
+      (event: React.MouseEvent<HTMLButtonElement>) => {
+        if (disabled || effectiveLoading || !onClick) {
+          return;
+        }
+        const outcome: unknown = onClick(event);
+        if (isPromiseLike(outcome)) {
+          setAutoPending(true);
+          const clearPending = () => {
+            if (mountedRef.current) {
+              setAutoPending(false);
+            }
+          };
+          outcome.then(clearPending, clearPending);
+        }
+      },
+      [disabled, effectiveLoading, onClick],
+    );
+
     const buttonText =
       text || (typeof children === 'string' && children.trim() ? children : 'Button');
     const variantStyle: VariantStyle = variantStyles[variant] ?? variantStyles.primary;
@@ -118,7 +163,7 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
 
     const innerContent = (
       <>
-        {isLoading ? (
+        {effectiveLoading ? (
           <span className="inline-flex items-center justify-center gap-2">
             <Loader2
               size={16}
@@ -132,7 +177,7 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
           <span className="inline-flex items-center justify-center gap-2">
             <span className="truncate">{buttonText}</span>
             <span
-              className="shrink-0 transition-transform duration-200 ease-out group-hover:translate-x-1"
+              className="shrink-0 transition-transform duration-100 ease-out group-hover:translate-x-1"
               aria-hidden="true"
             >
               {iconElement}
@@ -152,7 +197,7 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
       className,
     );
 
-    if (href && !disabled && !isLoading) {
+    if (href && !disabled && !effectiveLoading) {
       return (
         <Link href={href} className={baseClasses}>
           {innerContent}
@@ -163,8 +208,9 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
     return (
       <button
         ref={ref}
-        disabled={disabled || isLoading}
-        aria-busy={isLoading || undefined}
+        disabled={disabled || effectiveLoading}
+        aria-busy={effectiveLoading || undefined}
+        onClick={onClick ? handleInstantClick : undefined}
         className={baseClasses}
         {...props}
       >

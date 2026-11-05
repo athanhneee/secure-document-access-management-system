@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import {
+  applyOptimisticPolicyActivate,
+  applyOptimisticRoleDisable,
+  applyOptimisticUserStatus,
+} from '@/lib/optimistic-state';
 import type { VisualPolicyRule } from '@/components/abac/abac-models';
 import {
   mapHealthReadyResponse,
@@ -56,72 +61,79 @@ export function useAdminData() {
   });
   const { hydrateConfigs } = wm;
 
-  const refresh = useCallback(async () => {
-    setIsLoading(true);
-    setErrorMessage(null);
-
-    const [
-      usersRes,
-      deptsRes,
-      rolesRes,
-      permsRes,
-      policiesRes,
-      attrsRes,
-      wmConfigsRes,
-      healthRes,
-      dashboardRes,
-    ] = await Promise.allSettled([
-      apiClient<{ data: UserRow[] }>('/users'),
-      apiClient<{ data: DepartmentRow[] }>('/departments'),
-      apiClient<{ data: RoleRow[] }>('/rbac/roles'),
-      apiClient<{ data: PermissionRow[] }>('/rbac/permissions'),
-      apiClient<{ data: AbacPolicyApiDto[] }>('/abac/policies'),
-      apiClient<{ data: AttributeDefinitionApiDto[] }>('/abac/attributes'),
-      apiClient<{ data: WatermarkConfigRow[] }>('/watermarks/configs'),
-      apiClient<HealthReadyResponse>('/health/ready'),
-      apiClient<HealthDashboardResponse>('/health/dashboard'),
-    ]);
-
-    if (usersRes.status === 'fulfilled') setUsers(usersRes.value.data || []);
-    if (deptsRes.status === 'fulfilled') setDepartments(deptsRes.value.data || []);
-    if (rolesRes.status === 'fulfilled') setRoles(rolesRes.value.data || []);
-    if (permsRes.status === 'fulfilled') setPermissions(permsRes.value.data || []);
-    if (policiesRes.status === 'fulfilled') {
-      setPolicies((policiesRes.value.data || []).map(normalizeAbacPolicyRow));
-    }
-    if (attrsRes.status === 'fulfilled') {
-      setAttributes((attrsRes.value.data || []).map(normalizeAttributeDefinitionRow));
-    }
-    if (wmConfigsRes.status === 'fulfilled') {
-      hydrateConfigs(wmConfigsRes.value.data || []);
-    }
-
-    const dashboardData = dashboardRes.status === 'fulfilled' ? dashboardRes.value : null;
-    if (healthRes.status === 'fulfilled') {
-      setHealthData(mapHealthReadyResponse(healthRes.value, dashboardData));
-    } else {
-      const err = healthRes.reason;
-      if (
-        err instanceof ApiError &&
-        err.response &&
-        typeof err.response === 'object' &&
-        ('checks' in err.response || 'status' in err.response)
-      ) {
-        setHealthData(
-          mapHealthReadyResponse(err.response as unknown as HealthReadyResponse, dashboardData),
-        );
-      } else {
-        setHealthData({
-          status: 'OFFLINE',
-          database: { status: 'OFFLINE' },
-          cache: { status: 'OFFLINE' },
-          uptimeSeconds: dashboardData?.process?.uptimeSeconds ?? 0,
-        });
+  const refresh = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!options?.silent) {
+        setIsLoading(true);
       }
-    }
+      setErrorMessage(null);
 
-    setIsLoading(false);
-  }, [hydrateConfigs]);
+      const [
+        usersRes,
+        deptsRes,
+        rolesRes,
+        permsRes,
+        policiesRes,
+        attrsRes,
+        wmConfigsRes,
+        healthRes,
+        dashboardRes,
+      ] = await Promise.allSettled([
+        apiClient<{ data: UserRow[] }>('/users'),
+        apiClient<{ data: DepartmentRow[] }>('/departments'),
+        apiClient<{ data: RoleRow[] }>('/rbac/roles'),
+        apiClient<{ data: PermissionRow[] }>('/rbac/permissions'),
+        apiClient<{ data: AbacPolicyApiDto[] }>('/abac/policies'),
+        apiClient<{ data: AttributeDefinitionApiDto[] }>('/abac/attributes'),
+        apiClient<{ data: WatermarkConfigRow[] }>('/watermarks/configs'),
+        apiClient<HealthReadyResponse>('/health/ready'),
+        apiClient<HealthDashboardResponse>('/health/dashboard'),
+      ]);
+
+      if (usersRes.status === 'fulfilled') setUsers(usersRes.value.data || []);
+      if (deptsRes.status === 'fulfilled') setDepartments(deptsRes.value.data || []);
+      if (rolesRes.status === 'fulfilled') setRoles(rolesRes.value.data || []);
+      if (permsRes.status === 'fulfilled') setPermissions(permsRes.value.data || []);
+      if (policiesRes.status === 'fulfilled') {
+        setPolicies((policiesRes.value.data || []).map(normalizeAbacPolicyRow));
+      }
+      if (attrsRes.status === 'fulfilled') {
+        setAttributes((attrsRes.value.data || []).map(normalizeAttributeDefinitionRow));
+      }
+      if (wmConfigsRes.status === 'fulfilled') {
+        hydrateConfigs(wmConfigsRes.value.data || []);
+      }
+
+      const dashboardData = dashboardRes.status === 'fulfilled' ? dashboardRes.value : null;
+      if (healthRes.status === 'fulfilled') {
+        setHealthData(mapHealthReadyResponse(healthRes.value, dashboardData));
+      } else {
+        const err = healthRes.reason;
+        if (
+          err instanceof ApiError &&
+          err.response &&
+          typeof err.response === 'object' &&
+          ('checks' in err.response || 'status' in err.response)
+        ) {
+          setHealthData(
+            mapHealthReadyResponse(err.response as unknown as HealthReadyResponse, dashboardData),
+          );
+        } else {
+          setHealthData({
+            status: 'OFFLINE',
+            database: { status: 'OFFLINE' },
+            cache: { status: 'OFFLINE' },
+            uptimeSeconds: dashboardData?.process?.uptimeSeconds ?? 0,
+          });
+        }
+      }
+
+      if (!options?.silent) {
+        setIsLoading(false);
+      }
+    },
+    [hydrateConfigs],
+  );
 
   useEffect(() => {
     let ignore = false;
@@ -138,14 +150,20 @@ export function useAdminData() {
   }, [refresh, refreshTrigger]);
 
   async function changeUserStatus(targetUser: UserRow, action: UserStatusAction) {
+    const previousUsers = users;
+    setErrorMessage(null);
+    setUsers((prev) => applyOptimisticUserStatus(prev, targetUser.id, action));
+    setMessage(`Đã cập nhật trạng thái tài khoản ${targetUser.username}.`);
+
     try {
       await apiClient(`/users/${targetUser.id}/${action}`, {
         method: 'POST',
         body: JSON.stringify({ expectedVersion: targetUser.version }),
       });
-      setMessage(`Đã cập nhật trạng thái tài khoản ${targetUser.username}.`);
-      await refresh();
+      void refresh({ silent: true });
     } catch (err) {
+      setUsers(previousUsers);
+      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể cập nhật tài khoản.'
@@ -159,15 +177,20 @@ export function useAdminData() {
       setErrorMessage('Không thể vô hiệu hóa vai trò mặc định của hệ thống.');
       return;
     }
+    const previousRoles = roles;
     setErrorMessage(null);
+    setRoles((prev) => applyOptimisticRoleDisable(prev, role.id));
+    setMessage(`Đã vô hiệu hóa vai trò ${role.name}.`);
+
     try {
       await apiClient(`/rbac/roles/${role.id}/disable`, {
         method: 'POST',
         body: JSON.stringify({ expectedVersion: role.version }),
       });
-      setMessage(`Đã vô hiệu hóa vai trò ${role.name}.`);
-      await refresh();
+      void refresh({ silent: true });
     } catch (err) {
+      setRoles(previousRoles);
+      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể vô hiệu hóa vai trò.'
@@ -182,11 +205,16 @@ export function useAdminData() {
       setErrorMessage('Quy tắc nháp cục bộ chưa được đồng bộ lên máy chủ PDP.');
       return;
     }
+    const previousPolicies = policies;
+    setPolicies((prev) => applyOptimisticPolicyActivate(prev, policyId));
+    setMessage('Đã kích hoạt chính sách ABAC thành công.');
+
     try {
       await apiClient(`/abac/policies/${policyId}/activate`, { method: 'POST' });
-      setMessage('Đã kích hoạt chính sách ABAC thành công.');
-      await refresh();
+      void refresh({ silent: true });
     } catch (err) {
+      setPolicies(previousPolicies);
+      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể kích hoạt chính sách.'
@@ -211,6 +239,32 @@ export function useAdminData() {
 
     const isExistingDbPolicy =
       /^\d+$/u.test(savedRule.id) && policies.some((p) => p.id === savedRule.id);
+    const previousPolicies = policies;
+    const optimisticRow: AbacPolicyRow = {
+      id: savedRule.id,
+      code: savedRule.code,
+      name: savedRule.name,
+      description: savedRule.description,
+      effect: savedRule.effect,
+      priority: savedRule.priority,
+      targetAction: savedRule.targetAction,
+      isActive: isExistingDbPolicy
+        ? (policies.find((p) => p.id === savedRule.id)?.isActive ?? false)
+        : false,
+      obligations: savedRule.obligations,
+      groups: savedRule.groups,
+    };
+
+    setPolicies((prev) =>
+      isExistingDbPolicy
+        ? prev.map((p) => (p.id === savedRule.id ? { ...p, ...optimisticRow } : p))
+        : [optimisticRow, ...prev],
+    );
+    setMessage(
+      isExistingDbPolicy
+        ? `Đã cập nhật chính sách ABAC [${savedRule.code}] lên máy chủ PDP.`
+        : `Đã tạo mới chính sách ABAC [${savedRule.code}] trên máy chủ PDP.`,
+    );
 
     try {
       if (isExistingDbPolicy) {
@@ -218,16 +272,16 @@ export function useAdminData() {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
-        setMessage(`Đã cập nhật chính sách ABAC [${savedRule.code}] lên máy chủ PDP.`);
       } else {
         await apiClient('/abac/policies', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
-        setMessage(`Đã tạo mới chính sách ABAC [${savedRule.code}] trên máy chủ PDP.`);
       }
-      await refresh();
+      void refresh({ silent: true });
     } catch (err) {
+      setPolicies(previousPolicies);
+      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể lưu chính sách ABAC lên máy chủ.'

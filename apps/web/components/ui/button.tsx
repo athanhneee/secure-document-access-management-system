@@ -21,6 +21,19 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   isLoading?: boolean;
 }
 
+/**
+ * Thuật toán: Nhận diện Phản hồi Bất đồng bộ Tức thì Dưới 100ms (`isPromiseLike`)
+ * Mục đích: Phát hiện trình xử lý `onClick` trả về `Promise` trong `O(1)` để kích hoạt ngay trạng thái chờ `aria-busy` và con quay `Loader2` trong cùng chu kỳ sự kiện nhấn chuột (`< 1ms`), đồng thời khóa nhấn đúp tự động.
+ */
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'then' in value &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   (
     {
@@ -29,11 +42,43 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       size = 'default',
       isLoading = false,
       disabled,
+      onClick,
       children,
       ...props
     },
     ref,
   ) => {
+    const [autoPending, setAutoPending] = React.useState(false);
+    const mountedRef = React.useRef(true);
+
+    React.useEffect(() => {
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+      };
+    }, []);
+
+    const effectiveLoading = isLoading || autoPending;
+
+    const handleInstantClick = React.useCallback(
+      (event: React.MouseEvent<HTMLButtonElement>) => {
+        if (disabled || effectiveLoading || !onClick) {
+          return;
+        }
+        const outcome: unknown = onClick(event);
+        if (isPromiseLike(outcome)) {
+          setAutoPending(true);
+          const clearPending = () => {
+            if (mountedRef.current) {
+              setAutoPending(false);
+            }
+          };
+          outcome.then(clearPending, clearPending);
+        }
+      },
+      [disabled, effectiveLoading, onClick],
+    );
+
     // CONFLICT-RESOLVED: Chuẩn hóa toàn bộ trạng thái hover về đúng bảng màu chuẩn trong rules/ui-design-system.md (#E31C5F, brightness-90/95, #dddddd).
     const variants: Record<string, string> = {
       default:
@@ -48,7 +93,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         'border border-[#dddddd] bg-transparent text-[#222222] hover:bg-[#f7f7f7] active:scale-[0.98]',
       secondary:
         'bg-[#f7f7f7] text-[#222222] border border-[#ebebeb] hover:border-[#dddddd] hover:brightness-95 active:scale-[0.98]',
-      ghost: 'text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222]',
+      ghost: 'text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] active:scale-[0.98]',
       link: 'text-[#FF385C] underline-offset-4 hover:underline p-0 h-auto',
     };
 
@@ -64,15 +109,16 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       return (
         <button
           ref={ref}
-          disabled={disabled || isLoading}
-          aria-busy={isLoading || undefined}
+          disabled={disabled || effectiveLoading}
+          aria-busy={effectiveLoading || undefined}
+          onClick={onClick ? handleInstantClick : undefined}
           className={cn(
-            'group relative min-w-[8rem] w-auto inline-flex items-center justify-center cursor-pointer overflow-hidden rounded-full border border-transparent bg-[#FF385C] hover:bg-[#E31C5F] px-5 py-2 text-center text-xs font-semibold text-white shadow-2xs transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] select-none disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]',
+            'group relative min-w-[8rem] w-auto inline-flex items-center justify-center cursor-pointer overflow-hidden rounded-full border border-transparent bg-[#FF385C] hover:bg-[#E31C5F] px-5 py-2 text-center text-xs font-semibold text-white shadow-2xs transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] select-none disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]',
             className,
           )}
           {...props}
         >
-          {isLoading ? (
+          {effectiveLoading ? (
             <span className="flex items-center gap-2">
               <Loader2
                 size={16}
@@ -88,7 +134,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
               <ArrowRight
                 size={16}
                 strokeWidth={2}
-                className="shrink-0 transition-transform duration-200 ease-out group-hover:translate-x-1"
+                className="shrink-0 transition-transform duration-100 ease-out group-hover:translate-x-1"
                 aria-hidden="true"
               />
             </span>
@@ -100,17 +146,18 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <button
         ref={ref}
-        disabled={disabled || isLoading}
-        aria-busy={isLoading || undefined}
+        disabled={disabled || effectiveLoading}
+        aria-busy={effectiveLoading || undefined}
+        onClick={onClick ? handleInstantClick : undefined}
         className={cn(
-          'inline-flex items-center justify-center whitespace-nowrap rounded-[40px] transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FF385C] focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50 cursor-pointer select-none',
+          'inline-flex items-center justify-center whitespace-nowrap rounded-[40px] transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FF385C] focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50 cursor-pointer select-none',
           variants[variant],
           sizes[size],
           className,
         )}
         {...props}
       >
-        {isLoading ? (
+        {effectiveLoading ? (
           <span className="flex items-center gap-2">
             <Loader2
               size={16}

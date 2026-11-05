@@ -5,8 +5,8 @@ import { apiClient } from '@/lib/api-client';
 import type { ClassificationHistoryItem, DocumentItem, DocumentVersionItem } from '../types';
 
 /**
- * Fetches on-demand version history (SHA-256 & malware scan status) and SCD Type 2
- * classification history records for a selected document.
+ * Thuật toán: Mở Tức Thì Hộp Thoại Lịch Sử Phiên Bản & Lịch Sử Phân Loại SCD Loại 2 (`useDocumentHistory`)
+ * Mục đích: Mở hộp thoại ngay dưới `16ms` khi nhấp chuột, xóa dữ liệu cũ của tài liệu trước để tránh nháy sai lệch và nạp bất đồng bộ danh sách băm SHA-256 / biến động mức mật.
  */
 export function useDocumentHistory() {
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
@@ -21,6 +21,7 @@ export function useDocumentHistory() {
 
   async function handleOpenVersionHistory(doc: DocumentItem) {
     setDocForVersions(doc);
+    setDocVersions([]);
     setIsLoadingVersions(true);
     setVersionHistoryOpen(true);
     try {
@@ -37,6 +38,7 @@ export function useDocumentHistory() {
 
   async function handleOpenClassHistory(doc: DocumentItem) {
     setDocForClassHistory(doc);
+    setDocClassHistory([]);
     setIsLoadingClassHistory(true);
     setClassHistoryOpen(true);
     try {

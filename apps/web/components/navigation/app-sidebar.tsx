@@ -95,7 +95,7 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
             <span>Phân hệ theo vai trò</span>
           </div>
           <p className="mt-0.5 text-[11px] text-[#717171] leading-normal">
-            Kiểm soát truy cập Zero Trust & RBAC
+            Kiểm soát truy cập Zero Trust &amp; RBAC
           </p>
         </div>
 
@@ -164,7 +164,7 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
           >
             <div className="flex items-center gap-2">
               <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span>Quản lý phiên & thiết bị</span>
+              <span>Quản lý phiên &amp; thiết bị</span>
             </div>
           </Link>
 

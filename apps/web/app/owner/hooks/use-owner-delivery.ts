@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { apiClient, apiDownload, ApiError, verifyPdfMagicBytes } from '@/lib/api-client';
 import { triggerBlobDownload } from '../helpers';
 import type { DocumentItem } from '../types';
@@ -11,10 +11,10 @@ interface UseOwnerDeliveryParams {
 }
 
 /**
- * Thuật toán: Xem trước Phiên Kiểm soát PEP & Tải xuống Qua Vé Dùng Một Lần (`useOwnerDelivery`)
- * Mục đích: Cấp phát phiên truy cập (`VIEW` / `DOWNLOAD`) đã thẩm định chính sách, xác thực chữ ký đầu `%PDF-` và quản lý vòng đời Object URL chống rò rỉ bộ nhớ.
+ * Thuật toán: Mở Hộp Thoại Xem Trước Tức Thì Dưới 16ms & Tải Xuống Qua Vé Dùng Một Lần (`useOwnerDelivery`)
+ * Mục đích: Mở khung xem trước Sandbox ngay lập tức (`< 0,1s`) trước khi khởi tạo phiên `VIEW`, xác thực chữ ký đầu `%PDF-` và chống tranh chấp phản hồi mạng qua `previewReqIdRef`.
  * Cơ chế hoạt động:
- *   - `handleOpenPreview` & `handlePageChange`: Khởi tạo phiên `VIEW`, tải luồng nhị phân trang PDF đã đóng dấu thủy vân, kiểm chứng magic bytes `0x25 0x50 0x44 0x46 0x2D` (`verifyPdfMagicBytes`) và thu hồi `ObjectURL` cũ ngay khi chuyển trang/đóng hộp thoại.
+ *   - `handleOpenPreview`: Hiển thị hộp thoại phương thức ngay trong khung hình đầu tiên, tải phiên và luồng PDF gắn thủy vân ở nền; tự động đóng hộp thoại nếu máy chủ từ chối phiên.
  *   - `handleDownloadWithTicket`: Thực thi giao thức 3 bước (mở phiên `DOWNLOAD` -> xin vé ngắn hạn dùng một lần `download-ticket` -> tải bản sao PDF gắn thủy vân).
  */
 export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDeliveryParams) {
@@ -26,9 +26,14 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
   const [previewTotalPages, setPreviewTotalPages] = useState(1);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
+  const previewReqIdRef = useRef(0);
 
   const handleClosePreview = useCallback(
     (open: boolean) => {
+      if (!open) {
+        previewReqIdRef.current += 1;
+        setIsLoadingPreview(false);
+      }
       setPreviewOpen(open);
       if (!open && previewPdfUrl) {
         URL.revokeObjectURL(previewPdfUrl);
@@ -39,12 +44,18 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
   );
 
   async function handleOpenPreview(doc: DocumentItem) {
-    setIsLoadingPreview(true);
-    setErrorMessage(null);
+    const reqId = ++previewReqIdRef.current;
     if (previewPdfUrl) {
       URL.revokeObjectURL(previewPdfUrl);
       setPreviewPdfUrl(null);
     }
+    setErrorMessage(null);
+    setPreviewDoc(doc);
+    setPreviewSessionId(null);
+    setPreviewPage(1);
+    setPreviewTotalPages(1);
+    setIsLoadingPreview(true);
+    setPreviewOpen(true);
 
     try {
       const sessionResult = await apiClient<{ sessionId: string }>(
@@ -55,15 +66,19 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
         },
       );
 
-      setPreviewDoc(doc);
+      if (previewReqIdRef.current !== reqId) {
+        return;
+      }
+
       setPreviewSessionId(sessionResult.sessionId);
-      setPreviewPage(1);
-      setPreviewOpen(true);
 
       try {
         const pdfBlob = await apiDownload(
           `/documents/${doc.id}/preview?sessionId=${sessionResult.sessionId}`,
         );
+        if (previewReqIdRef.current !== reqId) {
+          return;
+        }
         if (!(await verifyPdfMagicBytes(pdfBlob))) {
           throw new Error('Invalid PDF stream header.');
         }
@@ -78,13 +93,19 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
         console.warn('Could not load binary PDF preview stream:', streamErr);
       }
     } catch (err) {
+      if (previewReqIdRef.current !== reqId) {
+        return;
+      }
+      setPreviewOpen(false);
       if (err instanceof ApiError) {
         setErrorMessage(err.message || 'Không thể tạo phiên xem trước tài liệu.');
       } else {
         setErrorMessage('Không thể tạo phiên xem trước tài liệu.');
       }
     } finally {
-      setIsLoadingPreview(false);
+      if (previewReqIdRef.current === reqId) {
+        setIsLoadingPreview(false);
+      }
     }
   }
 

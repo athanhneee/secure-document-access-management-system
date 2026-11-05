@@ -219,11 +219,12 @@ export async function createAndSeedLoadTestFixture() {
   );
 
   let prevHash = null;
+  const auditHmacKey = crypto.randomBytes(32);
   const auditRows = [];
   for (let seq = 1; seq <= 5000; seq++) {
     const docId = docIds[seq % docIds.length];
     const entryHash = crypto
-      .createHmac('sha256', 'audit-secret-key')
+      .createHmac('sha256', auditHmacKey)
       .update(`${prevHash ?? 'GENESIS'}:${seq}:DOCUMENT_ACCESSED:SUCCESS`)
       .digest('hex');
     auditRows.push([

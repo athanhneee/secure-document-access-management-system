@@ -60,6 +60,8 @@ export function OwnerWorkspace() {
     setErrorMessage: data.setErrorMessage,
   });
   const lifecycle = useDocumentLifecycle({
+    documents: data.documents,
+    setDocuments: data.setDocuments,
     refreshData: data.refreshData,
     setMessage: data.setMessage,
     setErrorMessage: data.setErrorMessage,
@@ -67,6 +69,8 @@ export function OwnerWorkspace() {
   const history = useDocumentHistory();
   const grantsControl = useOwnerGrants({
     documents: data.documents,
+    grants: data.grants,
+    setGrants: data.setGrants,
     usersLookup: data.usersLookup,
     rolesLookup: data.rolesLookup,
     refreshData: data.refreshData,
@@ -74,6 +78,8 @@ export function OwnerWorkspace() {
     setErrorMessage: data.setErrorMessage,
   });
   const requestsControl = useOwnerRequests({
+    requests: data.requests,
+    setRequests: data.setRequests,
     refreshData: data.refreshData,
     setMessage: data.setMessage,
     setErrorMessage: data.setErrorMessage,
@@ -92,7 +98,7 @@ export function OwnerWorkspace() {
                 <span className="text-xs text-[#717171]">Phân hệ Chủ sở hữu</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
-                Quản lý & Cấp phép Tài liệu Mật
+                Quản lý &amp; Cấp phép Tài liệu Mật
               </h1>
               <p className="text-xs text-[#717171]">
                 Tải lên tệp đa phương thức với kiểm tra phân loại bắt buộc, cấp quyền trực tiếp, xét

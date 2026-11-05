@@ -70,7 +70,9 @@ async function main() {
     const tag = cipher.getAuthTag();
 
     // Decrypt DEK
-    const decipher = crypto.createDecipheriv('aes-256-gcm', kek, iv);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', kek, iv, {
+      authTagLength: 16,
+    });
     decipher.setAuthTag(tag);
     const decryptedDek = Buffer.concat([decipher.update(encryptedDek), decipher.final()]);
 
@@ -93,8 +95,9 @@ async function main() {
       }),
     ).toString('base64url');
 
+    const ephemeralJwtKey = crypto.randomBytes(32);
     const signature = crypto
-      .createHmac('sha256', 'smoke-test-secret-key-32-chars')
+      .createHmac('sha256', ephemeralJwtKey)
       .update(`${header}.${payload}`)
       .digest('base64url');
     const token = `${header}.${payload}.${signature}`;
@@ -103,7 +106,7 @@ async function main() {
     const parts = token.split('.');
     if (parts.length !== 3) throw new Error('Malformed token');
     const expectedSig = crypto
-      .createHmac('sha256', 'smoke-test-secret-key-32-chars')
+      .createHmac('sha256', ephemeralJwtKey)
       .update(`${parts[0]}.${parts[1]}`)
       .digest('base64url');
     if (!crypto.timingSafeEqual(Buffer.from(parts[2]), Buffer.from(expectedSig))) {
@@ -158,7 +161,7 @@ async function main() {
 
   // 6. Audit Trail Cryptographic Hash Chain Validation
   await runCheck('6. Immutable Audit Trail HMAC Hash-Chaining Verification', async () => {
-    const hmacKey = 'audit-tamper-key-32-chars-long';
+    const hmacKey = crypto.randomBytes(32);
     let prevHash = '0000000000000000000000000000000000000000000000000000000000000000';
     const chain = [];
 

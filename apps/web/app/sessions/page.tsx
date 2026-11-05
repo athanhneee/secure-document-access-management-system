@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { removeOptimisticById } from '@/lib/optimistic-state';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { AuthGuard } from '@/components/auth-guard';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -26,11 +27,13 @@ export default function SessionsPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   /**
-   * Thuật toán: Đồng Bộ Danh Sách Phiên Thiết Bị Đang Mở & Thu Hồi Chọn Lọc Không Hủy Phiên Hiện Tại (`loadActiveSessions`, `handleRevokeSingleSession`, `handleLogoutOthers`)
-   * Mục đích: Truy vấn `/auth/sessions` để liệt kê mọi phiên đăng nhập còn hiệu lực, cho phép thu hồi từng phiên qua `DELETE /auth/sessions/:id` hoặc thu hồi toàn bộ thiết bị khác qua `POST /auth/logout-others` mà vẫn bảo toàn cookie phiên hiện tại.
+   * Thuật toán: Đồng Bộ Danh Sách Phiên Thiết Bị & Thu Hồi Chọn Lọc Lạc Quan Dưới 16ms (`loadActiveSessions`, `handleRevokeSingleSession`, `handleLogoutOthers`)
+   * Mục đích: Loại bỏ tức thì phiên thiết bị từ xa trên giao diện ngay khi người dùng xác nhận (`< 0,1s`) mà vẫn bảo toàn cookie phiên hiện tại, tự động hoàn trả ảnh chụp `previousSessions` nếu yêu cầu mạng thất bại.
    */
-  const loadActiveSessions = useCallback(async () => {
-    setIsFetching(true);
+  const loadActiveSessions = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setIsFetching(true);
+    }
     try {
       const res = await apiClient<{ data?: ActiveAuthSessionItem[] } | ActiveAuthSessionItem[]>(
         '/auth/sessions',
@@ -38,9 +41,13 @@ export default function SessionsPage() {
       const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
       setSessions(list);
     } catch {
-      setSessions([]);
+      if (!options?.silent) {
+        setSessions([]);
+      }
     } finally {
-      setIsFetching(false);
+      if (!options?.silent) {
+        setIsFetching(false);
+      }
     }
   }, []);
 
@@ -62,17 +69,20 @@ export default function SessionsPage() {
     if (target.isCurrent) {
       return;
     }
+    const previousSessions = sessions;
     setRevokingSessionId(target.id);
     setErrorMessage(null);
-    setSuccessMessage(null);
+    setSessions((prev) => removeOptimisticById(prev, target.id));
+    setSuccessMessage(
+      `Đã thu hồi phiên đăng nhập từ địa chỉ IP ${target.ipAddress || 'từ xa'} thành công.`,
+    );
 
     try {
       await apiClient(`/auth/sessions/${target.id}`, { method: 'DELETE' });
-      setSuccessMessage(
-        `Đã thu hồi phiên đăng nhập từ địa chỉ IP ${target.ipAddress || 'từ xa'} thành công.`,
-      );
-      await loadActiveSessions();
+      void loadActiveSessions({ silent: true });
     } catch (err) {
+      setSessions(previousSessions);
+      setSuccessMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể thu hồi phiên thiết bị này.'
@@ -84,25 +94,33 @@ export default function SessionsPage() {
   }
 
   async function handleLogoutOthers() {
-    // CONFLICT-RESOLVED: Chuyển từ /auth/logout-all sang /auth/logout-others kết hợp ConfirmDialog chuẩn WCAG để thu hồi các thiết bị khác mà không hủy cookie phiên hiện tại.
+    // CONFLICT-RESOLVED: Chuyển từ /auth/logout-all sang /auth/logout-others kết hợp ConfirmDialog chuẩn WCAG và thu hồi lạc quan dưới 16ms mà không hủy cookie phiên hiện tại.
+    const previousSessions = sessions;
+    const optimisticRevokedCount = sessions.filter((s) => !s.isCurrent).length;
     setIsRevokingOthers(true);
+    setConfirmLogoutOthersOpen(false);
     setErrorMessage(null);
-    setSuccessMessage(null);
+    setSessions((prev) => prev.filter((s) => s.isCurrent));
+    setSuccessMessage(
+      optimisticRevokedCount > 0
+        ? `Đã đăng xuất thành công ${optimisticRevokedCount} phiên trên các thiết bị khác. Phiên hiện tại vẫn được giữ nguyên.`
+        : 'Đã thu hồi toàn bộ các phiên đăng nhập trên thiết bị khác thành công.',
+    );
 
     try {
       const res = await apiClient<{ revokedCount?: number }>('/auth/logout-others', {
         method: 'POST',
       });
-      setConfirmLogoutOthersOpen(false);
       const count = typeof res?.revokedCount === 'number' ? res.revokedCount : null;
-      setSuccessMessage(
-        count !== null
-          ? `Đã đăng xuất thành công ${count} phiên trên các thiết bị khác. Phiên hiện tại vẫn được giữ nguyên.`
-          : 'Đã thu hồi toàn bộ các phiên đăng nhập trên thiết bị khác thành công.',
-      );
-      await loadActiveSessions();
+      if (count !== null) {
+        setSuccessMessage(
+          `Đã đăng xuất thành công ${count} phiên trên các thiết bị khác. Phiên hiện tại vẫn được giữ nguyên.`,
+        );
+      }
+      void loadActiveSessions({ silent: true });
     } catch (err) {
-      setConfirmLogoutOthersOpen(false);
+      setSessions(previousSessions);
+      setSuccessMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể đăng xuất các thiết bị khác.'
@@ -122,7 +140,7 @@ export default function SessionsPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-[#222222]">
-                Quản lý phiên làm việc & thiết bị
+                Quản lý phiên làm việc &amp; thiết bị
               </h1>
               <p className="text-xs text-[#717171] mt-1">
                 Theo dõi các phiên đăng nhập đang hoạt động và thu hồi quyền truy cập khi có nghi

@@ -1,25 +1,30 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { applyOptimisticStatusById } from '@/lib/optimistic-state';
 import { expandGrantPermissions, toLocalISO } from '../helpers';
 import type { AccessGrantItem, DocumentItem, RoleLookupItem, UserLookupItem } from '../types';
 
 interface UseOwnerGrantsParams {
   documents: DocumentItem[];
+  grants: AccessGrantItem[];
+  setGrants: Dispatch<SetStateAction<AccessGrantItem[]>>;
   usersLookup: UserLookupItem[];
   rolesLookup: RoleLookupItem[];
-  refreshData: () => Promise<void>;
+  refreshData: (options?: { silent?: boolean }) => Promise<void>;
   setMessage: (msg: string | null) => void;
   setErrorMessage: (msg: string | null) => void;
 }
 
 /**
- * Thuật toán: Cấp Quyền Trực Tiếp Có Thời Hạn & Thu Hồi Khẩn Cấp (`useOwnerGrants`)
- * Kiểm định khoảng hiệu lực, chuẩn hóa tập quyền `DOWNLOAD => ['VIEW', 'DOWNLOAD']`, đối chiếu `expectedVersion` và bắt buộc lý do thu hồi tối thiểu 10 ký tự.
+ * Thuật toán: Cấp Quyền Trực Tiếp Có Thời Hạn & Thu Hồi Khẩn Cấp Lạc Quan (`useOwnerGrants`)
+ * Kiểm định khoảng hiệu lực, chuẩn hóa tập quyền `DOWNLOAD => ['VIEW', 'DOWNLOAD']`, cập nhật lạc quan trạng thái `REVOKED` dưới `16ms` và hoàn tác tự động nếu máy chủ từ chối `expectedVersion`.
  */
 export function useOwnerGrants({
   documents,
+  grants,
+  setGrants,
   usersLookup,
   rolesLookup,
   refreshData,
@@ -123,7 +128,7 @@ export function useOwnerGrants({
       setDirectDocId('');
       setDirectUserId('');
       setDirectRoleId('');
-      await refreshData();
+      void refreshData({ silent: true });
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
@@ -145,30 +150,37 @@ export function useOwnerGrants({
     e.preventDefault();
     if (!selectedGrant) return;
 
-    if (revokeReason.trim().length < 10) {
+    const trimmedReason = revokeReason.trim();
+    if (trimmedReason.length < 10) {
       setErrorMessage('Lý do thu hồi bắt buộc phải có ít nhất 10 ký tự để ghi nhật ký kiểm toán.');
       return;
     }
 
+    const target = selectedGrant;
+    const previousGrants = grants;
+
     setIsRevoking(true);
     setErrorMessage(null);
+    setRevokeOpen(false);
+    setSelectedGrant(null);
+    setRevokeReason('');
+    setGrants((prev) => applyOptimisticStatusById(prev, target.id, 'REVOKED'));
+    setMessage(
+      `Đã thu hồi quyền truy cập của ${target.principalName}. Mọi phiên làm việc đang chạy đã bị chấm dứt tức thì.`,
+    );
+
     try {
-      await apiClient(`/access-grants/${selectedGrant.id}/revoke`, {
+      await apiClient(`/access-grants/${target.id}/revoke`, {
         method: 'POST',
         body: JSON.stringify({
-          reason: revokeReason.trim(),
-          expectedVersion: selectedGrant.version,
+          reason: trimmedReason,
+          expectedVersion: target.version,
         }),
       });
-
-      setMessage(
-        `Đã thu hồi quyền truy cập của ${selectedGrant.principalName}. Mọi phiên làm việc đang chạy đã bị chấm dứt tức thì.`,
-      );
-      setRevokeOpen(false);
-      setSelectedGrant(null);
-      setRevokeReason('');
-      await refreshData();
+      void refreshData({ silent: true });
     } catch (err) {
+      setGrants(previousGrants);
+      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể thu hồi quyền.'

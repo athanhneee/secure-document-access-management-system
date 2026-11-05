@@ -90,7 +90,7 @@ export function DecideRequestModal({
                 }`}
               >
                 <Download size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>Xem & Tải (DOWNLOAD)</span>
+                <span>Xem &amp; Tải (DOWNLOAD)</span>
               </button>
             </div>
           </fieldset>

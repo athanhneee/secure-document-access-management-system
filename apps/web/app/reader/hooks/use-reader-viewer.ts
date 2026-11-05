@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { apiClient, apiDownload, ApiError, verifyPdfMagicBytes } from '@/lib/api-client';
 import { triggerWatermarkedDownload } from '../helpers';
 import type { MyGrantedDoc } from '../types';
@@ -11,11 +11,11 @@ interface UseReaderViewerParams {
 }
 
 /**
- * Thuật toán: Trình Xem Tài liệu Phiên PEP Kiểm soát & Tải xuống Qua Vé Dùng Một Lần (`useReaderViewer`)
- * Mục đích: Đàm phán phiên truy cập (`VIEW` / `DOWNLOAD`), kiểm chứng chữ ký đầu `%PDF-` trên từng trang PDF đã đóng dấu thủy vân và thu hồi tức thời Object URL.
+ * Thuật toán: Mở Hộp Thoại Xem Trước Tức Thì Dưới 16ms & Kiểm Định Chữ Ký `%PDF-` Chống Tranh Chấp (`useReaderViewer`)
+ * Mục đích: Hiển thị khung Sandbox xem trước ngay tức khắc khi người đọc nhấp chuột (`< 0,1s`) trong lúc đàm phán phiên `VIEW` và tải luồng PDF gắn thủy vân ở nền, đồng thời chặn phản hồi trễ bằng khóa phiên tăng dần `previewReqIdRef`.
  * Cơ chế hoạt động:
- *   - `handleOpenPreview` & `handlePageChange`: Kiểm tra 5 byte đầu `0x25 0x50 0x44 0x46 0x2D` qua `verifyPdfMagicBytes` trước khi nạp vào khung xem hộp cát, giải phóng URL trang trước để chống rò rỉ bộ nhớ.
- *   - `handleDownloadWithTicket`: Thực hiện quy trình 3 bước xin phiên `DOWNLOAD`, đổi vé ngắn hạn dùng một lần và tải bản sao gắn thủy vân.
+ *   - `handleOpenPreview`: Mở ngay hộp thoại phương thức ở trạng thái đang tải trước khi `await` API; nếu tạo phiên thất bại thì tự động đóng hộp thoại và hiển thị thông báo lỗi.
+ *   - `verifyPdfMagicBytes` & `URL.revokeObjectURL`: Xác thực 5 byte đầu `0x25 0x50 0x44 0x46 0x2D` và thu hồi ngay Object URL khi đóng hoặc chuyển trang chống rò rỉ bộ nhớ.
  */
 export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewerParams) {
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -26,9 +26,14 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
   const [previewTotalPages, setPreviewTotalPages] = useState(1);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
+  const previewReqIdRef = useRef(0);
 
   const handleClosePreview = useCallback(
     (open: boolean) => {
+      if (!open) {
+        previewReqIdRef.current += 1;
+        setIsLoadingPreview(false);
+      }
       setPreviewOpen(open);
       if (!open && previewPdfUrl) {
         URL.revokeObjectURL(previewPdfUrl);
@@ -39,12 +44,18 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
   );
 
   async function handleOpenPreview(doc: MyGrantedDoc) {
-    setIsLoadingPreview(true);
-    setErrorMessage(null);
+    const reqId = ++previewReqIdRef.current;
     if (previewPdfUrl) {
       URL.revokeObjectURL(previewPdfUrl);
       setPreviewPdfUrl(null);
     }
+    setErrorMessage(null);
+    setPreviewDoc(doc);
+    setPreviewSessionId(null);
+    setPreviewPage(1);
+    setPreviewTotalPages(1);
+    setIsLoadingPreview(true);
+    setPreviewOpen(true);
 
     try {
       const sessionResult = await apiClient<{ sessionId: string }>(
@@ -55,15 +66,19 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
         },
       );
 
-      setPreviewDoc(doc);
+      if (previewReqIdRef.current !== reqId) {
+        return;
+      }
+
       setPreviewSessionId(sessionResult.sessionId);
-      setPreviewPage(1);
-      setPreviewOpen(true);
 
       try {
         const pdfBlob = await apiDownload(
           `/documents/${doc.documentId}/preview?sessionId=${sessionResult.sessionId}`,
         );
+        if (previewReqIdRef.current !== reqId) {
+          return;
+        }
         if (!(await verifyPdfMagicBytes(pdfBlob))) {
           throw new Error('Invalid PDF stream header.');
         }
@@ -81,13 +96,19 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
         );
       }
     } catch (err) {
+      if (previewReqIdRef.current !== reqId) {
+        return;
+      }
+      setPreviewOpen(false);
       if (err instanceof ApiError) {
         setErrorMessage(err.message || 'Không thể tạo phiên xem trước tài liệu.');
       } else {
         setErrorMessage('Không thể tạo phiên xem trước tài liệu.');
       }
     } finally {
-      setIsLoadingPreview(false);
+      if (previewReqIdRef.current === reqId) {
+        setIsLoadingPreview(false);
+      }
     }
   }
 

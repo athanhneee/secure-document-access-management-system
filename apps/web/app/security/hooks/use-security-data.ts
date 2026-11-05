@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { applyOptimisticStatusById } from '@/lib/optimistic-state';
 import { mapAlertDto, mapIncidentDto } from '../helpers';
 import type {
   AlertApiDto,
@@ -30,8 +31,10 @@ export function useSecurityData() {
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const refreshData = useCallback(async () => {
-    setIsLoading(true);
+  const refreshData = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setIsLoading(true);
+    }
     setErrorMessage(null);
     try {
       const [alertsRes, incRes, rulesRes, sessionsRes] = await Promise.all([
@@ -58,7 +61,9 @@ export function useSecurityData() {
         setErrorMessage('Không thể tải dữ liệu an ninh thông tin.');
       }
     } finally {
-      setIsLoading(false);
+      if (!options?.silent) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -77,43 +82,54 @@ export function useSecurityData() {
   }, [refreshData]);
 
   async function runDetection() {
-    setIsLoading(true);
+    setErrorMessage(null);
     try {
       await apiClient('/security-detection/run', {
         method: 'POST',
         body: JSON.stringify({ windowMinutes: 60 }),
       });
       setMessage('Đã kích hoạt quét phát hiện bất thường trên toàn bộ audit log 60 phút qua.');
-      await refreshData();
+      await refreshData({ silent: true });
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(err.message);
       } else {
         setErrorMessage('Không thể chạy quét bất thường.');
       }
-    } finally {
-      setIsLoading(false);
     }
   }
 
-  // CONFLICT-RESOLVED: Gỡ bỏ hộp thoại xác nhận gốc của trình duyệt, chuyển sang hộp thoại phương thức ConfirmDialog chuẩn WCAG 2.1 AA (rules/ui-design-system.md §6.3)
+  function applyOptimisticAlertStatus(
+    alertId: string,
+    nextStatus: SecurityAlertItem['status'],
+  ): () => void {
+    const previousAlerts = alerts;
+    setAlerts((prev) => applyOptimisticStatusById(prev, alertId, nextStatus));
+    return () => {
+      setAlerts(previousAlerts);
+    };
+  }
+
+  // CONFLICT-RESOLVED: Gỡ bỏ hộp thoại xác nhận gốc của trình duyệt, chuyển sang hộp thoại phương thức ConfirmDialog chuẩn WCAG 2.1 AA (rules/ui-design-system.md §6.3) kèm ngắt phiên lạc quan dưới 16ms
   async function terminateSession(explicitId?: string) {
     const sessionId = explicitId ?? pendingTerminateSessionId;
     if (!sessionId) {
       return;
     }
+    const previousSessions = documentSessions;
     setTerminatingSessionId(sessionId);
+    setPendingTerminateSessionId(null);
     setErrorMessage(null);
+    setDocumentSessions((prev) => applyOptimisticStatusById(prev, sessionId, 'TERMINATED'));
+    setMessage('Đã ngắt phiên truy cập tài liệu thành công.');
+
     try {
       await apiClient(`/access-sessions/${sessionId}/terminate`, {
         method: 'POST',
       });
-      setMessage('Đã ngắt phiên truy cập tài liệu thành công.');
-      setDocumentSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, status: 'TERMINATED' } : s)),
-      );
-      setPendingTerminateSessionId(null);
     } catch (err) {
+      setDocumentSessions(previousSessions);
+      setMessage(null);
       if (err instanceof ApiError) {
         setErrorMessage(err.message || 'Không thể ngắt phiên truy cập.');
       } else {
@@ -139,6 +155,7 @@ export function useSecurityData() {
     setErrorMessage,
     refreshData,
     runDetection,
+    applyOptimisticAlertStatus,
     terminateSession,
   };
 }

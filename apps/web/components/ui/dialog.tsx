@@ -208,7 +208,7 @@ export function DialogContent({
     <div
       data-dialog-content="true"
       className={cn(
-        'relative w-full max-w-lg rounded-[28px] border border-[#ebebeb] bg-[#ffffff] p-5 sm:p-7 text-[#222222] shadow-[0_20px_60px_rgba(0,0,0,0.12)] backdrop-blur-md animate-scale-in max-h-[88vh] overflow-y-auto',
+        'relative w-full max-w-lg rounded-[28px] border border-[#ebebeb] bg-[#ffffff] p-5 sm:p-7 text-[#222222] shadow-[0_20px_60px_rgba(0,0,0,0.12)] backdrop-blur-md animate-modal-enter max-h-[88vh] overflow-y-auto',
         className,
       )}
       {...props}

@@ -90,7 +90,7 @@ export function PolicySimulatorDialog({
                 aria-hidden="true"
               />
               <DialogTitle className="text-lg font-bold text-[#222222]">
-                Trình Giả Lập & Kiểm Thử PDP Thời Gian Thực (Live Policy Simulator)
+                Trình Giả Lập &amp; Kiểm Thử PDP Thời Gian Thực (Live Policy Simulator)
               </DialogTitle>
             </div>
 

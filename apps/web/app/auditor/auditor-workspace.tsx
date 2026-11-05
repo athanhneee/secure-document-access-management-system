@@ -66,7 +66,7 @@ export function AuditorWorkspace() {
                 <span className="text-xs text-[#717171]">Phân tách Trách nhiệm (SoD)</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
-                Kiểm toán Toàn vẹn & Báo cáo Tuân thủ
+                Kiểm toán Toàn vẹn &amp; Báo cáo Tuân thủ
               </h1>
               <p className="text-xs text-[#717171]">
                 Chế độ chỉ đọc nghiêm ngặt. Xác minh chuỗi băm HMAC-SHA256 và xuất dữ liệu có chống

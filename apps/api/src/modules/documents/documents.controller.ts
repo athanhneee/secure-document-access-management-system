@@ -97,6 +97,7 @@ export class DocumentsController {
   }
 
   @Patch(':id')
+  @RequirePermission('DOCUMENT', 'CLASSIFY')
   async updateDocumentMetadata(
     @Param() params: unknown,
     @Body() body: unknown,
@@ -113,6 +114,7 @@ export class DocumentsController {
 
   @Post(':id/activate')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('DOCUMENT', 'CLASSIFY')
   async activateDocument(
     @Param() params: unknown,
     @Req() req: FastifyRequest,
@@ -123,6 +125,7 @@ export class DocumentsController {
 
   @Post(':id/current-version')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('DOCUMENT_VERSION', 'CREATE')
   async setCurrentVersion(
     @Param() params: unknown,
     @Body() body: unknown,
@@ -173,6 +176,7 @@ export class DocumentsController {
 
   @Post(':id/transfer-owner')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('DOCUMENT', 'MANAGE')
   async transferOwner(
     @Param() params: unknown,
     @Body() body: unknown,

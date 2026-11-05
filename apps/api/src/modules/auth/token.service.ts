@@ -57,12 +57,16 @@ export class TokenService {
     if (!publicKeys.some((item) => item.kid === this.activeKid)) {
       throw new Error('AUTH_ACTIVE_KID must be present in AUTH_SIGNING_PUBLIC_KEYS_JSON.');
     }
+    // CONFLICT-RESOLVED: Đính kèm .catch(() => {}) lên promise nạp khóa bất đối xứng được giữ trong bộ nhớ tránh UnhandledPromiseRejection (MED-06)
     this.privateKeyPromise = importPKCS8(privatePem, 'EdDSA');
+    this.privateKeyPromise.catch(() => {});
     for (const item of publicKeys) {
       if (!item.kid || !item.publicKeyPem || this.publicKeyPromises.has(item.kid)) {
         throw new Error('Signing public keys must have unique non-empty kid values.');
       }
-      this.publicKeyPromises.set(item.kid, importSPKI(item.publicKeyPem, 'EdDSA'));
+      const publicKeyPromise = importSPKI(item.publicKeyPem, 'EdDSA');
+      publicKeyPromise.catch(() => {});
+      this.publicKeyPromises.set(item.kid, publicKeyPromise);
     }
   }
 

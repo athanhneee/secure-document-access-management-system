@@ -4,6 +4,8 @@ import type {
   VisualConditionGroup,
   VisualObligation,
   AttributeMetadata,
+  ExpectedValue,
+  PolicyOperator,
 } from './abac-models';
 import { ATTRIBUTE_REGISTRY } from './abac-models';
 import type { PolicyTemplate } from './policy-templates';
@@ -11,11 +13,41 @@ import type { PolicyTemplate } from './policy-templates';
 let conditionCounter = 0;
 
 /**
- * Algorithm / Thuật toán: Bộ Đếm Đơn Điệu Sinh Định Danh Nút AST (Monotonic Node ID Generator)
+ * Thuật toán: Bộ Đếm Đơn Điệu Sinh Định Danh Nút AST (`createConditionId`)
  */
 export function createConditionId(): string {
   conditionCounter += 1;
   return `cond-${conditionCounter}`;
+}
+
+/**
+ * Thuật toán: Khởi Tạo Giá Trị Kỳ Vọng Mặc Định Đồng Bộ Theo Toán Tử & Miền Kiểu (`defaultExpectedValue`)
+ */
+export function defaultExpectedValue(
+  meta: AttributeMetadata | undefined,
+  operator: PolicyOperator,
+): ExpectedValue {
+  if (operator === 'TIME_BETWEEN') {
+    return { start: '08:00', end: '17:30', timeZone: 'Asia/Ho_Chi_Minh' };
+  }
+  if (operator === 'BETWEEN') {
+    if (meta?.options && meta.options.length > 0) {
+      return [meta.options[0]!.value, meta.options[meta.options.length - 1]!.value];
+    }
+    if (meta?.type === 'NUMBER') {
+      return [0, typeof meta.defaultValue === 'number' ? meta.defaultValue : 100];
+    }
+    return ['', ''];
+  }
+  if (operator === 'IN' || operator === 'NOT_IN') {
+    if (Array.isArray(meta?.defaultValue)) return [...meta.defaultValue];
+    if (meta?.defaultValue !== undefined && typeof meta.defaultValue !== 'object') {
+      return [meta.defaultValue];
+    }
+    return [];
+  }
+  if (operator === 'EXISTS') return true;
+  return meta ? meta.defaultValue : '';
 }
 
 export const DEFAULT_INITIAL_RULE: VisualPolicyRule = {
@@ -42,15 +74,14 @@ export const DEFAULT_INITIAL_RULE: VisualPolicyRule = {
 };
 
 /**
- * Algorithm / Thuật toán: Chuẩn Hóa & Tuần Tự Hóa Trạng Thái DNF Sang JSON AST (DNF-to-AST Serialization)
+ * Thuật toán: Chuẩn Hóa & Tuần Tự Hóa Trạng Thái DNF Sang JSON AST (`serializePolicyAst`)
  */
 export function serializePolicyAst(rule: VisualPolicyRule): string {
   return JSON.stringify(rule, null, 2);
 }
 
 /**
- * Algorithm / Thuật toán: Giải Tuần Tự Hóa & Kiểm Định Lược Đồ JSON AST Sang Biểu Diễn DNF (AST-to-DNF Schema Validation)
- * Cơ chế: Phân tích `JSON.parse` và kiểm tra bất biến `code`, `effect`, `groups` trước khi dựng lại cây DNF.
+ * Thuật toán: Giải Tuần Tự Hóa & Kiểm Định Lược Đồ JSON AST Sang Biểu Diễn DNF (`deserializePolicyAst`)
  */
 export function deserializePolicyAst(jsonText: string): VisualPolicyRule {
   const parsed = JSON.parse(jsonText) as VisualPolicyRule;
@@ -61,14 +92,14 @@ export function deserializePolicyAst(jsonText: string): VisualPolicyRule {
 }
 
 /**
- * Algorithm / Thuật toán: Sao Chép Sâu Cây Mẫu Chính Sách (AST Template Deep Clone)
+ * Thuật toán: Sao Chép Sâu Cây Mẫu Chính Sách (`clonePolicyTemplate`)
  */
 export function clonePolicyTemplate(tpl: PolicyTemplate): VisualPolicyRule {
   return JSON.parse(JSON.stringify(tpl.rule)) as VisualPolicyRule;
 }
 
 /**
- * Algorithm / Thuật toán: Bổ Sung & Chỉnh Sửa Nút Điều Kiện Liên Hội Có Ràng Buộc Kiểu (Type-Safe Conjunctive AST Node Operations)
+ * Thuật toán: Bổ Sung & Chỉnh Sửa Nút Điều Kiện Liên Hội Có Ràng Buộc Kiểu (`addConditionToGroup` .. `updateConditionField`)
  */
 export function addConditionToGroup(
   rule: VisualPolicyRule,
@@ -77,11 +108,12 @@ export function addConditionToGroup(
 ): VisualPolicyRule {
   const attrKey = attributeKey || 'subject.clearanceRank';
   const meta = ATTRIBUTE_REGISTRY[attrKey];
+  const initialOp: PolicyOperator = meta ? meta.supportedOperators[0]! : 'EQ';
   const newCondition: VisualCondition = {
     id: createConditionId(),
     attribute: attrKey,
-    operator: meta ? meta.supportedOperators[0]! : 'EQ',
-    expected: meta ? meta.defaultValue : '',
+    operator: initialOp,
+    expected: defaultExpectedValue(meta, initialOp),
   };
   return {
     ...rule,
@@ -155,12 +187,18 @@ export function updateConditionField(
           if (cond.id !== conditionId) return cond;
           if (field === 'attribute') {
             const meta = ATTRIBUTE_REGISTRY[value as string];
+            const nextOp: PolicyOperator = meta ? meta.supportedOperators[0]! : 'EQ';
             return {
               ...cond,
               attribute: value as string,
-              operator: meta ? meta.supportedOperators[0]! : 'EQ',
-              expected: meta ? meta.defaultValue : '',
+              operator: nextOp,
+              expected: defaultExpectedValue(meta, nextOp),
             };
+          }
+          if (field === 'operator') {
+            const nextOp = value as PolicyOperator;
+            const meta = ATTRIBUTE_REGISTRY[cond.attribute];
+            return { ...cond, operator: nextOp, expected: defaultExpectedValue(meta, nextOp) };
           }
           return { ...cond, [field]: value };
         }),
@@ -170,7 +208,7 @@ export function updateConditionField(
 }
 
 /**
- * Algorithm / Thuật toán: Quản Lý Nhánh Tuyển DNF & Kéo-Thả Liên Nhóm (Disjunctive OR-Clause & Cross-Group AST Relocation)
+ * Thuật toán: Quản Lý Nhánh Tuyển DNF & Kéo-Thả Liên Nhóm (`addDisjunctiveGroup` .. `relocateConditionAcrossGroups`)
  */
 export function addDisjunctiveGroup(rule: VisualPolicyRule): VisualPolicyRule {
   const nextId = rule.groups.length > 0 ? Math.max(...rule.groups.map((g) => g.id)) + 1 : 1;
@@ -224,7 +262,7 @@ export function relocateConditionAcrossGroups(
 }
 
 /**
- * Algorithm / Thuật toán: Quản Lý Tập Nghĩa Vụ Thực Thi Duy Nhất Theo Loại & Lọc Đa Tiêu Chí Thuộc Tính
+ * Thuật toán: Quản Lý Tập Nghĩa Vụ Thực Thi Duy Nhất Theo Loại & Lọc Đa Tiêu Chí Thuộc Tính
  */
 export function toggleRuleObligation(
   obligations: VisualObligation[],

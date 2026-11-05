@@ -39,14 +39,18 @@ export function useSecurityData() {
           data: [],
         })),
         apiClient<{ data: IncidentApiDto[] }>('/incidents?pageSize=50').catch(() => ({ data: [] })),
-        apiClient<DetectionRuleItem[]>('/security-detection/rules').catch(() => []),
+        apiClient<DetectionRuleItem[] | { data?: DetectionRuleItem[] }>(
+          '/security-detection/rules',
+        ).catch(() => []),
         apiClient<{ data: DocumentSessionItem[] }>('/access-sessions').catch(() => ({ data: [] })),
       ]);
 
       setDocumentSessions(sessionsRes.data || []);
       setAlerts((alertsRes.data || []).map(mapAlertDto));
       setIncidents((incRes.data || []).map(mapIncidentDto));
-      setDetectionRules(Array.isArray(rulesRes) ? rulesRes : []);
+      setDetectionRules(
+        Array.isArray(rulesRes) ? rulesRes : Array.isArray(rulesRes?.data) ? rulesRes.data : [],
+      );
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(err.message);

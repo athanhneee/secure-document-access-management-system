@@ -223,7 +223,7 @@ export class WatermarkEngineService {
         document_version_id: params.documentVersionId,
         user_id: params.userId,
         watermark_token: params.watermarkToken,
-        rendered_text: params.renderedText,
+        rendered_text: params.renderedText.slice(0, 1000),
         output_sha256_hash: params.outputSha256Hash,
         generated_at: params.generatedAt ?? new Date(),
       },

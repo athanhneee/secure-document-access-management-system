@@ -1,4 +1,4 @@
-import { getDatabaseClient } from '@sda/database';
+import { getDatabaseClient, withSerializableTransaction, type Prisma } from '@sda/database';
 import { buildAuditKeyRing, canonicalizeJson } from '@sda/contracts';
 import { createHmac, randomUUID } from 'node:crypto';
 
@@ -7,10 +7,9 @@ import { createHmac, randomUUID } from 'node:crypto';
  *
  * Algorithm / Thuật toán tổng quan module:
  * - Định kỳ quét bảng `access_grants` để thu hồi tự động theo lô (`BATCH_SIZE = 100`) các quyền truy cập hết hạn
- *   (`status = 'ACTIVE'` và `valid_until <= now`) kết hợp khóa hàng `FOR UPDATE SKIP LOCKED`.
- * - Chấm dứt dây chuyền phiên truy cập đang mở (`access_sessions`), xin khóa tư vấn giao dịch `pg_advisory_xact_lock`,
- *   chuẩn hóa JSON tất định RFC 8785 (`canonicalizeJson` từ `@sda/contracts`) và nối chuỗi băm kiểm toán mật mã
- *   HMAC-SHA256 theo phiên bản khóa đang kích hoạt trong `AuditKeyRing`.
+ *   (`status = 'ACTIVE'` và `valid_until <= now`) kết hợp khóa hàng `FOR UPDATE SKIP LOCKED` và vòng lặp thử lại `withSerializableTransaction` (`40001`).
+ * - Chấm dứt dây chuyền phiên truy cập đang mở (`access_sessions`), xin khóa tư vấn giao dịch 64-bit `pg_advisory_xact_lock(hashtextextended($1, 0))`
+ *   đúng một lần cho phân vùng trước vòng lặp, chuẩn hóa JSON tất định RFC 8785 (`canonicalizeJson`) và nối chuỗi băm kiểm toán mật mã HMAC-SHA256.
  */
 
 const BATCH_SIZE = 100;
@@ -29,22 +28,22 @@ interface AuditChainRow {
 }
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
-type TransactionClient = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
 
 /**
- * Algorithm / Thuật toán: Thu hồi theo lô quyền truy cập hết hạn và ghi nhật ký chuỗi băm kiểm toán nguyên tử.
+ * Algorithm / Thuật toán: Thu hồi theo lô quyền truy cập hết hạn trong giao dịch `SERIALIZABLE` có thử lại xung đột `40001`
+ * và ghi nhật ký chuỗi băm kiểm toán nguyên tử dưới khóa tư vấn 64-bit `hashtextextended`.
  */
 export async function runGrantExpiryBatch(
   hmacKey: string,
   keyRotationJson?: string,
+  options?: { databaseClient?: PrismaClient; maxRetries?: number },
 ): Promise<number> {
-  const database = getDatabaseClient();
+  const database = options?.databaseClient ?? getDatabaseClient();
   const keyRing = buildAuditKeyRing(hmacKey, keyRotationJson);
   const now = new Date();
-  let expiredCount = 0;
 
-  await database.$transaction(
-    async (tx: TransactionClient) => {
+  return withSerializableTransaction(
+    async (tx: Prisma.TransactionClient) => {
       const expiring = await tx.$queryRawUnsafe<ExpiredGrantRow[]>(
         `SELECT id, document_id, principal_user_id, principal_role_id, principal_type
          FROM access_grants
@@ -55,14 +54,13 @@ export async function runGrantExpiryBatch(
         BATCH_SIZE,
       );
 
-      if (expiring.length === 0) return;
+      if (expiring.length === 0) return 0;
 
       const ids = expiring.map((r: ExpiredGrantRow) => r.id);
-      const result = await tx.accessGrant.updateMany({
+      await tx.accessGrant.updateMany({
         where: { id: { in: ids } },
         data: { status: 'EXPIRED' },
       });
-      expiredCount = result.count;
 
       const activeSessions = await tx.accessSession.findMany({
         where: { access_grant_id: { in: ids }, status: 'ACTIVE' },
@@ -80,17 +78,24 @@ export async function runGrantExpiryBatch(
         });
       }
 
-      for (const grant of expiring) {
-        const partition = 'ACCESS_GRANT';
-        await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', partition);
+      const partition = 'ACCESS_GRANT';
+      // CONFLICT-RESOLVED: Sử dụng khóa tư vấn 64-bit hashtextextended($1, 0) đồng nhất với trigger validate_audit_chain_link() và chỉ khóa 1 lần cho phân vùng trước vòng lặp.
+      await tx.$executeRawUnsafe(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        partition,
+      );
 
-        const previous = await tx.$queryRawUnsafe<AuditChainRow[]>(
-          'SELECT entry_hash, chain_sequence FROM audit_logs WHERE chain_partition=$1 ORDER BY chain_sequence DESC LIMIT 1',
-          partition,
-        );
-        const prior = previous[0] as AuditChainRow | undefined;
-        const sequence = (prior?.chain_sequence ?? 0n) + 1n;
-        const previousHash = prior?.entry_hash ?? null;
+      const previous = await tx.$queryRawUnsafe<AuditChainRow[]>(
+        'SELECT entry_hash, chain_sequence FROM audit_logs WHERE chain_partition=$1 ORDER BY chain_sequence DESC LIMIT 1',
+        partition,
+      );
+      const prior = previous[0] as AuditChainRow | undefined;
+      let currentSequence = BigInt(prior?.chain_sequence ?? 0n);
+      let currentPreviousHash = prior?.entry_hash ?? null;
+
+      for (const grant of expiring) {
+        const sequence = ++currentSequence;
+        const previousHash = currentPreviousHash;
         const correlationId = randomUUID();
         const occurredAt = new Date();
 
@@ -155,12 +160,19 @@ export async function runGrantExpiryBatch(
             chain_algorithm: 'HMAC-SHA-256',
           },
         });
-      }
-    },
-    { isolationLevel: 'Serializable' },
-  );
 
-  return expiredCount;
+        currentPreviousHash = entryHash;
+      }
+
+      return expiring.length;
+    },
+    {
+      client: database,
+      ...(options?.maxRetries !== undefined
+        ? { maxRetries: options.maxRetries, baseDelayMs: 1 }
+        : {}),
+    },
+  );
 }
 
 /**

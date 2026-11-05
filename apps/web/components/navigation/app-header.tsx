@@ -181,10 +181,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
               <span className="hidden md:inline text-xs font-medium">Phiên làm việc</span>
             </Link>
 
-            <span
-              className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-[#008489] select-none"
-              style={{ background: 'transparent', border: 'none', padding: 0 }}
-            >
+            <span className="staff-badge hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-[#008489] select-none">
               <User size={16} strokeWidth={1.75} aria-hidden="true" />
               <span>{user.fullName || user.username}</span>
             </span>

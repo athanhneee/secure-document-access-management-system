@@ -1,27 +1,32 @@
 import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  HttpCode,
   HttpStatus,
   Param,
   Post,
+  Put,
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
+import { PositiveBigIntSchema } from '@sda/contracts';
 import { z } from 'zod';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { CsrfService } from '../auth/csrf.service.js';
 import { RequirePermission } from '../rbac/require-permission.js';
+import { UpsertAbacPolicySchema } from './abac-policy-mutation.helper.js';
 import { AbacService } from './abac.service.js';
 
-const IdSchema = z.string().regex(/^\d+$/u).transform(BigInt);
+const IdSchema = PositiveBigIntSchema;
 const SimulationSchema = z
   .object({
-    subjectUserId: z.string().regex(/^\d+$/u).transform(BigInt),
+    subjectUserId: PositiveBigIntSchema,
     resourceDocumentId: z.string().uuid(),
     action: z.enum(['DISCOVER', 'VIEW', 'DOWNLOAD', 'SHARE', 'MANAGE']),
     environment: z
@@ -59,6 +64,38 @@ export class AbacController {
   @ApiResponse({ status: HttpStatus.OK, description: 'Policy rules list' })
   listPolicies() {
     return this.abacService.listPolicies();
+  }
+
+  @Post('policies')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('POLICY', 'MANAGE', true)
+  @ApiOperation({ summary: 'Create a new ABAC policy rule with DNF conditions' })
+  createPolicy(@Body() body: unknown, @Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    const parsed = UpsertAbacPolicySchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    return this.abacService.createPolicy(
+      this.principal(request),
+      parsed.data,
+      this.context(request),
+    );
+  }
+
+  @Put('policies/:id')
+  @RequirePermission('POLICY', 'MANAGE', true)
+  @ApiOperation({ summary: 'Update an existing ABAC policy rule and DNF conditions' })
+  updatePolicy(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    const parsedId = IdSchema.safeParse(id);
+    if (!parsedId.success) throw new BadRequestException('Invalid policy rule ID.');
+    const parsedBody = UpsertAbacPolicySchema.safeParse(body);
+    if (!parsedBody.success) throw new BadRequestException(parsedBody.error.flatten());
+    return this.abacService.updatePolicy(
+      this.principal(request),
+      parsedId.data,
+      parsedBody.data,
+      this.context(request),
+    );
   }
 
   @Get('attributes')

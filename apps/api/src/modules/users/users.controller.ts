@@ -11,12 +11,14 @@ import {
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import { PositiveBigIntSchema } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { RequirePermission } from '../rbac/require-permission.js';
 import { UsersService } from './users.service.js';
 
-const IdSchema = z.string().regex(/^\d+$/u).transform(BigInt);
+// CONFLICT-RESOLVED: Chuẩn hóa định danh số nguyên 64-bit dương có trần PostgreSQL BIGINT (HIGH-12)
+const IdSchema = PositiveBigIntSchema;
 const VersionSchema = z.object({ expectedVersion: z.number().int().min(0) }).strict();
 const CreateSchema = z
   .object({
@@ -29,7 +31,7 @@ const CreateSchema = z
     email: z.string().email().max(255),
     fullName: z.string().trim().min(1).max(150),
     employeeCode: z.string().trim().min(1).max(50).nullable().optional(),
-    departmentId: z.string().regex(/^\d+$/u).transform(BigInt).nullable().optional(),
+    departmentId: PositiveBigIntSchema.nullable().optional(),
     password: z.string().min(15).max(128),
   })
   .strict();
@@ -39,7 +41,7 @@ const UpdateSchema = z
     email: z.string().email().max(255).optional(),
     fullName: z.string().trim().min(1).max(150).optional(),
     employeeCode: z.string().trim().min(1).max(50).nullable().optional(),
-    departmentId: z.string().regex(/^\d+$/u).transform(BigInt).nullable().optional(),
+    departmentId: PositiveBigIntSchema.nullable().optional(),
   })
   .strict();
 

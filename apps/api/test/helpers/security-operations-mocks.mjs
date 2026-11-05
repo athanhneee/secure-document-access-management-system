@@ -30,7 +30,16 @@ export function createMassDownloadDetectionHarness(actorUserId = 100n) {
       ],
     },
     auditLog: {
-      findMany: async () => mockAuditLogs,
+      findMany: async ({ where } = {}) =>
+        mockAuditLogs.filter((log) => {
+          if (Array.isArray(where?.action?.in) && !where.action.in.includes(log.action)) {
+            return false;
+          }
+          if (where?.outcome && log.outcome !== where.outcome) {
+            return false;
+          }
+          return true;
+        }),
     },
     securityAlert: {
       findFirst: async ({ where }) =>

@@ -135,7 +135,8 @@ export async function appendChainedAuditLog(
   chain_sequence: bigint;
 }> {
   const partition = input.partition || 'GLOBAL';
-  await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', partition);
+  // CONFLICT-RESOLVED: Dùng hashtextextended($1, 0) 64-bit thay cho hashtext($1) 32-bit để triệt tiêu nguy cơ xung đột khóa tư vấn giữa các phân vùng.
+  await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', partition);
 
   const previous = await tx.$queryRawUnsafe<Array<{ entry_hash: string; chain_sequence: bigint }>>(
     'SELECT entry_hash, chain_sequence FROM audit_logs WHERE chain_partition=$1 ORDER BY chain_sequence DESC LIMIT 1',

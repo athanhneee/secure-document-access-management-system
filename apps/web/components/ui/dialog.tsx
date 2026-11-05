@@ -191,9 +191,7 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
         }}
         className="fixed inset-0 z-50 m-0 flex h-full w-full max-h-none max-w-none items-center justify-center border-none bg-[#222222]/40 p-3 sm:p-4 overflow-y-auto backdrop-blur-xs outline-none"
       >
-        <div className="relative z-10 flex w-full justify-center my-auto">
-          <div className="w-full max-w-lg">{children}</div>
-        </div>
+        <div className="relative z-10 flex w-full justify-center my-auto">{children}</div>
       </dialog>
     </DialogContext.Provider>
   );
@@ -210,7 +208,7 @@ export function DialogContent({
     <div
       data-dialog-content="true"
       className={cn(
-        'relative w-full rounded-[28px] border border-[#ebebeb] bg-[#ffffff] p-5 sm:p-7 text-[#222222] shadow-[0_20px_60px_rgba(0,0,0,0.12)] backdrop-blur-md animate-scale-in max-h-[88vh] overflow-y-auto',
+        'relative w-full max-w-lg rounded-[28px] border border-[#ebebeb] bg-[#ffffff] p-5 sm:p-7 text-[#222222] shadow-[0_20px_60px_rgba(0,0,0,0.12)] backdrop-blur-md animate-scale-in max-h-[88vh] overflow-y-auto',
         className,
       )}
       {...props}

@@ -1,3 +1,4 @@
+export * from './dto/validation-primitives.js';
 export * from './dto/documents.dto.js';
 export * from './dto/access-control.dto.js';
 export * from './dto/audit-reports.dto.js';

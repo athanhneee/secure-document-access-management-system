@@ -120,10 +120,7 @@ export function SecurityPillarsSection() {
                         className="text-[#008489]"
                         aria-hidden="true"
                       />
-                      <span
-                        className="staff-badge inline-flex items-center gap-1.5 text-xs font-bold text-[#008489]"
-                        style={{ background: 'transparent', border: 'none', padding: 0 }}
-                      >
+                      <span className="staff-badge inline-flex items-center gap-1.5 text-xs font-bold text-[#008489]">
                         <span className="dot dot-info" aria-hidden="true" />
                         <span>{pillar.badge}</span>
                       </span>

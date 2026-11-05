@@ -36,7 +36,8 @@ const CaptureSnapshotSchema = z
       .min(1)
       .max(64)
       .regex(/^[a-zA-Z0-9._-]+$/),
-    status: z.enum(['HEALTHY', 'DEGRADED', 'UNHEALTHY', 'OK', 'ERROR']),
+    // CONFLICT-RESOLVED: Khớp tuyệt đối miền giá trị CHECK (status IN ('HEALTHY','DEGRADED','DOWN')) của bảng system_health_snapshots.
+    status: z.enum(['HEALTHY', 'DEGRADED', 'DOWN']),
     details: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
@@ -71,7 +72,8 @@ export class HealthController {
   constructor(
     private readonly healthService: HealthService,
     private readonly metricsService: MetricsService,
-    @Optional() private readonly csrf?: CsrfService,
+    // CONFLICT-RESOLVED: Gỡ @Optional() khỏi CsrfService để cưỡng chế fail-closed CSRF trên mọi endpoint POST vận hành.
+    private readonly csrf: CsrfService,
     @Optional() private readonly config?: AppConfigService,
   ) {}
 
@@ -140,11 +142,14 @@ export class HealthController {
   }
 
   @Post('snapshots')
-  @RequirePermission('SYSTEM_HEALTH', 'VIEW')
+  @RequirePermission('SYSTEM_HEALTH', 'MANAGE')
   @ApiOperation({ summary: 'Capture an operational business snapshot for audit history' })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Captured business snapshot' })
   async captureSnapshot(@Body() body: unknown, @Req() request: FastifyRequest) {
-    this.csrf?.assertRequest(request);
+    if (!this.csrf) {
+      throw new ForbiddenException('CSRF protection service is unavailable.');
+    }
+    this.csrf.assertRequest(request);
     if (!request?.auth) {
       throw new UnauthorizedException('Authentication context is unavailable.');
     }
@@ -160,6 +165,24 @@ export class HealthController {
       ...details,
       capturedByUserId: String(request.auth.userId),
     });
+  }
+
+  /**
+   * Thuật toán: Kích hoạt thu dọn bản ghi vận hành hết hạn có bảo vệ CSRF và RBAC (`SYSTEM_HEALTH:MANAGE`).
+   */
+  @Post('retention-cleanup')
+  @RequirePermission('SYSTEM_HEALTH', 'MANAGE')
+  @ApiOperation({ summary: 'Purge expired operational snapshots and transient artifacts' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Retention cleanup summary' })
+  async runRetentionCleanup(@Req() request: FastifyRequest) {
+    if (!this.csrf) {
+      throw new ForbiddenException('CSRF protection service is unavailable.');
+    }
+    this.csrf.assertRequest(request);
+    if (!request?.auth) {
+      throw new UnauthorizedException('Authentication context is unavailable.');
+    }
+    return this.healthService.runRetentionCleanup();
   }
 
   /**

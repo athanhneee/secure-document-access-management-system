@@ -7,6 +7,7 @@ import {
 } from '@sda/contracts';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
+import { AuthorizationService } from '../rbac/authorization.service.js';
 import {
   buildSecurityAlertsWhere,
   mapAlertBaseDetail,
@@ -14,6 +15,11 @@ import {
   validateAlertStatusTransition,
   type AlertDetail,
 } from './security-alerts.helper.js';
+import {
+  applyAlertScopeToWhere,
+  assertAlertInDepartmentScope,
+  resolveAlertDepartmentScope,
+} from './security-operations-scope.helper.js';
 
 export type { AlertDetail };
 
@@ -26,6 +32,7 @@ export class SecurityAlertsService {
   constructor(
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -37,13 +44,17 @@ export class SecurityAlertsService {
   /**
    * Algorithm: Lookahead Paginated Security Alert Query (`pageSize + 1` slice).
    */
-  async listAlerts(query: QuerySecurityAlertsInput): Promise<{
+  async listAlerts(
+    query: QuerySecurityAlertsInput,
+    actor?: AuthPrincipal,
+  ): Promise<{
     data: AlertDetail[];
     page: number;
     pageSize: number;
     hasMore: boolean;
   }> {
-    const where = buildSecurityAlertsWhere(query);
+    const allowedDepts = await resolveAlertDepartmentScope(this.authorization, actor, 'VIEW');
+    const where = applyAlertScopeToWhere(buildSecurityAlertsWhere(query), allowedDepts);
     const orderBy =
       query.sort === 'severity' ? { severity: query.order } : { detected_at: query.order };
 
@@ -74,7 +85,8 @@ export class SecurityAlertsService {
     };
   }
 
-  async getAlertById(id: string): Promise<AlertDetail> {
+  async getAlertById(id: string, actor?: AuthPrincipal): Promise<AlertDetail> {
+    await assertAlertInDepartmentScope(this.database, this.authorization, actor, id, 'VIEW');
     const alert = await this.database.securityAlert.findUnique({
       where: { id },
       include: {
@@ -129,6 +141,7 @@ export class SecurityAlertsService {
     input: UpdateAlertStatusInput,
     actor: AuthPrincipal,
   ): Promise<AlertDetail> {
+    await assertAlertInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const alert = await this.requireAlert(id);
     const { resolvedAt, resolutionNote } = validateAlertStatusTransition(alert.status, input);
 
@@ -169,6 +182,7 @@ export class SecurityAlertsService {
     assignedToUserId: bigint | null,
     actor: AuthPrincipal,
   ): Promise<AlertDetail> {
+    await assertAlertInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const alert = await this.requireAlert(id);
 
     if (assignedToUserId) {
@@ -209,6 +223,7 @@ export class SecurityAlertsService {
    * Algorithm: Append-Only Timestamped Investigation Note Accrual.
    */
   async addAlertNote(id: string, note: string, actor: AuthPrincipal): Promise<AlertDetail> {
+    await assertAlertInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const alert = await this.requireAlert(id);
     const entry = `\n[${new Date().toISOString()}] ${actor.username}: ${note.trim()}`;
 

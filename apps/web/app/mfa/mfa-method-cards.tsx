@@ -2,7 +2,7 @@
 
 import type { FormEvent } from 'react';
 import Link from 'next/link';
-import { Key, ArrowLeft, AlertCircle, Fingerprint } from 'lucide-react';
+import { Key, ArrowLeft, AlertCircle, Fingerprint, ShieldPlus } from 'lucide-react';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Input } from '@/components/ui/input';
 import {
@@ -25,6 +25,7 @@ interface MfaMethodCardsProps {
   onChangeTotpCode: (code: string) => void;
   onChangeRecoveryCode: (code: string) => void;
   onToggleRecoveryMode: () => void;
+  onStartEnrollment: () => void;
   onWebAuthnVerify: () => void;
   onSubmitVerify: (e: FormEvent<HTMLFormElement>) => void;
 }
@@ -39,6 +40,7 @@ export function MfaMethodCards({
   onChangeTotpCode,
   onChangeRecoveryCode,
   onToggleRecoveryMode,
+  onStartEnrollment,
   onWebAuthnVerify,
   onSubmitVerify,
 }: MfaMethodCardsProps) {
@@ -180,6 +182,16 @@ export function MfaMethodCards({
               ? 'Quay lại phương thức xác thực FIDO2 / TOTP'
               : 'Không có thiết bị xác thực? Dùng mã khôi phục'}
           </span>
+        </button>
+
+        <button
+          type="button"
+          disabled={isLoading || isWebAuthnLoading}
+          onClick={onStartEnrollment}
+          className="rounded-full px-3 py-1 text-xs text-[#222222] hover:bg-[#f7f7f7] hover:underline transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+        >
+          <ShieldPlus size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
+          <span>Thiết lập MFA lần đầu</span>
         </button>
 
         <Link

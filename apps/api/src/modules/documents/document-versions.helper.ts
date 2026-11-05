@@ -46,7 +46,7 @@ export async function executeSetCurrentVersion(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal);
+  await assertDocumentMutationPermission(authorization, doc, principal, 'VERSION');
 
   let version;
   if (input.versionId) {

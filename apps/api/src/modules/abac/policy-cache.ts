@@ -49,6 +49,15 @@ export class PolicyCache implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Thuật toán: Xóa bản đệm chính sách của phiên bản trước khi nâng số hiệu epoch trên PostgreSQL sequence.
+   */
+  async bumpPolicyEpoch(previousVersion?: string): Promise<void> {
+    if (previousVersion) {
+      await this.invalidate(previousVersion);
+    }
+  }
+
   onModuleDestroy(): void {
     this.redis.disconnect();
   }

@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
-import { toLocalISO } from '../helpers';
+import { expandGrantPermissions, toLocalISO } from '../helpers';
 import type { AccessGrantItem, DocumentItem, RoleLookupItem, UserLookupItem } from '../types';
 
 interface UseOwnerGrantsParams {
@@ -15,10 +15,8 @@ interface UseOwnerGrantsParams {
 }
 
 /**
- * Algorithm: Time-Bounded Direct Grant & Emergency Revocation Controller
- * Validates grant validity windows, optimistic concurrency (`expectedVersion`), and mandatory
- * D-BR15 audit justification (>= 10 chars) before mutating ABAC/DAC access grants.
- * Time Complexity: O(1) per action | Space Complexity: O(1)
+ * Thuật toán: Cấp Quyền Trực Tiếp Có Thời Hạn & Thu Hồi Khẩn Cấp (`useOwnerGrants`)
+ * Kiểm định khoảng hiệu lực, chuẩn hóa tập quyền `DOWNLOAD => ['VIEW', 'DOWNLOAD']`, đối chiếu `expectedVersion` và bắt buộc lý do thu hồi tối thiểu 10 ký tự.
  */
 export function useOwnerGrants({
   documents,
@@ -91,6 +89,8 @@ export function useOwnerGrants({
     setErrorMessage(null);
 
     try {
+      // CONFLICT-RESOLVED: Chuẩn hóa tập quyền trực tiếp để DOWNLOAD luôn đi kèm VIEW, ngăn gửi ['DOWNLOAD'] đơn lẻ.
+      const normalizedPermissions = expandGrantPermissions(directPermissions);
       const payload: {
         documentId: string;
         principalType: 'USER' | 'ROLE';
@@ -102,7 +102,7 @@ export function useOwnerGrants({
       } = {
         documentId: directDocId,
         principalType: directPrincipalType,
-        permissions: directPermissions,
+        permissions: normalizedPermissions,
         validFrom: new Date(directValidFrom).toISOString(),
         validUntil: new Date(directValidUntil).toISOString(),
       };

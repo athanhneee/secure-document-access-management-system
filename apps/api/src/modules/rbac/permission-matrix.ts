@@ -8,6 +8,8 @@ export const SYSTEM_ROLE_PERMISSION_MATRIX = {
     'POLICY_SIMULATE',
     'WATERMARK_CONFIG_MANAGE',
     'SYSTEM_HEALTH_VIEW',
+    // CONFLICT-RESOLVED: Bổ sung quyền SYSTEM_HEALTH_MANAGE cho SYSTEM_ADMIN để điều hành chụp ảnh sức khỏe và dọn dẹp dữ liệu quá hạn.
+    'SYSTEM_HEALTH_MANAGE',
   ],
   SECURITY_OFFICER: [
     'AUDIT_VIEW',
@@ -22,6 +24,8 @@ export const SYSTEM_ROLE_PERMISSION_MATRIX = {
   AUDITOR: ['AUDIT_VIEW', 'AUDIT_EXPORT', 'ALERT_VIEW', 'WATERMARK_TRACE', 'SYSTEM_REPORT_EXPORT'],
   DOCUMENT_OWNER: [
     'DOCUMENT_UPLOAD',
+    // CONFLICT-RESOLVED: Bổ sung quyền DOCUMENT_MANAGE cho DOCUMENT_OWNER đồng bộ với seed-catalog.ts và chuyển quyền sở hữu tài liệu.
+    'DOCUMENT_MANAGE',
     'DOCUMENT_CLASSIFY',
     'DOCUMENT_VERSION_CREATE',
     'DOCUMENT_ARCHIVE',

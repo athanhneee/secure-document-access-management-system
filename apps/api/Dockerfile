@@ -43,10 +43,12 @@ FROM node:24.14.1-alpine3.23 AS runner
 
 WORKDIR /app
 
-# Security: Install dumb-init for proper PID 1 signal forwarding
+# Security: Install dumb-init for proper PID 1 signal forwarding and pre-create shared export dir
 RUN apk add --no-cache dumb-init wget && \
     addgroup -g 10001 -S appgroup && \
-    adduser -u 10001 -S appuser -G appgroup -s /sbin/nologin
+    adduser -u 10001 -S appuser -G appgroup -s /sbin/nologin && \
+    mkdir -p /var/lib/sda/exports && \
+    chown -R 10001:10001 /var/lib/sda/exports
 
 ENV NODE_ENV=production \
     PORT=3001 \

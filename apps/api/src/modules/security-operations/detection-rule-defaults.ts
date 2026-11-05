@@ -42,26 +42,42 @@ export interface DetectionResult {
 export async function resolveActiveDetectionRules(
   database: PrismaClient,
 ): Promise<DetectionRule[]> {
+  const baseline = cloneDefaultSecurityDetectionRules() as DetectionRule[];
   try {
     const dbConfigs = await database.detectionRuleConfig.findMany();
     if (dbConfigs && dbConfigs.length > 0) {
-      return dbConfigs.map((cfg) => ({
-        ruleCode: cfg.rule_code,
-        name: cfg.name,
-        description: cfg.description ?? '',
-        isEnabled: cfg.is_enabled,
-        severity: cfg.severity,
-        threshold: cfg.threshold,
-        windowMinutes: cfg.window_minutes,
-        cooldownMinutes: cfg.cooldown_minutes,
-        parameters: (cfg.parameters as Record<string, unknown>) ?? {},
-      }));
+      // CONFLICT-RESOLVED: Hợp nhất cấu hình từ CSDL đè lên bộ quy tắc chuẩn theo ruleCode để không làm rơi các quy tắc chưa tùy chỉnh (MED-03)
+      const overrides = new Map<string, DetectionRule>(
+        dbConfigs.map((cfg) => [
+          cfg.rule_code,
+          {
+            ruleCode: cfg.rule_code,
+            name: cfg.name,
+            description: cfg.description ?? '',
+            isEnabled: cfg.is_enabled,
+            severity: cfg.severity,
+            threshold: cfg.threshold,
+            windowMinutes: cfg.window_minutes,
+            cooldownMinutes: cfg.cooldown_minutes,
+            parameters: (cfg.parameters as Record<string, unknown>) ?? {},
+          },
+        ]),
+      );
+      const merged = baseline.map((rule) => {
+        const override = overrides.get(rule.ruleCode);
+        if (override) {
+          overrides.delete(rule.ruleCode);
+          return override;
+        }
+        return rule;
+      });
+      return [...merged, ...overrides.values()];
     }
   } catch {
     // Fallback to canonical shared defaults if table is not yet migrated/reachable
   }
   // CONFLICT-RESOLVED: Dùng bộ quy tắc mặc định thống nhất từ @sda/contracts thay vì khai báo trùng lặp cục bộ lệch với Worker.
-  return cloneDefaultSecurityDetectionRules() as DetectionRule[];
+  return baseline;
 }
 
 /**
@@ -82,58 +98,54 @@ export async function upsertDetectionRuleConfig(
   updatedByUserId?: bigint,
 ): Promise<DetectionRule> {
   const ruleCode = existing.ruleCode;
-  try {
-    const updated = await database.detectionRuleConfig.upsert({
-      where: { rule_code: ruleCode },
-      update: {
-        is_enabled: updates.isEnabled ?? existing.isEnabled,
-        severity: updates.severity ?? existing.severity,
-        threshold: updates.threshold ?? existing.threshold,
-        window_minutes: updates.windowMinutes ?? existing.windowMinutes,
-        cooldown_minutes: updates.cooldownMinutes ?? existing.cooldownMinutes,
-        parameters: (updates.parameters ?? existing.parameters) as never,
-        updated_at: new Date(),
-        updated_by: updatedByUserId ?? null,
-      },
-      create: {
-        rule_code: ruleCode,
-        name: existing.name,
-        description: existing.description,
-        is_enabled: updates.isEnabled ?? existing.isEnabled,
-        severity: updates.severity ?? existing.severity,
-        threshold: updates.threshold ?? existing.threshold,
-        window_minutes: updates.windowMinutes ?? existing.windowMinutes,
-        cooldown_minutes: updates.cooldownMinutes ?? existing.cooldownMinutes,
-        parameters: (updates.parameters ?? existing.parameters) as never,
-        updated_by: updatedByUserId ?? null,
-      },
+  // CONFLICT-RESOLVED: Không nuốt lỗi CSDL hoặc kiểm toán bằng try/catch rỗng khi cập nhật quy tắc SOC (MED-03)
+  const updated = await database.detectionRuleConfig.upsert({
+    where: { rule_code: ruleCode },
+    update: {
+      is_enabled: updates.isEnabled ?? existing.isEnabled,
+      severity: updates.severity ?? existing.severity,
+      threshold: updates.threshold ?? existing.threshold,
+      window_minutes: updates.windowMinutes ?? existing.windowMinutes,
+      cooldown_minutes: updates.cooldownMinutes ?? existing.cooldownMinutes,
+      parameters: (updates.parameters ?? existing.parameters) as never,
+      updated_at: new Date(),
+      updated_by: updatedByUserId ?? null,
+    },
+    create: {
+      rule_code: ruleCode,
+      name: existing.name,
+      description: existing.description,
+      is_enabled: updates.isEnabled ?? existing.isEnabled,
+      severity: updates.severity ?? existing.severity,
+      threshold: updates.threshold ?? existing.threshold,
+      window_minutes: updates.windowMinutes ?? existing.windowMinutes,
+      cooldown_minutes: updates.cooldownMinutes ?? existing.cooldownMinutes,
+      parameters: (updates.parameters ?? existing.parameters) as never,
+      updated_by: updatedByUserId ?? null,
+    },
+  });
+
+  if (auditWriter && updatedByUserId) {
+    await auditWriter.writeLog({
+      action: 'DETECTION_RULE_CONFIGURED',
+      outcome: 'SUCCESS',
+      actorUserId: updatedByUserId,
+      objectType: 'DETECTION_RULE_CONFIG',
+      objectId: ruleCode,
+      chainPartition: 'SECURITY_OPERATIONS',
+      details: { ruleCode, updates },
     });
-
-    if (auditWriter && updatedByUserId) {
-      await auditWriter.writeLog({
-        action: 'DETECTION_RULE_CONFIGURED',
-        outcome: 'SUCCESS',
-        actorUserId: updatedByUserId,
-        objectType: 'DETECTION_RULE_CONFIG',
-        objectId: ruleCode,
-        chainPartition: 'SECURITY_OPERATIONS',
-        details: { ruleCode, updates },
-      });
-    }
-
-    return {
-      ruleCode: updated.rule_code,
-      name: updated.name,
-      description: updated.description ?? '',
-      isEnabled: updated.is_enabled,
-      severity: updated.severity,
-      threshold: updated.threshold,
-      windowMinutes: updated.window_minutes,
-      cooldownMinutes: updated.cooldown_minutes,
-      parameters: (updated.parameters as Record<string, unknown>) ?? {},
-    };
-  } catch {
-    Object.assign(existing, updates);
-    return existing;
   }
+
+  return {
+    ruleCode: updated.rule_code,
+    name: updated.name,
+    description: updated.description ?? '',
+    isEnabled: updated.is_enabled,
+    severity: updated.severity,
+    threshold: updated.threshold,
+    windowMinutes: updated.window_minutes,
+    cooldownMinutes: updated.cooldown_minutes,
+    parameters: (updated.parameters as Record<string, unknown>) ?? {},
+  };
 }

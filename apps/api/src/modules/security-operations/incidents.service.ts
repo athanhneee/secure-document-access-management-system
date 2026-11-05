@@ -17,6 +17,7 @@ import {
 } from '@sda/contracts';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
+import { AuthorizationService } from '../rbac/authorization.service.js';
 import {
   executeAddIncidentAction,
   executeCompleteIncidentAction,
@@ -33,6 +34,11 @@ import {
   executeSubmitIncidentReport,
   executeUpdateIncidentReport,
 } from './incident-transitions.helper.js';
+import {
+  applyIncidentScopeToWhere,
+  assertIncidentInDepartmentScope,
+  resolveIncidentDepartmentScope,
+} from './security-operations-scope.helper.js';
 
 export type { IncidentActionDetail, IncidentReportDetail };
 
@@ -46,6 +52,7 @@ export class IncidentsService {
   constructor(
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -66,13 +73,17 @@ export class IncidentsService {
   /**
    * Algorithm: Lookahead N+1 Paginated Incident Report Listing
    */
-  async listIncidentReports(query: QueryIncidentReportsInput): Promise<{
+  async listIncidentReports(
+    query: QueryIncidentReportsInput,
+    actor?: AuthPrincipal,
+  ): Promise<{
     data: IncidentReportDetail[];
     page: number;
     pageSize: number;
     hasMore: boolean;
   }> {
-    const where = buildIncidentQueryWhere(query);
+    const allowedDepts = await resolveIncidentDepartmentScope(this.authorization, actor, 'VIEW');
+    const where = applyIncidentScopeToWhere(buildIncidentQueryWhere(query), allowedDepts);
     const reports = await this.database.incidentReport.findMany({
       where,
       orderBy: { [query.sort]: query.order },
@@ -101,7 +112,8 @@ export class IncidentsService {
   /**
    * Algorithm: Incident Report & Chronological Remediation Action Hydration
    */
-  async getIncidentReportById(id: string): Promise<IncidentReportDetail> {
+  async getIncidentReportById(id: string, actor?: AuthPrincipal): Promise<IncidentReportDetail> {
+    await assertIncidentInDepartmentScope(this.database, this.authorization, actor, id, 'VIEW');
     const report = await this.database.incidentReport.findUnique({
       where: { id },
       include: {
@@ -130,6 +142,7 @@ export class IncidentsService {
     input: UpdateIncidentReportInput,
     actor: AuthPrincipal,
   ): Promise<IncidentReportDetail> {
+    await assertIncidentInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const updatedId = await executeUpdateIncidentReport(
       this.database,
       this.auditWriter,
@@ -145,6 +158,7 @@ export class IncidentsService {
     input: SubmitIncidentReportInput,
     actor: AuthPrincipal,
   ): Promise<IncidentReportDetail> {
+    await assertIncidentInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const updatedId = await executeSubmitIncidentReport(
       this.database,
       this.auditWriter,
@@ -160,6 +174,7 @@ export class IncidentsService {
     input: CloseIncidentReportInput,
     actor: AuthPrincipal,
   ): Promise<IncidentReportDetail> {
+    await assertIncidentInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const updatedId = await executeCloseIncidentReport(
       this.database,
       this.auditWriter,
@@ -170,11 +185,18 @@ export class IncidentsService {
     return this.getIncidentReportById(updatedId);
   }
 
-  addIncidentAction(
+  async addIncidentAction(
     incidentReportId: string,
     input: CreateIncidentActionInput,
     actor: AuthPrincipal,
   ): Promise<IncidentActionDetail> {
+    await assertIncidentInDepartmentScope(
+      this.database,
+      this.authorization,
+      actor,
+      incidentReportId,
+      'MANAGE',
+    );
     return executeAddIncidentAction(
       this.database,
       this.auditWriter,
@@ -184,12 +206,21 @@ export class IncidentsService {
     );
   }
 
-  completeIncidentAction(
+  async completeIncidentAction(
     actionId: bigint,
     input: CompleteIncidentActionInput,
     actor: AuthPrincipal,
     expectedIncidentId?: string,
   ): Promise<IncidentActionDetail> {
+    if (expectedIncidentId) {
+      await assertIncidentInDepartmentScope(
+        this.database,
+        this.authorization,
+        actor,
+        expectedIncidentId,
+        'MANAGE',
+      );
+    }
     return executeCompleteIncidentAction(
       this.database,
       this.auditWriter,

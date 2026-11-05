@@ -4,12 +4,18 @@
  *   async export jobs, executes bounded-FIFO (50-item) artifact generation with SHA-256 integrity hashing,
  *   and serves downloads with path-traversal/symlink guards.
  */
-import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getDatabaseClient } from '@sda/database';
-import { AppErrorCode, type CreateExportJobInput, type ExportType } from '@sda/contracts';
+import { AppErrorCode, type CreateExportJobInput } from '@sda/contracts';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
@@ -19,6 +25,7 @@ import {
   resolveExportAuthorizationScope,
 } from './export-filter-scope.helper.js';
 import {
+  assertCrossUserExportScope,
   assertExportJobAccess,
   assertExportJobReadyForDownload,
   mapExportJobToDetail,
@@ -34,6 +41,7 @@ export type { ExportJobDetail };
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 const DEFAULT_TTL_HOURS = 24;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class ExportJobService {
@@ -54,7 +62,10 @@ export class ExportJobService {
       this.database = (databaseClient ?? null) as unknown as PrismaClient;
     }
 
-    this.exportDir = path.join(process.cwd(), '.local', 'exports');
+    // CONFLICT-RESOLVED: Ưu tiên biến môi trường EXPORT_STORAGE_DIR để đồng bộ đường dẫn tệp xuất với worker dọn dẹp (CRIT-08)
+    this.exportDir = path.resolve(
+      process.env['EXPORT_STORAGE_DIR']?.trim() || path.join(process.cwd(), '.local', 'exports'),
+    );
     try {
       if (!fs.existsSync(this.exportDir)) fs.mkdirSync(this.exportDir, { recursive: true });
     } catch {
@@ -118,11 +129,32 @@ export class ExportJobService {
       correlationId: correlationId ?? null,
     });
 
-    void this.processExportJob(id, input, actor, correlationId, allowedDepartmentIds);
+    // CONFLICT-RESOLVED: Bắt lỗi bất đồng bộ nền tránh UnhandledPromiseRejection làm sập tiến trình API (MED-02)
+    void this.processExportJob(id, input, actor, correlationId, allowedDepartmentIds).catch((err) =>
+      this.logger.error(`Unhandled export job ${id} rejection:`, err),
+    );
     return mapExportJobToDetail(job);
   }
 
+  /**
+   * Thuật toán: Liệt kê 50 tác vụ xuất báo cáo gần nhất thuộc chính người dùng yêu cầu (`requester_user_id = actor.userId`).
+   */
+  async listExportJobs(actor: AuthPrincipal): Promise<{ data: ExportJobDetail[] }> {
+    const jobs = await this.database.asyncExportJob.findMany({
+      where: { requester_user_id: actor.userId },
+      orderBy: { created_at: 'desc' },
+      take: 50,
+    });
+    return { data: jobs.map(mapExportJobToDetail) };
+  }
+
+  /**
+   * Thuật toán: Tra cứu chi tiết tác vụ xuất báo cáo kèm thẩm định UUID, quyền sở hữu và phạm vi phòng ban chéo.
+   */
   async getExportJob(id: string, actor: AuthPrincipal): Promise<ExportJobDetail> {
+    if (!UUID_REGEX.test(id)) {
+      throw new BadRequestException('Export jobId must be a valid UUID.');
+    }
     const job = await this.database.asyncExportJob.findUnique({ where: { id } });
     if (!job) {
       throw new NotFoundException({
@@ -131,16 +163,20 @@ export class ExportJobService {
       });
     }
     assertExportJobAccess(job, actor);
+    await assertCrossUserExportScope(this.database, this.authorization, job, actor);
     return mapExportJobToDetail(job);
   }
 
   /**
-   * Algorithm: Path-Traversal-Hardened, RBAC-Verified & TTL-Gated Export Artifact Delivery
+   * Algorithm / Thuật toán: Tải xuống tệp báo cáo có kiểm tra UUID, chống leo thang đường dẫn, xác thực phạm vi phòng ban và kiểm tra hạn TTL.
    */
   async downloadExportJob(
     id: string,
     actor: AuthPrincipal,
   ): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
+    if (!UUID_REGEX.test(id)) {
+      throw new BadRequestException('Export jobId must be a valid UUID.');
+    }
     const job = await this.database.asyncExportJob.findUnique({ where: { id } });
     if (!job) {
       throw new NotFoundException({
@@ -150,7 +186,7 @@ export class ExportJobService {
     }
 
     assertExportJobAccess(job, actor);
-    await resolveExportAuthorizationScope(this.authorization, actor, job.export_type as ExportType);
+    await assertCrossUserExportScope(this.database, this.authorization, job, actor);
     assertExportJobReadyForDownload(job);
 
     const buffer = readVerifiedExportArtifact(
@@ -237,13 +273,17 @@ export class ExportJobService {
       });
     } catch (err) {
       this.logger.error(`Export job ${jobId} failed:`, err);
-      await this.database.asyncExportJob.update({
-        where: { id: jobId },
-        data: {
-          status: 'FAILED',
-          error_message: err instanceof Error ? err.message : String(err),
-        },
-      });
+      try {
+        await this.database.asyncExportJob.update({
+          where: { id: jobId },
+          data: {
+            status: 'FAILED',
+            error_message: err instanceof Error ? err.message : String(err),
+          },
+        });
+      } catch (updateErr) {
+        this.logger.error(`Failed to persist FAILED status for export job ${jobId}:`, updateErr);
+      }
     }
   }
 }

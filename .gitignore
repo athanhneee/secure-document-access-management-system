@@ -8,17 +8,18 @@ node_modules/
 .local/
 **/.local/
 !.local.example/
-# CONFLICT-RESOLVED: Chặn hoàn toàn supabase/, docs/, rules/ và design-system/ trên kho lưu trữ công khai (chỉ giữ README.md) cùng các thư mục cache CLI đám mây cục bộ
+# CONFLICT-RESOLVED: Chỉ chặn .supabase/ (cache CLI cục bộ), mở khóa supabase/ cùng hai tệp chuẩn thiết kế rules/ui-design-system.md và design-system/MASTER.md để Git và CI theo dõi đầy đủ.
 .supabase/
 **/.supabase/
-supabase/
 .wrangler/
 **/.wrangler/
 .vercel/
 **/.vercel/
 docs/
-rules/
-design-system/
+rules/*
+!rules/ui-design-system.md
+design-system/*
+!design-system/MASTER.md
 
 # =========================================================================
 # 2. Build, framework, caches and test artifacts
@@ -154,7 +155,7 @@ storage/
 *.flac
 
 # =========================================================================
-# 6. Markdown files (Chỉ giữ lại duy nhất README.md)
+# 6. Markdown files (Chỉ giữ lại duy nhất README.md và các tệp chuẩn thiết kế bắt buộc cho CI)
 # =========================================================================
 *.md
 **/*.md
@@ -162,6 +163,9 @@ storage/
 !readme.md
 !**/README.md
 !**/readme.md
+# CONFLICT-RESOLVED: Mở khóa theo dõi Git cho rules/ui-design-system.md và design-system/MASTER.md để test/unit/ui-design-wcag.test.mjs không sập ENOENT trên bản clone sạch / GitHub Actions CI.
+!rules/ui-design-system.md
+!design-system/MASTER.md
 
 # =========================================================================
 # 7. Prisma generated client; migrations and schema MUST be tracked

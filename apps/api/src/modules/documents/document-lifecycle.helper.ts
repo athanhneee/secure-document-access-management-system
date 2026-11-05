@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient } from '@sda/database';
 import {
   AppErrorCode,
+  isValidIsoCalendarDate,
   type CreateDocumentDraftInput,
   type UpdateDocumentMetadataInput,
 } from '@sda/contracts';
@@ -31,7 +32,16 @@ async function assertActiveDepartment(database: PrismaClient, departmentId: bigi
   }
 }
 
+/**
+ * Thuật toán: Phân tích ngày hạn lưu trữ ISO `YYYY-MM-DD` có kiểm định ngày lịch Gregorian thực.
+ */
 function parseIsoRetentionDate(isoDate: string): Date {
+  if (!isValidIsoCalendarDate(isoDate)) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.RETENTION_DATE_INVALID,
+      message: 'Invalid retention date format or impossible calendar date.',
+    });
+  }
   const retDate = new Date(`${isoDate}T00:00:00.000Z`);
   if (Number.isNaN(retDate.getTime())) {
     throw new BadRequestException({
@@ -190,7 +200,7 @@ export async function executeUpdateDocumentMetadata(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal);
+  await assertDocumentMutationPermission(authorization, doc, principal, 'METADATA');
 
   const updateData: {
     title?: string;

@@ -46,7 +46,7 @@ test('Prisma migration deploy, idempotent seed, and ABAC version triggers are va
   const migrationCount = await database.query(
     'SELECT count(*)::int AS count FROM _prisma_migrations WHERE finished_at IS NOT NULL',
   );
-  assert.equal(migrationCount.rows[0].count, 10);
+  assert.equal(migrationCount.rows[0].count, 11);
 
   const abacEvolution = await database.query(
     `SELECT table_name,column_name FROM information_schema.columns
@@ -137,16 +137,19 @@ test('Prisma migration deploy, idempotent seed, and ABAC version triggers are va
       (SELECT count(*)::int FROM permissions) AS permissions,
       (SELECT count(*)::int FROM attribute_definitions) AS attribute_definitions,
       (SELECT count(*)::int FROM attribute_options ao JOIN attribute_definitions ad ON ad.id=ao.attribute_definition_id WHERE ad.code='CLEARANCE_LEVEL') AS clearance_options,
+      (SELECT count(*)::int FROM attribute_options ao JOIN attribute_definitions ad ON ad.id=ao.attribute_definition_id WHERE ad.code='EMPLOYMENT_STATUS') AS employment_status_options,
       (SELECT count(*)::int FROM departments) AS departments,
       (SELECT count(*)::int FROM business_categories) AS categories,
       (SELECT count(*)::int FROM users) AS users
   `);
+  // CONFLICT-RESOLVED: Đồng bộ bộ đếm kiểm thử tích hợp với 34 quyền RBAC hạt nhân và lọc tường minh các tập tùy chọn CLEARANCE_LEVEL (4) + EMPLOYMENT_STATUS (3).
   assert.deepEqual(seededOnce.rows[0], {
     classifications: 4,
     roles: 5,
-    permissions: 32,
+    permissions: 34,
     attribute_definitions: 15,
     clearance_options: 4,
+    employment_status_options: 3,
     departments: 2,
     categories: 2,
     users: 6,
@@ -158,7 +161,8 @@ test('Prisma migration deploy, idempotent seed, and ABAC version triggers are va
       (SELECT count(*)::int FROM roles WHERE is_system_role) AS roles,
       (SELECT count(*)::int FROM permissions) AS permissions,
       (SELECT count(*)::int FROM attribute_definitions) AS attribute_definitions,
-      (SELECT count(*)::int FROM attribute_options) AS clearance_options,
+      (SELECT count(*)::int FROM attribute_options ao JOIN attribute_definitions ad ON ad.id=ao.attribute_definition_id WHERE ad.code='CLEARANCE_LEVEL') AS clearance_options,
+      (SELECT count(*)::int FROM attribute_options ao JOIN attribute_definitions ad ON ad.id=ao.attribute_definition_id WHERE ad.code='EMPLOYMENT_STATUS') AS employment_status_options,
       (SELECT count(*)::int FROM departments) AS departments,
       (SELECT count(*)::int FROM business_categories) AS categories,
       (SELECT count(*)::int FROM users) AS users

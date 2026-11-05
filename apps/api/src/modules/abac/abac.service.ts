@@ -8,6 +8,12 @@ import { getDatabaseClient, withSerializableTransaction } from '@sda/database';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { canSimulatePolicy } from '../rbac/permission-matrix.js';
 import { AbacAuditService } from './abac-audit.service.js';
+import {
+  executeUpsertAbacPolicy,
+  serializeAbacPolicyRow,
+  type RawPolicyForSerialize,
+  type UpsertAbacPolicyInput,
+} from './abac-policy-mutation.helper.js';
 import { AbacRepository } from './abac.repository.js';
 import type { PdpResult, PolicyEvaluationInput } from './abac.types.js';
 import { PolicyCache } from './policy-cache.js';
@@ -24,15 +30,54 @@ export class AbacService {
     private readonly audit: AbacAuditService,
   ) {}
 
+  /**
+   * Thuật toán: Truy vấn và tuần tự hóa danh sách quy tắc chính sách ABAC sang DTO JSON an toàn `bigint`.
+   */
   async listPolicies(): Promise<{ data: Array<Record<string, unknown>> }> {
     const policies = await this.repository.listPolicies();
     return {
-      data: policies.map((policy) => ({
-        ...policy,
-        id: policy.id.toString(),
-        version: policy.version.toString(),
-      })),
+      data: policies.map((policy) => serializeAbacPolicyRow(policy as RawPolicyForSerialize)),
     };
+  }
+
+  /**
+   * Thuật toán: Khởi tạo quy tắc chính sách ABAC mới kèm các nhóm điều kiện DNF và kiểm định trình biên dịch.
+   */
+  async createPolicy(
+    principal: AuthPrincipal,
+    input: UpsertAbacPolicyInput,
+    context: RequestContext,
+  ): Promise<Record<string, unknown>> {
+    return executeUpsertAbacPolicy({
+      input,
+      principal,
+      context,
+      database: this.database,
+      repository: this.repository,
+      cache: this.cache,
+      audit: this.audit,
+    });
+  }
+
+  /**
+   * Thuật toán: Cập nhật quy tắc chính sách ABAC hiện hữu kèm thay thế tập điều kiện DNF và làm mới epoch bộ nhớ đệm.
+   */
+  async updatePolicy(
+    principal: AuthPrincipal,
+    ruleId: bigint,
+    input: UpsertAbacPolicyInput,
+    context: RequestContext,
+  ): Promise<Record<string, unknown>> {
+    return executeUpsertAbacPolicy({
+      ruleId,
+      input,
+      principal,
+      context,
+      database: this.database,
+      repository: this.repository,
+      cache: this.cache,
+      audit: this.audit,
+    });
   }
 
   async listAttributes(): Promise<{ data: Array<Record<string, unknown>> }> {

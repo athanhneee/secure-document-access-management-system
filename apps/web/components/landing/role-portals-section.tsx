@@ -162,7 +162,6 @@ export function RolePortalsSection() {
                     />
                     <span
                       className={`staff-badge inline-flex items-center gap-1.5 text-xs font-bold ${portal.badgeColor}`}
-                      style={{ background: 'transparent', border: 'none', padding: 0 }}
                     >
                       <span className={`dot ${portal.dotClass}`} aria-hidden="true" />
                       <span>{portal.role}</span>

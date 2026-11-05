@@ -124,7 +124,7 @@ export function PolicyPresetsBar({
               type="button"
               size="sm"
               onClick={() => onSaveRule(rule)}
-              className="rounded-full bg-[#FF385C] hover:bg-[#E0294C] text-white text-xs h-8 px-4 font-semibold"
+              className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs h-8 px-4 font-semibold"
             >
               Lưu Chính Sách
             </Button>
@@ -180,7 +180,7 @@ export function PolicyPresetsBar({
                     type="button"
                     size="sm"
                     onClick={() => onSelectTemplate(tpl)}
-                    className="rounded-full bg-[#FF385C] hover:bg-[#E0294C] text-white text-xs h-7 px-3.5 font-semibold"
+                    className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs h-7 px-3.5 font-semibold"
                   >
                     Áp dụng mẫu này
                   </Button>

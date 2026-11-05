@@ -59,6 +59,30 @@ export function AlertDetailModal({
   );
 }
 
+/**
+ * Thuật toán: Máy Trạng Thái Chuyển Tiếp Cảnh Báo An Ninh & Bổ Sung Ghi Chú Điều Tra Độc Lập (`VALID_TRANSITIONS`)
+ * Mục đích: Khóa danh sách trạng thái đích hợp lệ theo trạng thái hiện tại, bỏ qua lệnh tự chuyển tiếp (`PATCH /status`) khi chỉ ghi chú điều tra và cho phép đính kèm ghi chú ngay cả ở trạng thái kết thúc.
+ * Cơ chế hoạt động:
+ *   - Sinh tập trạng thái cho phép `[alert.status, ...VALID_TRANSITIONS[alert.status]]`; vô hiệu hóa thẻ `<select>` khi cảnh báo đã đóng (`RESOLVED` / `FALSE_POSITIVE`).
+ *   - Chỉ phát truy vấn `PATCH /security-alerts/:id/status` khi `newStatus !== alert.status`; nếu `newStatus === alert.status` và có `investigationNote`, chuyển thẳng tới `POST /security-alerts/:id/notes`.
+ */
+// CONFLICT-RESOLVED: Đồng bộ tập trạng thái chuyển tiếp với AlertStatusSchema (@sda/contracts) và enum CSDL alert_status để không gửi ESCALATED gây lỗi 400, vẫn hỗ trợ ESCALATED -> RESOLVED nếu nhận từ API.
+const VALID_TRANSITIONS: Record<SecurityAlertItem['status'], SecurityAlertItem['status'][]> = {
+  OPEN: ['INVESTIGATING', 'RESOLVED', 'FALSE_POSITIVE'],
+  INVESTIGATING: ['RESOLVED', 'FALSE_POSITIVE'],
+  ESCALATED: ['RESOLVED'],
+  RESOLVED: [],
+  FALSE_POSITIVE: [],
+};
+
+const STATUS_LABELS: Record<SecurityAlertItem['status'], string> = {
+  OPEN: 'OPEN (Đang mở)',
+  INVESTIGATING: 'INVESTIGATING (Đang điều tra)',
+  ESCALATED: 'ESCALATED (Đã leo thang)',
+  RESOLVED: 'RESOLVED (Đã xử lý)',
+  FALSE_POSITIVE: 'FALSE_POSITIVE (Báo động giả)',
+};
+
 interface AlertDetailFormProps {
   alert: SecurityAlertItem;
   onClose: () => void;
@@ -74,21 +98,41 @@ function AlertDetailForm({
   onSuccess,
   onError,
 }: AlertDetailFormProps) {
-  const [newStatus, setNewStatus] = useState<SecurityAlertItem['status']>(
-    alert.status === 'OPEN' ? 'INVESTIGATING' : alert.status,
+  const allowedStatuses = Array.from(
+    new Set<SecurityAlertItem['status']>([
+      alert.status,
+      ...(VALID_TRANSITIONS[alert.status] ?? []),
+    ]),
   );
+  const isTerminalStatus = allowedStatuses.length <= 1;
+
+  const [newStatus, setNewStatus] = useState<SecurityAlertItem['status']>(alert.status);
   const [resolutionNote, setResolutionNote] = useState('');
   const [investigationNote, setInvestigationNote] = useState('');
   const [isUpdatingAlert, setIsUpdatingAlert] = useState(false);
 
+  const statusChanged = newStatus !== alert.status;
+  const requiresResolutionNote =
+    statusChanged && (newStatus === 'RESOLVED' || newStatus === 'FALSE_POSITIVE');
+
   async function handleUpdateAlertStatus() {
-    if (
-      (newStatus === 'RESOLVED' || newStatus === 'FALSE_POSITIVE') &&
-      resolutionNote.trim().length < 5
-    ) {
+    const trimmedResNote = resolutionNote.trim();
+    const trimmedInvNote = investigationNote.trim();
+
+    if (!statusChanged && !trimmedInvNote) {
+      onError('Vui lòng chọn trạng thái chuyển tiếp mới hoặc nhập ghi chú điều tra nội bộ.');
+      return;
+    }
+
+    if (requiresResolutionNote && trimmedResNote.length < 5) {
       onError(
         'Cần ghi rõ ghi chú kết luận xử lý (ít nhất 5 ký tự) khi đóng hoặc đánh dấu false-positive.',
       );
+      return;
+    }
+
+    if (trimmedInvNote && trimmedInvNote.length < 5) {
+      onError('Ghi chú điều tra nội bộ cần tối thiểu 5 ký tự.');
       return;
     }
 
@@ -96,26 +140,32 @@ function AlertDetailForm({
     onClearError();
 
     try {
-      await apiClient(`/security-alerts/${alert.id}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          status: newStatus,
-          resolutionNote: resolutionNote.trim() || undefined,
-        }),
-      });
+      if (statusChanged) {
+        await apiClient(`/security-alerts/${alert.id}/status`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            status: newStatus,
+            resolutionNote: trimmedResNote || undefined,
+          }),
+        });
+      }
 
-      if (investigationNote.trim()) {
+      if (trimmedInvNote) {
         await apiClient(`/security-alerts/${alert.id}/notes`, {
           method: 'POST',
-          body: JSON.stringify({ note: investigationNote.trim() }),
+          body: JSON.stringify({ note: trimmedInvNote }),
         });
       }
 
       onClose();
-      await onSuccess(`Đã cập nhật trạng thái cảnh báo thành ${newStatus}.`);
+      await onSuccess(
+        statusChanged
+          ? `Đã cập nhật trạng thái cảnh báo thành ${newStatus}.`
+          : 'Đã lưu ghi chú điều tra nội bộ cho cảnh báo.',
+      );
     } catch (err) {
       if (err instanceof ApiError) {
-        onError(err.message || 'Không thể cập nhật trạng thái cảnh báo.');
+        onError(err.message || 'Không thể cập nhật cảnh báo.');
       } else {
         onError('Đã xảy ra lỗi khi cập nhật cảnh báo.');
       }
@@ -149,21 +199,24 @@ function AlertDetailForm({
           <select
             id="alert-status-select"
             value={newStatus}
-            onChange={(e) =>
-              setNewStatus(
-                e.target.value as 'OPEN' | 'INVESTIGATING' | 'RESOLVED' | 'FALSE_POSITIVE',
-              )
-            }
-            className="w-full h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+            disabled={isTerminalStatus || isUpdatingAlert}
+            onChange={(e) => setNewStatus(e.target.value as SecurityAlertItem['status'])}
+            className="w-full h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <option value="OPEN">OPEN (Đang mở)</option>
-            <option value="INVESTIGATING">INVESTIGATING (Đang điều tra)</option>
-            <option value="RESOLVED">RESOLVED (Đã xử lý)</option>
-            <option value="FALSE_POSITIVE">FALSE_POSITIVE (Báo động giả)</option>
+            {allowedStatuses.map((statusOption) => (
+              <option key={statusOption} value={statusOption}>
+                {STATUS_LABELS[statusOption]}
+              </option>
+            ))}
           </select>
+          {isTerminalStatus && (
+            <p className="text-[11px] text-[#717171]">
+              Cảnh báo đã ở trạng thái kết thúc; bạn vẫn có thể lưu thêm ghi chú điều tra bên dưới.
+            </p>
+          )}
         </div>
 
-        {(newStatus === 'RESOLVED' || newStatus === 'FALSE_POSITIVE') && (
+        {requiresResolutionNote && (
           <div className="space-y-1">
             <label htmlFor="res-note" className="font-medium text-[#222222]">
               Ghi chú kết luận (Bắt buộc tối thiểu 5 ký tự){' '}

@@ -122,51 +122,74 @@ export async function executeRevokeUserRole(
   userId: bigint,
   assignmentId: bigint,
   context: RequestContext,
+  database?: PrismaClient,
 ): Promise<void> {
   if (principal.userId === userId) {
     throw new ForbiddenException('Administrators cannot revoke their own roles.');
   }
-  await withSerializableTransaction(async (transaction) => {
-    const assignment = await transaction.userRole.findFirst({
-      where: { id: assignmentId, user_id: userId },
-      include: { roles: { include: { role_permissions: true } } },
-    });
-    if (!assignment) throw new NotFoundException('Role assignment not found.');
-    const user = await transaction.user.findUniqueOrThrow({ where: { id: userId } });
-    await authorization.assertPermission(principal, 'USER', 'MANAGE', {
-      targetDepartmentId: user.department_id,
-    });
-    await authorization.assertPermission(principal, 'USER', 'MANAGE', {
-      targetDepartmentId: assignment.scope_department_id,
-    });
-    if (assignment.roles?.role_permissions) {
-      await authorization.assertCanDelegate(
+  await withSerializableTransaction(
+    async (transaction) => {
+      const assignment = await transaction.userRole.findFirst({
+        where: { id: assignmentId, user_id: userId },
+        include: { roles: { include: { role_permissions: true } } },
+      });
+      if (!assignment) throw new NotFoundException('Role assignment not found.');
+      const user = await transaction.user.findUniqueOrThrow({ where: { id: userId } });
+      await authorization.assertPermission(principal, 'USER', 'MANAGE', {
+        targetDepartmentId: user.department_id,
+      });
+      await authorization.assertPermission(principal, 'USER', 'MANAGE', {
+        targetDepartmentId: assignment.scope_department_id,
+      });
+      if (assignment.roles?.role_permissions) {
+        await authorization.assertCanDelegate(
+          principal,
+          assignment.roles.role_permissions.map((mapping) => mapping.permission_id),
+          assignment.scope_department_id,
+        );
+      }
+      const now = new Date();
+      if (assignment.valid_to !== null && assignment.valid_to <= now) {
+        throw new ConflictException('Role assignment is already inactive.');
+      }
+      // CONFLICT-RESOLVED: Xóa trực tiếp bản ghi gán vai trò chưa đến giờ hiệu lực (`valid_from >= now`) để không vi phạm ràng buộc SQL `CHECK (valid_to IS NULL OR valid_to > valid_from)` (HIGH-12)
+      if (assignment.valid_from >= now) {
+        await transaction.userRole.delete({
+          where: { id: assignmentId },
+        });
+        await audit.record(
+          transaction,
+          {
+            action: 'USER_ROLE_REVOKED',
+            objectType: 'USER_ROLE',
+            objectId: assignmentId.toString(),
+            before: auditAssignmentSnapshot(assignment),
+            after: null,
+          },
+          principal,
+          context,
+        );
+        return;
+      }
+      const after = await transaction.userRole.update({
+        where: { id: assignmentId },
+        data: { valid_to: now },
+      });
+      await audit.record(
+        transaction,
+        {
+          action: 'USER_ROLE_REVOKED',
+          objectType: 'USER_ROLE',
+          objectId: assignmentId.toString(),
+          before: auditAssignmentSnapshot(assignment),
+          after: auditAssignmentSnapshot(after),
+        },
         principal,
-        assignment.roles.role_permissions.map((mapping) => mapping.permission_id),
-        assignment.scope_department_id,
+        context,
       );
-    }
-    const now = new Date();
-    if (assignment.valid_to !== null && assignment.valid_to <= now) {
-      throw new ConflictException('Role assignment is already inactive.');
-    }
-    const after = await transaction.userRole.update({
-      where: { id: assignmentId },
-      data: { valid_to: now },
-    });
-    await audit.record(
-      transaction,
-      {
-        action: 'USER_ROLE_REVOKED',
-        objectType: 'USER_ROLE',
-        objectId: assignmentId.toString(),
-        before: auditAssignmentSnapshot(assignment),
-        after: auditAssignmentSnapshot(after),
-      },
-      principal,
-      context,
-    );
-  });
+    },
+    database ? { client: database } : undefined,
+  );
   authorization.invalidateUser(userId);
 }
 

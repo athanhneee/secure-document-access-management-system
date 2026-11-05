@@ -19,6 +19,10 @@ import {
 } from './auth-password.helper.js';
 import { executeLogin, executeRefresh } from './auth-session.helper.js';
 import {
+  executeRevokeTargetSession,
+  type ActiveAuthSessionItem,
+} from './auth-sessions-management.helper.js';
+import {
   executeBeginWebAuthnEnrollment,
   executeGetWebAuthnAuthOptions,
   executeVerifyWebAuthnAuth,
@@ -103,6 +107,47 @@ export class AuthService {
     );
   }
 
+  async listSessions(principal: AuthPrincipal): Promise<{ data: ActiveAuthSessionItem[] }> {
+    const data = await this.repository.listActiveSessions(principal.userId, principal.sessionId);
+    return { data };
+  }
+
+  async logoutOthers(
+    principal: AuthPrincipal,
+    context: RequestContext,
+  ): Promise<{ revokedCount: number }> {
+    const revokedCount = await this.repository.revokeOtherSessions(
+      principal.userId,
+      principal.sessionId,
+      'USER_LOGOUT_OTHERS',
+    );
+    await this.audit.record(
+      {
+        action: 'LOGOUT_OTHERS',
+        outcome: 'SUCCESS',
+        actorUserId: principal.userId,
+        actorUsername: principal.username,
+        details: { revokedSessions: revokedCount },
+      },
+      context,
+    );
+    return { revokedCount };
+  }
+
+  revokeTargetSession(
+    principal: AuthPrincipal,
+    targetSessionId: string,
+    context: RequestContext,
+  ): Promise<{ clearedCurrentCookies: boolean }> {
+    return executeRevokeTargetSession({
+      repository: this.repository,
+      audit: this.audit,
+      principal,
+      targetSessionId,
+      context,
+    });
+  }
+
   changePassword(
     principal: AuthPrincipal,
     currentPassword: string,
@@ -124,7 +169,7 @@ export class AuthService {
     principal: AuthPrincipal,
     label: string | undefined,
     context: RequestContext,
-  ): Promise<{ secret: string; uri: string }> {
+  ): Promise<{ secret: string; uri: string; qrCodeDataUrl: string }> {
     return executeBeginMfaEnrollment(this.deps(), principal, label, context);
   }
 

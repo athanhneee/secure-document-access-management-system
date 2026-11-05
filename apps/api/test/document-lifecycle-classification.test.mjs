@@ -19,6 +19,16 @@ test('Document Lifecycle: SCD Type 2 classification history preserves past rows 
         },
       ],
     ],
+    userAttributeAssignments: [
+      [
+        10n,
+        {
+          user_id: 1n,
+          attribute_code: 'CLEARANCE_LEVEL',
+          numeric_rank: 4,
+        },
+      ],
+    ],
   });
 
   const principal = { userId: 1n, username: 'owner_user', roles: ['DOCUMENT_OWNER'], mfa: true };
@@ -81,6 +91,14 @@ test('Document Lifecycle: Reclassification to higher level revokes insufficient 
       ],
     ],
     userAttributeAssignments: [
+      [
+        0n,
+        {
+          user_id: 1n,
+          attribute_code: 'CLEARANCE_LEVEL',
+          numeric_rank: 4,
+        },
+      ],
       [
         1n,
         {
@@ -178,4 +196,68 @@ test('Document Lifecycle: Reclassification to higher level revokes insufficient 
 
   const highSession = accessSessions.get(sessionHighId);
   assert.equal(highSession.status, 'ACTIVE');
+});
+
+test('Document Lifecycle [CRIT-04]: Actor with lower clearance cannot upgrade document above own clearance', async () => {
+  const docId = randomUUID();
+  const { db, service } = createDocumentsTestService({
+    documents: [
+      [
+        docId,
+        {
+          id: docId,
+          document_code: 'DOC-BLP-UPGRADE',
+          title: 'Bell-LaPadula upgrade guard test',
+          owner_id: 1n,
+          department_id: 100n,
+          status: 'ACTIVE',
+        },
+      ],
+    ],
+    userAttributeAssignments: [
+      [
+        1n,
+        {
+          user_id: 1n,
+          attribute_code: 'CLEARANCE_LEVEL',
+          numeric_rank: 2,
+        },
+      ],
+    ],
+  });
+
+  await db.documentClassificationHistory.create({
+    data: {
+      document_id: docId,
+      classification_level_id: 1n,
+      business_category_id: 10n,
+      reason: 'Initial Internal',
+      classified_by: 1n,
+      effective_from: new Date(),
+      effective_to: null,
+    },
+  });
+
+  const lowClearedOwner = {
+    userId: 1n,
+    username: 'owner_rank2',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  };
+  const context = { ip: '127.0.0.1', correlationId: randomUUID() };
+
+  await assert.rejects(
+    () =>
+      service.reclassifyDocument(
+        docId,
+        {
+          classificationLevelId: 3n,
+          businessCategoryId: 10n,
+          reason: 'Attempt escalation to Secret',
+        },
+        lowClearedOwner,
+        context,
+      ),
+    (err) => err.response?.errorCode === 'BELL_LAPADULA_CLEARANCE_INSUFFICIENT',
+  );
 });

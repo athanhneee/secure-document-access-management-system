@@ -9,6 +9,7 @@ import {
   Body,
   Req,
   Res,
+  HttpCode,
   HttpStatus,
   UnauthorizedException,
   BadRequestException,
@@ -23,6 +24,18 @@ import { AuthorizationService } from '../rbac/authorization.service.js';
 import { resolveExportAuthorizationScope } from './export-filter-scope.helper.js';
 import { ExportJobService } from './export-job.service.js';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Thuật toán: Kiểm tra định dạng UUID hợp lệ cho tham số đường dẫn `jobId`.
+ */
+function assertJobUuid(jobId: string): string {
+  if (!UUID_REGEX.test(jobId)) {
+    throw new BadRequestException('Export jobId must be a valid UUID.');
+  }
+  return jobId;
+}
+
 @ApiTags('reports')
 @ApiBearerAuth()
 @Controller('reports')
@@ -33,7 +46,17 @@ export class ReportsController {
     @Optional() private readonly authorization?: AuthorizationService,
   ) {}
 
+  @Get('export')
+  @ApiOperation({ summary: 'List recent asynchronous export jobs requested by current user' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'User export job history' })
+  async listExportJobs(@Req() req: FastifyRequest) {
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
+    return this.exportJobService.listExportJobs(req.auth);
+  }
+
+  // CONFLICT-RESOLVED: Trả mã HTTP 202 Accepted chuẩn REST cho tác vụ xuất báo cáo bất đồng bộ (LOW-01)
   @Post('export')
+  @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Initiate an asynchronous report export job with 24h TTL' })
   @ApiResponse({ status: HttpStatus.ACCEPTED, description: 'Export job initiated' })
   async createExportJob(@Body() body: unknown, @Req() req: FastifyRequest) {
@@ -50,7 +73,7 @@ export class ReportsController {
   @ApiResponse({ status: HttpStatus.OK, description: 'Export job details' })
   async getExportJob(@Param('jobId') jobId: string, @Req() req: FastifyRequest) {
     if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    return this.exportJobService.getExportJob(jobId, req.auth);
+    return this.exportJobService.getExportJob(assertJobUuid(jobId), req.auth);
   }
 
   @Get('export/:jobId/download')
@@ -64,7 +87,7 @@ export class ReportsController {
     @Res() reply: FastifyReply,
   ) {
     if (!req.auth) throw new UnauthorizedException('Authentication required.');
-    const result = await this.exportJobService.downloadExportJob(jobId, req.auth);
+    const result = await this.exportJobService.downloadExportJob(assertJobUuid(jobId), req.auth);
 
     reply
       .header('Content-Type', result.mimeType)

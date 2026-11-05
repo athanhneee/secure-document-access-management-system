@@ -45,7 +45,7 @@ export async function executeTransferDocumentOwner(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal);
+  await assertDocumentMutationPermission(authorization, doc, principal, 'TRANSFER_OWNER');
 
   const targetUser = await database.user.findUnique({ where: { id: input.newOwnerId } });
   if (!targetUser || targetUser.status !== 'ACTIVE') {

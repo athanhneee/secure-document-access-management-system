@@ -56,8 +56,10 @@ export function AbacAttributesPanel({ attributes }: AbacAttributesPanelProps) {
                     <div className="flex flex-wrap gap-x-3 gap-y-1">
                       {attr.attribute_options?.map((opt) => (
                         // CONFLICT-RESOLVED: Loại bỏ nền bg-[#f7f7f7] trên Badge để giữ chuẩn phẳng staff-001 theo rules/ui-design-system.md.
-                        <Badge key={opt.id} variant="outline" className="text-[10px]">
-                          {opt.name}{' '}
+                        <Badge key={opt.id || opt.code} variant="outline" className="text-[10px]">
+                          {opt.code && opt.name && opt.code !== opt.name
+                            ? `${opt.code} — ${opt.name}`
+                            : opt.name || opt.code}{' '}
                           {opt.numeric_rank !== null &&
                             opt.numeric_rank !== undefined &&
                             `(Rank ${opt.numeric_rank})`}

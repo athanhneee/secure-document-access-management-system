@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 
-export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
+export interface BadgeProps extends Omit<React.HTMLAttributes<HTMLSpanElement>, 'style'> {
   variant?:
     | 'default'
     | 'secondary'
@@ -21,13 +21,9 @@ export function Badge({
   variant = 'default',
   showDot = true,
   children,
-  style,
   ...props
 }: BadgeProps) {
-  // STRICT RULE: "staff-001" pattern - NO CAPSULE / PILL BOXES!
-  // background: transparent !important, border: none !important, padding: 0 !important
-  // Statuses: 6px .dot + bold text
-  // success: #008A05 | warning: #E07912 | danger: #C13515 | info: #008489 | primary: #FF385C | neutral: #717171
+  // CONFLICT-RESOLVED: Giữ biểu diễn phẳng staff-001 qua lớp CSS .staff-badge trong globals.css, loại bỏ hoàn toàn thuộc tính style nội tuyến để tương thích CSP nonce.
   const styles: Record<string, { text: string; dot: string }> = {
     default: { text: 'text-[#008489]', dot: 'bg-[#008489]' },
     info: { text: 'text-[#008489]', dot: 'bg-[#008489]' },
@@ -51,12 +47,6 @@ export function Badge({
         currentStyle.text,
         className,
       )}
-      style={{
-        background: 'transparent',
-        border: 'none',
-        padding: 0,
-        ...style,
-      }}
       {...props}
     >
       {showDot && <span className={cn('dot', currentStyle.dot)} aria-hidden="true" />}

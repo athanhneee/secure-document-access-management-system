@@ -60,6 +60,8 @@ export async function executeGrantedDocumentsQuery(params: {
       doc_title: string;
       doc_status: string;
       cl_name: string | null;
+      cl_code?: string | null;
+      cl_allow_download?: boolean | null;
     }>
   >(
     Prisma.sql`
@@ -67,14 +69,18 @@ export async function executeGrantedDocumentsQuery(params: {
         ag."id"::text AS "grant_id", ag."status"::text AS "grant_status",
         ag."valid_from", ag."valid_until", ag."granted_at",
         d."id"::text AS "doc_id", d."document_code" AS "doc_code",
-        d."title" AS "doc_title", d."status"::text AS "doc_status", cl."name" AS "cl_name"
+        d."title" AS "doc_title", d."status"::text AS "doc_status",
+        cl."name" AS "cl_name", cl."code" AS "cl_code", cl."allow_download" AS "cl_allow_download"
       FROM access_grants ag
       JOIN documents d ON d.id = ag.document_id
       LEFT JOIN document_classification_history dch
         ON dch.document_id = d.id AND dch.effective_to IS NULL
       LEFT JOIN classification_levels cl ON cl.id = dch.classification_level_id
       WHERE (${Prisma.join(grantVisibility, ' OR ')})
-        AND d."status" != 'DELETED'
+        AND ag."status" = 'ACTIVE'
+        AND ag."valid_from" <= NOW()
+        AND ag."valid_until" > NOW()
+        AND d."status" = 'ACTIVE'
         ${grantClearanceFilter}
       ORDER BY ${sortColumn} ${orderDir}, ag."id" ASC
       LIMIT ${limit}
@@ -99,6 +105,7 @@ export async function executeGrantedDocumentsQuery(params: {
     }
   }
 
+  // CONFLICT-RESOLVED: Bổ sung classificationLevelCode và allowDownload cho GrantedDocumentItem.document kèm giá trị dự phòng an toàn cho mock kiểm thử.
   const hasMore = rows.length > input.pageSize;
   const data: GrantedDocumentItem[] = rows.slice(0, input.pageSize).map((row) => ({
     grantId: row.grant_id,
@@ -113,6 +120,9 @@ export async function executeGrantedDocumentsQuery(params: {
       title: row.doc_title,
       status: row.doc_status,
       classificationLevelName: row.cl_name,
+      classificationLevelCode: row.cl_code ?? null,
+      allowDownload:
+        row.cl_allow_download ?? (row.cl_code !== 'SECRET' && row.cl_code !== 'TOP_SECRET'),
     },
   }));
 

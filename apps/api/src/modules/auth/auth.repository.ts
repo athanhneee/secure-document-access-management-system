@@ -15,6 +15,11 @@ import {
   type SessionTokensInput,
 } from './auth-session.repository.js';
 import {
+  queryActiveUserSessions,
+  revokeOtherActiveUserSessions,
+  type ActiveAuthSessionItem,
+} from './auth-sessions-management.helper.js';
+import {
   advanceWebAuthnCounterAtomic,
   consumeMfaRecoveryCode,
   consumeMfaRecoveryCodeAtomic,
@@ -128,6 +133,14 @@ export class AuthRepository {
 
   revokeAllSessions(userId: bigint, reason: string): Promise<number> {
     return revokeAllUserSessions(this.database, userId, reason);
+  }
+
+  listActiveSessions(userId: bigint, currentSessionId: string): Promise<ActiveAuthSessionItem[]> {
+    return queryActiveUserSessions(this.database, userId, currentSessionId);
+  }
+
+  revokeOtherSessions(userId: bigint, currentSessionId: string, reason: string): Promise<number> {
+    return revokeOtherActiveUserSessions(this.database, userId, currentSessionId, reason);
   }
 
   async updatePassword(userId: bigint, passwordHash: string): Promise<void> {

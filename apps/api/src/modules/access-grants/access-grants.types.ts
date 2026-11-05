@@ -21,6 +21,10 @@ export interface GrantDetail {
   revokedAt: string | null;
   revokeReason: string | null;
   version: number;
+  // CONFLICT-RESOLVED: Bổ sung trường quan hệ tùy chọn cho danh sách grant trên UI mà vẫn tương thích mock đơn vị
+  document?: { title: string; documentCode: string };
+  principalUser?: { fullName: string; username: string };
+  principalRole?: { name: string; code: string };
 }
 
 export interface GrantListResult {
@@ -48,12 +52,23 @@ export interface RawGrantRecord {
   revoke_reason: string | null;
   version: number;
   access_grant_permissions: Array<{ permission: string }>;
+  documents?: {
+    title?: string;
+    document_code?: string;
+    department_id?: bigint;
+    owner_id?: bigint;
+  } | null;
+  users_access_grants_principal_user_idTousers?: { full_name?: string; username?: string } | null;
+  roles?: { name?: string; code?: string } | null;
 }
 
 /**
  * Algorithm / Thuật toán: Ánh xạ bản ghi `access_grants` sang DTO `GrantDetail` chuẩn hóa chuỗi ISO-8601 và ID 64-bit.
  */
 export function toGrantDetail(grant: RawGrantRecord): GrantDetail {
+  const docRel = grant.documents;
+  const userRel = grant.users_access_grants_principal_user_idTousers;
+  const roleRel = grant.roles;
   return {
     id: grant.id,
     documentId: grant.document_id,
@@ -72,5 +87,14 @@ export function toGrantDetail(grant: RawGrantRecord): GrantDetail {
     revokedAt: grant.revoked_at?.toISOString() ?? null,
     revokeReason: grant.revoke_reason,
     version: grant.version,
+    ...(docRel?.title !== undefined && docRel?.document_code !== undefined
+      ? { document: { title: docRel.title, documentCode: docRel.document_code } }
+      : {}),
+    ...(userRel?.full_name !== undefined && userRel?.username !== undefined
+      ? { principalUser: { fullName: userRel.full_name, username: userRel.username } }
+      : {}),
+    ...(roleRel?.name !== undefined && roleRel?.code !== undefined
+      ? { principalRole: { name: roleRel.name, code: roleRel.code } }
+      : {}),
   };
 }

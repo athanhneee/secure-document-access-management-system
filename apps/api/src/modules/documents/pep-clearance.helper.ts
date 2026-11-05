@@ -141,6 +141,28 @@ export async function resolveEligibleGrant(params: {
       return existingOwnerGrant.id;
     }
 
+    // CONFLICT-RESOLVED: Chuyển các bản ghi owner grant trạng thái ACTIVE nhưng đã quá hạn sang EXPIRED trước khi chèn mới để không vi phạm chỉ mục duy nhất uq_access_grant_active_user.
+    if (typeof database.accessGrant.update === 'function') {
+      const staleOwnerGrant = await database.accessGrant.findFirst({
+        where: {
+          document_id: documentId,
+          principal_type: 'USER',
+          principal_user_id: userId,
+          status: 'ACTIVE',
+        },
+        select: { id: true, valid_until: true },
+      });
+      if (staleOwnerGrant) {
+        await database.accessGrant.update({
+          where: { id: staleOwnerGrant.id },
+          data: {
+            status: staleOwnerGrant.valid_until <= now ? 'EXPIRED' : 'REVOKED',
+            version: { increment: 1 },
+          },
+        });
+      }
+    }
+
     const grantId = randomUUID();
     const permissions: ('VIEW' | 'DOWNLOAD')[] = classAllowDownload
       ? ['VIEW', 'DOWNLOAD']

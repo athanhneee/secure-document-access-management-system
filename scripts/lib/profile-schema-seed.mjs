@@ -1,14 +1,15 @@
 /**
- * SDA Query Profiler Schema & High-Volume Synthetic Dataset Seeder
- * Extracted from scripts/profile-queries.mjs for modularity (Rule §3 ≤ 180 lines).
+ * SDA Query Profiler High-Volume Synthetic Dataset Seeder
+ * Extracted from scripts/profile-queries.mjs for modularity (Rule §3).
  */
 
 import crypto from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
+import { PROFILE_SCHEMA_SQL } from './profile-schema-ddl.mjs';
 
 /**
- * Algorithm / Thuật toán: Parameterized Multi-Row Batch Insert Executor (Chèn Lô Tham Số Hóa Chống SQL Injection)
- * Purpose / Mục đích: Construct positional `$1..$N` placeholders without interpolating runtime values into SQL text.
+ * Thuật toán: Chèn Lô Đa Dòng Tham Số Hóa Chống SQL Injection (Parameterized Multi-Row Batch Insert Executor)
+ * Mục đích: Khởi tạo danh sách giữ chỗ vị trí `$1..$N` theo lô mà không nội suy giá trị thời gian chạy vào chuỗi SQL.
  */
 async function batchInsertParameterized(db, tableName, columns, rows, batchSize = 500) {
   for (let offset = 0; offset < rows.length; offset += batchSize) {
@@ -29,81 +30,15 @@ async function batchInsertParameterized(db, tableName, columns, rows, batchSize 
 }
 
 /**
- * Algorithm / Thuật toán: Composite B-Tree Schema Provisioning & High-Cardinality Batch Seeding
- * Purpose / Mục đích: Provision 6 relational tables with production composite B-Tree indexes and seed 38,050+
- *   interlinked records (50 departments, 1,000 users, 5,000 documents, 10,000 grants, 2,000 sessions, 20,000 audit logs)
- *   so PostgreSQL's cost-based query planner exercises realistic selectivity statistics.
+ * Thuật toán: Cấp Phát Lược Đồ Phức Hợp B-Tree Chuẩn Prisma & Gieo Lô Mật Độ Cao (High-Cardinality Batch Seeder)
+ * Mục đích: Khởi tạo lược đồ quan hệ chuẩn Prisma kèm chỉ mục B-Tree, nạp hơn 48.000 bản ghi liên kết
+ *   và cập nhật thống kê `ANALYZE` cho bộ lập kế hoạch PostgreSQL.
  */
 export async function createAndSeedProfileDatabase() {
   const db = new PGlite();
+  await db.exec(PROFILE_SCHEMA_SQL);
 
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS departments (
-      id BIGSERIAL PRIMARY KEY,
-      code VARCHAR(50) UNIQUE NOT NULL,
-      name VARCHAR(150) NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS users (
-      id BIGSERIAL PRIMARY KEY,
-      username VARCHAR(50) UNIQUE NOT NULL,
-      email VARCHAR(255) UNIQUE NOT NULL,
-      department_id BIGINT REFERENCES departments(id),
-      clearance_level INTEGER NOT NULL DEFAULT 1,
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE'
-    );
-    CREATE TABLE IF NOT EXISTS documents (
-      id UUID PRIMARY KEY,
-      document_code VARCHAR(50) UNIQUE NOT NULL,
-      title VARCHAR(255) NOT NULL,
-      description TEXT,
-      classification_id INTEGER NOT NULL,
-      owner_id BIGINT REFERENCES users(id),
-      department_id BIGINT REFERENCES departments(id),
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    CREATE TABLE IF NOT EXISTS access_grants (
-      id UUID PRIMARY KEY,
-      document_id UUID REFERENCES documents(id),
-      grantee_user_id BIGINT REFERENCES users(id),
-      grantee_role_id BIGINT,
-      grant_type VARCHAR(20) NOT NULL,
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
-      valid_from TIMESTAMPTZ NOT NULL,
-      valid_until TIMESTAMPTZ NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    CREATE TABLE IF NOT EXISTS access_sessions (
-      id UUID PRIMARY KEY,
-      grant_id UUID REFERENCES access_grants(id),
-      user_id BIGINT REFERENCES users(id),
-      document_id UUID REFERENCES documents(id),
-      status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
-      session_token_hash VARCHAR(64) UNIQUE NOT NULL,
-      expires_at TIMESTAMPTZ NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id BIGSERIAL PRIMARY KEY,
-      actor_user_id BIGINT,
-      action VARCHAR(100) NOT NULL,
-      object_type VARCHAR(100) NOT NULL,
-      object_id VARCHAR(100),
-      outcome VARCHAR(30) NOT NULL,
-      chain_partition VARCHAR(50) NOT NULL,
-      sequence BIGINT NOT NULL,
-      previous_record_hash VARCHAR(64),
-      record_hash VARCHAR(64) NOT NULL,
-      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    CREATE INDEX idx_users_lookup ON users(department_id, status);
-    CREATE INDEX idx_docs_search_composite ON documents (classification_id, department_id, status, created_at DESC);
-    CREATE INDEX idx_docs_owner ON documents (owner_id, status);
-    CREATE INDEX idx_grants_zero_trust ON access_grants (document_id, grantee_user_id, status, valid_from, valid_until);
-    CREATE INDEX idx_sessions_active ON access_sessions (session_token_hash, status, expires_at);
-    CREATE INDEX idx_audit_partition_seq ON audit_logs (chain_partition, sequence ASC);
-  `);
-
+  // CONFLICT-RESOLVED: Nạp dữ liệu mẫu theo đúng danh sách cột chuẩn của Prisma schema (users, documents, document_versions, document_classification_history, access_grants, access_sessions, audit_logs).
   const deptRows = Array.from({ length: 50 }, (_, idx) => [
     `DEPT_${idx + 1}`,
     `Phòng ban chức năng số ${idx + 1}`,
@@ -113,33 +48,70 @@ export async function createAndSeedProfileDatabase() {
   const userRows = Array.from({ length: 1000 }, (_, idx) => [
     `user_${idx + 1}`,
     `user_${idx + 1}@org.vn`,
+    '!PROFILER_SYNTHETIC_DISABLED_HASH!',
+    `Nhân sự thử tải ${idx + 1}`,
     ((idx + 1) % 50) + 1,
-    ((idx + 1) % 4) + 1,
     'ACTIVE',
   ]);
   await batchInsertParameterized(
     db,
     'users',
-    ['username', 'email', 'department_id', 'clearance_level', 'status'],
+    ['username', 'email', 'password_hash', 'full_name', 'department_id', 'status'],
     userRows,
     250,
   );
 
+  await batchInsertParameterized(
+    db,
+    'classification_levels',
+    ['code', 'name', 'rank'],
+    [
+      ['INTERNAL', 'Nội bộ', 1],
+      ['CONFIDENTIAL', 'Mật', 2],
+      ['SECRET', 'Tối mật', 3],
+      ['TOP_SECRET', 'Tuyệt mật', 4],
+    ],
+    10,
+  );
+  await batchInsertParameterized(
+    db,
+    'business_categories',
+    ['code', 'name', 'department_id'],
+    [['GENERAL_OPERATIONS', 'Nghiệp vụ chung', 1]],
+    10,
+  );
+
   const docRows = [];
+  const versionRows = [];
+  const classificationRows = [];
   const docIds = [];
   for (let i = 1; i <= 5000; i++) {
     const id = crypto.randomUUID();
+    const ownerId = (i % 500) + 1;
     docIds.push(id);
     docRows.push([
       id,
       `DOC-${100000 + i}`,
       `Kế hoạch an toàn thông tin tài liệu ${i}`,
       `Mô tả nghiệp vụ ${i}`,
-      (i % 4) + 1,
-      (i % 500) + 1,
+      ownerId,
       (i % 50) + 1,
       'ACTIVE',
+      true,
     ]);
+    versionRows.push([
+      id,
+      1,
+      `doc_${i}.pdf`,
+      `documents/2026/${id}/v1.enc`,
+      'application/pdf',
+      4096,
+      crypto.createHash('sha256').update(`ver_${i}`).digest('hex'),
+      'kms-key-v1',
+      'CLEAN',
+      ownerId,
+    ]);
+    classificationRows.push([id, (i % 4) + 1, 1, ownerId]);
   }
   await batchInsertParameterized(
     db,
@@ -149,12 +121,37 @@ export async function createAndSeedProfileDatabase() {
       'document_code',
       'title',
       'description',
-      'classification_id',
       'owner_id',
       'department_id',
       'status',
+      'discoverable',
     ],
     docRows,
+    500,
+  );
+  await batchInsertParameterized(
+    db,
+    'document_versions',
+    [
+      'document_id',
+      'version_no',
+      'original_filename',
+      'storage_key',
+      'mime_type',
+      'file_size_bytes',
+      'sha256_hash',
+      'encryption_key_ref',
+      'scan_status',
+      'uploaded_by',
+    ],
+    versionRows,
+    500,
+  );
+  await batchInsertParameterized(
+    db,
+    'document_classification_history',
+    ['document_id', 'classification_level_id', 'business_category_id', 'classified_by'],
+    classificationRows,
     500,
   );
 
@@ -169,12 +166,14 @@ export async function createAndSeedProfileDatabase() {
     grantRows.push([
       id,
       docIds[i % docIds.length],
+      'USER',
       (i % 1000) + 1,
       null,
-      'USER',
-      'ACTIVE',
+      'DIRECT',
       past,
       future,
+      'ACTIVE',
+      (i % 500) + 1,
     ]);
   }
   await batchInsertParameterized(
@@ -183,55 +182,75 @@ export async function createAndSeedProfileDatabase() {
     [
       'id',
       'document_id',
-      'grantee_user_id',
-      'grantee_role_id',
-      'grant_type',
-      'status',
+      'principal_type',
+      'principal_user_id',
+      'principal_role_id',
+      'source',
       'valid_from',
       'valid_until',
+      'status',
+      'granted_by',
     ],
     grantRows,
     500,
   );
 
-  const sessionRows = [];
-  for (let i = 1; i <= 2000; i++) {
-    const tokenHash = crypto.createHash('sha256').update(`token_${i}`).digest('hex');
-    sessionRows.push([
+  const sessionRows = Array.from({ length: 2000 }, (_, idx) => {
+    const i = idx + 1;
+    return [
       crypto.randomUUID(),
       grantIds[i % grantIds.length],
+      (i % 5000) + 1,
       (i % 1000) + 1,
-      docIds[i % docIds.length],
+      `10.20.${(i % 200) + 1}.${(i % 250) + 1}`,
       'ACTIVE',
-      tokenHash,
-      future,
-    ]);
-  }
+      past,
+      new Date(now - (i % 300) * 1000).toISOString(),
+    ];
+  });
   await batchInsertParameterized(
     db,
     'access_sessions',
-    ['id', 'grant_id', 'user_id', 'document_id', 'status', 'session_token_hash', 'expires_at'],
+    [
+      'id',
+      'access_grant_id',
+      'document_version_id',
+      'user_id',
+      'ip_address',
+      'status',
+      'started_at',
+      'last_activity_at',
+    ],
     sessionRows,
     500,
   );
 
-  let prevHash = '0000000000000000000000000000000000000000000000000000000000000000';
+  const seqByPart = { DOCUMENT: 0, AUTH: 0 };
+  const prevByPart = { DOCUMENT: null, AUTH: null };
   const auditRows = [];
   for (let i = 1; i <= 20000; i++) {
-    const recHash = crypto.createHmac('sha256', 'k').update(`${prevHash}:${i}`).digest('hex');
     const part = i % 2 === 0 ? 'DOCUMENT' : 'AUTH';
+    const seq = ++seqByPart[part];
+    const prevHash = prevByPart[part];
+    const entryHash = crypto
+      .createHmac('sha256', 'k')
+      .update(`${prevHash ?? 'GENESIS'}:${seq}`)
+      .digest('hex');
+    const docId = docIds[i % docIds.length];
     auditRows.push([
       (i % 500) + 1,
-      'READ',
+      'DOCUMENT_ACCESSED',
       'DOCUMENT',
-      docIds[i % docIds.length],
+      docId,
+      docId,
       'SUCCESS',
-      part,
-      i,
+      crypto.randomUUID(),
       prevHash,
-      recHash,
+      entryHash,
+      part,
+      seq,
     ]);
-    prevHash = recHash;
+    prevByPart[part] = entryHash;
   }
   await batchInsertParameterized(
     db,
@@ -241,15 +260,18 @@ export async function createAndSeedProfileDatabase() {
       'action',
       'object_type',
       'object_id',
+      'document_id',
       'outcome',
+      'correlation_id',
+      'previous_hash',
+      'entry_hash',
       'chain_partition',
-      'sequence',
-      'previous_record_hash',
-      'record_hash',
+      'chain_sequence',
     ],
     auditRows,
     1000,
   );
 
+  await db.exec('ANALYZE;');
   return { db, docIds };
 }

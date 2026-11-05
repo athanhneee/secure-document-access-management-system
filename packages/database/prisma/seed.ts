@@ -6,6 +6,7 @@ import {
   attributeDefinitions,
   classificationLevels,
   disabledPasswordHash,
+  employmentStatusOptions,
   fixedSeedTime,
   permissions,
   rolePermissionCodes,
@@ -24,11 +25,10 @@ loadEnvironment({
 const client = createDatabaseClient();
 
 /**
- * Algorithm: Idempotent `SERIALIZABLE` baseline dictionary & non-authenticatable fixture seeding.
- * Upserts departments, classification ranks, default watermark config, system roles, permissions,
- * role-permission joins, ABAC attribute definitions/options, and (in non-production only) disabled
- * demo principals inside a single serializable transaction so repeated executions converge to an
- * identical database state without duplicates.
+ * Thuật toán: Gieo dữ liệu từ điển nền tảng lũy đẳng ở mức cô lập `SERIALIZABLE` (Idempotent Serializable Baseline Seeding).
+ * Cập nhật/tạo mới phòng ban, hạng độ mật, cấu hình đóng dấu mặc định, vai trò hệ thống, quyền hạt nhân,
+ * ma trận phân quyền, định nghĩa & tùy chọn thuộc tính ABAC (`CLEARANCE_LEVEL`, `EMPLOYMENT_STATUS`) và
+ * (chỉ ở môi trường phi sản xuất) tài khoản mẫu khóa cứng trong một giao dịch khả tuần tự duy nhất.
  */
 async function seed(): Promise<void> {
   await withSerializableTransaction(
@@ -165,8 +165,9 @@ async function seed(): Promise<void> {
         },
       });
 
+      let employmentStatusAttributeId: bigint | undefined;
       for (const [code, name, scope, valueType, required, multiValue] of attributeDefinitions) {
-        await transaction.attributeDefinition.upsert({
+        const definition = await transaction.attributeDefinition.upsert({
           where: { code },
           update: {
             name,
@@ -186,6 +187,12 @@ async function seed(): Promise<void> {
             created_by: seedActor.id,
           },
         });
+        if (code === 'EMPLOYMENT_STATUS') {
+          employmentStatusAttributeId = definition.id;
+        }
+      }
+      if (employmentStatusAttributeId === undefined) {
+        throw new Error('EMPLOYMENT_STATUS attribute definition is missing from seed catalog.');
       }
 
       const clearanceOptionByCode = new Map<string, bigint>();
@@ -213,6 +220,31 @@ async function seed(): Promise<void> {
           },
         });
         clearanceOptionByCode.set(level.code, option.id);
+      }
+
+      // CONFLICT-RESOLVED: Khởi tạo lũy đẳng tập giá trị hợp lệ cho thuộc tính EMPLOYMENT_STATUS đồng bộ với kịch bản Supabase SQL.
+      for (const [valueCode, displayName, numericRank, sortOrder] of employmentStatusOptions) {
+        await transaction.attributeOption.upsert({
+          where: {
+            attribute_definition_id_value_code: {
+              attribute_definition_id: employmentStatusAttributeId,
+              value_code: valueCode,
+            },
+          },
+          update: {
+            display_name: displayName,
+            numeric_rank: numericRank,
+            sort_order: sortOrder,
+            is_active: true,
+          },
+          create: {
+            attribute_definition_id: employmentStatusAttributeId,
+            value_code: valueCode,
+            display_name: displayName,
+            numeric_rank: numericRank,
+            sort_order: sortOrder,
+          },
+        });
       }
 
       if (process.env['NODE_ENV'] === 'production') return;

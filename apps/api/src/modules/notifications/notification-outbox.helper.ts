@@ -3,15 +3,25 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Logger } from '@nestjs/common';
-import type { getDatabaseClient } from '@sda/database';
+import { DatabaseConflictError, type getDatabaseClient } from '@sda/database';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
+
+/**
+ * Thuật toán: Nhận diện xung đột khóa duy nhất (`P2002` / `23505` / `DatabaseConflictError`) trên `deduplication_key` để không nuốt nhầm lỗi kết nối CSDL thật (HIGH-14).
+ */
+function isUniqueDeduplicationCollision(err: unknown): boolean {
+  if (err instanceof DatabaseConflictError) return true;
+  if (!err || typeof err !== 'object') return false;
+  const code = 'code' in err ? String((err as { code?: unknown }).code) : '';
+  return code === 'P2002' || code === '23505';
+}
 
 /**
  * Thuật toán: Đưa thông báo vào hàng đợi Outbox lũy đẳng chống trùng lặp (Idempotent Outbox Enqueue)
  * Mục đích: Đảm bảo mỗi sự kiện nghiệp vụ chỉ sinh tối đa một bản ghi gửi thư tương ứng với `dedupKey` ngay cả dưới điều kiện tranh chấp đồng thời.
  * Cơ chế hoạt động:
- *   - Kiểm tra trước khóa duy nhất `deduplication_key`; nếu đã tồn tại hoặc gặp xung đột ràng buộc duy nhất khi `create`, trả về `isDuplicate: true` thay vì làm hỏng luồng gọi.
+ *   - Kiểm tra trước khóa duy nhất `deduplication_key`; nếu đã tồn tại hoặc gặp xung đột ràng buộc duy nhất khi `create`, trả về `isDuplicate: true`, còn lỗi hạ tầng CSDL thực sẽ được ném lại.
  *
  * Algorithm: Idempotent Transactional Outbox Enqueue.
  * Checks deduplication_key uniqueness before inserting a PENDING outbox record;
@@ -22,6 +32,7 @@ export async function enqueueNotificationOutbox(
   logger: Logger,
   params: {
     recipientId: bigint;
+    channel?: 'IN_APP' | 'EMAIL' | 'BOTH';
     notificationType: string;
     title: string;
     body: string;
@@ -29,6 +40,10 @@ export async function enqueueNotificationOutbox(
     dedupKey: string;
   },
 ): Promise<{ outboxId?: string | undefined; isDuplicate: boolean }> {
+  const channel = params.channel ?? 'EMAIL';
+  if (channel === 'IN_APP') {
+    return { outboxId: undefined, isDuplicate: false };
+  }
   try {
     const existingOutbox = await database.notificationOutbox.findUnique({
       where: { deduplication_key: params.dedupKey },
@@ -46,7 +61,7 @@ export async function enqueueNotificationOutbox(
       data: {
         id: outboxId,
         recipient_id: params.recipientId,
-        channel: 'EMAIL',
+        channel: channel === 'BOTH' ? 'EMAIL' : channel,
         notification_type: params.notificationType,
         title: params.title,
         body: params.body,
@@ -60,7 +75,11 @@ export async function enqueueNotificationOutbox(
     });
     return { outboxId, isDuplicate: false };
   } catch (err) {
-    logger.warn(`Outbox insert handled duplicate key ${params.dedupKey}:`, err);
-    return { outboxId: undefined, isDuplicate: true };
+    // CONFLICT-RESOLVED: Chỉ coi lỗi vi phạm ràng buộc duy nhất (`P2002`/`23505`) là trùng lặp lũy đẳng, ném lại lỗi kết nối/truy vấn CSDL thật (HIGH-14)
+    if (isUniqueDeduplicationCollision(err)) {
+      logger.warn(`Outbox insert handled duplicate key ${params.dedupKey}:`, err);
+      return { outboxId: undefined, isDuplicate: true };
+    }
+    throw err;
   }
 }

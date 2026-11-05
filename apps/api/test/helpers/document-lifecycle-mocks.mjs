@@ -122,14 +122,21 @@ export function createInMemoryDatabase(initialState = {}) {
     },
     userAttributeAssignment: {
       findFirst: async ({ where }) => {
-        const assignments = Array.from(userAttributeAssignments.values()).filter(
-          (a) =>
-            a.user_id === where.user_id && a.attribute_code === where.attribute_definitions?.code,
-        );
+        const assignments = Array.from(userAttributeAssignments.values())
+          .filter(
+            (a) =>
+              a.user_id === where.user_id &&
+              a.attribute_code === where.attribute_definitions?.code &&
+              a.is_active !== false,
+          )
+          .sort((a, b) => (b.numeric_rank ?? 0) - (a.numeric_rank ?? 0));
         if (assignments.length === 0) return null;
         return {
           ...assignments[0],
-          attribute_options: { numeric_rank: assignments[0].numeric_rank },
+          attribute_options: {
+            numeric_rank: assignments[0].numeric_rank,
+            is_active: assignments[0].option_is_active ?? true,
+          },
         };
       },
     },

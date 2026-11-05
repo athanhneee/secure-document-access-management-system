@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
-import { calculateRequestedDays } from '../helpers';
+import { calculateRequestedDays, expandGrantPermissions } from '../helpers';
 import type { AccessRequestItem } from '../types';
 
 interface UseOwnerRequestsParams {
@@ -12,8 +12,8 @@ interface UseOwnerRequestsParams {
 }
 
 /**
- * Handles incoming access request adjudication (approval with bounded validity days
- * and permission scope, or immediate rejection with audit decision note).
+ * Thuật toán: Phán quyết Phê duyệt / Từ chối Yêu cầu Truy cập (`useOwnerRequests`)
+ * Khởi tạo khoảng ngày hiệu lực từ yêu cầu của người đọc và đảm bảo quyết định `APPROVED` cho `DOWNLOAD` luôn gửi kèm quyền nền `VIEW`.
  */
 export function useOwnerRequests({
   refreshData,
@@ -39,12 +39,14 @@ export function useOwnerRequests({
     setErrorMessage(null);
 
     try {
+      // CONFLICT-RESOLVED: Khi phê duyệt mức DOWNLOAD, gửi đầy đủ ['VIEW', 'DOWNLOAD'] để người nhận vừa xem trực tuyến vừa tải bản sao.
+      const grantedPermissions = expandGrantPermissions(grantAction);
       await apiClient(`/access-requests/${selectedRequest.id}/decide`, {
         method: 'POST',
         body: JSON.stringify({
           decision: 'APPROVED',
           validDays: grantValidDays,
-          permissions: [grantAction],
+          permissions: grantedPermissions,
         }),
       });
 

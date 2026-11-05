@@ -94,11 +94,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # CONFLICT-RESOLVED: Chuẩn hóa tên kho ảnh OCI về chữ thường trước khi đẩy và ký chứng thực SLSA để tránh lỗi GHCR khi tên owner/repo có chữ hoa ([LOW-03]).
+      - name: Normalize lowercase OCI image name
+        id: image_name
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY}-${SERVICE}"
+          echo "name=${IMAGE,,}" >> "$GITHUB_OUTPUT"
+
       - name: Extract Docker metadata (tags & labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}-${{ matrix.service }}
+          images: ${{ steps.image_name.outputs.name }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
@@ -119,6 +129,6 @@ jobs:
       - name: Generate SLSA Build Provenance Attestation
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ghcr.io/${{ github.repository }}-${{ matrix.service }}
+          subject-name: ${{ steps.image_name.outputs.name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true

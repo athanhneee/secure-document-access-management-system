@@ -30,8 +30,10 @@ export async function cleanExpiredExportJobs(options?: {
 }): Promise<ExportCleanupResult> {
   const database = options?.databaseClient ?? getDatabaseClient();
   const now = options?.now ?? new Date();
+  // CONFLICT-RESOLVED: Đồng bộ biến môi trường EXPORT_STORAGE_DIR giữa API và Worker, chỉ xóa bản ghi CSDL khi tệp nằm đúng biên thư mục và đã xóa hoặc không còn tồn tại (ENOENT).
   const resolvedBaseDir = path.resolve(
-    options?.exportBaseDir ?? path.join(process.cwd(), '.local', 'exports'),
+    options?.exportBaseDir ??
+      (process.env['EXPORT_STORAGE_DIR']?.trim() || path.join(process.cwd(), '.local', 'exports')),
   );
 
   let expiredJobsCleaned = 0;
@@ -51,20 +53,37 @@ export async function cleanExpiredExportJobs(options?: {
     for (const job of expiredJobs) {
       if (job.file_path) {
         const resolvedTarget = path.resolve(job.file_path);
-        if (resolvedTarget.startsWith(`${resolvedBaseDir}${path.sep}`)) {
-          try {
-            const stat = await fsp.lstat(resolvedTarget);
-            if (stat.isFile()) {
-              await fsp.unlink(resolvedTarget);
-              filesDeleted++;
-            }
-          } catch {
-            // File might already have been unlinked or not exist
-          }
-        } else {
+        const relativePath = path.relative(resolvedBaseDir, resolvedTarget);
+        const isInsideBaseDir =
+          relativePath.length > 0 &&
+          !relativePath.startsWith('..') &&
+          !path.isAbsolute(relativePath);
+
+        if (!isInsideBaseDir) {
           console.warn(
             `Export cleanup refused to unlink out-of-bounds file_path for job ${job.id}`,
           );
+          continue;
+        }
+
+        try {
+          const stat = await fsp.lstat(resolvedTarget);
+          if (!stat.isFile()) {
+            console.warn(
+              `Export cleanup refused to unlink non-regular file_path for job ${job.id}`,
+            );
+            continue;
+          }
+          await fsp.unlink(resolvedTarget);
+          filesDeleted++;
+        } catch (fileErr: unknown) {
+          const errCode = (fileErr as NodeJS.ErrnoException | null | undefined)?.code;
+          if (errCode !== 'ENOENT') {
+            console.warn(
+              `Export cleanup failed to unlink file for job ${job.id} (${errCode ?? 'UNKNOWN'}): ${fileErr instanceof Error ? fileErr.message : String(fileErr)}`,
+            );
+            continue;
+          }
         }
       }
 

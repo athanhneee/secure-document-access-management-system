@@ -1,19 +1,20 @@
 /**
- * Module: OOXML Archive Entry, Stream Inflation & XML/RELS Security Inspector
- * Algorithm: Blocks VBA/ActiveX binaries, external workbook links, XXE DOCTYPE/ENTITY declarations,
- *   entity-encoded external/SSRF/NTLM `.rels` targets, and spoofed ZIP compression ratios via stream inflation.
+ * Module: OOXML Archive Entry & XML/RELS Security Inspector
+ * Thuật toán: Chặn thực thi macro VBA/ActiveX, liên kết sổ tính ngoài, khai báo thực thể XXE (`<!DOCTYPE`/`<!ENTITY`)
+ *   và đích `.rels` mã hóa thực thể gây SSRF/NTLM thông qua bộ quét luồng cửa sổ trượt O(1) bộ nhớ.
  */
 import { StringDecoder } from 'node:string_decoder';
 import { BadRequestException } from '@nestjs/common';
-import yauzl, { type Entry, type ZipFile } from 'yauzl';
 import { AppErrorCode } from '@sda/contracts';
+
+export { inflateAndInspectZipEntry, openYauzlZip } from './zip-entry-inflation.helper.js';
 
 export const MAX_RELS_INSPECT_BYTES = 2 * 1024 * 1024;
 const XML_SLIDING_WINDOW_OVERLAP = 4096;
 
 /**
- * Algorithm: OOXML Entry Path Blacklist Verification
- * Blocks executable macro streams (`vbaProject.bin`, `/activex/`) and external workbook data links.
+ * Thuật toán: Kiểm tra danh sách đen đường dẫn thành phần gói OOXML.
+ * Chặn tệp nhị phân macro thực thi (`vbaProject.bin`, `/activex/`) và cấu hình kết nối dữ liệu ngoài (`xl/connections.xml`, `externalLink*.xml`).
  */
 export function inspectOoxmlEntryPathSecurity(
   lowerName: string,
@@ -32,8 +33,7 @@ export function inspectOoxmlEntryPathSecurity(
     });
   }
 
-  // CONFLICT-RESOLVED: Unified external workbook link checks across root and nested OOXML paths
-  // (`xl/externalLinks/externalLink1.xml` canonical + legacy `externalallink` typo variant).
+  // CONFLICT-RESOLVED: Hợp nhất kiểm tra đường dẫn liên kết ngoài OOXML ở cả gốc và thư mục lồng nhau.
   if (
     lowerName === 'xl/connections.xml' ||
     /(?:^|\/)external(?:al)?link\d*\.xml$/u.test(lowerName)
@@ -47,6 +47,10 @@ export function inspectOoxmlEntryPathSecurity(
   return null;
 }
 
+/**
+ * Thuật toán: Giải mã thực thể ký tự số thập lục phân/thập phân và thực thể định danh chuẩn XML.
+ * Chặn kỹ thuật ẩn dấu khai báo DTD/XXE hoặc giao thức mạng bên trong thuộc tính `Target` bằng mã hóa `&#x...;` / `&#...;`.
+ */
 function decodeXmlEntities(text: string): string {
   return text
     .replace(/&#x([0-9a-f]+);/giu, (_, hex: string) =>
@@ -62,6 +66,9 @@ function decodeXmlEntities(text: string): string {
     .replace(/&amp;/giu, '&');
 }
 
+/**
+ * Thuật toán: Phát hiện khai báo `<!DOCTYPE` hoặc `<!ENTITY` trực tiếp hoặc ẩn sau thực thể XML chống tấn công XXE / Billion Laughs.
+ */
 function hasProhibitedDoctypeOrEntity(xmlFragment: string): boolean {
   if (/<!\s*(?:doctype|entity)\b/iu.test(xmlFragment)) {
     return true;
@@ -73,9 +80,7 @@ function hasProhibitedDoctypeOrEntity(xmlFragment: string): boolean {
 }
 
 /**
- * Algorithm: XML Entity Decoding & XXE / SSRF-NTLM Relationship Guard
- * Rejects `<!DOCTYPE`/`<!ENTITY` across all XML parts and decodes numeric/named character entities
- * in `.rels` parts before matching `TargetMode="External"`, network schemes, and UNC paths.
+ * Thuật toán: Chốt chặn XXE và liên kết quan hệ ngoài SSRF/NTLM trên nội dung XML/`.rels` của OOXML.
  */
 export function detectMaliciousXmlOrRels(xml: string, isRels: boolean): BadRequestException | null {
   if (hasProhibitedDoctypeOrEntity(xml)) {
@@ -106,9 +111,9 @@ export function detectMaliciousXmlOrRels(xml: string, isRels: boolean): BadReque
 }
 
 /**
- * Algorithm / Thuật toán: Quét luồng cửa sổ trượt O(1) bộ nhớ chống XXE & Giới hạn cứng Fail-Closed cho `.rels`.
+ * Thuật toán: Quét luồng cửa sổ trượt O(1) bộ nhớ chống XXE & Giới hạn cứng Fail-Closed cho `.rels`.
  *   - Với `.rels`: từ chối ngay lập tức (Fail-Closed) nếu kích thước giải nén vượt quá 2 MiB; ngược lại giải mã thực thể và kiểm tra SSRF/NTLM toàn cục khi kết thúc luồng.
- *   - Với `.xml` cỡ lớn bất kỳ: dùng `StringDecoder('utf8')` kết hợp phần đuôi chồng lấp 4 KiB (`XML_SLIDING_WINDOW_OVERLAP`) để phát hiện `<!DOCTYPE` / `<!ENTITY` (kể cả chia cắt qua ranh giới chunk hoặc mã hóa thực thể số) mà không bao giờ bỏ qua tệp XML lớn.
+ *   - Với `.xml` cỡ lớn bất kỳ: dùng `StringDecoder('utf8')` kết hợp phần đuôi chồng lấp 4 KiB (`XML_SLIDING_WINDOW_OVERLAP`) để phát hiện `<!DOCTYPE` / `<!ENTITY` chia cắt qua ranh giới chunk.
  */
 export function createXmlStreamingSecurityScanner(isRels: boolean): {
   push: (chunk: Buffer) => BadRequestException | null;
@@ -166,122 +171,4 @@ export function createXmlStreamingSecurityScanner(isRels: boolean): {
       return null;
     },
   };
-}
-
-/**
- * Algorithm: Lazy-Entry PKZIP Handle Initialization
- * Opens a file path or in-memory buffer with `lazyEntries: true, autoClose: false` for O(1) entry cursoring.
- */
-export function openYauzlZip(source: Buffer | string): Promise<ZipFile> {
-  return new Promise((resolve, reject) => {
-    if (typeof source === 'string') {
-      yauzl.open(source, { lazyEntries: true, autoClose: false }, (err, zip) => {
-        if (err || !zip) return reject(err ?? new Error('Failed to open zip file'));
-        resolve(zip);
-      });
-    } else {
-      yauzl.fromBuffer(source, { lazyEntries: true, autoClose: false }, (err, zip) => {
-        if (err || !zip) return reject(err ?? new Error('Failed to open zip buffer'));
-        resolve(zip);
-      });
-    }
-  });
-}
-
-/**
- * Algorithm: Fail-Closed Entry Stream Inflation & Sliding-Window XML/RELS Inspection
- * Counts actual decompressed bytes to defeat spoofed 32-bit ZIP headers and inspects 100% of `.xml`/`.rels` streams without size-based bypass.
- */
-export function inflateAndInspectZipEntry(params: {
-  zipFile: ZipFile;
-  entry: Entry;
-  lowerName: string;
-  maxTotalUncompressedSize: number;
-  maxCompressionRatio: number;
-  addActualBytes: (delta: number) => number;
-  isSettled: () => boolean;
-  finishReject: (err: Error) => void;
-}): void {
-  const {
-    zipFile,
-    entry,
-    lowerName,
-    maxTotalUncompressedSize,
-    maxCompressionRatio,
-    addActualBytes,
-    isSettled,
-    finishReject,
-  } = params;
-  const shouldInspectXml = lowerName.endsWith('.xml') || lowerName.endsWith('.rels');
-  const xmlScanner = shouldInspectXml
-    ? createXmlStreamingSecurityScanner(lowerName.endsWith('.rels'))
-    : null;
-  let entryActualBytes = 0;
-
-  zipFile.openReadStream(entry, (streamErr, readStream) => {
-    if (isSettled()) return;
-    if (streamErr || !readStream) {
-      return finishReject(
-        new BadRequestException({
-          errorCode: AppErrorCode.INVALID_FILE_TYPE,
-          message: `Failed to read zip entry ${entry.fileName}: ${streamErr?.message ?? 'corrupt stream'}`,
-        }),
-      );
-    }
-
-    readStream.on('data', (chunk: Buffer) => {
-      if (isSettled()) {
-        readStream.destroy();
-        return;
-      }
-      entryActualBytes += chunk.length;
-      const actualTotal = addActualBytes(chunk.length);
-      if (actualTotal > maxTotalUncompressedSize) {
-        readStream.destroy();
-        return finishReject(
-          new BadRequestException({
-            errorCode: AppErrorCode.VALIDATION_FAILED,
-            message: `Zip archive actual inflated size exceeds limit of ${maxTotalUncompressedSize} bytes.`,
-          }),
-        );
-      }
-      if (entry.compressedSize > 64) {
-        const actualRatio = entryActualBytes / entry.compressedSize;
-        if (actualRatio > maxCompressionRatio) {
-          readStream.destroy();
-          return finishReject(
-            new BadRequestException({
-              errorCode: AppErrorCode.VALIDATION_FAILED,
-              message: `Zip archive actual compression ratio (${actualRatio.toFixed(1)}) exceeds limit of ${maxCompressionRatio}.`,
-            }),
-          );
-        }
-      }
-      if (xmlScanner) {
-        const xmlIssue = xmlScanner.push(chunk);
-        if (xmlIssue) {
-          readStream.destroy();
-          return finishReject(xmlIssue);
-        }
-      }
-    });
-
-    readStream.on('error', (err) => {
-      finishReject(
-        new BadRequestException({
-          errorCode: AppErrorCode.INVALID_FILE_TYPE,
-          message: `Corrupt compressed stream in zip archive: ${err.message}`,
-        }),
-      );
-    });
-
-    readStream.on('end', () => {
-      if (isSettled()) return;
-      if (xmlScanner) {
-        const finalIssue = xmlScanner.finish();
-        if (finalIssue) return finishReject(finalIssue);
-      }
-      zipFile.readEntry();
-    });
-  });
 }

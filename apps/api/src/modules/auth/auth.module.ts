@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { DefaultDenyGuard } from '../../default-deny.guard.js';
 import { AuthController } from './auth.controller.js';
+import { AuthWebAuthnController } from './auth-webauthn.controller.js';
 import { AuthService } from './auth.service.js';
 import { AuthAuditService } from './auth-audit.service.js';
 import { AuthRepository } from './auth.repository.js';
@@ -13,7 +14,7 @@ import { TokenService } from './token.service.js';
 import { WebAuthnService } from './webauthn.service.js';
 
 @Module({
-  controllers: [AuthController],
+  controllers: [AuthController, AuthWebAuthnController],
   providers: [
     DefaultDenyGuard,
     AuthService,

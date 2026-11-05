@@ -139,7 +139,7 @@ function RolePermissionsForm({
                 <div>
                   <div className="font-mono font-bold text-[11px] text-[#222222]">{perm.code}</div>
                   <div className="text-[10px] text-[#717171]">
-                    {perm.resourceType} : {perm.action}
+                    {perm.resource || perm.resourceType} : {perm.action}
                   </div>
                 </div>
               </label>

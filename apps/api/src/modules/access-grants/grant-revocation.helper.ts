@@ -8,7 +8,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import type { getDatabaseClient } from '@sda/database';
+import { withSerializableTransaction, type getDatabaseClient } from '@sda/database';
 import { AppErrorCode, type RevokeAccessGrantInput } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { NotificationsService } from '../notifications/notifications.service.js';
@@ -104,8 +104,13 @@ export async function executeRevokeGrantWorkflow(
   let didTransitionToRevoked = false;
   const affectedUserIds = new Set<bigint>();
 
-  await database.$transaction(
+  // CONFLICT-RESOLVED: Bọc thu hồi bằng withSerializableTransaction và kiểm tra lại expectedVersion sau FOR UPDATE (MED-02)
+  await withSerializableTransaction(
     async (tx) => {
+      terminatedSessionCount = 0;
+      didTransitionToRevoked = false;
+      affectedUserIds.clear();
+
       await tx.$executeRawUnsafe(
         'SELECT id FROM access_grants WHERE id = $1::uuid FOR UPDATE',
         grantId,
@@ -122,6 +127,13 @@ export async function executeRevokeGrantWorkflow(
         throw new BadRequestException({
           errorCode: AppErrorCode.GRANT_ALREADY_REVOKED,
           message: `Cannot revoke a grant with status ${locked.status}.`,
+        });
+      }
+
+      if (input.expectedVersion !== undefined && input.expectedVersion !== locked.version) {
+        throw new ConflictException({
+          errorCode: AppErrorCode.GRANT_CONCURRENCY_CONFLICT,
+          message: 'Grant was modified by another request. Please retry.',
         });
       }
 
@@ -177,7 +189,7 @@ export async function executeRevokeGrantWorkflow(
         tx,
       );
     },
-    { isolationLevel: 'Serializable' },
+    { client: database },
   );
 
   for (const userId of affectedUserIds) {

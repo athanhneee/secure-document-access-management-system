@@ -3,11 +3,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import type { VisualPolicyRule } from '@/components/abac/abac-models';
-import { mapHealthReadyResponse, upsertDraftPolicy } from '../helpers';
+import {
+  mapHealthReadyResponse,
+  normalizeAbacPolicyRow,
+  normalizeAttributeDefinitionRow,
+} from '../helpers';
 import type {
+  AbacPolicyApiDto,
   AbacPolicyRow,
+  AttributeDefinitionApiDto,
   AttributeDefinitionRow,
   DepartmentRow,
+  HealthDashboardResponse,
   HealthReadyResponse,
   PermissionRow,
   RoleRow,
@@ -16,12 +23,14 @@ import type {
   UserStatusAction,
   WatermarkConfigRow,
 } from '../types';
+import { useWatermarkSettings } from './use-watermark-settings';
 
 /**
  * Thuật toán: Đồng bộ Song song Chịu lỗi Đa Phân hệ Quản trị & Kiểm soát Đồng thời Lạc quan (`useAdminData`)
- * Mục đích: Tải đồng thời 8 nguồn dữ liệu quản trị độc lập và thực thi thay đổi trạng thái an toàn chống ghi đè mất dữ liệu (lost update).
+ * Mục đích: Tải đồng thời các nguồn dữ liệu quản trị độc lập (bao gồm xử lý phản hồi sức khỏe 503 suy giảm) và đồng bộ chính sách ABAC trực tiếp lên máy chủ PDP.
  * Cơ chế hoạt động:
- *   - Sử dụng `Promise.allSettled` gom kết quả từ 8 điểm cuối để sự cố cục bộ ở một phân hệ không làm tê liệt bảng điều khiển; gửi kèm phiên bản `expectedVersion` (Optimistic Concurrency Control) khi khóa/kích hoạt tài khoản hoặc vô hiệu hóa vai trò.
+ *   - Sử dụng `Promise.allSettled` gom kết quả từ các điểm cuối để sự cố cục bộ ở một phân hệ không làm tê liệt bảng điều khiển; trích xuất thân JSON từ `ApiError.response` khi `/health/ready` trả mã `503`.
+ *   - Gửi kèm `expectedVersion` (Optimistic Concurrency Control) khi cập nhật người dùng/vai trò và định tuyến `POST`/`PUT` `/abac/policies` theo định danh số thực tế.
  */
 export function useAdminData() {
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -32,55 +41,87 @@ export function useAdminData() {
   const [attributes, setAttributes] = useState<AttributeDefinitionRow[]>([]);
   const [healthData, setHealthData] = useState<SystemHealthData | null>(null);
 
-  const [watermarkConfigs, setWatermarkConfigs] = useState<WatermarkConfigRow[]>([]);
-  const [activeWmConfigId, setActiveWmConfigId] = useState<string | null>(null);
-  const [wmShowQr, setWmShowQr] = useState(true);
-  const [wmOpacity, setWmOpacity] = useState(25);
-  const [wmFontSize, setWmFontSize] = useState(14);
-  const [isSavingWatermark, setIsSavingWatermark] = useState(false);
-
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const wm = useWatermarkSettings({
+    onRefresh: async () => setRefreshTrigger((n) => n + 1),
+    onSuccess: (msg) => {
+      setErrorMessage(null);
+      setMessage(msg);
+    },
+    onError: setErrorMessage,
+  });
+  const { hydrateConfigs } = wm;
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const [usersRes, deptsRes, rolesRes, permsRes, policiesRes, attrsRes, wmConfigsRes, healthRes] =
-      await Promise.allSettled([
-        apiClient<{ data: UserRow[] }>('/users'),
-        apiClient<{ data: DepartmentRow[] }>('/departments'),
-        apiClient<{ data: RoleRow[] }>('/rbac/roles'),
-        apiClient<{ data: PermissionRow[] }>('/rbac/permissions'),
-        apiClient<{ data: AbacPolicyRow[] }>('/abac/policies'),
-        apiClient<{ data: AttributeDefinitionRow[] }>('/abac/attributes'),
-        apiClient<{ data: WatermarkConfigRow[] }>('/watermarks/configs'),
-        apiClient<HealthReadyResponse>('/health/ready'),
-      ]);
+    const [
+      usersRes,
+      deptsRes,
+      rolesRes,
+      permsRes,
+      policiesRes,
+      attrsRes,
+      wmConfigsRes,
+      healthRes,
+      dashboardRes,
+    ] = await Promise.allSettled([
+      apiClient<{ data: UserRow[] }>('/users'),
+      apiClient<{ data: DepartmentRow[] }>('/departments'),
+      apiClient<{ data: RoleRow[] }>('/rbac/roles'),
+      apiClient<{ data: PermissionRow[] }>('/rbac/permissions'),
+      apiClient<{ data: AbacPolicyApiDto[] }>('/abac/policies'),
+      apiClient<{ data: AttributeDefinitionApiDto[] }>('/abac/attributes'),
+      apiClient<{ data: WatermarkConfigRow[] }>('/watermarks/configs'),
+      apiClient<HealthReadyResponse>('/health/ready'),
+      apiClient<HealthDashboardResponse>('/health/dashboard'),
+    ]);
 
     if (usersRes.status === 'fulfilled') setUsers(usersRes.value.data || []);
     if (deptsRes.status === 'fulfilled') setDepartments(deptsRes.value.data || []);
     if (rolesRes.status === 'fulfilled') setRoles(rolesRes.value.data || []);
     if (permsRes.status === 'fulfilled') setPermissions(permsRes.value.data || []);
-    if (policiesRes.status === 'fulfilled') setPolicies(policiesRes.value.data || []);
-    if (attrsRes.status === 'fulfilled') setAttributes(attrsRes.value.data || []);
-    if (wmConfigsRes.status === 'fulfilled') {
-      const configs = wmConfigsRes.value.data || [];
-      setWatermarkConfigs(configs);
-      if (configs.length > 0 && configs[0]) {
-        setActiveWmConfigId(configs[0].id);
-        setWmOpacity(configs[0].opacityPercent);
-        setWmFontSize(configs[0].fontSize);
-        setWmShowQr(configs[0].includeQrCode);
-      }
+    if (policiesRes.status === 'fulfilled') {
+      setPolicies((policiesRes.value.data || []).map(normalizeAbacPolicyRow));
     }
+    if (attrsRes.status === 'fulfilled') {
+      setAttributes((attrsRes.value.data || []).map(normalizeAttributeDefinitionRow));
+    }
+    if (wmConfigsRes.status === 'fulfilled') {
+      hydrateConfigs(wmConfigsRes.value.data || []);
+    }
+
+    const dashboardData = dashboardRes.status === 'fulfilled' ? dashboardRes.value : null;
     if (healthRes.status === 'fulfilled') {
-      setHealthData(mapHealthReadyResponse(healthRes.value));
+      setHealthData(mapHealthReadyResponse(healthRes.value, dashboardData));
+    } else {
+      const err = healthRes.reason;
+      if (
+        err instanceof ApiError &&
+        err.response &&
+        typeof err.response === 'object' &&
+        ('checks' in err.response || 'status' in err.response)
+      ) {
+        setHealthData(
+          mapHealthReadyResponse(err.response as unknown as HealthReadyResponse, dashboardData),
+        );
+      } else {
+        setHealthData({
+          status: 'OFFLINE',
+          database: { status: 'OFFLINE' },
+          cache: { status: 'OFFLINE' },
+          uptimeSeconds: dashboardData?.process?.uptimeSeconds ?? 0,
+        });
+      }
     }
 
     setIsLoading(false);
-  }, []);
+  }, [hydrateConfigs]);
 
   useEffect(() => {
     let ignore = false;
@@ -94,7 +135,7 @@ export function useAdminData() {
     return () => {
       ignore = true;
     };
-  }, [refresh]);
+  }, [refresh, refreshTrigger]);
 
   async function changeUserStatus(targetUser: UserRow, action: UserStatusAction) {
     try {
@@ -154,51 +195,44 @@ export function useAdminData() {
     }
   }
 
-  function saveDraftPolicy(savedRule: VisualPolicyRule) {
-    setMessage(
-      `Đã lưu bản nháp mô phỏng cục bộ [${savedRule.code}] (Nháp mô phỏng cục bộ — chưa kích hoạt trên PDP).`,
-    );
-    setPolicies((prev) => upsertDraftPolicy(prev, savedRule));
-  }
-
-  function selectWatermarkConfig(configId: string) {
-    const found = watermarkConfigs.find((c) => c.id === configId);
-    if (found) {
-      setActiveWmConfigId(found.id);
-      setWmOpacity(found.opacityPercent);
-      setWmFontSize(found.fontSize);
-      setWmShowQr(found.includeQrCode);
-    }
-  }
-
-  async function saveWatermarkConfig() {
-    if (!activeWmConfigId) {
-      setErrorMessage('Không tìm thấy cấu hình watermark hợp lệ trên hệ thống.');
-      return;
-    }
-    setIsSavingWatermark(true);
+  async function saveDraftPolicy(savedRule: VisualPolicyRule) {
     setErrorMessage(null);
+    const payload = {
+      code: savedRule.code,
+      name: savedRule.name,
+      description: savedRule.description,
+      effect: savedRule.effect,
+      priority: savedRule.priority,
+      targetResource: 'DOCUMENT' as const,
+      targetAction: savedRule.targetAction,
+      obligations: savedRule.obligations,
+      groups: savedRule.groups,
+    };
+
+    const isExistingDbPolicy =
+      /^\d+$/u.test(savedRule.id) && policies.some((p) => p.id === savedRule.id);
+
     try {
-      await apiClient(`/watermarks/configs/${activeWmConfigId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          opacityPercent: wmOpacity,
-          fontSize: wmFontSize,
-          includeQrCode: wmShowQr,
-        }),
-      });
-      setMessage(
-        'Đã lưu cấu hình Watermark thành công lên máy chủ. Mọi phiên xem trước và tải xuống tiếp theo sẽ áp dụng thiết lập này.',
-      );
+      if (isExistingDbPolicy) {
+        await apiClient(`/abac/policies/${savedRule.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        setMessage(`Đã cập nhật chính sách ABAC [${savedRule.code}] lên máy chủ PDP.`);
+      } else {
+        await apiClient('/abac/policies', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setMessage(`Đã tạo mới chính sách ABAC [${savedRule.code}] trên máy chủ PDP.`);
+      }
       await refresh();
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
-          ? err.message || 'Không thể lưu cấu hình Watermark.'
-          : 'Đã xảy ra lỗi khi lưu cấu hình watermark.',
+          ? err.message || 'Không thể lưu chính sách ABAC lên máy chủ.'
+          : 'Đã xảy ra lỗi khi lưu chính sách ABAC.',
       );
-    } finally {
-      setIsSavingWatermark(false);
     }
   }
 
@@ -210,19 +244,7 @@ export function useAdminData() {
     policies,
     attributes,
     healthData,
-    watermark: {
-      configs: watermarkConfigs,
-      activeConfigId: activeWmConfigId,
-      showQr: wmShowQr,
-      setShowQr: setWmShowQr,
-      opacity: wmOpacity,
-      setOpacity: setWmOpacity,
-      fontSize: wmFontSize,
-      setFontSize: setWmFontSize,
-      isSaving: isSavingWatermark,
-      selectConfig: selectWatermarkConfig,
-      saveConfig: saveWatermarkConfig,
-    },
+    watermark: wm,
     isLoading,
     message,
     setMessage,

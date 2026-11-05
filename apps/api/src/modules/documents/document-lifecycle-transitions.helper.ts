@@ -61,7 +61,7 @@ export async function executeActivateDocument(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal);
+  await assertDocumentMutationPermission(authorization, doc, principal, 'ACTIVATE');
 
   if (!doc.owner_id || !doc.users || doc.users.status !== 'ACTIVE') {
     throw new BadRequestException({
@@ -108,46 +108,69 @@ export async function executeActivateDocument(params: {
     });
   }
 
-  await database.document.update({
-    where: { id: documentId },
-    data: { status: 'ACTIVE', version: { increment: 1 } },
-  });
+  // CONFLICT-RESOLVED: Bọc kích hoạt tài liệu và khởi tạo/gia hạn owner grant trong giao dịch nguyên tử, tránh đụng chỉ mục duy nhất uq_access_grant_active_user khi grant cũ hết hạn.
+  const now = new Date();
+  const validUntil = new Date(now.getTime() + 365 * 86400000);
+  const runInTx = async (
+    work: (tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]) => Promise<void>,
+  ) => {
+    if (typeof database.$transaction === 'function') {
+      await database.$transaction(work);
+    } else {
+      await work(database as unknown as Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]);
+    }
+  };
 
-  if (database.accessGrant?.findFirst && database.accessGrant?.create) {
-    const existingOwnerGrant = await database.accessGrant.findFirst({
-      where: {
-        document_id: documentId,
-        principal_type: 'USER',
-        principal_user_id: doc.owner_id,
-        status: 'ACTIVE',
-      },
+  await runInTx(async (tx) => {
+    await tx.document.update({
+      where: { id: documentId },
+      data: { status: 'ACTIVE', version: { increment: 1 } },
     });
 
-    if (!existingOwnerGrant) {
-      const allowDownload = activeClassification.classification_levels.allow_download;
-      await database.accessGrant.create({
-        data: {
-          id: randomUUID(),
+    if (tx.accessGrant?.findFirst && tx.accessGrant?.create) {
+      const existingOwnerGrant = await tx.accessGrant.findFirst({
+        where: {
           document_id: documentId,
           principal_type: 'USER',
           principal_user_id: doc.owner_id,
-          source: 'DIRECT',
           status: 'ACTIVE',
-          valid_from: new Date(),
-          valid_until: new Date(Date.now() + 365 * 86400000),
-          granted_by: doc.owner_id,
-          access_grant_permissions: {
-            createMany: {
-              data: [
-                { permission: 'VIEW' },
-                ...(allowDownload ? [{ permission: 'DOWNLOAD' as const }] : []),
-              ],
-            },
-          },
         },
       });
+
+      if (!existingOwnerGrant) {
+        const allowDownload = activeClassification.classification_levels.allow_download;
+        await tx.accessGrant.create({
+          data: {
+            id: randomUUID(),
+            document_id: documentId,
+            principal_type: 'USER',
+            principal_user_id: doc.owner_id,
+            source: 'DIRECT',
+            status: 'ACTIVE',
+            valid_from: now,
+            valid_until: validUntil,
+            granted_by: doc.owner_id,
+            access_grant_permissions: {
+              createMany: {
+                data: [
+                  { permission: 'VIEW' },
+                  ...(allowDownload ? [{ permission: 'DOWNLOAD' as const }] : []),
+                ],
+              },
+            },
+          },
+        });
+      } else if (
+        existingOwnerGrant.valid_until <= now &&
+        typeof tx.accessGrant.update === 'function'
+      ) {
+        await tx.accessGrant.update({
+          where: { id: existingOwnerGrant.id },
+          data: { valid_from: now, valid_until: validUntil, version: { increment: 1 } },
+        });
+      }
     }
-  }
+  });
 
   await audit.record(
     {
@@ -193,7 +216,7 @@ export async function executeArchiveDocument(params: {
     return;
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal);
+  await assertDocumentMutationPermission(authorization, doc, principal, 'ARCHIVE');
 
   const now = new Date();
   let suspendedGrantsCount = 0;

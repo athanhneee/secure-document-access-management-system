@@ -9,10 +9,11 @@ const repoRoot = path.resolve(__dirname, '../..');
 const webRoot = path.join(repoRoot, 'apps/web');
 
 /**
- * Thuật toán: Duyệt Đệ quy Cây Mã nguồn Giao diện & Kiểm toán Ràng buộc Thiết kế + WCAG (`collectWebSourceFiles`)
- * Mục đích: Quét toàn bộ tệp `.ts`, `.tsx`, `.css` trong `apps/web` (bỏ qua thư mục sinh tự động `node_modules`, `.next`, `dist`) để kiểm chứng tĩnh không có vi phạm chuẩn `rules/ui-design-system.md` và WCAG 2.1 AA.
+ * Thuật toán: Duyệt Đệ quy Cây Mã nguồn Giao diện & Khử Nhiễu Chú thích Bảo toàn Số Dòng (`collectWebSourceFiles`, `stripCommentsPreservingLines`)
+ * Mục đích: Quét toàn bộ tệp `.ts`, `.tsx`, `.css` trong `apps/web` (bỏ qua `node_modules`, `.next`, `dist`) và xóa nội dung chú thích mà vẫn giữ nguyên ký tự xuống dòng `\n` để báo cáo chính xác `file:line` khi kiểm toán chuẩn `rules/ui-design-system.md` và WCAG 2.1 AA.
  * Cơ chế hoạt động:
- *   - Duyệt chiều sâu thư mục với độ phức tạp tuyến tính `O(V)` theo tổng số nút tệp/thư mục `V`, trả về danh sách đường dẫn tuyệt đối đã chuẩn hóa.
+ *   - Duyệt chiều sâu thư mục trong thời gian tuyến tính `O(V)` theo tổng số nút tệp/thư mục `V`.
+ *   - Thay thế mọi khối chú thích `/* ... * /` và dòng chú thích `// ...` bằng khoảng trắng có cùng số dòng mới.
  */
 function collectWebSourceFiles(dir) {
   const results = [];
@@ -30,33 +31,33 @@ function collectWebSourceFiles(dir) {
   return results;
 }
 
+function stripCommentsPreservingLines(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\r\n]/g, ' '))
+    .replace(/^\s*\/\/.*$/gm, '');
+}
+
 const sourceFiles = collectWebSourceFiles(webRoot);
 
 describe('Design System Authority Synchronization (ui-design-system.md vs MASTER.md)', () => {
+  // CONFLICT-RESOLVED: Xóa bỏ cờ skip cục bộ sau khi .gitignore đã theo dõi tường minh rules/ui-design-system.md và design-system/MASTER.md trên CI.
   const uiSpecPath = path.join(repoRoot, 'rules/ui-design-system.md');
   const masterSpecPath = path.join(repoRoot, 'design-system/MASTER.md');
-  const hasLocalDesignSpecs = fs.existsSync(uiSpecPath) && fs.existsSync(masterSpecPath);
 
-  it(
-    'synchronizes Inter font, #FF385C accent, pill buttons, and flat staff-001 badges across both specs',
-    {
-      skip: !hasLocalDesignSpecs
-        ? 'Local design specs (rules/ and design-system/) are gitignored in public CI'
-        : false,
-    },
-    () => {
-      const uiSpec = fs.readFileSync(uiSpecPath, 'utf8');
-      const masterSpec = fs.readFileSync(masterSpecPath, 'utf8');
-      for (const doc of [uiSpec, masterSpec]) {
-        assert.match(doc, /Inter/);
-        assert.match(doc, /#FF385C/i);
-        assert.match(doc, /staff-001/);
-        assert.match(doc, /9999px|40px/);
-      }
-      assert.doesNotMatch(masterSpec, /Plus Jakarta Sans/i);
-      assert.doesNotMatch(masterSpec, /#0369A1/i);
-    },
-  );
+  it('synchronizes Inter font, #FF385C accent, pill buttons, and flat staff-001 badges across both specs', () => {
+    assert.ok(fs.existsSync(uiSpecPath), 'rules/ui-design-system.md must exist in repository');
+    assert.ok(fs.existsSync(masterSpecPath), 'design-system/MASTER.md must exist in repository');
+    const uiSpec = fs.readFileSync(uiSpecPath, 'utf8');
+    const masterSpec = fs.readFileSync(masterSpecPath, 'utf8');
+    for (const doc of [uiSpec, masterSpec]) {
+      assert.match(doc, /Inter/);
+      assert.match(doc, /#FF385C/i);
+      assert.match(doc, /staff-001/);
+      assert.match(doc, /9999px|40px/);
+    }
+    assert.doesNotMatch(masterSpec, /Plus Jakarta Sans/i);
+    assert.doesNotMatch(masterSpec, /#0369A1/i);
+  });
 });
 
 describe('UI Design System & WCAG 2.1 AA Static Regression Gates', () => {
@@ -81,7 +82,7 @@ describe('UI Design System & WCAG 2.1 AA Static Regression Gates', () => {
     for (const file of sourceFiles) {
       if (file.endsWith('.css')) continue;
       const rel = path.relative(webRoot, file).replaceAll('\\', '/');
-      const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+      const lines = stripCommentsPreservingLines(fs.readFileSync(file, 'utf8')).split(/\r?\n/);
       lines.forEach((line, idx) => {
         if (/\b(?:window\.)?(?:confirm|alert)\s*\(/.test(line)) {
           violations.push(`${rel}:${idx + 1}`);
@@ -91,28 +92,21 @@ describe('UI Design System & WCAG 2.1 AA Static Regression Gates', () => {
     assert.deepEqual(violations, []);
   });
 
-  it('forbids off-palette Tailwind utilities, off-palette hex codes, and raw <svg> tags', () => {
+  it('forbids off-palette Tailwind utilities, off-palette hex codes, inline style={{}}, and raw <svg>', () => {
+    // CONFLICT-RESOLVED: Siết chặt bảng màu chuẩn đúng 13 mã hex chính thức (loại bỏ #E0294C, #E0285F, #007004, #A32B0F, #eeeeee) và cấm thuộc tính style={{}} nội tuyến trong .tsx.
     const allowedHex = new Set([
       '#ffffff',
-      '#fff',
+      '#f7f7f7',
+      '#ebebeb',
+      '#dddddd',
       '#222222',
-      '#222',
       '#717171',
       '#b0b0b0',
       '#ff385c',
-      '#e0285f',
-      '#e0294c',
       '#e31c5f',
-      '#d70466',
-      '#f7f7f7',
-      '#eeeeee',
-      '#ebebeb',
-      '#dddddd',
       '#008a05',
-      '#007004',
       '#e07912',
       '#c13515',
-      '#a32b0f',
       '#008489',
     ]);
     const violations = [];
@@ -121,8 +115,9 @@ describe('UI Design System & WCAG 2.1 AA Static Regression Gates', () => {
 
     for (const file of sourceFiles) {
       if (file.endsWith('.css')) continue;
+      const isTsx = file.endsWith('.tsx');
       const rel = path.relative(webRoot, file).replaceAll('\\', '/');
-      const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+      const lines = stripCommentsPreservingLines(fs.readFileSync(file, 'utf8')).split(/\r?\n/);
       lines.forEach((line, idx) => {
         if (twRegex.test(line)) {
           violations.push(`${rel}:${idx + 1} (off-palette tailwind)`);
@@ -130,6 +125,9 @@ describe('UI Design System & WCAG 2.1 AA Static Regression Gates', () => {
         twRegex.lastIndex = 0;
         if (/<svg\b/.test(line)) {
           violations.push(`${rel}:${idx + 1} (raw svg)`);
+        }
+        if (isTsx && /\bstyle=\{\{/.test(line)) {
+          violations.push(`${rel}:${idx + 1} (inline style={{)`);
         }
         const hexMatches = line.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
         for (const hex of hexMatches) {
@@ -147,7 +145,7 @@ describe('UI Design System & WCAG 2.1 AA Static Regression Gates', () => {
     for (const file of sourceFiles) {
       if (!file.endsWith('.tsx')) continue;
       const rel = path.relative(webRoot, file).replaceAll('\\', '/');
-      const content = fs.readFileSync(file, 'utf8');
+      const content = stripCommentsPreservingLines(fs.readFileSync(file, 'utf8'));
 
       const lucideNames = new Set();
       for (const match of content.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]lucide-react['"]/g)) {

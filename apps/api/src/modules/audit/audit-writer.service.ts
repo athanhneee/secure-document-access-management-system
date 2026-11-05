@@ -4,7 +4,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { getDatabaseClient, type Prisma } from '@sda/database';
+import { DatabaseConflictError, getDatabaseClient, type Prisma } from '@sda/database';
 import { AppErrorCode, type AuditKeyRing } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
 import type { RequestContext } from '../auth/auth.types.js';
@@ -130,7 +130,7 @@ export class AuditWriterService {
       if (externalTx) {
         return await executeOperation(externalTx);
       }
-      return await this.database.$transaction(executeOperation);
+      return await this.executeStandaloneWithRetry(executeOperation);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(
@@ -140,4 +140,40 @@ export class AuditWriterService {
       throw new AuditWriteException(`Failed to reliably record audit event: ${msg}`, err);
     }
   }
+
+  /**
+   * Thuật toán: Thử lại có giới hạn với trễ lũy tiến cho giao dịch kiểm toán độc lập (Bounded Exponential Backoff Retry).
+   * Tự động thử lại tối đa 3 lần khi gặp lỗi xung đột tuần tự hóa tạm thời (`40001`, `40P01`, `P2034`, `DatabaseConflictError`)
+   * mà vẫn giữ nguyên lời gọi 1 đối số `this.database.$transaction(executeOperation)` tương thích với mock kiểm thử.
+   */
+  private async executeStandaloneWithRetry<T>(
+    executeOperation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await this.database.$transaction(executeOperation);
+      } catch (err: unknown) {
+        if (attempt >= maxAttempts || !isTransientAuditTxConflict(err)) {
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 15 * attempt));
+      }
+    }
+    throw new Error('Unreachable audit retry exhaustion');
+  }
+}
+
+/**
+ * Thuật toán: Nhận diện xung đột giao dịch tạm thời PostgreSQL/Prisma (`40001`, `40P01`, `P2034`).
+ */
+function isTransientAuditTxConflict(error: unknown): boolean {
+  if (error instanceof DatabaseConflictError) {
+    return true;
+  }
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : '';
+  return code === 'P2034' || code === '40001' || code === '40P01';
 }

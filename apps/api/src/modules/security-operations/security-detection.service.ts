@@ -1,5 +1,6 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { AppErrorCode } from '@sda/contracts';
 import { getDatabaseClient } from '@sda/database';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import {
@@ -41,7 +42,11 @@ export class SecurityDetectionService {
   ): Promise<DetectionRule> {
     const existing = (await this.getRules()).find((r) => r.ruleCode === ruleCode);
     if (!existing) {
-      throw new Error(`Rule ${ruleCode} not found.`);
+      // CONFLICT-RESOLVED: Ném NotFoundException chuẩn hóa thay vì Error thô gây HTTP 500 (HIGH-11)
+      throw new NotFoundException({
+        errorCode: AppErrorCode.RESOURCE_NOT_FOUND,
+        message: `Rule ${ruleCode} not found.`,
+      });
     }
     return upsertDetectionRuleConfig(
       this.database,

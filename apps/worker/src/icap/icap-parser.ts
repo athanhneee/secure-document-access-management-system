@@ -33,6 +33,9 @@ export {
  * - Pha 3 & 4: Ủy quyền trích xuất phân đoạn HTTP đóng gói và giải mã khung truyền tải `hex-chunked` qua `icap-http-body.ts`.
  */
 export class IcapParser {
+  /**
+   * Thuật toán: Phân tách khung bản tin ICAP RFC 3507 và lan truyền cờ `incompleteHeaders` khi HTTP header đóng gói chưa nhận đủ qua TCP.
+   */
   public static parseRequest(rawBuffer: Buffer): IcapRequest | null {
     const headerEndIndex = rawBuffer.indexOf('\r\n\r\n');
     if (headerEndIndex === -1) {
@@ -88,6 +91,7 @@ export class IcapParser {
     }
 
     const payload = extractEncapsulatedHttpPayload(method, remainingBuffer, encapsulated);
+    // CONFLICT-RESOLVED: Lan truyền tường minh incompleteHeaders để IcapServer không khóa sớm headersValidated khi HTTP header đóng gói bị phân mảnh TCP.
     if (payload.incompleteHeaders) {
       return {
         method,
@@ -97,6 +101,7 @@ export class IcapParser {
         encapsulated,
         ...(previewBytes !== undefined ? { previewBytes, isPreview: true } : {}),
         body: Buffer.alloc(0),
+        incompleteHeaders: payload.incompleteHeaders,
         isComplete: false,
       };
     }
@@ -117,6 +122,7 @@ export class IcapParser {
         ? { httpStatusMessage: payload.httpStatusMessage }
         : {}),
       body: payload.body,
+      incompleteHeaders: payload.incompleteHeaders,
       isComplete: payload.isComplete,
     };
   }

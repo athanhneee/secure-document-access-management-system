@@ -114,7 +114,7 @@ export function HomeHeader() {
             <div className="md:hidden">
               <Link
                 href="/login"
-                className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-[#FF385C] hover:bg-[#E0294C] text-xs font-semibold text-white active:scale-95 transition-all shadow-2xs"
+                className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-xs font-semibold text-white active:scale-95 transition-all shadow-2xs"
                 onClick={closeMenu}
               >
                 Đăng nhập

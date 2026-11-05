@@ -27,13 +27,14 @@ export function parseDocumentUuid(params: unknown): string {
 }
 
 /**
- * Algorithm: Preview Page Route Parameter Parser
- * Extracts validated document UUID and 1-based positive `pageNumber` from route params.
+ * Thuật toán: Phân tích tham số trang xem trước (`id` UUID + số trang nguyên dương bắt đầu từ 1).
  */
 export function parsePreviewPageParams(params: unknown): { id: string; pageNum: number } {
   const raw = params as Record<string, string>;
   const pageNum = Number(raw['pageNumber']);
-  if (Number.isNaN(pageNum) || pageNum < 1) throw new BadRequestException('Invalid page number.');
+  if (!Number.isInteger(pageNum) || pageNum < 1) {
+    throw new BadRequestException('Invalid page number.');
+  }
   return { id: parseDocumentUuid({ id: raw['id'] }), pageNum };
 }
 
@@ -58,8 +59,7 @@ export function parseBodyOrQuery<T>(schema: SafeParseSchema<T>, payload: unknown
 }
 
 /**
- * Algorithm: Access Session Identifier Extractor
- * Resolves session ID from query string or `X-Access-Session-Id` request header.
+ * Thuật toán: Trích xuất và kiểm định định dạng UUID cho mã phiên truy cập tài liệu (`sessionId` / `X-Access-Session-Id`).
  */
 export function resolveAccessSessionId(
   sessionId: string | undefined,
@@ -71,7 +71,11 @@ export function resolveAccessSessionId(
       'sessionId query parameter or X-Access-Session-Id header is required.',
     );
   }
-  return sid;
+  const parsed = UuidParamSchema.safeParse({ id: sid });
+  if (!parsed.success) {
+    throw new BadRequestException('Invalid access session UUID.');
+  }
+  return parsed.data.id;
 }
 
 /**

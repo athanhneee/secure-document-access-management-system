@@ -46,8 +46,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'List security alerts with filters and pagination' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Paginated security alerts list' })
   async listAlerts(@Query() query: unknown, @Req() req: FastifyRequest) {
-    requireAuthenticatedPrincipal(req);
-    return this.alertsService.listAlerts(parseZodPayload(QuerySecurityAlertsSchema, query));
+    const auth = requireAuthenticatedPrincipal(req);
+    return this.alertsService.listAlerts(parseZodPayload(QuerySecurityAlertsSchema, query), auth);
   }
 
   @Get('security-alerts/:id')
@@ -57,8 +57,8 @@ export class SecurityOperationsController {
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Security alert details' })
   async getAlertById(@Param('id') id: string, @Req() req: FastifyRequest) {
-    requireAuthenticatedPrincipal(req);
-    return this.alertsService.getAlertById(parseUuidParam(id, 'alert'));
+    const auth = requireAuthenticatedPrincipal(req);
+    return this.alertsService.getAlertById(parseUuidParam(id, 'alert'), auth);
   }
 
   @Patch('security-alerts/:id/status')
@@ -103,9 +103,10 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'List incident reports with filters and pagination' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Paginated incident reports list' })
   async listIncidents(@Query() query: unknown, @Req() req: FastifyRequest) {
-    requireAuthenticatedPrincipal(req);
+    const auth = requireAuthenticatedPrincipal(req);
     return this.incidentsService.listIncidentReports(
       parseZodPayload(QueryIncidentReportsSchema, query),
+      auth,
     );
   }
 
@@ -114,8 +115,8 @@ export class SecurityOperationsController {
   @ApiOperation({ summary: 'Get incident report details by ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Incident report details' })
   async getIncidentById(@Param('id') id: string, @Req() req: FastifyRequest) {
-    requireAuthenticatedPrincipal(req);
-    return this.incidentsService.getIncidentReportById(parseUuidParam(id, 'incident'));
+    const auth = requireAuthenticatedPrincipal(req);
+    return this.incidentsService.getIncidentReportById(parseUuidParam(id, 'incident'), auth);
   }
 
   @Post('incidents')

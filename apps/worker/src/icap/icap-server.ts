@@ -1,10 +1,7 @@
 import * as net from 'node:net';
 import { IcapParser } from './icap-parser.js';
-import { DlpEngine } from './dlp-engine.js';
 import {
   buildOptionsResponse,
-  build204Response,
-  buildBlockResponse,
   buildContinueResponse,
   buildProtocolErrorResponse,
 } from './icap-wire-responses.js';
@@ -13,19 +10,19 @@ import {
   type IcapServerMetrics,
   type ResolvedIcapConfig,
 } from './icap-alert-sink.js';
+import { executeIcapDlpEvaluation, type ConnectionStreamState } from './icap-request-handler.js';
 import type { IcapServerConfig, DlpScanResult, IcapRequest } from './icap.types.js';
 
 export { persistNetworkDlpSecurityAlert, type IcapServerMetrics };
 
 /**
  * Algorithm / Thuật toán Máy Trạng Thái Luồng TCP Tuyến Tính $O(N)$ RFC 3507 ICAP (Linear-Time TCP Stream State Machine):
- * - Pha 1 (Bảo vệ biên tài nguyên): Áp đặt trần header `16 KiB`, tổng tải trọng `25 MiB`, idle timeout `30s` và deadline cứng `60s`.
- * - Pha 2 (Ghép mảnh $O(N)$ không sao chép lặp $O(N^2)$): Lưu từng gói TCP vào danh sách mảnh `receivedChunks[]` ($O(1)$/gói)
- *   và chỉ quét cửa sổ biên nối 12 byte (`boundaryWindow`) để dò dấu kết thúc header `\r\n\r\n` hoặc kết thúc chunk `0\r\n\r\n` / `ieof\r\n\r\n`
- *   trước khi gộp `Buffer.concat` đúng một lần tại điểm hoàn tất khung tin.
+ * - Pha 1 (Bảo vệ biên tài nguyên): Áp đặt trần header kết hợp `16 KiB`, tổng tải trọng `25 MiB`, idle timeout `30s` và deadline cứng `60s`.
+ * - Pha 2 (Ghép mảnh $O(N)$ hỗ trợ `null-body` phân mảnh TCP): Giữ `headersValidated = false` khi `request.incompleteHeaders === true`
+ *   để chờ nhận đủ HTTP header đóng gói; ngay khi `!request.incompleteHeaders` và `request.isComplete === true` (bao gồm `null-body`),
+ *   xử lý tức thì mà không treo 30s chờ `0\r\n\r\n`.
  * - Pha 3 (Thương lượng & Preview): Phản hồi `OPTIONS 200 OK`; với `Preview` chưa có `ieof` và chưa vi phạm `BLOCK`, phát `100 Continue`.
- * - Pha 4 (Cưỡng chế DLP & Cảnh báo `AUDIT_ONLY`): Chặn bằng `HTTP 403` khi `BLOCK`; ở chế độ `AUDIT_ONLY` cho qua `204 No modifications`
- *   nhưng bắt buộc ghi nhận `auditedViolations` và tạo bản ghi `SecurityAlert` (`NETWORK_DLP_VIOLATION`) vào SOC (cả qua callback lẫn fallback DB).
+ * - Pha 4 (Cưỡng chế DLP & Cảnh báo `AUDIT_ONLY`): Ủy quyền cho `executeIcapDlpEvaluation` chặn `403` hoặc ghi cảnh báo `204`.
  */
 
 const MAX_ICAP_HEADER_BYTES = 16 * 1024;
@@ -116,18 +113,25 @@ export class IcapServer {
     socket.write(payload, () => socket.end());
   }
 
-  private async notifyViolation(scanResult: DlpScanResult, request: IcapRequest): Promise<void> {
-    if (this.onViolationCallback) {
-      try {
-        await this.onViolationCallback(scanResult, request);
-      } catch (err) {
-        console.error('[ICAP Server] Error in violation callback:', err);
-      }
-      return;
-    }
-    await persistNetworkDlpSecurityAlert(scanResult, request);
+  private async handleParsedRequest(
+    socket: net.Socket,
+    request: IcapRequest,
+    state: ConnectionStreamState,
+  ): Promise<void> {
+    await executeIcapDlpEvaluation({
+      socket,
+      request,
+      state,
+      config: this.config,
+      metrics: this.metrics,
+      onViolationCallback: this.onViolationCallback,
+    });
   }
 
+  /**
+   * Thuật toán: Máy trạng thái ghép khung TCP ICAP hai giai đoạn (`!headersValidated` -> `headersValidated`),
+   * xử lý dứt điểm `null-body` phân mảnh qua nhiều gói tin TCP mà không chờ dấu kết thúc chunk `0\r\n\r\n`.
+   */
   private handleConnection(socket: net.Socket): void {
     this.activeSockets.add(socket);
     this.metrics.totalConnections++;
@@ -135,9 +139,12 @@ export class IcapServer {
     let receivedChunks: Buffer[] = [];
     let totalReceivedBytes = 0;
     let tailBytes: Buffer = Buffer.alloc(0);
+    let icapHeaderComplete = false;
     let headersValidated = false;
-    let isProcessing = false;
-    let continuedAfterPreview = false;
+    const state: ConnectionStreamState = {
+      isProcessing: false,
+      continuedAfterPreview: false,
+    };
 
     socket.setTimeout(30_000);
     const connectionDeadline = setTimeout(() => socket.destroy(), MAX_CONNECTION_DURATION_MS);
@@ -151,10 +158,10 @@ export class IcapServer {
     };
 
     socket.on('data', async (chunk: Buffer) => {
-      if (isProcessing) return;
+      if (state.isProcessing) return;
 
       if (totalReceivedBytes + chunk.length > MAX_ICAP_TOTAL_BYTES) {
-        isProcessing = true;
+        state.isProcessing = true;
         this.replyAndClose(socket, buildProtocolErrorResponse(400));
         return;
       }
@@ -166,99 +173,85 @@ export class IcapServer {
         boundaryWindow.subarray(Math.max(0, boundaryWindow.length - BOUNDARY_TAIL_BYTES)),
       );
 
-      if (!headersValidated) {
-        if (boundaryWindow.indexOf('\r\n\r\n') === -1) {
-          if (totalReceivedBytes > MAX_ICAP_HEADER_BYTES) {
-            isProcessing = true;
-            this.replyAndClose(socket, buildProtocolErrorResponse(400));
+      try {
+        if (!headersValidated) {
+          if (!icapHeaderComplete) {
+            if (boundaryWindow.indexOf('\r\n\r\n') === -1) {
+              if (totalReceivedBytes > MAX_ICAP_HEADER_BYTES) {
+                state.isProcessing = true;
+                this.replyAndClose(socket, buildProtocolErrorResponse(400));
+              }
+              return;
+            }
+            icapHeaderComplete = true;
           }
+
+          const accumulatedBuffer = consolidateBuffer();
+          const request = IcapParser.parseRequest(accumulatedBuffer);
+          // CONFLICT-RESOLVED: Giữ headersValidated = false khi request.incompleteHeaders === true và kiểm soát trần MAX_ICAP_HEADER_BYTES trên tổng ICAP + HTTP headers.
+          if (!request || request.incompleteHeaders) {
+            if (totalReceivedBytes > MAX_ICAP_HEADER_BYTES) {
+              state.isProcessing = true;
+              this.replyAndClose(socket, buildProtocolErrorResponse(400));
+            }
+            return;
+          }
+
+          const icapHeaderEnd = accumulatedBuffer.indexOf('\r\n\r\n');
+          const httpHeaderEnd =
+            request.encapsulated.resBody ??
+            request.encapsulated.reqBody ??
+            request.encapsulated.nullBody ??
+            0;
+          if (icapHeaderEnd + 4 + httpHeaderEnd > MAX_ICAP_HEADER_BYTES) {
+            state.isProcessing = true;
+            this.replyAndClose(socket, buildProtocolErrorResponse(400));
+            return;
+          }
+
+          if (request.method === 'OPTIONS') {
+            headersValidated = true;
+            state.isProcessing = true;
+            this.metrics.totalRequests++;
+            this.metrics.optionsRequests++;
+            this.replyAndClose(socket, buildOptionsResponse(this.config));
+            return;
+          }
+
+          if (request.method !== 'RESPMOD' && request.method !== 'REQMOD') {
+            state.isProcessing = true;
+            this.replyAndClose(socket, buildProtocolErrorResponse(405));
+            return;
+          }
+
+          if (!request.isComplete && request.previewBytes === 0 && !state.continuedAfterPreview) {
+            state.continuedAfterPreview = true;
+            socket.write(buildContinueResponse());
+          }
+
+          headersValidated = true;
+          if (!request.isComplete) {
+            return;
+          }
+
+          await this.handleParsedRequest(socket, request, state);
           return;
         }
-      } else {
+
         const hasChunkTerminator =
           boundaryWindow.indexOf('0\r\n\r\n') !== -1 ||
           boundaryWindow.indexOf('ieof\r\n\r\n') !== -1;
         if (!hasChunkTerminator) {
           return;
         }
-      }
 
-      try {
-        const accumulatedBuffer = consolidateBuffer();
-        const request = IcapParser.parseRequest(accumulatedBuffer);
-        if (!request) {
-          if (totalReceivedBytes > MAX_ICAP_HEADER_BYTES) {
-            isProcessing = true;
-            this.replyAndClose(socket, buildProtocolErrorResponse(400));
-          }
+        const request = IcapParser.parseRequest(consolidateBuffer());
+        if (!request || request.incompleteHeaders || !request.isComplete) {
           return;
         }
-        headersValidated = true;
-
-        if (request.method === 'OPTIONS') {
-          isProcessing = true;
-          this.metrics.totalRequests++;
-          this.metrics.optionsRequests++;
-          this.replyAndClose(socket, buildOptionsResponse(this.config));
-          return;
-        }
-
-        if (request.method === 'RESPMOD' || request.method === 'REQMOD') {
-          if (!request.isComplete) return;
-
-          const scanResult = DlpEngine.scanPayload(request.body, {
-            customKeywords: this.config.customKeywords,
-            action: this.config.action,
-          });
-
-          if (
-            request.isPreview &&
-            !request.isPreviewIof &&
-            !continuedAfterPreview &&
-            scanResult.action !== 'BLOCK'
-          ) {
-            continuedAfterPreview = true;
-            socket.write(buildContinueResponse());
-            return;
-          }
-
-          isProcessing = true;
-          socket.pause();
-          this.metrics.totalRequests++;
-          if (request.method === 'RESPMOD') this.metrics.respmodRequests++;
-          else this.metrics.reqmodRequests++;
-          this.metrics.scannedBytes += scanResult.scannedBytes;
-
-          const safeUri = request.uri.replace(/\p{Cc}/gu, '').slice(0, 200);
-          if (scanResult.action === 'BLOCK') {
-            this.metrics.blockedViolations++;
-            console.warn(
-              `[ICAP Server] DLP VIOLATION BLOCKED: ${scanResult.violations.map((v) => v.rule).join(', ')} (${request.method} ${safeUri})`,
-            );
-            await this.notifyViolation(scanResult, request);
-            this.replyAndClose(socket, buildBlockResponse(scanResult.violations));
-            return;
-          }
-
-          if (scanResult.action === 'AUDIT' || !scanResult.isClean) {
-            this.metrics.auditedViolations++;
-            console.warn(
-              `[ICAP Server] DLP VIOLATION AUDITED (pass-through): ${scanResult.violations.map((v) => v.rule).join(', ')} (${request.method} ${safeUri})`,
-            );
-            await this.notifyViolation(scanResult, request);
-            this.replyAndClose(socket, build204Response());
-            return;
-          }
-
-          this.metrics.cleanPassThrough++;
-          this.replyAndClose(socket, build204Response());
-          return;
-        }
-
-        isProcessing = true;
-        this.replyAndClose(socket, buildProtocolErrorResponse(405));
+        await this.handleParsedRequest(socket, request, state);
       } catch (err) {
-        isProcessing = true;
+        state.isProcessing = true;
         const message = err instanceof Error ? err.message : String(err);
         if (message.startsWith('ICAP_405:'))
           return this.replyAndClose(socket, buildProtocolErrorResponse(405));

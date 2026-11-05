@@ -26,15 +26,44 @@ export interface UpdateUserInput {
 }
 
 /**
- * Thuật toán: Tra cứu danh bạ người dùng hoạt động kèm che dấu độ mật có điều kiện (Clearance-Redacted Active User Lookup)
- * Mục đích: Cho phép tìm kiếm người dùng để cấp quyền, nhưng ẩn cấp độ thẩm tra an ninh (`CLEARANCE_LEVEL`) đối với người gọi không giữ quyền quản lý người dùng hoặc cấp quyền.
- * Cơ chế hoạt động:
- *   - Đánh giá cờ `canViewClearance` dựa trên quyền `ACCESS_GRANT:CREATE` hoặc `USER:MANAGE` ở bất kỳ phạm vi nào.
- *   - Truy vấn người dùng `ACTIVE` kèm thuộc tính `CLEARANCE_LEVEL` còn hiệu lực có `numeric_rank` cao nhất (`take: 1`); nếu `!canViewClearance` thì che dấu về `'REDACTED'` / `0`.
+ * Thuật toán: Phân giải tập phòng ban được phép nhìn thấy cấp độ thẩm tra an ninh (`CLEARANCE_LEVEL`) theo hợp bao đóng `ACCESS_GRANT:CREATE` và `USER:MANAGE` (HIGH-13).
+ */
+async function resolveClearanceVisibilityScope(
+  authorization: AuthorizationService | undefined,
+  principal: AuthPrincipal | undefined,
+): Promise<{ global: boolean; departmentIds: Set<string> }> {
+  // CONFLICT-RESOLVED: Đóng an toàn (fail-closed) khi thiếu `principal` và giới hạn hiển thị `CLEARANCE_LEVEL` theo bao đóng phòng ban được cấp quyền (HIGH-13)
+  if (!authorization || !principal) {
+    return { global: false, departmentIds: new Set<string>() };
+  }
+  if (typeof authorization.visibleDepartmentIds === 'function') {
+    const [grantScope, userManageScope] = await Promise.all([
+      authorization.visibleDepartmentIds(principal, 'ACCESS_GRANT', 'CREATE'),
+      authorization.visibleDepartmentIds(principal, 'USER', 'MANAGE'),
+    ]);
+    if (grantScope === null || userManageScope === null) {
+      return { global: true, departmentIds: new Set<string>() };
+    }
+    return {
+      global: false,
+      departmentIds: new Set([...grantScope, ...userManageScope].map((id) => id.toString())),
+    };
+  }
+  const hasGlobal =
+    (await authorization.hasPermission(principal, 'ACCESS_GRANT', 'CREATE', {
+      requireGlobal: true,
+    })) ||
+    (await authorization.hasPermission(principal, 'USER', 'MANAGE', {
+      requireGlobal: true,
+    }));
+  return { global: hasGlobal, departmentIds: new Set<string>() };
+}
+
+/**
+ * Thuật toán: Tra cứu danh bạ người dùng hoạt động kèm che dấu độ mật theo phạm vi phòng ban (Department-Scoped Clearance-Redacted Lookup)
+ * Mục đích: Cho phép tìm kiếm người dùng để cấp quyền, nhưng chỉ hiển thị `CLEARANCE_LEVEL` cho các nhân sự thuộc phòng ban mà người gọi nắm quyền `ACCESS_GRANT:CREATE` hoặc `USER:MANAGE`.
  *
- * Algorithm: Clearance-Redacted Active User Directory Lookup.
- * Evaluates whether caller holds `ACCESS_GRANT:CREATE` or `USER:MANAGE` across any scope;
- * projects highest-ranked valid `CLEARANCE_LEVEL` attribute option or redacts clearance metadata.
+ * Algorithm: Department-Scoped Clearance-Redacted Active User Directory Lookup.
  */
 export async function lookupUsersWithClearance(
   database: PrismaClient,
@@ -42,14 +71,7 @@ export async function lookupUsersWithClearance(
   principal?: AuthPrincipal,
 ) {
   const now = new Date();
-  const canViewClearance =
-    !principal ||
-    (await authorization.hasPermission(principal, 'ACCESS_GRANT', 'CREATE', {
-      anyScope: true,
-    })) ||
-    (await authorization.hasPermission(principal, 'USER', 'MANAGE', {
-      anyScope: true,
-    }));
+  const visibility = await resolveClearanceVisibilityScope(authorization, principal);
 
   const users = await database.user.findMany({
     where: { status: 'ACTIVE' },
@@ -76,6 +98,9 @@ export async function lookupUsersWithClearance(
 
   return {
     data: users.map((u) => {
+      const canViewClearance =
+        visibility.global ||
+        (u.department_id !== null && visibility.departmentIds.has(u.department_id.toString()));
       const rawClearanceAttr =
         u.user_attribute_assignments_user_attribute_assignments_user_idTousers[0];
       const clearanceAttr =

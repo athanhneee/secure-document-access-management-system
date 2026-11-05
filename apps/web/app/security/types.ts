@@ -1,9 +1,12 @@
+export type AlertLifecycleStatus =
+  'OPEN' | 'INVESTIGATING' | 'ESCALATED' | 'RESOLVED' | 'FALSE_POSITIVE';
+
 export interface SecurityAlertItem {
   id: string;
   ruleCode: string;
   title: string;
   severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-  status: 'OPEN' | 'INVESTIGATING' | 'RESOLVED' | 'FALSE_POSITIVE';
+  status: AlertLifecycleStatus;
   detectedUserId?: string | undefined;
   detectedUserName?: string | undefined;
   documentId?: string | undefined;
@@ -13,6 +16,14 @@ export interface SecurityAlertItem {
   notes?: Array<{ note: string; authorName: string; createdAt: string }> | undefined;
 }
 
+export interface IncidentActionItem {
+  id: string;
+  actionType: string;
+  recommendation: string;
+  isCompleted?: boolean | undefined;
+  completedAt?: string | null | undefined;
+}
+
 export interface IncidentItem {
   id: string;
   title: string;
@@ -20,18 +31,12 @@ export interface IncidentItem {
   status: 'DRAFT' | 'SUBMITTED' | 'IN_REVIEW' | 'CLOSED';
   severity?: string | undefined;
   createdAt: string;
-  actions?:
-    | Array<{
-        id: string;
-        actionType: string;
-        recommendation: string;
-        isCompleted: boolean;
-      }>
-    | undefined;
+  actions?: IncidentActionItem[] | undefined;
 }
 
 export interface DetectionRuleItem {
-  code: string;
+  code?: string | undefined;
+  ruleCode?: string | undefined;
   name: string;
   severity: string;
   threshold: number;
@@ -41,11 +46,12 @@ export interface DetectionRuleItem {
 
 export interface AlertApiDto {
   id?: string;
+  alertType?: string;
   ruleCode?: string;
   alert_type?: string;
   title?: string;
   severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-  status?: 'OPEN' | 'INVESTIGATING' | 'RESOLVED' | 'FALSE_POSITIVE';
+  status?: AlertLifecycleStatus;
   detectedUserId?: string;
   detectedUser?: { fullName?: string };
   documentId?: string;
@@ -61,12 +67,7 @@ export interface IncidentApiDto {
   status?: 'DRAFT' | 'SUBMITTED' | 'IN_REVIEW' | 'CLOSED';
   severity?: string;
   createdAt?: string;
-  actions?: Array<{
-    id: string;
-    actionType: string;
-    recommendation: string;
-    isCompleted: boolean;
-  }>;
+  actions?: IncidentActionItem[];
 }
 
 export interface WatermarkVerifyDto {

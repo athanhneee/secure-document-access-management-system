@@ -82,15 +82,24 @@ export function aggregatePartitionVerifications(res: Record<string, PartitionVer
  *   - Ánh xạ phần mở rộng tệp chuẩn (`excel -> xlsx`), cấp phát Object URL qua `URL.createObjectURL`, kích hoạt thẻ neo ẩn tải tệp và gọi `URL.revokeObjectURL` ngay sau khi gỡ nút DOM.
  */
 export function normalizeExportJob(
-  newJob: ExportJobItem,
-  fallbackFormat: ExportFormat,
+  newJob: Partial<ExportJobItem> & { id: string },
+  fallbackFormat: ExportFormat = 'CSV',
 ): ExportJobItem {
+  const expiredByTimestamp = Boolean(
+    newJob.expiresAt && new Date(newJob.expiresAt).getTime() <= Date.now(),
+  );
+  const isExpired = Boolean(newJob.isExpired) || newJob.status === 'EXPIRED' || expiredByTimestamp;
+
   return {
     id: newJob.id,
     exportType: newJob.exportType || 'AUDIT_LOGS',
     format: (newJob.format as ExportFormat) || fallbackFormat,
     status: newJob.status || 'PENDING',
     createdAt: newJob.createdAt || new Date().toISOString(),
+    completedAt: newJob.completedAt ?? null,
+    expiresAt: newJob.expiresAt ?? null,
+    isExpired,
+    rowCount: newJob.rowCount ?? null,
   };
 }
 

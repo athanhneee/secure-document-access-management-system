@@ -213,6 +213,9 @@ test('Document State Machine — real DocumentsService SCD Type 2 reclassificati
     },
     accessGrant: { findMany: async () => [] },
     accessGrantPermission: { deleteMany: async () => ({ count: 0 }) },
+    userAttributeAssignment: {
+      findFirst: async () => ({ attribute_options: { numeric_rank: 4, is_active: true } }),
+    },
     $executeRawUnsafe: async () => 1,
     $transaction: async (fn) => fn(mockDb),
   };

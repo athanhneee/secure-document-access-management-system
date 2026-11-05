@@ -124,7 +124,13 @@ export class DocumentDeliveryController {
     this.csrf.assertRequest(req);
     const id = parseId(params);
     if (!sessionId) throw new BadRequestException('sessionId is required.');
-    return this.deliveryService.createDownloadTicket(id, sessionId, principal(req), reqCtx(req));
+    const validSessionId = resolveAccessSessionId(sessionId, req);
+    return this.deliveryService.createDownloadTicket(
+      id,
+      validSessionId,
+      principal(req),
+      reqCtx(req),
+    );
   }
 
   @PublicEndpoint()

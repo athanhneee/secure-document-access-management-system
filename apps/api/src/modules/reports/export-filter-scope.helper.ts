@@ -5,7 +5,12 @@
  *   2. Thu thập bao đóng phân cấp phòng ban (`allowedDepartmentIds`) và chuẩn hóa `filterParams` an toàn kiểu.
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AppErrorCode, type ExportType } from '@sda/contracts';
+import {
+  AppErrorCode,
+  MAX_PG_BIGINT,
+  isValidIsoCalendarDate,
+  type ExportType,
+} from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 
@@ -37,20 +42,33 @@ export interface NormalizedExportFilters {
   limit: number | null;
 }
 
+/**
+ * Thuật toán: Phân tích chuỗi số nguyên dương 64-bit có trần `MAX_PG_BIGINT` cho bộ lọc báo cáo.
+ */
 function parseOptionalBigInt(raw: unknown, fieldName: string): bigint | null {
   if (raw === undefined || raw === null || raw === '') return null;
-  if (typeof raw === 'bigint') return raw > 0n ? raw : null;
+  if (typeof raw === 'bigint') {
+    if (raw <= 0n || raw > MAX_PG_BIGINT) {
+      throw new BadRequestException(`filterParams.${fieldName} exceeds 64-bit BIGINT bounds.`);
+    }
+    return raw;
+  }
   const str = String(raw).trim();
   if (!/^\d+$/.test(str)) {
     throw new BadRequestException(`Invalid numeric identifier in filterParams.${fieldName}.`);
   }
   const value = BigInt(str);
-  if (value <= 0n) {
-    throw new BadRequestException(`filterParams.${fieldName} must be a positive integer.`);
+  if (value <= 0n || value > MAX_PG_BIGINT) {
+    throw new BadRequestException(
+      `filterParams.${fieldName} must be a positive 64-bit integer within PostgreSQL BIGINT range.`,
+    );
   }
   return value;
 }
 
+/**
+ * Thuật toán: Phân tích ngày/giờ ISO-8601 nghiêm ngặt kèm kiểm tra đối xứng lịch UTC (`Date.UTC`) chống ngày giả (như `2026-02-31`).
+ */
 function parseOptionalDate(raw: unknown, fieldName: string, endOfDay = false): Date | null {
   if (raw === undefined || raw === null || raw === '') return null;
   if (raw instanceof Date) {
@@ -63,6 +81,9 @@ function parseOptionalDate(raw: unknown, fieldName: string, endOfDay = false): D
     throw new BadRequestException(`Invalid date string in filterParams.${fieldName}.`);
   }
   const trimmed = raw.trim();
+  if (ISO_DATE_ONLY_REGEX.test(trimmed) && !isValidIsoCalendarDate(trimmed)) {
+    throw new BadRequestException(`Invalid calendar date in filterParams.${fieldName}.`);
+  }
   const normalized = ISO_DATE_ONLY_REGEX.test(trimmed)
     ? `${trimmed}${endOfDay ? 'T23:59:59.999Z' : 'T00:00:00.000Z'}`
     : trimmed;
@@ -73,6 +94,9 @@ function parseOptionalDate(raw: unknown, fieldName: string, endOfDay = false): D
   return new Date(ts);
 }
 
+/**
+ * Thuật toán: Cắt ngắn và chuẩn hóa chuỗi lọc đầu vào an toàn độ dài tối đa.
+ */
 function parseOptionalString(raw: unknown, maxLength = 100): string | null {
   if (raw === undefined || raw === null) return null;
   const trimmed = String(raw).trim();
@@ -87,7 +111,13 @@ export async function resolveExportAuthorizationScope(
   actor: AuthPrincipal,
   exportType: ExportType,
 ): Promise<bigint[] | null> {
-  if (!authorization) return null;
+  // CONFLICT-RESOLVED: Áp dụng cơ chế đóng an toàn (fail-closed) khi thiếu dịch vụ phân quyền thay vì trả về null (MED-06)
+  if (!authorization) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
+      message: 'Authorization service is required to evaluate export scope.',
+    });
+  }
 
   switch (exportType) {
     case 'AUDIT_LOGS': {

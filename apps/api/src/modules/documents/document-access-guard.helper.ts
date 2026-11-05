@@ -158,8 +158,16 @@ export async function assertDocumentReadAccess(
   },
   principal?: AuthPrincipal,
   allowDiscoverable = false,
+  options?: { internalTrustedRead?: boolean },
 ): Promise<void> {
-  if (!principal) return;
+  if (!principal) {
+    // CONFLICT-RESOLVED: Chặn Fail-Open khi thiếu `principal` ở các lời gọi đọc tài liệu từ bên ngoài; chỉ cho phép cờ nội bộ sau khi đã kiểm quyền đột biến (HIGH-08).
+    if (options?.internalTrustedRead) return;
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message: 'Authenticated principal is required to access document metadata.',
+    });
+  }
 
   if (isPureTechnicalOrAuditRole(principal)) {
     throw new ForbiddenException({

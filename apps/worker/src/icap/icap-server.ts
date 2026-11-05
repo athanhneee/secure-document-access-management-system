@@ -1,10 +1,7 @@
 import * as net from 'node:net';
 import { IcapParser } from './icap-parser.js';
-import {
-  buildOptionsResponse,
-  buildContinueResponse,
-  buildProtocolErrorResponse,
-} from './icap-wire-responses.js';
+import { IcapChunkStreamTracker } from './icap-content-decoder.js';
+import { buildOptionsResponse, buildProtocolErrorResponse } from './icap-wire-responses.js';
 import {
   persistNetworkDlpSecurityAlert,
   type IcapServerMetrics,
@@ -129,8 +126,8 @@ export class IcapServer {
   }
 
   /**
-   * Thuật toán: Máy trạng thái ghép khung TCP ICAP hai giai đoạn (`!headersValidated` -> `headersValidated`),
-   * xử lý dứt điểm `null-body` phân mảnh qua nhiều gói tin TCP mà không chờ dấu kết thúc chunk `0\r\n\r\n`.
+   * Thuật toán: Máy trạng thái ghép khung TCP ICAP hai giai đoạn tuyến tính $O(N)$ (`!headersValidated` -> `IcapChunkStreamTracker`),
+   * xử lý dứt điểm `null-body` phân mảnh TCP, chống bypass `Preview: 0` phân mảnh (CRIT-03), triệt tiêu nối mảng $O(N^2)$ và hỗ trợ mọi `;ext` hợp lệ.
    */
   private handleConnection(socket: net.Socket): void {
     this.activeSockets.add(socket);
@@ -141,6 +138,8 @@ export class IcapServer {
     let tailBytes: Buffer = Buffer.alloc(0);
     let icapHeaderComplete = false;
     let headersValidated = false;
+    let isPreviewRequest = false;
+    let chunkTracker: IcapChunkStreamTracker | null = null;
     const state: ConnectionStreamState = {
       isProcessing: false,
       continuedAfterPreview: false,
@@ -168,13 +167,14 @@ export class IcapServer {
 
       receivedChunks.push(chunk);
       totalReceivedBytes += chunk.length;
-      const boundaryWindow = tailBytes.length > 0 ? Buffer.concat([tailBytes, chunk]) : chunk;
-      tailBytes = Buffer.from(
-        boundaryWindow.subarray(Math.max(0, boundaryWindow.length - BOUNDARY_TAIL_BYTES)),
-      );
 
       try {
         if (!headersValidated) {
+          const boundaryWindow = tailBytes.length > 0 ? Buffer.concat([tailBytes, chunk]) : chunk;
+          tailBytes = Buffer.from(
+            boundaryWindow.subarray(Math.max(0, boundaryWindow.length - BOUNDARY_TAIL_BYTES)),
+          );
+
           if (!icapHeaderComplete) {
             if (boundaryWindow.indexOf('\r\n\r\n') === -1) {
               if (totalReceivedBytes > MAX_ICAP_HEADER_BYTES) {
@@ -187,7 +187,9 @@ export class IcapServer {
           }
 
           const accumulatedBuffer = consolidateBuffer();
-          const request = IcapParser.parseRequest(accumulatedBuffer);
+          const request = IcapParser.parseRequest(accumulatedBuffer, {
+            continuedAfterPreview: state.continuedAfterPreview,
+          });
           // CONFLICT-RESOLVED: Giữ headersValidated = false khi request.incompleteHeaders === true và kiểm soát trần MAX_ICAP_HEADER_BYTES trên tổng ICAP + HTTP headers.
           if (!request || request.incompleteHeaders) {
             if (totalReceivedBytes > MAX_ICAP_HEADER_BYTES) {
@@ -198,11 +200,8 @@ export class IcapServer {
           }
 
           const icapHeaderEnd = accumulatedBuffer.indexOf('\r\n\r\n');
-          const httpHeaderEnd =
-            request.encapsulated.resBody ??
-            request.encapsulated.reqBody ??
-            request.encapsulated.nullBody ??
-            0;
+          const bodyOffset = request.encapsulated.resBody ?? request.encapsulated.reqBody;
+          const httpHeaderEnd = bodyOffset ?? request.encapsulated.nullBody ?? 0;
           if (icapHeaderEnd + 4 + httpHeaderEnd > MAX_ICAP_HEADER_BYTES) {
             state.isProcessing = true;
             this.replyAndClose(socket, buildProtocolErrorResponse(400));
@@ -224,12 +223,19 @@ export class IcapServer {
             return;
           }
 
-          if (!request.isComplete && request.previewBytes === 0 && !state.continuedAfterPreview) {
-            state.continuedAfterPreview = true;
-            socket.write(buildContinueResponse());
+          // CONFLICT-RESOLVED: Không tự ý phát 100 Continue trước khi nhận khung chunk 0\r\n\r\n của Preview: 0 (chặn CRIT-03).
+          headersValidated = true;
+          isPreviewRequest = Boolean(request.isPreview);
+          tailBytes = Buffer.alloc(0);
+
+          if (request.encapsulated.nullBody === undefined && bodyOffset !== undefined) {
+            chunkTracker = new IcapChunkStreamTracker();
+            const bodyStart = icapHeaderEnd + 4 + bodyOffset;
+            if (bodyStart < accumulatedBuffer.length) {
+              chunkTracker.feed(accumulatedBuffer.subarray(bodyStart));
+            }
           }
 
-          headersValidated = true;
           if (!request.isComplete) {
             return;
           }
@@ -238,14 +244,20 @@ export class IcapServer {
           return;
         }
 
-        const hasChunkTerminator =
-          boundaryWindow.indexOf('0\r\n\r\n') !== -1 ||
-          boundaryWindow.indexOf('ieof\r\n\r\n') !== -1;
-        if (!hasChunkTerminator) {
-          return;
+        if (chunkTracker) {
+          chunkTracker.feed(chunk);
+          const requiredZeroChunks = isPreviewRequest && state.continuedAfterPreview ? 2 : 1;
+          if (
+            chunkTracker.zeroChunksCompleted < requiredZeroChunks &&
+            !chunkTracker.hasIeofTerminator
+          ) {
+            return;
+          }
         }
 
-        const request = IcapParser.parseRequest(consolidateBuffer());
+        const request = IcapParser.parseRequest(consolidateBuffer(), {
+          continuedAfterPreview: state.continuedAfterPreview,
+        });
         if (!request || request.incompleteHeaders || !request.isComplete) {
           return;
         }

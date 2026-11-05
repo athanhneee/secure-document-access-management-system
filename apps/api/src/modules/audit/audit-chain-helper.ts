@@ -36,12 +36,25 @@ function safeConfigKey(
  * Thuật toán: Phân giải thứ tự ưu tiên khóa gốc HMAC kiểm toán (Hierarchical Primary Key Resolution).
  */
 export function resolvePrimaryAuditHmacKey(config: AppConfigService): string {
-  return (
+  const configured =
     safeConfigKey(config, 'AUDIT_INTEGRITY_KEY') ||
     safeConfigKey(config, 'DOCUMENT_AUDIT_HMAC_KEY') ||
-    safeConfigKey(config, 'AUTH_AUDIT_HMAC_KEY') ||
-    'local-only-audit-integrity-hmac-key-0000000000000000'
-  );
+    safeConfigKey(config, 'AUTH_AUDIT_HMAC_KEY');
+  if (configured) return configured;
+
+  // CONFLICT-RESOLVED: Tuyệt đối từ chối khóa HMAC kiểm toán mặc định gắn cứng khi chạy ở môi trường Production (HIGH-09).
+  let nodeEnv: string | undefined;
+  try {
+    nodeEnv = config.get('NODE_ENV');
+  } catch {
+    nodeEnv = process.env['NODE_ENV'];
+  }
+  if (nodeEnv === 'production') {
+    throw new Error(
+      'AUDIT_INTEGRITY_KEY (or DOCUMENT_AUDIT_HMAC_KEY / AUTH_AUDIT_HMAC_KEY) must be configured in production.',
+    );
+  }
+  return 'local-only-audit-integrity-hmac-key-0000000000000000';
 }
 
 /**

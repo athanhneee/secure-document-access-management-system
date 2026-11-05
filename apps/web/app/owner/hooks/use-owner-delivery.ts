@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { apiClient, apiDownload, ApiError, verifyPdfMagicBytes } from '@/lib/api-client';
 import { triggerBlobDownload } from '../helpers';
 import type { DocumentItem } from '../types';
@@ -27,6 +27,20 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
   const previewReqIdRef = useRef(0);
+  const previewPdfUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    previewPdfUrlRef.current = previewPdfUrl;
+  }, [previewPdfUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (previewPdfUrlRef.current) {
+        URL.revokeObjectURL(previewPdfUrlRef.current);
+        previewPdfUrlRef.current = null;
+      }
+    };
+  }, []);
 
   const handleClosePreview = useCallback(
     (open: boolean) => {
@@ -72,35 +86,35 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
 
       setPreviewSessionId(sessionResult.sessionId);
 
-      try {
-        const pdfBlob = await apiDownload(
-          `/documents/${doc.id}/preview?sessionId=${sessionResult.sessionId}`,
-        );
-        if (previewReqIdRef.current !== reqId) {
-          return;
-        }
-        if (!(await verifyPdfMagicBytes(pdfBlob))) {
-          throw new Error('Invalid PDF stream header.');
-        }
-        if (pdfBlob.totalPages && pdfBlob.totalPages > 0) {
-          setPreviewTotalPages(pdfBlob.totalPages);
-        } else {
-          setPreviewTotalPages(1);
-        }
-        const objectUrl = URL.createObjectURL(pdfBlob);
-        setPreviewPdfUrl(objectUrl);
-      } catch (streamErr) {
-        console.warn('Could not load binary PDF preview stream:', streamErr);
+      // CONFLICT-RESOLVED: Chặn Fail-Closed khi tải luồng /preview thất bại hoặc sai chữ ký đầu %PDF- thay vì nuốt lỗi và dựng trang giả (CRIT-07).
+      const pdfBlob = await apiDownload(
+        `/documents/${doc.id}/preview?sessionId=${sessionResult.sessionId}`,
+      );
+      if (previewReqIdRef.current !== reqId) {
+        return;
       }
+      if (!(await verifyPdfMagicBytes(pdfBlob))) {
+        throw new Error('INVALID_PDF_MAGIC_BYTES');
+      }
+      if (pdfBlob.totalPages && pdfBlob.totalPages > 0) {
+        setPreviewTotalPages(pdfBlob.totalPages);
+      } else {
+        setPreviewTotalPages(1);
+      }
+      const objectUrl = URL.createObjectURL(pdfBlob);
+      setPreviewPdfUrl(objectUrl);
     } catch (err) {
       if (previewReqIdRef.current !== reqId) {
         return;
       }
       setPreviewOpen(false);
+      setPreviewSessionId(null);
       if (err instanceof ApiError) {
-        setErrorMessage(err.message || 'Không thể tạo phiên xem trước tài liệu.');
+        setErrorMessage(err.message || 'Không thể tải luồng xem trước tài liệu an toàn.');
+      } else if (err instanceof Error && err.message === 'INVALID_PDF_MAGIC_BYTES') {
+        setErrorMessage('Luồng dữ liệu xem trước không phải tệp PDF hợp lệ (đã chặn Fail-Closed).');
       } else {
-        setErrorMessage('Không thể tạo phiên xem trước tài liệu.');
+        setErrorMessage('Không thể tải luồng xem trước tài liệu an toàn.');
       }
     } finally {
       if (previewReqIdRef.current === reqId) {
@@ -117,7 +131,7 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
         `/documents/${previewDoc.id}/preview/page/${newPage}?sessionId=${previewSessionId}`,
       );
       if (!(await verifyPdfMagicBytes(pageBlob))) {
-        throw new Error('Invalid PDF stream header.');
+        throw new Error('INVALID_PDF_MAGIC_BYTES');
       }
       if (previewPdfUrl) {
         URL.revokeObjectURL(previewPdfUrl);
@@ -125,7 +139,12 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
       setPreviewPdfUrl(URL.createObjectURL(pageBlob));
       setPreviewPage(newPage);
     } catch (err) {
-      console.error('Could not load page preview:', err);
+      handleClosePreview(false);
+      if (err instanceof ApiError) {
+        setErrorMessage(err.message || 'Không thể tải trang xem trước PDF.');
+      } else {
+        setErrorMessage('Luồng trang PDF không hợp lệ (đã đóng chế độ xem Fail-Closed).');
+      }
     } finally {
       setIsLoadingPreview(false);
     }

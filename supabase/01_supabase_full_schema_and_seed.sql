@@ -1023,8 +1023,9 @@ CREATE TRIGGER trg_validate_current_document_version
   BEFORE INSERT OR UPDATE OF current_version_id ON public.documents
   FOR EACH ROW EXECUTE FUNCTION public.validate_current_document_version();
 
--- 6.3. Thuật toán kiểm soát truy cập đa mức Bell-LaPadula Simple Security Property (`validate_user_clearance_for_grant`, 1 trigger):
--- Truy vấn hạng thẩm tra an ninh cao nhất đang hiệu lực của người dùng (`user_rank`) và so sánh với hạng độ mật hiện hành của tài liệu (`document_rank`); từ chối giao dịch nếu thiếu thông tin hoặc `user_rank < document_rank` (No Read Up).
+-- 6.3. Thuật toán kiểm soát truy cập đa mức Bell-LaPadula Simple Security Property & Phân tách Nhiệm vụ SoD (`validate_user_clearance_for_grant`, 1 trigger):
+-- Cưỡng chế đồng thời cho cả `USER` và `ROLE` grant (phép giao bảo thủ Lattice Meet trên tập người giữ vai trò đang hoạt động + chặn vai trò quản trị/an ninh/kiểm toán SoD).
+-- CONFLICT-RESOLVED: Mở rộng trigger Bell-LaPadula/SoD cho `ROLE` grant để đồng bộ 100% với migration 20261105210000 (HIGH-12).
 CREATE OR REPLACE FUNCTION public.validate_user_clearance_for_grant()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1033,27 +1034,95 @@ AS $$
 DECLARE
   user_rank INTEGER;
   document_rank INTEGER;
+  holder_count INTEGER;
+  min_role_rank INTEGER;
 BEGIN
-  IF NEW.principal_type = 'USER' AND NEW.status = 'ACTIVE' THEN
-    SELECT ao.numeric_rank INTO user_rank
-    FROM public.user_attribute_assignments uaa
-    JOIN public.attribute_definitions ad ON ad.id = uaa.attribute_definition_id
-    JOIN public.attribute_options ao ON ao.id = uaa.option_id
-    WHERE uaa.user_id = NEW.principal_user_id
-      AND ad.code = 'CLEARANCE_LEVEL'
-      AND uaa.valid_from <= now()
-      AND (uaa.valid_to IS NULL OR uaa.valid_to > now())
-    ORDER BY ao.numeric_rank DESC
-    LIMIT 1;
-
+  IF NEW.status = 'ACTIVE' THEN
     SELECT cl.rank INTO document_rank
     FROM public.document_classification_history dch
     JOIN public.classification_levels cl ON cl.id = dch.classification_level_id
     WHERE dch.document_id = NEW.document_id
       AND dch.effective_to IS NULL;
 
-    IF user_rank IS NULL OR document_rank IS NULL OR user_rank < document_rank THEN
+    IF document_rank IS NULL THEN
       RAISE EXCEPTION 'Clearance level is insufficient for this document';
+    END IF;
+
+    IF NEW.principal_type = 'USER' THEN
+      SELECT ao.numeric_rank INTO user_rank
+      FROM public.user_attribute_assignments uaa
+      JOIN public.attribute_definitions ad ON ad.id = uaa.attribute_definition_id
+      JOIN public.attribute_options ao ON ao.id = uaa.option_id
+      WHERE uaa.user_id = NEW.principal_user_id
+        AND ad.code = 'CLEARANCE_LEVEL'
+        AND uaa.valid_from <= now()
+        AND (uaa.valid_to IS NULL OR uaa.valid_to > now())
+      ORDER BY ao.numeric_rank DESC
+      LIMIT 1;
+
+      IF user_rank IS NULL OR user_rank < document_rank THEN
+        RAISE EXCEPTION 'Clearance level is insufficient for this document';
+      END IF;
+    ELSIF NEW.principal_type = 'ROLE' THEN
+      IF EXISTS (
+        SELECT 1
+        FROM public.roles r
+        WHERE r.id = NEW.principal_role_id
+          AND (
+            r.code IN ('SYSTEM_ADMIN', 'SECURITY_OFFICER', 'AUDITOR')
+            OR EXISTS (
+              SELECT 1
+              FROM public.role_permissions rp
+              JOIN public.permissions p ON p.id = rp.permission_id
+              WHERE rp.role_id = r.id
+                AND (p.resource_type || ':' || p.action) IN (
+                  'USER:MANAGE',
+                  'ROLE:MANAGE',
+                  'POLICY_RULE:MANAGE',
+                  'ATTRIBUTE_DEFINITION:MANAGE',
+                  'AUDIT_LOG:READ',
+                  'AUDIT_LOG:VERIFY',
+                  'AUDIT_LOG:EXPORT',
+                  'SECURITY_ALERT:READ',
+                  'SECURITY_ALERT:MANAGE',
+                  'INCIDENT_REPORT:CREATE',
+                  'INCIDENT_REPORT:UPDATE',
+                  'INCIDENT_REPORT:CLOSE',
+                  'WATERMARK_CONFIG:MANAGE',
+                  'WATERMARK_INSTANCE:TRACE',
+                  'CLASSIFICATION_LEVEL:MANAGE',
+                  'SYSTEM_HEALTH:READ'
+                )
+            )
+          )
+      ) THEN
+        RAISE EXCEPTION 'Separation of duties violation: administrative, security, or audit roles cannot receive document grants';
+      END IF;
+
+      SELECT count(*)::int, min(coalesce(holder_clearance.max_rank, 0))
+      INTO holder_count, min_role_rank
+      FROM (
+        SELECT DISTINCT ur.user_id
+        FROM public.user_roles ur
+        JOIN public.users u ON u.id = ur.user_id
+        WHERE ur.role_id = NEW.principal_role_id
+          AND (ur.valid_to IS NULL OR ur.valid_to > now())
+          AND u.status <> 'DISABLED'
+      ) active_holders
+      LEFT JOIN LATERAL (
+        SELECT max(ao.numeric_rank) AS max_rank
+        FROM public.user_attribute_assignments uaa
+        JOIN public.attribute_definitions ad ON ad.id = uaa.attribute_definition_id
+        JOIN public.attribute_options ao ON ao.id = uaa.option_id
+        WHERE uaa.user_id = active_holders.user_id
+          AND ad.code = 'CLEARANCE_LEVEL'
+          AND uaa.valid_from <= now()
+          AND (uaa.valid_to IS NULL OR uaa.valid_to > now())
+      ) holder_clearance ON TRUE;
+
+      IF holder_count = 0 OR min_role_rank IS NULL OR min_role_rank < document_rank THEN
+        RAISE EXCEPTION 'Clearance level is insufficient for this document';
+      END IF;
     END IF;
   END IF;
   RETURN NEW;
@@ -1062,7 +1131,7 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_validate_user_clearance_for_grant ON public.access_grants;
 CREATE TRIGGER trg_validate_user_clearance_for_grant
-  BEFORE INSERT OR UPDATE OF principal_user_id, document_id, status ON public.access_grants
+  BEFORE INSERT OR UPDATE OF principal_type, principal_user_id, principal_role_id, document_id, status ON public.access_grants
   FOR EACH ROW EXECUTE FUNCTION public.validate_user_clearance_for_grant();
 
 -- 6.4. Thuật toán kiểm chứng tính liên tục chuỗi băm mật mã HMAC-SHA-256 (`validate_audit_chain_link`, 1 trigger):
@@ -1335,16 +1404,16 @@ BEGIN
     EXECUTE format('DROP POLICY IF EXISTS p_zero_trust_postgrest_deny ON public.%I', tbl);
     EXECUTE format(
       'CREATE POLICY p_zero_trust_postgrest_deny ON public.%I AS RESTRICTIVE FOR ALL TO PUBLIC '
-      || 'USING (current_user NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'')) '
-      || 'WITH CHECK (current_user NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated''))',
+      || 'USING (current_user NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated'')) '
+      || 'WITH CHECK (current_user NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated''))',
       tbl
     );
 
     EXECUTE format('DROP POLICY IF EXISTS p_zero_trust_backend_allow ON public.%I', tbl);
     EXECUTE format(
       'CREATE POLICY p_zero_trust_backend_allow ON public.%I AS PERMISSIVE FOR ALL TO PUBLIC '
-      || 'USING (current_user NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'')) '
-      || 'WITH CHECK (current_user NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated''))',
+      || 'USING ((current_user IN (''postgres'', ''service_role'', ''supabase_admin'', ''sda'', ''sda_local'', ''sda_app'', ''prisma'') OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND (r.rolsuper OR r.rolbypassrls))) AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated'')) '
+      || 'WITH CHECK ((current_user IN (''postgres'', ''service_role'', ''supabase_admin'', ''sda'', ''sda_local'', ''sda_app'', ''prisma'') OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND (r.rolsuper OR r.rolbypassrls))) AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated''))',
       tbl
     );
 
@@ -1388,7 +1457,7 @@ INSERT INTO public._prisma_migrations (id, checksum, finished_at, migration_name
 SELECT v.id, v.checksum, now(), v.migration_name, now(), 1
 FROM (
   VALUES
-    -- CONFLICT-RESOLVED: Synchronized SHA-256 checksums across all 11 Prisma migration files
+    -- CONFLICT-RESOLVED: Synchronized SHA-256 checksums across all 12 Prisma migration files
     ('00000000-0000-4000-8000-000000000001', '888f80f07b278005583e833af6a81983bd14ced9314ca04d0ca37749abe4fa07', '20260917160000_initial_secure_schema'),
     ('00000000-0000-4000-8000-000000000002', '62afc2f3ebe6bbc85c8b92b676091ff4ae62255906b9b6fb71845b143e9a9629', '20260919120000_hardened_authentication'),
     ('00000000-0000-4000-8000-000000000003', '704e601658fb17e709e81f31abfae3e938faf4b869ee29c17b608a7adc7181ec', '20260919180000_scoped_rbac_administration'),
@@ -1399,7 +1468,8 @@ FROM (
     ('00000000-0000-4000-8000-000000000008', '57847f304f12740360ee357170f6fe0335edec964ee258945b4f24f5dc51f581', '20260923200000_security_ops_and_incident_management'),
     ('00000000-0000-4000-8000-000000000009', '442f6b5eb9efb20b8b132d934f3dbc2ecafde4843dc7bf0721077b9e8a152e6d', '20261031120000_supabase_rls_and_mfa_webauthn'),
     ('00000000-0000-4000-8000-000000000010', '6a366ad5437851cb216414080c6b56789741bf408ce190f6ebd2c89249cdf43c', '20261105133000_rls_policies_and_audit_truncate_guard'),
-    ('00000000-0000-4000-8000-000000000011', '52f89c902eb0daf6955ae415e43491e9a663a4a3c0a98aacad78125a2015523d', '20261105160000_prisma_migrations_rls_hardening')
+    ('00000000-0000-4000-8000-000000000011', '52f89c902eb0daf6955ae415e43491e9a663a4a3c0a98aacad78125a2015523d', '20261105160000_prisma_migrations_rls_hardening'),
+    ('00000000-0000-4000-8000-000000000012', 'e304141e09963409f64aad5c5196b4011db31ceb9dd8fc2ebc3d03f64e59f34f', '20261105210000_harden_rls_allowlist_and_role_grant_trigger')
 ) AS v(id, checksum, migration_name)
 WHERE NOT EXISTS (
   SELECT 1 FROM public._prisma_migrations pm WHERE pm.migration_name = v.migration_name
@@ -1871,7 +1941,7 @@ COMMIT;
 -- PHẦN 10: TRUY VẤN TỰ KIỂM CHỨNG SAU KHI CHẠY (VERIFICATION SUMMARY)
 -- Kết quả kỳ vọng trên Supabase SQL Editor:
 --   business_tables = 39 | rls_locked_tables = 40 | rls_policies = 80 | enum_types = 18 | triggers = 21
---   roles = 5 | permissions = 34 | classifications = 4 | watermark_configs = 3 | detection_rules = 6 | synced_migrations = 11
+--   roles = 5 | permissions = 34 | classifications = 4 | watermark_configs = 3 | detection_rules = 6 | synced_migrations = 12
 -- =============================================================================
 
 -- Thuật toán: Truy vấn tổng hợp đối soát danh mục hệ thống PostgreSQL (`pg_tables`, `pg_policies`, `pg_type`, `pg_trigger`) và số lượng bản ghi nền tảng

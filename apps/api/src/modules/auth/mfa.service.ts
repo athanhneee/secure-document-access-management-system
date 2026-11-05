@@ -18,6 +18,10 @@ import { AppConfigService } from '../../config/config.service.js';
 export class MfaService {
   private readonly encryptionKey: Buffer;
   private readonly recoveryPepper: Buffer;
+  private readonly lastAcceptedStepBySecret = new Map<
+    string,
+    { step: number; expiresAt: number }
+  >();
 
   /**
    * Thuật toán: Dẫn xuất khóa con phân tách miền bằng SHA-256 (Domain-Separated SHA-256 Key Derivation).
@@ -53,21 +57,47 @@ export class MfaService {
   }
 
   /**
-   * Thuật toán: Xác thực mã OTP theo thời gian chuẩn RFC 6238 TOTP với cửa sổ lệch đồng hồ ±1 chu kỳ.
-   * Cơ chế hoạt động: Giải mã xác thực bí mật Base32, tính giá trị HMAC-SHA1 cắt động (Dynamic Truncation)
-   * trên bước thời gian 30 giây hiện tại cùng 2 bước lân cận (`window: 1`) để bù độ trễ đồng hồ client-server.
+   * Thuật toán: Xác thực mã OTP theo thời gian chuẩn RFC 6238 §5.2 TOTP với cửa sổ lệch đồng hồ ±1 chu kỳ và chốt chống phát lại theo bước thời gian.
    */
   verifyTotp(encryptedSecret: string, token: string): boolean {
     if (!/^\d{6}$/.test(token)) return false;
+    const rawSecret = this.decrypt(encryptedSecret);
+    const now = Date.now();
     const totp = new OTPAuth.TOTP({
       issuer: 'Secure Document Access',
       label: 'verification',
       algorithm: 'SHA1',
       digits: 6,
       period: 30,
-      secret: OTPAuth.Secret.fromBase32(this.decrypt(encryptedSecret)),
+      secret: OTPAuth.Secret.fromBase32(rawSecret),
     });
-    return totp.validate({ token, window: 1 }) !== null;
+    const delta = totp.validate({ token, window: 1, timestamp: now });
+    if (delta === null) return false;
+
+    // CONFLICT-RESOLVED: Chặn phát lại mã TOTP trong cửa sổ 90 giây theo RFC 6238 §5.2 bằng theo dõi bước thời gian cuối đã chấp nhận (HIGH-10).
+    if (this.lastAcceptedStepBySecret.size >= 4_096) {
+      for (const [key, entry] of this.lastAcceptedStepBySecret) {
+        if (entry.expiresAt <= now) this.lastAcceptedStepBySecret.delete(key);
+      }
+    }
+    if (this.lastAcceptedStepBySecret.size >= 16_384) {
+      return false;
+    }
+
+    const secretDigest = createHash('sha256')
+      .update(this.recoveryPepper)
+      .update(rawSecret, 'utf8')
+      .digest('hex');
+    const matchedStep = Math.floor(now / 30_000) + delta;
+    const previous = this.lastAcceptedStepBySecret.get(secretDigest);
+    if (previous && previous.expiresAt > now && matchedStep <= previous.step) {
+      return false;
+    }
+    this.lastAcceptedStepBySecret.set(secretDigest, {
+      step: matchedStep,
+      expiresAt: now + 120_000,
+    });
+    return true;
   }
 
   /**

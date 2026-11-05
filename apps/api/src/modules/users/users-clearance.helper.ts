@@ -76,6 +76,7 @@ export async function lookupUsersWithClearance(
   const users = await database.user.findMany({
     where: { status: 'ACTIVE' },
     orderBy: { username: 'asc' },
+    take: 500,
     select: {
       id: true,
       username: true,

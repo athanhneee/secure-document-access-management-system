@@ -4,7 +4,7 @@
  * Ký không trạng thái thử thách WebAuthn bằng HMAC-SHA256 (TTL 5 phút) và chống phát lại bằng bộ nhớ đệm hai ngưỡng.
  */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 
 interface SignedChallengePayload {
   challenge: string;
@@ -78,10 +78,10 @@ export class WebAuthnChallengeStore {
       throw new BadRequestException('Challenge token has expired.');
     }
 
+    // CONFLICT-RESOLVED: Bắt buộc `payload.userId` hiện diện và khớp `expectedUserId`, đồng thời không trục xuất FIFO các challenge chưa hết hạn để chống Replay (HIGH-10).
     if (
       expectedUserId !== undefined &&
-      payload.userId !== undefined &&
-      payload.userId !== String(expectedUserId)
+      (payload.userId === undefined || payload.userId !== String(expectedUserId))
     ) {
       throw new BadRequestException('Challenge token is bound to a different user.');
     }
@@ -92,15 +92,19 @@ export class WebAuthnChallengeStore {
     if (consumedExpiry && consumedExpiry > now) {
       throw new BadRequestException('Challenge token has already been used.');
     }
+    if (this.consumedChallenges.size >= 8_192) {
+      throw new HttpException(
+        'Too many concurrent WebAuthn challenges. Please retry shortly.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
     this.consumedChallenges.set(replayKey, payload.timestamp + 300_000);
 
     return payload.challenge;
   }
 
   /**
-   * Algorithm / Thuật toán: Cắt tỉa bộ nhớ đệm chống phát lại thử thách hai ngưỡng (Two-Tier TTL & FIFO Replay Cache Eviction).
-   * Khi bảng vượt 4.096 mục, quét xóa các thử thách đã hết hạn TTL; nếu vẫn đạt trần cứng 8.192 mục,
-   * trục xuất theo thứ tự chèn cũ nhất (FIFO trên Map) để bảo vệ giới hạn bộ nhớ tiến trình.
+   * Algorithm / Thuật toán: Quét dọn bộ nhớ đệm chống phát lại thử thách theo TTL mà không làm rơi trạng thái chưa hết hạn.
    */
   private pruneConsumedChallenges(now: number): void {
     if (this.consumedChallenges.size < 4_096) return;
@@ -108,11 +112,6 @@ export class WebAuthnChallengeStore {
       if (expiresAt <= now) {
         this.consumedChallenges.delete(key);
       }
-    }
-    while (this.consumedChallenges.size >= 8_192) {
-      const oldest = this.consumedChallenges.keys().next().value;
-      if (!oldest) break;
-      this.consumedChallenges.delete(oldest);
     }
   }
 }

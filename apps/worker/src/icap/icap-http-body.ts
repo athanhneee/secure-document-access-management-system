@@ -57,9 +57,13 @@ export function parseEncapsulatedHeader(headerValue?: string): EncapsulatedSecti
  * Algorithm / Thuật toán: Giải mã tuần tự khung truyền tải phân mảnh hệ thập lục phân (Hex-Chunked Stream Decoder - RFC 3507 / RFC 2616).
  * Cơ chế:
  *   - Duyệt con trỏ `offset` qua từng khung `<hex-size>[;ext]\r\n<payload>\r\n` và kiểm tra hậu tố `\r\n`.
- *   - Khi gặp chunk kích thước `0`: nhận diện cờ `; ieof` hoặc tiếp tục ghép phần thân sau `100 Continue` nếu còn dữ liệu nối tiếp.
+ *   - Hỗ trợ đầy đủ phần mở rộng `;ext` và trailer tùy chọn tại chunk kết thúc `0[;ext]\r\n...\r\n`.
+ *   - Khi `expectPostPreviewTerminator === true` (đã gửi `100 Continue` sau pha Preview), bắt buộc đợi đủ dấu kết thúc `0` thứ hai của phần thân thật để chống vượt rào DLP qua `Preview: 0` (CRIT-03).
  */
-export function decodeIcapChunks(chunkBuffer: Buffer): {
+export function decodeIcapChunks(
+  chunkBuffer: Buffer,
+  options?: { expectPostPreviewTerminator?: boolean | undefined },
+): {
   data: Buffer;
   isComplete: boolean;
   isPreviewIof?: boolean;
@@ -68,6 +72,7 @@ export function decodeIcapChunks(chunkBuffer: Buffer): {
   let offset = 0;
   let isComplete = false;
   let isPreviewIof = false;
+  let zeroChunksSeen = 0;
 
   while (offset < chunkBuffer.length) {
     const newlineIndex = chunkBuffer.indexOf('\r\n', offset);
@@ -86,8 +91,11 @@ export function decodeIcapChunks(chunkBuffer: Buffer): {
     }
 
     if (chunkSize === 0) {
-      const terminatorEnd = newlineIndex + 4;
-      if (terminatorEnd > chunkBuffer.length) break;
+      // CONFLICT-RESOLVED: Định vị ranh giới kết thúc trailer `\r\n\r\n` bắt đầu từ `newlineIndex` để hỗ trợ mọi `;ext` hợp lệ và trailer tùy chọn.
+      const trailerBlankIndex = chunkBuffer.indexOf('\r\n\r\n', newlineIndex);
+      if (trailerBlankIndex === -1) break;
+      const terminatorEnd = trailerBlankIndex + 4;
+
       const extensions = semiParts
         .slice(1)
         .map((s) => s.trim().toLowerCase())
@@ -96,6 +104,13 @@ export function decodeIcapChunks(chunkBuffer: Buffer): {
         isPreviewIof = true;
         isComplete = true;
         break;
+      }
+
+      zeroChunksSeen += 1;
+      if (options?.expectPostPreviewTerminator && zeroChunksSeen < 2) {
+        offset = terminatorEnd;
+        isComplete = false;
+        continue;
       }
       if (terminatorEnd < chunkBuffer.length) {
         offset = terminatorEnd;
@@ -141,6 +156,7 @@ export function extractEncapsulatedHttpPayload(
   method: IcapMethod,
   remainingBuffer: Buffer,
   encapsulated: EncapsulatedSection,
+  options?: { expectPostPreviewTerminator?: boolean | undefined },
 ): ExtractedEncapsulatedPayload {
   let httpHeaders: Record<string, string> | undefined;
   let httpMethod: string | undefined;
@@ -218,7 +234,7 @@ export function extractEncapsulatedHttpPayload(
   if (method === 'OPTIONS' || encapsulated.nullBody !== undefined || bodyOffset === undefined) {
     isComplete = true;
   } else if (bodyOffset < remainingBuffer.length) {
-    const decoded = decodeIcapChunks(remainingBuffer.slice(bodyOffset));
+    const decoded = decodeIcapChunks(remainingBuffer.slice(bodyOffset), options);
     body = Buffer.from(decoded.data);
     isComplete = decoded.isComplete;
     isPreviewIof = decoded.isPreviewIof ?? false;

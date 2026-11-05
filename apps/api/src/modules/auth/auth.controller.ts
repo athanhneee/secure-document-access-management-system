@@ -19,6 +19,7 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { AppConfigService } from '../../config/config.service.js';
 import { PublicEndpoint } from '../../public-endpoint.js';
+import { AllowAuthenticatedSelf } from '../rbac/require-permission.js';
 import { AllowPreMfa } from './allow-pre-mfa.js';
 import { AuthService } from './auth.service.js';
 import { CsrfService } from './csrf.service.js';
@@ -32,6 +33,7 @@ import {
 } from './auth-cookies.helper.js';
 
 @ApiTags('auth')
+@AllowAuthenticatedSelf()
 @Controller('auth')
 export class AuthController {
   private readonly secureCookies: boolean;

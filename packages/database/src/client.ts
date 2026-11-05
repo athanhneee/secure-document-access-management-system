@@ -64,15 +64,16 @@ export function buildPgPoolConfig(connectionString?: string): ResolvedPgConfig {
   const explicitDisableVerify = sslMode === 'no-verify' || rejectUnauthorizedEnv === 'false';
   const explicitDisableSsl = sslMode === 'disable' || envSsl === 'false';
 
-  if (isProduction && explicitDisableVerify) {
+  // CONFLICT-RESOLVED: Chặn vô hiệu hóa xác thực chứng chỉ X.509 (CWE-295) và chặn kết nối không mã hóa (CWE-319) cả trên Production lẫn mọi máy chủ đám mây Supabase (HIGH-12).
+  if ((isProduction || isSupabaseHost) && explicitDisableVerify) {
     throw new Error(
-      'SECURITY VIOLATION (CWE-295): Disabling TLS certificate verification is strictly forbidden in production. Configure a valid CA bundle via DATABASE_CA_CERT or NODE_EXTRA_CA_CERTS.',
+      'SECURITY VIOLATION (CWE-295): Disabling TLS certificate verification is strictly forbidden in production and on Supabase cloud hosts. Configure a valid CA bundle via DATABASE_CA_CERT or NODE_EXTRA_CA_CERTS.',
     );
   }
 
-  if (isProduction && !isUnixSocket && explicitDisableSsl) {
+  if (((isProduction && !isUnixSocket) || isSupabaseHost) && explicitDisableSsl) {
     throw new Error(
-      'SECURITY VIOLATION (CWE-319): Unencrypted PostgreSQL TCP connections (DATABASE_SSL=false or sslmode=disable) are strictly forbidden in production.',
+      'SECURITY VIOLATION (CWE-319): Unencrypted PostgreSQL TCP connections (DATABASE_SSL=false or sslmode=disable) are strictly forbidden in production and on Supabase cloud hosts.',
     );
   }
 

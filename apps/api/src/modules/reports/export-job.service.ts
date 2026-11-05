@@ -67,7 +67,9 @@ export class ExportJobService {
       process.env['EXPORT_STORAGE_DIR']?.trim() || path.join(process.cwd(), '.local', 'exports'),
     );
     try {
-      if (!fs.existsSync(this.exportDir)) fs.mkdirSync(this.exportDir, { recursive: true });
+      if (!fs.existsSync(this.exportDir)) {
+        fs.mkdirSync(this.exportDir, { recursive: true, mode: 0o700 });
+      }
     } catch {
       // Fallback to memoryStorage when filesystem is restricted
     }
@@ -195,6 +197,7 @@ export class ExportJobService {
       id,
       job.file_path,
       this.logger,
+      job.sha256_hash,
     );
     if (!buffer) {
       throw new NotFoundException({

@@ -17,6 +17,7 @@ import type { AuthorizationService } from '../rbac/authorization.service.js';
 import type { DocumentAuditService } from './document-audit.service.js';
 import {
   assertDocumentMutationPermission,
+  getUserClearanceRank,
   isPureTechnicalOrAuditRole,
 } from './document-access-guard.helper.js';
 
@@ -28,6 +29,32 @@ async function assertActiveDepartment(database: PrismaClient, departmentId: bigi
     throw new BadRequestException({
       errorCode: AppErrorCode.VALIDATION_FAILED,
       message: 'Target department does not exist or is inactive.',
+    });
+  }
+}
+
+/**
+ * Thuật toán: Kiểm định thẩm quyền phòng ban đích khi khởi tạo dự thảo hoặc di chuyển phòng ban tài liệu (HIGH-05).
+ */
+async function assertDepartmentWriteScope(
+  authorization: AuthorizationService | undefined,
+  principal: AuthPrincipal,
+  targetDepartmentId: bigint,
+  allowUploadAction: boolean,
+): Promise<void> {
+  if (!authorization || typeof authorization.hasPermission !== 'function') return;
+  const scope = { targetDepartmentId };
+  const [canManage, canClassify, canUpload] = await Promise.all([
+    authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', scope),
+    authorization.hasPermission(principal, 'DOCUMENT', 'CLASSIFY', scope),
+    allowUploadAction
+      ? authorization.hasPermission(principal, 'DOCUMENT', 'UPLOAD', scope)
+      : Promise.resolve(false),
+  ]);
+  if (!canManage && !canClassify && !canUpload) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message: 'Caller is not authorized to create or place documents in the target department.',
     });
   }
 }
@@ -58,12 +85,13 @@ function parseIsoRetentionDate(isoDate: string): Date {
  */
 export async function executeCreateDocumentDraft(params: {
   database: PrismaClient;
+  authorization?: AuthorizationService | undefined;
   audit: DocumentAuditService;
   input: CreateDocumentDraftInput;
   principal: AuthPrincipal;
   context: RequestContext;
 }): Promise<string> {
-  const { database, audit, input, principal, context } = params;
+  const { database, authorization, audit, input, principal, context } = params;
 
   if (isPureTechnicalOrAuditRole(principal)) {
     throw new ForbiddenException({
@@ -91,6 +119,8 @@ export async function executeCreateDocumentDraft(params: {
   }
 
   await assertActiveDepartment(database, input.departmentId);
+  // CONFLICT-RESOLVED: Chặn BOLA liên phòng ban và kiểm tra độ mật Bell-LaPadula ngay khi khởi tạo bản nháp tài liệu (HIGH-05).
+  await assertDepartmentWriteScope(authorization, principal, input.departmentId, true);
 
   if (input.classificationLevelId) {
     const level = await database.classificationLevel.findUnique({
@@ -100,6 +130,13 @@ export async function executeCreateDocumentDraft(params: {
       throw new BadRequestException({
         errorCode: AppErrorCode.VALIDATION_FAILED,
         message: 'Target classification level does not exist or is inactive.',
+      });
+    }
+    const actorClearanceRank = await getUserClearanceRank(database, principal.userId, new Date());
+    if (actorClearanceRank < level.rank) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+        message: `Insufficient clearance level (${actorClearanceRank}) to create document at classification rank ${level.rank}.`,
       });
     }
   }
@@ -225,6 +262,10 @@ export async function executeUpdateDocumentMetadata(params: {
 
   if (input.departmentId !== undefined) {
     await assertActiveDepartment(database, input.departmentId);
+    if (input.departmentId !== doc.department_id) {
+      // CONFLICT-RESOLVED: Chặn chuyển phòng ban tài liệu sang đơn vị ngoài thẩm quyền quản lý/phân loại của người gọi (HIGH-05).
+      await assertDepartmentWriteScope(authorization, principal, input.departmentId, false);
+    }
     updateData.department_id = input.departmentId;
   }
 

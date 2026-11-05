@@ -15,6 +15,7 @@ import {
   AuditVerifierService,
   type PartitionVerificationResult,
 } from './audit-verifier.service.js';
+import { redactOracleField } from './audit-alert-escalator.js';
 import {
   applyAuditFilterAllowlist,
   formatAuditExportPayload,
@@ -66,15 +67,19 @@ function serializeVerificationResult(
     totalChecked: result.totalChecked,
     anchorsChecked: result.anchorsChecked,
     ...(result.alertId !== undefined ? { alertId: result.alertId } : {}),
-    violations: result.violations.map((v) => ({
-      code: v.code,
-      partition: v.partition,
-      sequence: v.sequence.toString(),
-      ...(v.logId !== undefined ? { logId: v.logId.toString() } : {}),
-      ...(v.expected !== undefined ? { expected: v.expected } : {}),
-      ...(v.actual !== undefined ? { actual: v.actual } : {}),
-      message: v.message,
-    })),
+    violations: result.violations.map((v) => {
+      const safeExpected = redactOracleField(v.code, v.expected);
+      const safeActual = v.code === 'AUDIT_LOG_TAMPERED' ? '[TAMPERED_ENTRY_HASH]' : v.actual;
+      return {
+        code: v.code,
+        partition: v.partition,
+        sequence: v.sequence.toString(),
+        ...(v.logId !== undefined ? { logId: v.logId.toString() } : {}),
+        ...(safeExpected !== undefined ? { expected: safeExpected } : {}),
+        ...(safeActual !== undefined ? { actual: safeActual } : {}),
+        message: v.message,
+      };
+    }),
   };
 }
 

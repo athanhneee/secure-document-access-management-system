@@ -107,6 +107,18 @@ export const EnvSchema = z
    * chặn adapter KMS mô phỏng, cấm tắt kiểm tra chứng chỉ TLS CWE-295 và cấm mã thông báo Vault mẫu.
    */
   .superRefine((value, context) => {
+    const docBucket = value.STORAGE_BUCKET_DOCUMENTS.trim();
+    const quarantineBucket = value.STORAGE_BUCKET_QUARANTINE.trim();
+    const derivativesBucket = value.STORAGE_BUCKET_DERIVATIVES.trim();
+    if (quarantineBucket === docBucket || quarantineBucket === derivativesBucket) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['STORAGE_BUCKET_QUARANTINE'],
+        message:
+          'STORAGE_BUCKET_QUARANTINE must be isolated in a separate bucket from STORAGE_BUCKET_DOCUMENTS and STORAGE_BUCKET_DERIVATIVES.',
+      });
+    }
+
     if (value.NODE_ENV !== 'production') {
       return;
     }

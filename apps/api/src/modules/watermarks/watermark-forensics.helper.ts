@@ -1,11 +1,12 @@
 /**
  * Module: WatermarkForensicsHelper — Truy vết ngược nguồn gốc rò rỉ tài liệu từ mã `watermark_token` (Forensic Leak Attribution Engine - UC28).
  */
-import { NotFoundException, type Logger } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, type Logger } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
+import type { AuthorizationService } from '../rbac/authorization.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -58,7 +59,14 @@ export async function traceWatermarkToken(
   logger: Logger,
   token: string,
   actor?: AuthPrincipal,
+  authorization?: AuthorizationService,
 ): Promise<WatermarkVerificationResult> {
+  if (authorization && !actor) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.FORBIDDEN,
+      message: 'Authenticated principal is required for watermark forensic attribution.',
+    });
+  }
   logger.log(`Verifying watermark token: ${token.slice(0, 11)}...`);
   const instance = await database.watermarkInstance.findUnique({
     where: { watermark_token: token },
@@ -89,12 +97,13 @@ export async function traceWatermarkToken(
               id: true,
               title: true,
               document_code: true,
+              department_id: true,
               classification_history: {
                 where: { effective_to: null },
                 take: 1,
                 select: {
                   classification_levels: {
-                    select: { code: true, name: true },
+                    select: { code: true, name: true, rank: true },
                   },
                 },
               },
@@ -120,6 +129,38 @@ export async function traceWatermarkToken(
     });
   }
 
+  const docWithClass = instance.document_versions.document as {
+    id: string;
+    title: string;
+    document_code: string | null;
+    department_id?: bigint;
+    classification_history?: Array<{
+      classification_levels?: { code?: string; name?: string; rank?: number } | null;
+    }>;
+  };
+  const activeLevel = docWithClass.classification_history?.[0]?.classification_levels;
+
+  // CONFLICT-RESOLVED: Giới hạn phạm vi phòng ban và chặn cán bộ cấp phòng ban truy vết thủy vân liên phòng ban hoặc tài liệu `TOP_SECRET` (HIGH-06).
+  if (authorization && actor && typeof authorization.visibleDepartmentIds === 'function') {
+    const visibleDepts = await authorization.visibleDepartmentIds(
+      actor,
+      'WATERMARK_INSTANCE',
+      'TRACE',
+    );
+    if (visibleDepts !== null) {
+      const isTopSecret = activeLevel?.code === 'TOP_SECRET' || (activeLevel?.rank ?? 0) >= 4;
+      const inScope =
+        docWithClass.department_id !== undefined &&
+        visibleDepts.includes(docWithClass.department_id);
+      if (!inScope || isTopSecret) {
+        throw new NotFoundException({
+          errorCode: AppErrorCode.WATERMARK_TOKEN_NOT_FOUND,
+          message: 'Watermark token was not found in the reconciliation registry.',
+        });
+      }
+    }
+  }
+
   if (auditWriter && actor) {
     await auditWriter.writeLog({
       actorUserId: actor.userId,
@@ -139,15 +180,6 @@ export async function traceWatermarkToken(
     });
   }
 
-  const docWithClass = instance.document_versions.document as {
-    id: string;
-    title: string;
-    document_code: string | null;
-    classification_history?: Array<{
-      classification_levels?: { code?: string; name?: string } | null;
-    }>;
-  };
-  const activeLevel = docWithClass.classification_history?.[0]?.classification_levels;
   const classificationName = activeLevel?.code ?? activeLevel?.name ?? null;
 
   return {

@@ -38,7 +38,11 @@ export function createInMemoryDatabase(initialState = {}) {
   );
   const accessGrants = new Map(initialState.accessGrants ?? []);
   const accessSessions = new Map(initialState.accessSessions ?? []);
-  const userAttributeAssignments = new Map(initialState.userAttributeAssignments ?? []);
+  const userAttributeAssignments = new Map(
+    initialState.userAttributeAssignments ?? [
+      [9999n, { user_id: 1n, attribute_code: 'CLEARANCE_LEVEL', numeric_rank: 4 }],
+    ],
+  );
   const notifications = new Map();
   const securityAlerts = new Map();
 
@@ -126,15 +130,21 @@ export function createInMemoryDatabase(initialState = {}) {
           .filter(
             (a) =>
               a.user_id === where.user_id &&
-              a.attribute_code === where.attribute_definitions?.code &&
+              (a.attribute_code ?? a.attribute_definitions?.code) ===
+                where.attribute_definitions?.code &&
               a.is_active !== false,
           )
-          .sort((a, b) => (b.numeric_rank ?? 0) - (a.numeric_rank ?? 0));
+          .sort(
+            (a, b) =>
+              (b.numeric_rank ?? b.attribute_options?.numeric_rank ?? 0) -
+              (a.numeric_rank ?? a.attribute_options?.numeric_rank ?? 0),
+          );
         if (assignments.length === 0) return null;
         return {
           ...assignments[0],
           attribute_options: {
-            numeric_rank: assignments[0].numeric_rank,
+            numeric_rank:
+              assignments[0].numeric_rank ?? assignments[0].attribute_options?.numeric_rank ?? 0,
             is_active: assignments[0].option_is_active ?? true,
           },
         };
@@ -168,7 +178,10 @@ export function createInMemoryDatabase(initialState = {}) {
   };
 }
 
-export function createDocumentsTestService(initialState = {}, permissions = []) {
+export function createDocumentsTestService(
+  initialState = {},
+  permissions = [{ userId: 1n, resource: 'DOCUMENT', action: 'UPLOAD', scopeDepartmentId: 100n }],
+) {
   const stores = createInMemoryDatabase(initialState);
   const mockAudit = createMockAudit();
   const mockAuth = createMockAuthorization(permissions);

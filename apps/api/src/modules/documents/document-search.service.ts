@@ -19,6 +19,7 @@ import { executeGrantedDocumentsQuery } from './document-grants-search.helper.js
 import {
   buildSearchWhereClause,
   queryUserClearanceRank,
+  resolveFailClosedAllowDownload,
   resolveSortColumn,
   sanitizeSearchQuery,
   type GrantedDocumentsResult,
@@ -143,10 +144,10 @@ export class DocumentSearchService {
       departmentName: row.department_name,
       classificationLevelName: row.classification_level_name,
       classificationLevelCode: row.classification_level_code,
-      allowDownload:
-        row.classification_allow_download ??
-        (row.classification_level_code !== 'SECRET' &&
-          row.classification_level_code !== 'TOP_SECRET'),
+      allowDownload: resolveFailClosedAllowDownload(
+        row.classification_allow_download,
+        row.classification_level_code,
+      ),
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     }));

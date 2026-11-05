@@ -12,6 +12,7 @@ import { AppErrorCode } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
+import { getUserClearanceRank } from './document-access-guard.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -113,6 +114,67 @@ export async function validateIngestionPreconditions(
             errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
             message:
               'Only the document owner or authorized department administrator can upload a new version.',
+          });
+        }
+      }
+    }
+  } else if (!input.documentId) {
+    // CONFLICT-RESOLVED: Kiểm tra quyền trên phòng ban đích và độ mật Bell-LaPadula trước khi ghi đệm tệp tải lên mới (HIGH-05).
+    let callerDeptId = (input.principal as { departmentId?: bigint }).departmentId;
+    if (callerDeptId === undefined && typeof database?.user?.findUnique === 'function') {
+      const caller = await database.user.findUnique({
+        where: { id: input.principal.userId },
+        select: { department_id: true },
+      });
+      callerDeptId = caller?.department_id ?? undefined;
+    }
+    const targetDeptId = input.departmentId ?? callerDeptId ?? 1n;
+    if (typeof database?.department?.findUnique === 'function') {
+      const dept = await database.department.findUnique({ where: { id: targetDeptId } });
+      if (!dept || !dept.is_active) {
+        input.fileStream.destroy();
+        throw new BadRequestException({
+          errorCode: AppErrorCode.VALIDATION_FAILED,
+          message: 'Target department does not exist or is inactive.',
+        });
+      }
+    }
+    if (authorization && typeof authorization.hasPermission === 'function') {
+      const scope = { targetDepartmentId: targetDeptId };
+      const [canUpload, canClassify, canManage] = await Promise.all([
+        authorization.hasPermission(input.principal, 'DOCUMENT', 'UPLOAD', scope),
+        authorization.hasPermission(input.principal, 'DOCUMENT', 'CLASSIFY', scope),
+        authorization.hasPermission(input.principal, 'DOCUMENT', 'MANAGE', scope),
+      ]);
+      if (!canUpload && !canClassify && !canManage) {
+        input.fileStream.destroy();
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+          message: 'Caller is not authorized to upload documents into the target department.',
+        });
+      }
+    }
+    if (
+      input.classificationLevelId &&
+      typeof database?.classificationLevel?.findUnique === 'function'
+    ) {
+      const level = await database.classificationLevel.findUnique({
+        where: { id: input.classificationLevelId },
+      });
+      if (!level || !level.is_active) {
+        input.fileStream.destroy();
+        throw new BadRequestException({
+          errorCode: AppErrorCode.VALIDATION_FAILED,
+          message: 'Target classification level does not exist or is inactive.',
+        });
+      }
+      if (typeof database?.userAttributeAssignment?.findFirst === 'function') {
+        const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
+        if (rank < level.rank) {
+          input.fileStream.destroy();
+          throw new ForbiddenException({
+            errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+            message: `Insufficient clearance level (${rank}) to upload document at rank ${level.rank}.`,
           });
         }
       }

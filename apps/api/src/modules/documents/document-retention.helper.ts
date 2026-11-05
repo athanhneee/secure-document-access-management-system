@@ -3,8 +3,10 @@
  * Algorithm: Scans non-deleted documents with `retention_until <= now + daysThreshold`, filters by caller
  *   ownership or `DOCUMENT:CLASSIFY` department permission, emits owner notifications, and raises `RETENTION_OVERDUE` alerts.
  */
+import { ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient } from '@sda/database';
+import { AppErrorCode } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import type { DocumentAuditService } from './document-audit.service.js';
@@ -23,8 +25,16 @@ export async function executeCheckRetentionWarnings(params: {
   daysThreshold: number;
   principal?: AuthPrincipal | undefined;
   context?: RequestContext | undefined;
+  systemScan?: boolean | undefined;
 }): Promise<RetentionCheckResult> {
-  const { database, authorization, audit, daysThreshold, principal, context } = params;
+  const { database, authorization, audit, daysThreshold, principal, context, systemScan } = params;
+  // CONFLICT-RESOLVED: Chặn Fail-Open quét hạn lưu trữ toàn cục khi thiếu `principal` nếu không bật cờ tác vụ hệ thống `systemScan: true` (HIGH-08).
+  if (!principal && !systemScan) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message: 'Authenticated principal is required for retention horizon scan.',
+    });
+  }
   const now = new Date();
   const thresholdDate = new Date(now.getTime() + daysThreshold * 86400 * 1000);
 

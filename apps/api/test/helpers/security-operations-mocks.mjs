@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 export function createMassDownloadDetectionHarness(actorUserId = 100n) {
   const alertsTable = [];
@@ -101,7 +101,7 @@ export function createExportJobFixtures(requesterId = 101n) {
         status: 'COMPLETED',
         file_path: 'C:/temp/incident.pdf',
         file_size_bytes: 2048n,
-        sha256_hash: '123456abcdef123456abcdef123456abcdef123456abcdef123456abcdef123456',
+        sha256_hash: createHash('sha256').update('mock pdf content').digest('hex'),
         mime_type: 'application/pdf',
         row_count: 1,
         error_message: null,

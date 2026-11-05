@@ -9,6 +9,7 @@ import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import {
   queryUserClearanceRank,
+  resolveFailClosedAllowDownload,
   resolveGrantSortColumn,
   type GrantedDocumentItem,
   type GrantedDocumentsResult,
@@ -34,10 +35,8 @@ export async function executeGrantedDocumentsQuery(params: {
   const userRoles = await authorization.effectiveGrants(userId);
   const roleIds = [...new Set(userRoles.map((g) => g.roleId))];
   const userClearanceRank = await queryUserClearanceRank(database, userId);
-  const grantClearanceFilter =
-    userClearanceRank !== null
-      ? Prisma.sql`AND (cl."rank" IS NULL OR cl."rank" <= ${userClearanceRank})`
-      : Prisma.empty;
+  const effectiveClearanceRank = userClearanceRank ?? 0;
+  const grantClearanceFilter = Prisma.sql`AND (cl."rank" IS NULL OR cl."rank" <= ${effectiveClearanceRank})`;
 
   const grantVisibility: Prisma.Sql[] = [
     Prisma.sql`(ag.principal_type = 'USER' AND ag.principal_user_id = ${userId})`,
@@ -121,8 +120,7 @@ export async function executeGrantedDocumentsQuery(params: {
       status: row.doc_status,
       classificationLevelName: row.cl_name,
       classificationLevelCode: row.cl_code ?? null,
-      allowDownload:
-        row.cl_allow_download ?? (row.cl_code !== 'SECRET' && row.cl_code !== 'TOP_SECRET'),
+      allowDownload: resolveFailClosedAllowDownload(row.cl_allow_download, row.cl_code),
     },
   }));
 

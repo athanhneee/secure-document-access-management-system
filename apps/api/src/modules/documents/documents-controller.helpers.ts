@@ -122,9 +122,10 @@ export function extractDocumentPrincipal(request: FastifyRequest): AuthPrincipal
 }
 
 export function extractDocumentRequestContext(request: FastifyRequest): RequestContext {
+  const userAgent = request.headers?.['user-agent'];
   return {
-    ip: request.ip,
-    ...(request.headers['user-agent'] ? { userAgent: request.headers['user-agent'] } : {}),
+    ip: request.ip ?? '127.0.0.1',
+    ...(userAgent ? { userAgent } : {}),
     correlationId: request.correlationId ?? randomUUID(),
   };
 }

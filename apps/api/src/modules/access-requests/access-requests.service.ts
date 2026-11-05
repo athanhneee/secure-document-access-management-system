@@ -160,60 +160,92 @@ export class AccessRequestsService {
   }
 
   /**
-   * UC14: Algorithm / Thuật toán: Chuyển Trạng Thái Hủy Yêu Cầu Của Người Gửi (`PENDING` -> `CANCELLED`).
+   * UC14: Algorithm / Thuật toán: Chuyển Trạng Thái Hủy Yêu Cầu Của Người Gửi Có Khóa Redlock & CAS Nguyên Tử (`PENDING` -> `CANCELLED`).
    */
   async cancelRequest(
     id: string,
     principal: AuthPrincipal,
     context: RequestContext,
   ): Promise<{ id: string; status: string }> {
-    const now = new Date();
-    const request = await this.database.accessRequest.findUnique({ where: { id } });
+    const runCancel = async (): Promise<{ id: string; status: string }> => {
+      const now = new Date();
+      const request = await this.database.accessRequest.findUnique({ where: { id } });
 
-    if (!request) {
-      throw new NotFoundException({
-        errorCode: AppErrorCode.ACCESS_REQUEST_NOT_FOUND,
-        message: 'Access request was not found.',
-      });
-    }
-    if (request.requester_id !== principal.userId) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.FORBIDDEN,
-        message: 'You can only cancel your own access requests.',
-      });
-    }
-    if (request.status !== 'PENDING') {
-      throw new BadRequestException({
-        errorCode: AppErrorCode.ACCESS_REQUEST_ALREADY_DECIDED,
-        message: `Cannot cancel request in ${request.status} status.`,
-      });
-    }
+      if (!request) {
+        throw new NotFoundException({
+          errorCode: AppErrorCode.ACCESS_REQUEST_NOT_FOUND,
+          message: 'Access request was not found.',
+        });
+      }
+      if (request.requester_id !== principal.userId) {
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.FORBIDDEN,
+          message: 'You can only cancel your own access requests.',
+        });
+      }
+      if (request.status !== 'PENDING') {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.ACCESS_REQUEST_ALREADY_DECIDED,
+          message: `Cannot cancel request in ${request.status} status.`,
+        });
+      }
 
-    await this.database.$transaction(async (tx) => {
-      await tx.accessRequest.update({
-        where: { id },
-        data: {
-          status: 'CANCELLED',
-          cancelled_at: now,
-          updated_at: now,
-          version: { increment: 1 },
-        },
+      await this.database.$transaction(async (tx) => {
+        // CONFLICT-RESOLVED: Bọc Redlock cùng khóa `access-request:decision:${id}` và dùng CAS `status = 'PENDING'` để ngăn ghi đè yêu cầu vừa được phê duyệt (HIGH-11).
+        if (typeof tx.accessRequest.updateMany === 'function') {
+          const updated = await tx.accessRequest.updateMany({
+            where: { id, requester_id: principal.userId, status: 'PENDING' },
+            data: {
+              status: 'CANCELLED',
+              cancelled_at: now,
+              updated_at: now,
+              version: { increment: 1 },
+            },
+          });
+          if (updated.count === 0) {
+            throw new BadRequestException({
+              errorCode: AppErrorCode.ACCESS_REQUEST_ALREADY_DECIDED,
+              message: 'Access request was concurrently decided or cancelled.',
+            });
+          }
+        } else {
+          const current = await tx.accessRequest.findUnique({ where: { id } });
+          if (!current || current.status !== 'PENDING') {
+            throw new BadRequestException({
+              errorCode: AppErrorCode.ACCESS_REQUEST_ALREADY_DECIDED,
+              message: 'Access request was concurrently decided or cancelled.',
+            });
+          }
+          await tx.accessRequest.update({
+            where: { id },
+            data: {
+              status: 'CANCELLED',
+              cancelled_at: now,
+              updated_at: now,
+              version: { increment: 1 },
+            },
+          });
+        }
+        await this.audit.record(
+          {
+            action: 'ACCESS_REQUEST_CANCELLED',
+            outcome: 'SUCCESS',
+            objectId: id,
+            documentId: request.document_id,
+            details: { requesterId: principal.userId.toString() },
+          },
+          principal,
+          context,
+          tx,
+        );
       });
-      await this.audit.record(
-        {
-          action: 'ACCESS_REQUEST_CANCELLED',
-          outcome: 'SUCCESS',
-          objectId: id,
-          documentId: request.document_id,
-          details: { requesterId: principal.userId.toString() },
-        },
-        principal,
-        context,
-        tx,
-      );
-    });
 
-    return { id, status: 'CANCELLED' };
+      return { id, status: 'CANCELLED' };
+    };
+
+    return this.redlock
+      ? await this.redlock.withLock(`access-request:decision:${id}`, 5000, runCancel)
+      : await runCancel();
   }
 
   /**

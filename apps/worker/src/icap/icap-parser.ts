@@ -34,9 +34,13 @@ export {
  */
 export class IcapParser {
   /**
-   * Thuật toán: Phân tách khung bản tin ICAP RFC 3507 và lan truyền cờ `incompleteHeaders` khi HTTP header đóng gói chưa nhận đủ qua TCP.
+   * Thuật toán: Phân tách khung bản tin ICAP RFC 3507 và lan truyền cờ `incompleteHeaders` cũng như trạng thái `continuedAfterPreview`
+   * khi HTTP header hoặc pha Preview `0\r\n\r\n` bị phân mảnh qua nhiều gói tin TCP.
    */
-  public static parseRequest(rawBuffer: Buffer): IcapRequest | null {
+  public static parseRequest(
+    rawBuffer: Buffer,
+    options?: { continuedAfterPreview?: boolean | undefined },
+  ): IcapRequest | null {
     const headerEndIndex = rawBuffer.indexOf('\r\n\r\n');
     if (headerEndIndex === -1) {
       return null;
@@ -90,7 +94,10 @@ export class IcapParser {
       previewBytes = parseInt(previewHeader.trim(), 10);
     }
 
-    const payload = extractEncapsulatedHttpPayload(method, remainingBuffer, encapsulated);
+    const isPreview = previewBytes !== undefined;
+    const payload = extractEncapsulatedHttpPayload(method, remainingBuffer, encapsulated, {
+      expectPostPreviewTerminator: Boolean(isPreview && options?.continuedAfterPreview),
+    });
     // CONFLICT-RESOLVED: Lan truyền tường minh incompleteHeaders để IcapServer không khóa sớm headersValidated khi HTTP header đóng gói bị phân mảnh TCP.
     if (payload.incompleteHeaders) {
       return {

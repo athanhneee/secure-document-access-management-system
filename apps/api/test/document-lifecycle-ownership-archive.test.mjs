@@ -116,7 +116,9 @@ test('Document Lifecycle: Retention check emits notifications and alerts but NEV
     ],
   });
 
-  const result = await service.checkRetentionWarnings(30);
+  const result = await service.checkRetentionWarnings(30, undefined, undefined, {
+    systemScan: true,
+  });
 
   assert.equal(result.warningCount, 1);
   assert.equal(result.warnings[0].documentId, expiringDocId);

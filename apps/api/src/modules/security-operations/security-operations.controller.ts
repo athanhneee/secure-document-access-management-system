@@ -216,7 +216,8 @@ export class SecurityOperationsController {
   }
 
   @Patch('security-detection/rules/:ruleCode')
-  @RequirePermission('SECURITY_ALERT', 'MANAGE')
+  // CONFLICT-RESOLVED: Bắt buộc phạm vi toàn cục (`global = true`) cho cấu hình và kích hoạt quy tắc phát hiện xâm nhập SOC toàn hệ thống (HIGH-06).
+  @RequirePermission('SECURITY_ALERT', 'MANAGE', true)
   @ApiOperation({
     summary: 'Configure anomaly detection rule parameters, threshold, window, cooldown',
   })
@@ -232,7 +233,7 @@ export class SecurityOperationsController {
   }
 
   @Post('security-detection/run')
-  @RequirePermission('SECURITY_ALERT', 'MANAGE')
+  @RequirePermission('SECURITY_ALERT', 'MANAGE', true)
   @ApiOperation({ summary: 'Manually trigger anomaly detection run' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Detection run results' })
   async runDetection(@Body() body: unknown, @Req() req: FastifyRequest) {

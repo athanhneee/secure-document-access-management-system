@@ -27,7 +27,7 @@ import {
   UpdateDocumentMetadataSchema,
 } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
-import { RequirePermission } from '../rbac/require-permission.js';
+import { RequireAnyPermission, RequirePermission } from '../rbac/require-permission.js';
 import { DocumentsService, type DocumentDetail } from './documents.service.js';
 import {
   DocumentSearchService,
@@ -63,6 +63,10 @@ export class DocumentsController {
   }
 
   @Get('my-grants')
+  @RequireAnyPermission([
+    { resource: 'DOCUMENT', action: 'VIEW' },
+    { resource: 'DOCUMENT', action: 'DISCOVER' },
+  ])
   async getMyGrantedDocuments(
     @Query() query: unknown,
     @Req() req: FastifyRequest,
@@ -89,6 +93,12 @@ export class DocumentsController {
   }
 
   @Get(':id')
+  @RequireAnyPermission([
+    { resource: 'DOCUMENT', action: 'VIEW' },
+    { resource: 'DOCUMENT', action: 'DISCOVER' },
+    { resource: 'DOCUMENT', action: 'CLASSIFY' },
+    { resource: 'DOCUMENT', action: 'MANAGE' },
+  ])
   async getDocumentDetail(
     @Param() params: unknown,
     @Req() req: FastifyRequest,
@@ -192,6 +202,12 @@ export class DocumentsController {
   }
 
   @Get(':id/classification-history')
+  @RequireAnyPermission([
+    { resource: 'DOCUMENT', action: 'VIEW' },
+    { resource: 'DOCUMENT', action: 'DISCOVER' },
+    { resource: 'DOCUMENT', action: 'CLASSIFY' },
+    { resource: 'DOCUMENT', action: 'MANAGE' },
+  ])
   async getClassificationHistory(
     @Param() params: unknown,
     @Req() req: FastifyRequest,
@@ -200,6 +216,12 @@ export class DocumentsController {
   }
 
   @Get(':id/versions')
+  @RequireAnyPermission([
+    { resource: 'DOCUMENT', action: 'VIEW' },
+    { resource: 'DOCUMENT', action: 'DISCOVER' },
+    { resource: 'DOCUMENT', action: 'CLASSIFY' },
+    { resource: 'DOCUMENT', action: 'MANAGE' },
+  ])
   async getDocumentVersions(
     @Param() params: unknown,
     @Req() req: FastifyRequest,
@@ -212,10 +234,7 @@ export class DocumentsController {
   @RequirePermission('DOCUMENT', 'CLASSIFY')
   async checkRetention(@Req() req: FastifyRequest): Promise<unknown> {
     this.csrf.assertRequest(req);
-    return this.documentsService.checkRetentionWarnings(
-      30,
-      req.auth,
-      req.auth ? reqCtx(req) : undefined,
-    );
+    // CONFLICT-RESOLVED: Cưỡng chế xác thực `principal(req)` bắt buộc thay vì truyền `req.auth` tùy chọn dẫn tới bỏ qua phạm vi phòng ban (HIGH-08).
+    return this.documentsService.checkRetentionWarnings(30, principal(req), reqCtx(req));
   }
 }

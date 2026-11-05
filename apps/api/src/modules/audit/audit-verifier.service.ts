@@ -70,22 +70,36 @@ export class AuditVerifierService {
     let totalChecked = 0;
 
     let previousHash: string | null = null;
-    let expectedSequence: bigint | null = options?.fromSequence ?? null;
+    // CONFLICT-RESOLVED: Khởi tạo expectedSequence = 1n mặc định thay vì null để chặn tấn công cắt cụt đầu chuỗi (Head-Truncation 1..K).
+    let expectedSequence: bigint =
+      options?.fromSequence !== undefined && options.fromSequence >= 1n ? options.fromSequence : 1n;
 
     if (options?.fromSequence && options.fromSequence > 1n) {
+      const priorSequence = options.fromSequence - 1n;
       const priorLog = await this.database.auditLog.findFirst({
         where: {
           chain_partition: partition,
-          chain_sequence: options.fromSequence - 1n,
+          chain_sequence: priorSequence,
         },
       });
       if (priorLog) {
         previousHash = priorLog.entry_hash;
+      } else {
+        violations.push({
+          code: AppErrorCode.AUDIT_CHAIN_BROKEN,
+          partition,
+          sequence: options.fromSequence,
+          expected: `sequence:${priorSequence.toString()}`,
+          actual: 'PRIOR_LOG_MISSING',
+          message: `Prior link at sequence ${priorSequence} is missing in partition ${partition}`,
+        });
       }
     }
 
     let cursorSequence: bigint | undefined =
-      options?.fromSequence !== undefined ? options.fromSequence - 1n : undefined;
+      options?.fromSequence !== undefined && options.fromSequence >= 1n
+        ? options.fromSequence - 1n
+        : undefined;
 
     while (true) {
       const batchWhere: {
@@ -112,8 +126,6 @@ export class AuditVerifierService {
           logHashBySequence.set(log.chain_sequence, { id: log.id, entry_hash: log.entry_hash });
         }
 
-        if (expectedSequence === null) expectedSequence = log.chain_sequence;
-
         if (log.chain_sequence !== expectedSequence) {
           violations.push({
             code: AppErrorCode.AUDIT_SEQUENCE_GAP,
@@ -124,10 +136,9 @@ export class AuditVerifierService {
             actual: log.chain_sequence.toString(),
             message: `Sequence gap detected in partition ${partition}: expected ${expectedSequence}, found ${log.chain_sequence}`,
           });
-          expectedSequence = log.chain_sequence;
         }
 
-        if (log.chain_sequence === 1n && !options?.fromSequence) {
+        if (log.chain_sequence === 1n) {
           if (log.previous_hash !== null) {
             violations.push({
               code: AppErrorCode.AUDIT_CHAIN_BROKEN,
@@ -139,10 +150,19 @@ export class AuditVerifierService {
               message: `First entry in partition ${partition} must have null previous_hash`,
             });
           }
-        } else if (
-          previousHash !== null &&
-          !safeTimingEqualString(log.previous_hash, previousHash)
-        ) {
+        } else if (previousHash === null) {
+          if (!options?.fromSequence || options.fromSequence <= 1n) {
+            violations.push({
+              code: AppErrorCode.AUDIT_CHAIN_BROKEN,
+              partition,
+              sequence: log.chain_sequence,
+              logId: log.id,
+              expected: 'GENESIS_SEQUENCE_1',
+              actual: log.previous_hash ?? 'null',
+              message: `Missing genesis head before sequence ${log.chain_sequence} in partition ${partition}`,
+            });
+          }
+        } else if (!safeTimingEqualString(log.previous_hash, previousHash)) {
           violations.push({
             code: AppErrorCode.AUDIT_CHAIN_BROKEN,
             partition,
@@ -180,13 +200,14 @@ export class AuditVerifierService {
           .digest('hex');
 
         if (!safeTimingEqualString(computedHash, log.entry_hash)) {
+          // CONFLICT-RESOLVED: Tuyệt đối không trả về computedHash để triệt tiêu HMAC Signing Oracle (CRIT-02).
           violations.push({
             code: AppErrorCode.AUDIT_LOG_TAMPERED,
             partition,
             sequence: log.chain_sequence,
             logId: log.id,
-            expected: computedHash,
-            actual: log.entry_hash,
+            expected: '[REDACTED_HMAC]',
+            actual: '[TAMPERED_ENTRY_HASH]',
             message: `HMAC verification failed for partition ${partition} at sequence ${log.chain_sequence}: data was tampered`,
           });
         }
@@ -225,17 +246,31 @@ export class AuditVerifierService {
   }
 
   /**
-   * Algorithm / Thuật toán: Quét kiểm chứng tuần tự toàn bộ phân vùng nhật ký đang hoạt động.
+   * Algorithm / Thuật toán: Quét kiểm chứng tuần tự hợp nhất danh sách phân vùng từ cả `audit_logs` và `audit_anchors`
+   * nhằm phát hiện cả kịch bản xóa trắng toàn bộ nhật ký của một phân vùng đã có điểm neo.
    */
   async verifyAllPartitions(): Promise<Record<string, PartitionVerificationResult>> {
-    const distinctPartitions = await this.database.auditLog.findMany({
+    const distinctLogPartitions = await this.database.auditLog.findMany({
       select: { chain_partition: true },
       distinct: ['chain_partition'],
     });
+    const distinctAnchorPartitions =
+      typeof this.database.auditAnchor?.findMany === 'function'
+        ? await this.database.auditAnchor.findMany({
+            select: { chain_partition: true },
+            distinct: ['chain_partition'],
+          })
+        : [];
+
+    const partitionNames = new Set<string>();
+    for (const p of distinctLogPartitions) partitionNames.add(p.chain_partition);
+    for (const a of distinctAnchorPartitions) {
+      if (a?.chain_partition) partitionNames.add(a.chain_partition);
+    }
 
     const results: Record<string, PartitionVerificationResult> = {};
-    for (const p of distinctPartitions) {
-      results[p.chain_partition] = await this.verifyPartition(p.chain_partition);
+    for (const partition of partitionNames) {
+      results[partition] = await this.verifyPartition(partition);
     }
     return results;
   }

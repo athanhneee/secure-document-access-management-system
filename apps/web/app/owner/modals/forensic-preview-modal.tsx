@@ -1,6 +1,13 @@
 'use client';
 
-import { ShieldCheck, FileType, RefreshCw, QrCode, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  ShieldCheck,
+  ShieldAlert,
+  FileType,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import { ClassificationBadge } from '@/components/classification-badge';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import {
@@ -35,8 +42,6 @@ export function ForensicPreviewModal({
   page,
   totalPages,
   isLoading,
-  userFullName,
-  username,
   onPageChange,
 }: ForensicPreviewModalProps) {
   return (
@@ -55,7 +60,7 @@ export function ForensicPreviewModal({
                 Sandbox Xem Trước An Toàn: {document?.title}
               </DialogTitle>
             </div>
-            <DialogDescription className="text-[11px] text-[#717171] mt-0.5 flex flex-wrap items-center gap-2">
+            <DialogDescription className="text-xs text-[#717171] mt-0.5 flex flex-wrap items-center gap-2">
               <span>Phiên: {sessionId || 'sess-active'}</span>
               <span className="text-[#ebebeb]">|</span>
               <span className="inline-flex items-center gap-1 text-[#008489] font-medium">
@@ -91,55 +96,24 @@ export function ForensicPreviewModal({
               />
             </div>
           ) : (
-            <div className="relative w-full max-w-2xl aspect-[3/4] bg-white rounded shadow-2xl p-8 flex flex-col justify-between overflow-hidden select-none border border-[#dddddd]">
-              <div className="space-y-4 text-[#222222]">
-                <div className="border-b border-[#ebebeb] pb-3">
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-[#717171]">
-                    CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
-                  </div>
-                  <div className="text-xs font-semibold text-[#222222] mt-1">{document?.title}</div>
-                  <div className="text-[10px] text-[#717171] font-bold mt-0.5">
-                    Số: {document?.documentCode || 'DOC-CONFIDENTIAL-2026'}
-                  </div>
-                </div>
-
-                <div className="space-y-2 text-xs leading-relaxed text-[#717171]">
-                  <p>
-                    Căn cứ quy chế an toàn thông tin và bảo vệ tài liệu mật số 14/QC-BCĐ, nội dung
-                    này chỉ được phép tiếp cận bởi nhân sự được ủy quyền thông qua phiên làm việc đã
-                    xác thực.
-                  </p>
-                  <p>
-                    Nghiêm cấm sao chép, chụp ảnh màn hình hoặc phát tán ra ngoài phạm vi quy định.
-                    Mọi vi phạm sẽ được xử lý theo quy định của pháp luật và truy vết qua mã
-                    watermark định danh phiên.
-                  </p>
-                </div>
-              </div>
-
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none rotate-[-25deg] opacity-25">
-                <div className="font-bold text-center text-[#C13515] text-sm leading-tight space-y-1">
-                  <div>
-                    {userFullName || 'CHỦ SỞ HỮU'} · {username}
-                  </div>
-                  <div>{new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC</div>
-                  <div className="text-xs text-[#222222]">{document?.documentCode}</div>
-                  <div className="text-[11px] text-[#008A05]">WM-{sessionId?.slice(0, 16)}</div>
-                </div>
-                <QrCode
-                  size={24}
-                  strokeWidth={1.75}
-                  className="mt-2 text-[#C13515]"
-                  aria-hidden="true"
-                />
-              </div>
-
-              <div className="text-[10px] font-bold text-[#717171] flex justify-between border-t border-[#ebebeb] pt-2">
-                <span>Phân hệ Owner · Controlled Delivery</span>
-                <span>
-                  Trang {page} / {totalPages}
-                </span>
-              </div>
+            <div
+              role="alert"
+              className="w-full max-w-md bg-[#ffffff] rounded-xl border border-[#dddddd] p-6 flex flex-col items-center text-center gap-3"
+            >
+              {/* CONFLICT-RESOLVED: Gỡ bỏ hoàn toàn trang văn bản giả gắn quốc hiệu/số hiệu khi thiếu pdfUrl để đảm bảo Fail-Closed (CRIT-07). */}
+              <ShieldAlert
+                size={24}
+                strokeWidth={1.75}
+                className="text-[#C13515]"
+                aria-hidden="true"
+              />
+              <p className="text-sm font-semibold text-[#222222]">
+                Không thể hiển thị bản xem trước PDF đã xác thực
+              </p>
+              <p className="text-xs leading-relaxed text-[#717171]">
+                Luồng dữ liệu PDF gắn dấu Watermark chưa sẵn sàng hoặc không vượt qua bước kiểm định
+                chữ ký tệp (chế độ bảo vệ Fail-Closed).
+              </p>
             </div>
           )}
         </div>

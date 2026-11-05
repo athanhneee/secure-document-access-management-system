@@ -105,6 +105,77 @@ export async function buildGrantSubjectAttributes(
 }
 
 /**
+ * Algorithm / Thuật toán: Tổng hợp thuộc tính chủ thể bảo thủ (Lattice Meet) cho cấp quyền theo vai trò `ROLE` (HIGH-11).
+ * Tuyệt đối không dùng độ mật/phòng ban của người cấp (`granter`); thay vào đó tính giá trị giao bảo thủ trên tập người giữ vai trò đang hoạt động.
+ */
+export async function buildRoleGrantSubjectAttributes(
+  database: PrismaClient,
+  roleId: bigint,
+  now: Date = new Date(),
+): Promise<{
+  clearanceRank: number | null;
+  departmentId: string | null;
+  employmentStatus: string | null;
+  projects: string[];
+  holderCount: number;
+}> {
+  if (typeof database?.userRole?.findMany !== 'function') {
+    return {
+      clearanceRank: 0,
+      departmentId: null,
+      employmentStatus: 'ACTIVE',
+      projects: [],
+      holderCount: 0,
+    };
+  }
+
+  const assignments = await database.userRole.findMany({
+    where: {
+      role_id: roleId,
+      OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+      users: { status: { not: 'DISABLED' } },
+    },
+    select: { user_id: true },
+  });
+
+  const uniqueUserIds = [...new Set(assignments.map((a) => a.user_id))];
+  if (uniqueUserIds.length === 0) {
+    return {
+      clearanceRank: 0,
+      departmentId: null,
+      employmentStatus: null,
+      projects: [],
+      holderCount: 0,
+    };
+  }
+
+  const holderProfiles = await Promise.all(
+    uniqueUserIds.map((uid) => buildGrantSubjectAttributes(database, uid, now)),
+  );
+  const minClearance = holderProfiles.reduce(
+    (min, p) => Math.min(min, p.clearanceRank ?? 0),
+    Number.POSITIVE_INFINITY,
+  );
+  const firstDept = holderProfiles[0]?.departmentId ?? null;
+  const sharedDept = holderProfiles.every((p) => p.departmentId === firstDept) ? firstDept : null;
+  const allActive = holderProfiles.every((p) => p.employmentStatus === 'ACTIVE');
+  const sharedProjects = holderProfiles
+    .slice(1)
+    .reduce(
+      (acc, p) => acc.filter((proj) => p.projects.includes(proj)),
+      [...(holderProfiles[0]?.projects ?? [])],
+    );
+
+  return {
+    clearanceRank: Number.isFinite(minClearance) ? minClearance : 0,
+    departmentId: sharedDept,
+    employmentStatus: allActive ? 'ACTIVE' : null,
+    projects: sharedProjects,
+    holderCount: uniqueUserIds.length,
+  };
+}
+
+/**
  * Algorithm / Thuật toán: Trích xuất vector thuộc tính tài nguyên tài liệu cho động cơ đánh giá ABAC.
  */
 export function buildGrantResourceAttributes(

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { ForbiddenException } from '@nestjs/common';
 import { activateMfaAuthSession } from '../dist/modules/auth/auth-session.repository.js';
@@ -93,52 +94,61 @@ test('[HIGH-05] ExportJobService enforces per-type RBAC permissions and applies 
     mfa: true,
   };
 
-  const service = new ExportJobService(mockDb, undefined, mockAuthorization);
+  const tmpExportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sda-high-export-'));
+  const prevExportDir = process.env['EXPORT_STORAGE_DIR'];
+  process.env['EXPORT_STORAGE_DIR'] = tmpExportDir;
+  try {
+    const service = new ExportJobService(mockDb, undefined, mockAuthorization);
 
-  // 1. AUDITOR with only AUDIT_LOG:EXPORT cannot export INCIDENT_REPORTS
-  await assert.rejects(
-    service.createExportJob(
-      { exportType: 'INCIDENT_REPORTS', format: 'CSV', filterParams: {} },
-      auditorActor,
-    ),
-    (err) => err instanceof ForbiddenException,
-  );
-
-  // 2. Requesting out-of-scope departmentId=99 is rejected
-  await assert.rejects(
-    service.createExportJob(
-      { exportType: 'AUDIT_LOGS', format: 'JSON', filterParams: { departmentId: '99' } },
-      auditorActor,
-    ),
-    (err) => err instanceof ForbiddenException,
-  );
-
-  // 3. Valid filterParams + department scope are applied to Prisma query
-  await service.processExportJob(
-    (
-      await service.createExportJob(
-        {
-          exportType: 'AUDIT_LOGS',
-          format: 'JSON',
-          filterParams: { action: 'DOCUMENT_DOWNLOADED', from: '2026-01-01', to: '2026-12-31' },
-        },
+    // 1. AUDITOR with only AUDIT_LOG:EXPORT cannot export INCIDENT_REPORTS
+    await assert.rejects(
+      service.createExportJob(
+        { exportType: 'INCIDENT_REPORTS', format: 'CSV', filterParams: {} },
         auditorActor,
-      )
-    ).id,
-    {
-      exportType: 'AUDIT_LOGS',
-      format: 'JSON',
-      filterParams: { action: 'DOCUMENT_DOWNLOADED', from: '2026-01-01', to: '2026-12-31' },
-    },
-    auditorActor,
-    'corr-1',
-    [10n],
-  );
+      ),
+      (err) => err instanceof ForbiddenException,
+    );
 
-  assert.ok(capturedWhere);
-  assert.equal(capturedWhere.action, 'DOCUMENT_DOWNLOADED');
-  assert.ok(capturedWhere.occurred_at?.gte instanceof Date);
-  assert.ok(Array.isArray(capturedWhere.OR));
+    // 2. Requesting out-of-scope departmentId=99 is rejected
+    await assert.rejects(
+      service.createExportJob(
+        { exportType: 'AUDIT_LOGS', format: 'JSON', filterParams: { departmentId: '99' } },
+        auditorActor,
+      ),
+      (err) => err instanceof ForbiddenException,
+    );
+
+    // 3. Valid filterParams + department scope are applied to Prisma query
+    await service.processExportJob(
+      (
+        await service.createExportJob(
+          {
+            exportType: 'AUDIT_LOGS',
+            format: 'JSON',
+            filterParams: { action: 'DOCUMENT_DOWNLOADED', from: '2026-01-01', to: '2026-12-31' },
+          },
+          auditorActor,
+        )
+      ).id,
+      {
+        exportType: 'AUDIT_LOGS',
+        format: 'JSON',
+        filterParams: { action: 'DOCUMENT_DOWNLOADED', from: '2026-01-01', to: '2026-12-31' },
+      },
+      auditorActor,
+      'corr-1',
+      [10n],
+    );
+
+    assert.ok(capturedWhere);
+    assert.equal(capturedWhere.action, 'DOCUMENT_DOWNLOADED');
+    assert.ok(capturedWhere.occurred_at?.gte instanceof Date);
+    assert.ok(Array.isArray(capturedWhere.OR));
+  } finally {
+    if (prevExportDir === undefined) delete process.env['EXPORT_STORAGE_DIR'];
+    else process.env['EXPORT_STORAGE_DIR'] = prevExportDir;
+    fs.rmSync(tmpExportDir, { recursive: true, force: true });
+  }
 });
 
 test('[HIGH-06] Migration 20261105133000 enforces FORCE RLS, explicit policies, service_role least privilege & TRUNCATE triggers', () => {

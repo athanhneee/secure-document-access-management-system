@@ -15,11 +15,18 @@ export class CloudKmsService implements KmsService {
   private readonly logger = new Logger(CloudKmsService.name);
   readonly keyId: string;
   readonly region: string;
+  private readonly isProduction: boolean;
   private readonly fallbackKek: Buffer;
 
   constructor(config: AppConfigService) {
+    this.isProduction = config.get('NODE_ENV') === 'production';
     this.keyId = config.get('AWS_KMS_KEY_ID') ?? 'alias/sda-master-kek';
     this.region = config.get('AWS_KMS_REGION') ?? 'us-east-1';
+    if (this.isProduction && config.get('KMS_PROVIDER') === 'aws-kms') {
+      throw new Error(
+        'Software Cloud KMS simulator is prohibited in production; wire real AWS KMS SDK.',
+      );
+    }
 
     const masterKey = config.get('APP_ENCRYPTION_MASTER_KEY');
     this.fallbackKek = Buffer.from(
@@ -42,6 +49,9 @@ export class CloudKmsService implements KmsService {
    * Algorithm: Cloud KMS Region-Bound AES-256-GCM DEK Wrap
    */
   async wrapKey(plaintextDek: Buffer): Promise<KmsWrapResult> {
+    if (this.isProduction) {
+      throw new Error('Software Cloud KMS simulator cannot wrap keys in production.');
+    }
     return wrapDekWithAes256Gcm(plaintextDek, this.fallbackKek, this.keyRef);
   }
 
@@ -49,6 +59,9 @@ export class CloudKmsService implements KmsService {
    * Algorithm: Cloud KMS Region-Bound AES-256-GCM DEK Unwrap
    */
   async unwrapKey(wrappedDek: string, keyRef: string): Promise<Buffer> {
+    if (this.isProduction) {
+      throw new Error('Software Cloud KMS simulator cannot unwrap keys in production.');
+    }
     if (!keyRef.startsWith('aws-kms:')) {
       throw new Error(`Unsupported KMS keyRef format: ${keyRef}`);
     }

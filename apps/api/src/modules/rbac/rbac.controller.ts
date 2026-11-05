@@ -18,7 +18,7 @@ import { randomUUID } from 'node:crypto';
 import { PositiveBigIntSchema } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
-import { RequirePermission } from './require-permission.js';
+import { RequireAnyPermission, RequirePermission } from './require-permission.js';
 import { RbacService } from './rbac.service.js';
 
 // CONFLICT-RESOLVED: Chuẩn hóa định danh số nguyên 64-bit dương có trần PostgreSQL BIGINT (HIGH-12)
@@ -79,9 +79,13 @@ export class RbacController {
   }
 
   @Get('roles/lookup')
+  @RequireAnyPermission([
+    { resource: 'ACCESS_GRANT', action: 'CREATE' },
+    { resource: 'USER', action: 'MANAGE' },
+    { resource: 'ROLE', action: 'MANAGE', global: true },
+  ])
   lookupRoles(@Req() request: FastifyRequest) {
-    this.principal(request);
-    return this.rbac.lookupRoles();
+    return this.rbac.lookupRoles(this.principal(request));
   }
 
   @Get('roles/:id')

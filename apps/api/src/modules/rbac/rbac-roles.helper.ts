@@ -7,7 +7,11 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 import { withSerializableTransaction, type getDatabaseClient } from '@sda/database';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from './authorization.service.js';
-import { systemRoleAllows } from './permission-matrix.js';
+import {
+  areOverlappingRolesSodCompatible,
+  resolveCompatibleSodArchetypes,
+  systemRoleAllows,
+} from './permission-matrix.js';
 import type { RbacAuditService } from './rbac-audit.service.js';
 import { actorHoldsActiveRole } from './rbac-assignments.helper.js';
 
@@ -85,41 +89,45 @@ export async function executeUpdateRole(params: {
   context: RequestContext;
 }): Promise<bigint> {
   const { database, authorization, audit, principal, id, input, context } = params;
-  const role = await withSerializableTransaction(async (transaction) => {
-    const before = await transaction.role.findUnique({ where: { id } });
-    if (!before) throw new NotFoundException('Role not found.');
-    if (await actorHoldsActiveRole(database, principal.userId, id)) {
-      throw new ForbiddenException('Administrators cannot change a role they hold.');
-    }
-    if (before.is_system_role && (input.code !== undefined || input.name !== undefined)) {
-      throw new ForbiddenException('System role code and name are immutable.');
-    }
-    const changed = await transaction.role.updateMany({
-      where: { id, version: input.expectedVersion },
-      data: {
-        ...(input.code !== undefined ? { code: input.code } : {}),
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        updated_at: new Date(),
-        version: { increment: 1 },
-      },
-    });
-    if (changed.count !== 1) throw new ConflictException('Role was changed by another request.');
-    const after = await transaction.role.findUniqueOrThrow({ where: { id } });
-    await audit.record(
-      transaction,
-      {
-        action: 'ROLE_UPDATED',
-        objectType: 'ROLE',
-        objectId: id.toString(),
-        before: auditRoleSnapshot(before),
-        after: auditRoleSnapshot(after),
-      },
-      principal,
-      context,
-    );
-    return after;
-  });
+  const role = await withSerializableTransaction(
+    async (transaction) => {
+      const before = await transaction.role.findUnique({ where: { id } });
+      if (!before) throw new NotFoundException('Role not found.');
+      // CONFLICT-RESOLVED: Chạy `actorHoldsActiveRole` bên trong giao dịch `transaction` thay vì `database` bên ngoài để giữ tính cô lập SERIALIZABLE (HIGH-02).
+      if (await actorHoldsActiveRole(transaction, principal.userId, id)) {
+        throw new ForbiddenException('Administrators cannot change a role they hold.');
+      }
+      if (before.is_system_role && (input.code !== undefined || input.name !== undefined)) {
+        throw new ForbiddenException('System role code and name are immutable.');
+      }
+      const changed = await transaction.role.updateMany({
+        where: { id, version: input.expectedVersion },
+        data: {
+          ...(input.code !== undefined ? { code: input.code } : {}),
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          updated_at: new Date(),
+          version: { increment: 1 },
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('Role was changed by another request.');
+      const after = await transaction.role.findUniqueOrThrow({ where: { id } });
+      await audit.record(
+        transaction,
+        {
+          action: 'ROLE_UPDATED',
+          objectType: 'ROLE',
+          objectId: id.toString(),
+          before: auditRoleSnapshot(before),
+          after: auditRoleSnapshot(after),
+        },
+        principal,
+        context,
+      );
+      return after;
+    },
+    { client: database },
+  );
   authorization.invalidateAll();
   return role.id;
 }
@@ -185,15 +193,15 @@ export async function executeReplaceRolePermissions(params: {
         include: { role_permissions: { include: { permissions: true } } },
       });
       if (!role) throw new NotFoundException('Role not found.');
-      if (await actorHoldsActiveRole(database, principal.userId, roleId)) {
+      // CONFLICT-RESOLVED: Kiểm tra quyền sở hữu vai trò trong cùng giao dịch SERIALIZABLE và chặn trộn lẫn tập quyền trái Phân tách Nhiệm vụ trên Custom Role (HIGH-01, HIGH-02).
+      if (await actorHoldsActiveRole(transaction, principal.userId, roleId)) {
         throw new ForbiddenException('Administrators cannot change a role they hold.');
       }
       const permissions = await transaction.permission.findMany({
         where: { id: { in: uniquePermissionIds } },
       });
-      if (permissions.length !== uniquePermissionIds.length) {
+      if (permissions.length !== uniquePermissionIds.length)
         throw new NotFoundException('Permission not found.');
-      }
       await authorization.assertCanDelegate(principal, uniquePermissionIds, null);
       if (
         role.is_system_role &&
@@ -205,6 +213,59 @@ export async function executeReplaceRolePermissions(params: {
         throw new ForbiddenException(
           'System role mapping is outside the approved permission matrix.',
         );
+      }
+      if (resolveCompatibleSodArchetypes([{ code: role.code, permissions }]).size === 0) {
+        throw new ForbiddenException(
+          'Role permissions violate Separation of Duties across incompatible security domains.',
+        );
+      }
+      const now = new Date();
+      const activeHolders =
+        typeof transaction.userRole?.findMany === 'function'
+          ? await transaction.userRole.findMany({
+              where: {
+                role_id: roleId,
+                OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+              },
+              select: { user_id: true, valid_from: true, valid_to: true },
+            })
+          : [];
+      if (activeHolders.length > 0) {
+        const holderIds = [...new Set(activeHolders.map((h) => h.user_id))];
+        const allHolderAssignments = await transaction.userRole.findMany({
+          where: {
+            user_id: { in: holderIds },
+            roles: { is_active: true },
+            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          },
+          include: {
+            roles: { include: { role_permissions: { include: { permissions: true } } } },
+          },
+        });
+        for (const targetAssignment of activeHolders) {
+          const overlappingForHolder = allHolderAssignments
+            .filter(
+              (other) =>
+                other.user_id === targetAssignment.user_id &&
+                (other.valid_to === null || other.valid_to > targetAssignment.valid_from) &&
+                (targetAssignment.valid_to === null ||
+                  other.valid_from < targetAssignment.valid_to),
+            )
+            .map((other) => ({
+              code: other.roles.code,
+              permissions:
+                other.role_id === roleId
+                  ? permissions
+                  : (other.roles.role_permissions ?? [])
+                      .map((m) => m.permissions)
+                      .filter((p): p is NonNullable<typeof p> => Boolean(p)),
+            }));
+          if (!areOverlappingRolesSodCompatible(overlappingForHolder)) {
+            throw new ConflictException(
+              'Separation of duties violation: updating role permissions conflicts with another role held by an assigned user.',
+            );
+          }
+        }
       }
       const before = role.role_permissions.map((mapping) => mapping.permissions.code).sort();
       await transaction.rolePermission.deleteMany({ where: { role_id: roleId } });

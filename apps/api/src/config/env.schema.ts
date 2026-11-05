@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const EnvSchema = z
   .object({
-    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    NODE_ENV: z.enum(['development', 'test', 'staging', 'production']).default('development'),
     HOST: z.string().default('127.0.0.1'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3001),
     TRUST_PROXY: z.string().default('loopback'),
@@ -26,9 +26,13 @@ export const EnvSchema = z
     REDLOCK_RETRY_JITTER_MS: z.coerce.number().int().min(0).default(50),
     REDLOCK_DEFAULT_TTL_MS: z.coerce.number().int().min(500).default(5000),
     REDLOCK_FAIL_CLOSED: z
-      .preprocess((val) => val === 'true' || val === true, z.boolean())
-      .default(false),
+      .preprocess(
+        (val) => (val === undefined ? true : val !== 'false' && val !== false),
+        z.boolean(),
+      )
+      .default(true),
     ABAC_TRUSTED_NETWORK_CIDRS: z.string().default('127.0.0.0/8,::1/128'),
+    STORAGE_MOCK: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(false),
     STORAGE_ENDPOINT: z.string().default('127.0.0.1'),
     STORAGE_PORT: z.coerce.number().int().min(1).max(65535).default(9000),
     STORAGE_REGION: z.string().default('us-east-1'),
@@ -116,6 +120,14 @@ export const EnvSchema = z
         path: ['STORAGE_BUCKET_QUARANTINE'],
         message:
           'STORAGE_BUCKET_QUARANTINE must be isolated in a separate bucket from STORAGE_BUCKET_DOCUMENTS and STORAGE_BUCKET_DERIVATIVES.',
+      });
+    }
+
+    if ((value.NODE_ENV === 'production' || value.NODE_ENV === 'staging') && value.STORAGE_MOCK) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['STORAGE_MOCK'],
+        message: 'STORAGE_MOCK=true is strictly forbidden in staging and production environments.',
       });
     }
 

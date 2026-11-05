@@ -13,6 +13,7 @@ import { generateCsv } from './csv-formula-sanitizer.js';
 import {
   decryptAndVerifyExportArtifactBuffer,
   encryptExportArtifactBuffer,
+  readContainedExportArtifactBuffer,
 } from './export-disk-cipher.helper.js';
 import { resolveExportAuthorizationScope } from './export-filter-scope.helper.js';
 import { generateExcelTable, generatePdfTable, type ExportColumn } from './export-formatter.js';
@@ -255,11 +256,10 @@ export function readVerifiedExportArtifact(
       message: 'Export artifact path is invalid.',
     });
   }
-  if (fs.existsSync(resolvedTarget) && !fs.lstatSync(resolvedTarget).isSymbolicLink()) {
-    const rawDiskBuffer = fs.readFileSync(resolvedTarget);
-    return decryptAndVerifyExportArtifactBuffer(id, rawDiskBuffer, expectedSha256Hash, true);
-  }
-  return null;
+  const rawDiskBuffer = readContainedExportArtifactBuffer(resolvedTarget);
+  return rawDiskBuffer
+    ? decryptAndVerifyExportArtifactBuffer(id, rawDiskBuffer, expectedSha256Hash, true)
+    : null;
 }
 
 /**

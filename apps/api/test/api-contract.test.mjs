@@ -1,43 +1,105 @@
+/**
+ * Module: Real API Contract, Exception Envelope & Safe DTO Projection Tests
+ * Thuật toán: Kiểm chứng trực tiếp `HttpExceptionFilter`, `presentUserRecord` và các lược đồ `@sda/contracts` thật
+ *   (thay thế hoàn toàn các hàm giả lập nội bộ trước đây).
+ */
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { BadRequestException } from '@nestjs/common';
 import {
   IdParamSchema,
   UuidParamSchema,
+  PositiveBigIntSchema,
   CreateDocumentDraftSchema,
   RevokeAccessGrantSchema,
   CreateAccessRequestSchema,
   ListAccessGrantsSchema,
 } from '../../../packages/contracts/dist/dto.js';
 import { AppErrorCode } from '@sda/contracts';
+import { HttpExceptionFilter } from '../dist/common/filters/http-exception.filter.js';
+import { presentUserRecord } from '../dist/modules/users/users-clearance.helper.js';
 
-// ── 1. Standard Error Envelope & AppErrorCode Conformance ────────────────────
+function createCapturedHttpHost({
+  url = '/api/v1/documents',
+  headers = {},
+  correlationId = undefined,
+} = {}) {
+  const captured = {
+    statusCode: null,
+    headers: {},
+    body: null,
+  };
+  const reply = {
+    status(code) {
+      captured.statusCode = code;
+      return reply;
+    },
+    header(name, value) {
+      captured.headers[name.toLowerCase()] = value;
+      return reply;
+    },
+    send(payload) {
+      captured.body = payload;
+      return reply;
+    },
+  };
+  const request = { url, headers, correlationId };
+  const host = {
+    switchToHttp: () => ({
+      getResponse: () => reply,
+      getRequest: () => request,
+    }),
+  };
+  return { host, captured };
+}
 
-test('API Contract — error response follows standard envelope format', () => {
-  function createStandardError(code, message, details = undefined) {
-    return {
-      error: {
-        code,
-        message,
-        details,
-      },
-    };
-  }
+// ── 1. Real HttpExceptionFilter Envelope & SQL/Stack Masking ──────────────────
 
-  const err = createStandardError(AppErrorCode.VALIDATION_FAILED, 'Request validation failed.', {
-    fieldErrors: { title: ['Title is required'] },
+test('API Contract — real HttpExceptionFilter formats validation errors and masks 500 internals', () => {
+  const filter = new HttpExceptionFilter();
+
+  // Case A: Explicit domain/validation BadRequestException
+  const { host: badReqHost, captured: badReq } = createCapturedHttpHost({
+    url: '/api/v1/documents?secret=1',
+    headers: { 'x-correlation-id': 'corr-safe-001' },
   });
+  filter.catch(
+    new BadRequestException({
+      errorCode: AppErrorCode.VALIDATION_FAILED,
+      message: 'Request validation failed.',
+      details: { fieldErrors: { title: ['Title is required'] } },
+    }),
+    badReqHost,
+  );
 
-  assert.equal(typeof err.error.code, 'string');
-  assert.equal(typeof err.error.message, 'string');
-  assert.ok(err.error.details);
-  assert.equal(err.error.code, AppErrorCode.VALIDATION_FAILED);
+  assert.equal(badReq.statusCode, 400);
+  assert.equal(badReq.headers['cache-control'], 'no-store');
+  assert.equal(badReq.headers['x-correlation-id'], 'corr-safe-001');
+  assert.equal(badReq.body.errorCode, AppErrorCode.VALIDATION_FAILED);
+  assert.equal(badReq.body.message, 'Request validation failed.');
+  assert.deepEqual(badReq.body.details, { fieldErrors: { title: ['Title is required'] } });
+  assert.equal(badReq.body.correlationId, 'corr-safe-001');
+  assert.equal(typeof badReq.body.timestamp, 'string');
 
-  // Response contains no stack trace, database internals, or internal paths
-  const serialized = JSON.stringify(err);
+  // Case B: Raw unexpected internal error with SQL/Prisma details & CRLF correlation injection
+  const { host: internalHost, captured: internalRes } = createCapturedHttpHost({
+    url: '/api/v1/users',
+    headers: { 'x-correlation-id': 'evil\r\nSet-Cookie: hacked=1' },
+  });
+  const sensitiveInternalError = new Error(
+    'SELECT password_hash FROM users WHERE prisma_client = 1 at node_modules/@prisma/client',
+  );
+  filter.catch(sensitiveInternalError, internalHost);
+
+  assert.equal(internalRes.statusCode, 500);
+  assert.equal(internalRes.body.errorCode, AppErrorCode.INTERNAL_SERVER_ERROR);
+  assert.notEqual(internalRes.headers['x-correlation-id'], 'evil\r\nSet-Cookie: hacked=1');
+  const serialized = JSON.stringify(internalRes.body);
   assert.ok(!serialized.includes('node_modules'));
   assert.ok(!serialized.includes('SELECT '));
+  assert.ok(!serialized.includes('password_hash'));
   assert.ok(!serialized.includes('prisma'));
 });
 
@@ -47,45 +109,47 @@ test('API Contract — strict schema rejects unknown/extra fields (mass-assignme
   const payloadWithExtra = {
     title: 'Hop dong bao mat',
     departmentId: '1',
-    isAdmin: true, // Malicious privilege escalation injection
-    bypassAudit: true, // Malicious security bypass injection
+    isAdmin: true,
+    bypassAudit: true,
   };
 
   const parsed = CreateDocumentDraftSchema.safeParse(payloadWithExtra);
   assert.ok(!parsed.success, 'Schema must reject unexpected fields.');
 });
 
-test('API Contract — path params enforce UUID and positive numeric IDs', () => {
-  // UUID param
+test('API Contract — path params and PositiveBigIntSchema enforce UUID and IEEE-754 safe 64-bit IDs', () => {
   const validUuid = randomUUID();
   assert.ok(UuidParamSchema.safeParse({ id: validUuid }).success);
   assert.ok(!UuidParamSchema.safeParse({ id: 'invalid-uuid-format' }).success);
   assert.ok(!UuidParamSchema.safeParse({ id: '../traversal/path' }).success);
 
-  // Numeric ID param
   assert.ok(IdParamSchema.safeParse({ id: '42' }).success);
   assert.ok(!IdParamSchema.safeParse({ id: '-1' }).success);
   assert.ok(!IdParamSchema.safeParse({ id: '0' }).success);
   assert.ok(!IdParamSchema.safeParse({ id: 'abc' }).success);
+
+  // [MED-03] Safe IEEE-754 integer check on numeric JSON inputs
+  assert.equal(PositiveBigIntSchema.safeParse(Number.MAX_SAFE_INTEGER).data, 9007199254740991n);
+  assert.ok(
+    !PositiveBigIntSchema.safeParse(Number.MAX_SAFE_INTEGER + 1).success,
+    'Must reject unsafe JS numbers exceeding Number.MAX_SAFE_INTEGER',
+  );
+  assert.equal(PositiveBigIntSchema.safeParse('9007199254740993').data, 9007199254740993n);
 });
 
-// ── 3. Pagination Bounds & Denial-of-Service Protection ────────────────────────
+// ── 3. Pagination Bounds & Denial-of-Service Protection ───────────────────────
 
 test('API Contract — enforces safe pagination limits and rejects unbounded page size', () => {
-  // Normal pagination within bounds
   const validPage = ListAccessGrantsSchema.safeParse({ page: '1', pageSize: '20' });
   assert.ok(validPage.success);
   assert.equal(validPage.data.pageSize, 20);
 
-  // Rejects page 0 or negative
   assert.ok(!ListAccessGrantsSchema.safeParse({ page: '0' }).success);
   assert.ok(!ListAccessGrantsSchema.safeParse({ page: '-5' }).success);
 
-  // Rejects pageSize > 50 (DoS prevention)
   const excessivePage = ListAccessGrantsSchema.safeParse({ pageSize: '1000000' });
   assert.ok(!excessivePage.success, 'Must reject pageSize > 50 to prevent memory exhaustion');
 
-  // Whitelisted sorting fields
   assert.ok(ListAccessGrantsSchema.safeParse({ sort: 'granted_at', order: 'desc' }).success);
   assert.ok(!ListAccessGrantsSchema.safeParse({ sort: 'malicious_sql_injection;' }).success);
 });
@@ -93,12 +157,11 @@ test('API Contract — enforces safe pagination limits and rejects unbounded pag
 // ── 4. IDOR Resistance & Resource Isolation ───────────────────────────────────
 
 test('API Contract — CreateAccessRequest relies on authenticated caller, not client-supplied user ID', () => {
-  // CreateAccessRequestSchema does NOT accept userId parameter from client body
   const requestBody = {
     documentId: randomUUID(),
     requestedAction: 'VIEW',
     reason: 'Can tham chieu tai lieu cho cong viec nghiep vu.',
-    userId: '9999', // Attacker trying to submit request on behalf of user 9999
+    userId: '9999',
   };
 
   const parsed = CreateAccessRequestSchema.safeParse(requestBody);
@@ -115,7 +178,6 @@ test('API Contract — RevokeAccessGrant accepts optional expectedVersion for op
   assert.ok(validWithVersion.success);
   assert.equal(validWithVersion.data.expectedVersion, 3);
 
-  // Rejects negative version
   assert.ok(
     !RevokeAccessGrantSchema.safeParse({
       reason: 'Thu hoi quyen theo quyet dinh lanh dao.',
@@ -124,36 +186,35 @@ test('API Contract — RevokeAccessGrant accepts optional expectedVersion for op
   );
 });
 
-// ── 6. Secret Sanitization in API Contract ────────────────────────────────────
+// ── 6. Real User DTO Allowlist Projection ─────────────────────────────────────
 
-test('API Contract — response serializer guarantees no sensitive credentials leak', () => {
-  function serializeUserResponse(user) {
-    const {
-      passwordHash: _passwordHash,
-      refreshToken: _refreshToken,
-      mfaSecret: _mfaSecret,
-      ...safeUser
-    } = user;
-    return { ...safeUser, id: safeUser.id.toString() };
-  }
-
+test('API Contract — real presentUserRecord enforces allowlist and strips all credentials', () => {
   const rawDbUser = {
     id: 10n,
     username: 'admin',
     email: 'admin@corp.test',
-    passwordHash: '$argon2id$v=19$m=65536,p=1,t=3$secret-hash',
-    refreshToken: 'secret-refresh-token-opaque',
-    mfaSecret: 'encrypted-totp-secret',
-    fullName: 'System Administrator',
+    full_name: 'System Administrator',
+    department_id: 2n,
+    status: 'ACTIVE',
+    version: 4,
+    password_hash: '$argon2id$v=19$m=65536,p=1,t=3$secret-hash',
+    mfa_methods: [{ secret_encrypted: 'encrypted-totp-secret' }],
+    refresh_tokens: [{ token_hash: 'secret-refresh-token-opaque' }],
+    password_reset_tokens: [{ token_hash: 'reset-secret' }],
+    created_by: 1n,
   };
 
-  const serialized = serializeUserResponse(rawDbUser);
+  const serialized = presentUserRecord(rawDbUser);
   const jsonOutput = JSON.stringify(serialized);
 
-  assert.ok(!jsonOutput.includes('passwordHash'));
+  assert.ok(!jsonOutput.includes('password'));
   assert.ok(!jsonOutput.includes('secret-hash'));
-  assert.ok(!jsonOutput.includes('refreshToken'));
+  assert.ok(!jsonOutput.includes('refresh'));
   assert.ok(!jsonOutput.includes('secret-refresh-token'));
-  assert.ok(!jsonOutput.includes('mfaSecret'));
+  assert.ok(!jsonOutput.includes('encrypted-totp-secret'));
+  assert.ok(!jsonOutput.includes('createdBy'));
+  assert.equal(serialized.id, '10');
+  assert.equal(serialized.departmentId, '2');
+  assert.equal(serialized.fullName, 'System Administrator');
   assert.equal(serialized.username, 'admin');
 });

@@ -8,6 +8,7 @@ import {
   createDecipheriv,
   createHash,
   randomBytes,
+  scryptSync,
   timingSafeEqual,
 } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
@@ -84,10 +85,8 @@ export class MfaService {
       return false;
     }
 
-    const secretDigest = createHash('sha256')
-      .update(this.recoveryPepper)
-      .update(rawSecret, 'utf8')
-      .digest('hex');
+    // CONFLICT-RESOLVED: Dùng hàm dẫn xuất khóa tốn bộ nhớ scryptSync kèm recoveryPepper để định danh khe chống phát lại TOTP, đáp ứng chuẩn CWE-916 (CodeQL js/insufficient-password-hash).
+    const secretDigest = scryptSync(rawSecret, this.recoveryPepper, 32).toString('hex');
     const matchedStep = Math.floor(now / 30_000) + delta;
     const previous = this.lastAcceptedStepBySecret.get(secretDigest);
     if (previous && previous.expiresAt > now && matchedStep <= previous.step) {

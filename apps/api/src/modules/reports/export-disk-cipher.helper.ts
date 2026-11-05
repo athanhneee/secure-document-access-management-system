@@ -62,7 +62,10 @@ export function decryptAndVerifyExportArtifactBuffer(
       const ivStart = EXPORT_MAGIC.length;
       const tagStart = ivStart + IV_BYTES;
       const bodyStart = tagStart + TAG_BYTES;
-      const decipher = createDecipheriv('aes-256-gcm', key, payload.subarray(ivStart, tagStart));
+      // CONFLICT-RESOLVED: Khai báo tường minh `authTagLength: TAG_BYTES` (16 byte) cho AES-256-GCM để chống tấn công rút ngắn thẻ xác thực (Semgrep gcm-no-tag-length).
+      const decipher = createDecipheriv('aes-256-gcm', key, payload.subarray(ivStart, tagStart), {
+        authTagLength: TAG_BYTES,
+      });
       decipher.setAAD(Buffer.from(jobId, 'utf8'));
       decipher.setAuthTag(payload.subarray(tagStart, bodyStart));
       plaintext = Buffer.concat([decipher.update(payload.subarray(bodyStart)), decipher.final()]);
@@ -82,6 +85,33 @@ export function decryptAndVerifyExportArtifactBuffer(
     }
   }
   return plaintext;
+}
+
+/**
+ * Thuật toán: Đọc nguyên tử qua File Descriptor không kiểm tra đường dẫn trước (`O_NOFOLLOW` + `fstatSync(fd)`) chống đua thời gian TOCTOU (`CWE-367`).
+ */
+export function readContainedExportArtifactBuffer(resolvedTarget: string): Buffer | null {
+  let fd: number | undefined;
+  try {
+    // CONFLICT-RESOLVED: Mở trực tiếp file descriptor một lần với cờ O_NOFOLLOW rồi thẩm định bằng fstatSync(fd) thay vì existsSync/lstatSync trước readFileSync để triệt tiêu TOCTOU (CodeQL js/file-system-race).
+    const openFlags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
+    fd = fs.openSync(resolvedTarget, openFlags);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      return null;
+    }
+    return fs.readFileSync(fd);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Ignore descriptor close failure
+      }
+    }
+  }
 }
 
 /**

@@ -68,16 +68,42 @@ export class AuthRepository {
   }
 
   /**
-   * Algorithm / Thuật toán: Khóa tài khoản lũy thừa theo ngưỡng thất bại liên tiếp (`min(900s, 30 * 2^min(failures - 5, 5))`).
+   * Algorithm / Thuật toán: Khóa tài khoản lũy thừa đơn điệu theo ngưỡng thất bại liên tiếp (`GREATEST(existingLockedUntil, candidateLockUntil)`).
+   * Cơ chế hoạt động:
+   *   - Tính bước phạt tự động `min(900s, 30 * 2^min(failures - 5, 5))` khi `failures >= 5`.
+   *   - Đối chiếu với `locked_until` hiện hữu của quản trị viên (cả trên đối tượng `user` lẫn bản ghi DB mới nhất);
+   *     chỉ nâng mốc khóa về tương lai xa hơn và tuyệt đối không xóa (`null`) hay rút ngắn thời hạn khóa quản trị (MED-02).
    */
   async recordLoginFailure(user: AuthUser): Promise<void> {
     const failures = user.failedLoginCount + 1;
     const lockSeconds = failures < 5 ? 0 : Math.min(900, 30 * 2 ** Math.min(failures - 5, 5));
+    const candidateLockUntil = lockSeconds > 0 ? new Date(Date.now() + lockSeconds * 1_000) : null;
+    const latestRow =
+      typeof this.database.user.findUnique === 'function'
+        ? await this.database.user.findUnique({
+            where: { id: user.id },
+            select: { locked_until: true },
+          })
+        : null;
+    const existingLock = [
+      user.lockedUntil ?? null,
+      latestRow?.locked_until ?? null,
+    ].reduce<Date | null>((acc, cur) => {
+      if (!cur) return acc;
+      if (!acc) return cur;
+      return cur.getTime() > acc.getTime() ? cur : acc;
+    }, null);
+    // CONFLICT-RESOLVED: Giữ nguyên mốc khóa quản trị viên dài hạn thay vì ghi đè bằng null hoặc thời hạn khóa tự động ngắn hơn (MED-02).
+    const effectiveLockUntil =
+      existingLock && (!candidateLockUntil || existingLock.getTime() > candidateLockUntil.getTime())
+        ? existingLock
+        : candidateLockUntil;
+
     await this.database.user.update({
       where: { id: user.id },
       data: {
         failed_login_count: { increment: 1 },
-        locked_until: lockSeconds > 0 ? new Date(Date.now() + lockSeconds * 1_000) : null,
+        ...(effectiveLockUntil !== null ? { locked_until: effectiveLockUntil } : {}),
       },
     });
   }

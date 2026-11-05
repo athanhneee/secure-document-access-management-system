@@ -32,8 +32,20 @@ export class ObjectStorageService implements OnModuleInit {
     this.documentsBucket = config.get('STORAGE_BUCKET_DOCUMENTS');
     this.derivativesBucket = config.get('STORAGE_BUCKET_DERIVATIVES');
 
-    // Use in-memory mock if STORAGE_MOCK=true or during test if host is unreachable/placeholder
-    this.isMock = process.env['STORAGE_MOCK'] === 'true' || config.get('NODE_ENV') === 'test';
+    const runtimeEnv = String(config.get('NODE_ENV') ?? process.env['NODE_ENV'] ?? 'development')
+      .trim()
+      .toLowerCase();
+    const storageMockRequested =
+      config.get('STORAGE_MOCK') === true || process.env['STORAGE_MOCK'] === 'true';
+    // CONFLICT-RESOLVED: Cấm tuyệt đối chế độ kho lưu trữ RAM giả lập (STORAGE_MOCK=true) trên môi trường staging và production (MED-05).
+    if (storageMockRequested && (runtimeEnv === 'production' || runtimeEnv === 'staging')) {
+      throw new Error(
+        'SECURITY_VIOLATION: In-memory STORAGE_MOCK=true is strictly forbidden in staging and production environments.',
+      );
+    }
+
+    // Use in-memory mock if STORAGE_MOCK=true (dev/test only) or during test
+    this.isMock = storageMockRequested || runtimeEnv === 'test';
 
     if (!this.isMock) {
       const rawEndpoint = config.get('STORAGE_ENDPOINT').trim();

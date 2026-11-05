@@ -3,12 +3,17 @@ import path from 'node:path';
 import { createApplication } from './application.js';
 
 if (!process.env['DATABASE_URL']) {
+  // CONFLICT-RESOLVED: Khi NODE_ENV=test, tuyệt đối không nạp tệp .env của môi trường phát triển/đám mây để bảo toàn tính cô lập kiểm thử (CRIT-06 / HIGH-12).
   const candidateGroups = [
-    [
-      path.resolve(process.cwd(), '.env'),
-      path.resolve(process.cwd(), '../../.env'),
-      path.resolve(import.meta.dirname, '../../../../.env'),
-    ],
+    ...(process.env['NODE_ENV'] === 'test'
+      ? []
+      : [
+          [
+            path.resolve(process.cwd(), '.env'),
+            path.resolve(process.cwd(), '../../.env'),
+            path.resolve(import.meta.dirname, '../../../../.env'),
+          ],
+        ]),
     [
       path.resolve(process.cwd(), '.local/dev.env'),
       path.resolve(process.cwd(), '../../.local/dev.env'),
@@ -26,6 +31,9 @@ if (!process.env['DATABASE_URL']) {
         }
       }
     }
+  }
+  if (!process.env['DATABASE_URL'] && process.env['NODE_ENV'] === 'test') {
+    process.env['DATABASE_URL'] = 'postgresql://127.0.0.1:5432/secure_docs_test?schema=public';
   }
 }
 

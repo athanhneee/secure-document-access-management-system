@@ -42,11 +42,15 @@ export function isValidIsoCalendarDate(value: string): boolean {
  * Thuật toán: Chuẩn hóa và kiểm định khóa định danh nguyên dương 64-bit (`1 <= x <= 9223372036854775807`).
  * Chặn tràn số `BIGINT` PostgreSQL (HTTP 500 `22003 numeric field overflow`) ngay tại biên xác thực DTO.
  */
-// CONFLICT-RESOLVED: Bổ sung cận trên 64-bit PostgreSQL BIGINT (2^63 - 1) và từ chối kiểu boolean/chuỗi rỗng khi ép kiểu sang BigInt.
+// CONFLICT-RESOLVED: Bổ sung cận trên 64-bit PostgreSQL BIGINT (2^63 - 1), ràng buộc .safe() chống mất độ chính xác IEEE-754 và từ chối kiểu boolean/chuỗi rỗng khi ép kiểu sang BigInt (MED-03).
 export const PositiveBigIntSchema = z
   .union([
     z.bigint(),
-    z.number().int().positive(),
+    z
+      .number()
+      .int()
+      .safe('Numeric identifier exceeds IEEE-754 MAX_SAFE_INTEGER; transmit 64-bit IDs as strings')
+      .positive(),
     z
       .string()
       .trim()

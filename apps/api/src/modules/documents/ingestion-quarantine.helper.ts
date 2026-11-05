@@ -3,7 +3,7 @@
  * Algorithm: Stages spooled uploads into the private quarantine bucket, executes ClamAV scanning,
  *   and isolates infected samples in non-discoverable `DRAFT` (`discoverable = false`) forensic records.
  */
-import { BadRequestException, type Logger } from '@nestjs/common';
+import { BadRequestException, ServiceUnavailableException, type Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import type { getDatabaseClient } from '@sda/database';
@@ -95,6 +95,28 @@ export async function stageAndScanQuarantineUpload(params: {
     },
     input.context,
   );
+
+  if (scanResult.status === 'FAILED') {
+    // CONFLICT-RESOLVED: Khi ClamAV gặp sự cố kỹ thuật (FAILED), xóa đối tượng cách ly và ném 503 SERVICE_UNAVAILABLE thay vì gán nhãn sai thành INFECTED/MALWARE_DETECTED.
+    await compensation.compensate(session);
+    await audit.record(
+      {
+        action: 'DOCUMENT_UPLOAD_FAILED',
+        outcome: 'FAILED',
+        actorUserId: input.principal.userId,
+        actorUsername: input.principal.username,
+        documentId: targetDocId,
+        reasonCode: AppErrorCode.SERVICE_UNAVAILABLE,
+        details: { scanStatus: 'FAILED', durationMs: scanResult.durationMs },
+      },
+      input.context,
+    );
+    throw new ServiceUnavailableException({
+      errorCode: AppErrorCode.SERVICE_UNAVAILABLE,
+      message:
+        'Antivirus scanning service is temporarily unavailable. Upload rejected fail-closed.',
+    });
+  }
 
   if (scanResult.status !== 'CLEAN') {
     session.storageKeysToDelete = session.storageKeysToDelete.filter(

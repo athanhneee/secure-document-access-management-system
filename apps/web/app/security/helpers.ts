@@ -14,7 +14,7 @@ import type {
 export function mapAlertDto(a: AlertApiDto): SecurityAlertItem {
   return {
     id: a.id || '—',
-    ruleCode: a.ruleCode || a.alert_type || 'ANOMALY_DETECTION',
+    ruleCode: a.alertType || a.ruleCode || a.alert_type || 'ANOMALY_DETECTION',
     title: a.title || 'Phát hiện hành vi bất thường',
     severity: a.severity || 'HIGH',
     status: a.status || 'OPEN',

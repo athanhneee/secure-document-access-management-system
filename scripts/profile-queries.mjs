@@ -5,18 +5,14 @@
  */
 
 import os from 'node:os';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAndSeedProfileDatabase } from './lib/profile-schema-seed.mjs';
 
 /**
- * Algorithm / Thuật toán: Query Plan Scan-Node Classifier (Trích Xuất & Phân Loại Nút Quét Kế Hoạch Thực Thi SQL)
- * Purpose / Mục đích: Execute `EXPLAIN (ANALYZE, BUFFERS)` against a parameterized query and classify whether
- *   the PostgreSQL optimizer selects an optimal B-Tree index access path versus a full-table sequential scan.
- * Mechanism / Cơ chế hoạt động:
- *   - Runs `EXPLAIN (ANALYZE, BUFFERS)` with bound parameters and extracts physical execution plan rows.
- *   - Inspects plan operator nodes for `Index Scan`, `Bitmap Index Scan`, or `Index Only Scan` versus `Seq Scan`.
+ * Thuật toán: Phân Loại Nút Quét Kế Hoạch Thực Thi SQL (Query Plan Scan-Node Classifier)
+ * Mục đích: Thực thi `EXPLAIN (ANALYZE, BUFFERS)` trên truy vấn tham số hóa và xác minh bộ tối ưu hóa
+ *   PostgreSQL lựa chọn đường truy xuất chỉ mục B-Tree tối ưu thay vì quét tuần tự toàn bảng.
  */
 export async function profileQuery(db, title, query, params) {
   console.log('-'.repeat(78));
@@ -41,9 +37,9 @@ export async function profileQuery(db, title, query, params) {
 }
 
 /**
- * Algorithm / Thuật toán: Critical-Path Hot Query `EXPLAIN (ANALYZE, BUFFERS)` Benchmark Suite
- * Purpose / Mục đích: Seed 38,050+ relational rows and verify B-Tree index utilization across the 4 critical-path
- *   queries (Document Search, Zero-Trust Grant Lookup, Active Session Verification, Audit Partition Range Scan).
+ * Thuật toán: Bộ Kiểm Định `EXPLAIN (ANALYZE, BUFFERS)` Trên 4 Truy Vấn Đường Nóng Chuẩn Prisma
+ * Mục đích: Nạp tập dữ liệu mật độ cao và kiểm chứng việc khai thác chỉ mục B-Tree trên 4 luồng truy vấn cốt lõi
+ *   (Tìm kiếm tài liệu kèm phân loại hiện hành, Tra cứu quyền cấp phát Zero-Trust, Xác minh phiên đọc hoạt động, Quét dải phân vùng kiểm toán).
  */
 export async function main() {
   console.log('='.repeat(78));
@@ -61,20 +57,25 @@ export async function main() {
   console.log(`Seeding completed successfully:
   - Departments: 50
   - Users: 1,000
-  - Documents: 5,000
+  - Documents & Active Classifications: 5,000
   - Access Grants: 10,000
   - Access Sessions: 2,000
   - Audit Logs: 20,000`);
 
   console.log('\n[3/3] Profiling Hot Queries with EXPLAIN ANALYZE...\n');
 
+  // CONFLICT-RESOLVED: Đồng bộ 4 câu truy vấn EXPLAIN ANALYZE với lược đồ Prisma chuẩn (document_classification_history, principal_user_id, access_sessions.last_activity_at, audit_logs.chain_sequence).
   await profileQuery(
     db,
     '1. Document Search with Classification & Department Filtering',
-    `SELECT d.id, d.document_code, d.title, d.classification_id, d.owner_id, u.username as owner_username
+    `SELECT d.id, d.document_code, d.title, cl.rank AS classification_rank, d.owner_id, u.username AS owner_username
      FROM documents d
+     JOIN document_classification_history dch
+       ON dch.document_id = d.id AND dch.effective_to IS NULL
+     JOIN classification_levels cl
+       ON cl.id = dch.classification_level_id
      JOIN users u ON d.owner_id = u.id
-     WHERE d.department_id = $1 AND d.classification_id <= $2 AND d.status = 'ACTIVE'
+     WHERE d.department_id = $1 AND cl.rank <= $2 AND d.status = 'ACTIVE' AND d.discoverable = TRUE
      ORDER BY d.created_at DESC
      LIMIT 20;`,
     [15, 3],
@@ -82,35 +83,35 @@ export async function main() {
 
   await profileQuery(
     db,
-    '2. Zero-Trust Active Grant Lookup (Document + Grantee + Time-Window)',
+    '2. Zero-Trust Active Grant Lookup (Document + Principal User + Time-Window)',
     `SELECT g.id, g.status, g.valid_from, g.valid_until
      FROM access_grants g
-     WHERE g.document_id = $1 AND g.grantee_user_id = $2 AND g.status = 'ACTIVE'
-       AND g.valid_from <= NOW() AND g.valid_until > NOW()
+     WHERE g.principal_user_id = $2 AND g.document_id = $1 AND g.principal_type = 'USER'
+       AND g.status = 'ACTIVE' AND g.valid_from <= NOW() AND g.valid_until > NOW()
      LIMIT 1;`,
     [docIds[100], 101],
   );
 
-  const sampleTokenHash = crypto.createHash('sha256').update('token_50').digest('hex');
   await profileQuery(
     db,
-    '3. Active Session Token Verification & Expiry Check',
-    `SELECT s.id, s.user_id, s.document_id, s.expires_at, s.status
+    '3. Active Access Session Verification by Principal User',
+    `SELECT s.id, s.access_grant_id, s.document_version_id, s.user_id, s.ip_address, s.started_at, s.last_activity_at, s.status
      FROM access_sessions s
-     WHERE s.session_token_hash = $1 AND s.status = 'ACTIVE' AND s.expires_at > NOW()
-     LIMIT 1;`,
-    [sampleTokenHash],
+     WHERE s.user_id = $1 AND s.status = 'ACTIVE' AND s.ended_at IS NULL
+     ORDER BY s.last_activity_at DESC
+     LIMIT 5;`,
+    [51],
   );
 
   await profileQuery(
     db,
     '4. Audit Trail Partition Range Query for Verification',
-    `SELECT id, sequence, previous_record_hash, record_hash
+    `SELECT id, chain_sequence, previous_hash, entry_hash, correlation_id, outcome, occurred_at
      FROM audit_logs
-     WHERE chain_partition = $1 AND sequence >= $2
-     ORDER BY sequence ASC
+     WHERE chain_partition = $1 AND chain_sequence >= $2
+     ORDER BY chain_sequence ASC
      LIMIT 100;`,
-    ['DOCUMENT', 5000],
+    ['DOCUMENT', 2500],
   );
 
   console.log('\n' + '='.repeat(78));

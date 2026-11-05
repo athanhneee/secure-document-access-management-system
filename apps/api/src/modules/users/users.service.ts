@@ -161,6 +161,10 @@ export class UsersService {
   }
 
   lock(principal: AuthPrincipal, id: bigint, expectedVersion: number, context: RequestContext) {
+    // CONFLICT-RESOLVED: Ngăn quản trị viên tự khóa tài khoản của chính mình gây mất quyền điều hành (MED-07)
+    if (principal.userId === id) {
+      throw new ForbiddenException('Administrators cannot lock themselves.');
+    }
     return executeChangeUserStatus({
       database: this.database,
       authorization: this.authorization,

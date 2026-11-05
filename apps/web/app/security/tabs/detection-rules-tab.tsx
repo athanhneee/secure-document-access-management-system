@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, Play } from 'lucide-react';
+import { Play } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -54,37 +54,45 @@ export function DetectionRulesTab({ detectionRules, onRunDetection }: DetectionR
               </TableRow>
             </TableHeader>
             <TableBody>
-              {detectionRules.map((r, i) => (
-                <TableRow key={i} className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60">
-                  <TableCell className="font-bold text-xs text-[#222222]">{r.code}</TableCell>
-                  <TableCell className="font-semibold text-xs text-[#222222]">{r.name}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        r.severity === 'CRITICAL'
-                          ? 'destructive'
-                          : r.severity === 'HIGH'
-                            ? 'warning'
-                            : 'info'
-                      }
-                    >
-                      {r.severity}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs font-bold text-[#222222]">
-                    {r.threshold} lần
-                  </TableCell>
-                  <TableCell className="text-xs font-bold text-[#222222]">
-                    {r.windowMinutes}m
-                  </TableCell>
-                  <TableCell>
-                    <span className="flex items-center gap-1.5 text-[11px] text-[#008A05]">
-                      <Check size={16} strokeWidth={2} aria-hidden="true" />
-                      <span>Kích hoạt</span>
-                    </span>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {detectionRules.map((r, i) => {
+                const resolvedCode = r.ruleCode || r.code || '—';
+                const enabled = r.isEnabled !== false;
+                return (
+                  <TableRow
+                    key={resolvedCode !== '—' ? resolvedCode : i}
+                    className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
+                  >
+                    <TableCell className="font-bold text-xs text-[#222222]">
+                      {resolvedCode}
+                    </TableCell>
+                    <TableCell className="font-semibold text-xs text-[#222222]">{r.name}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          r.severity === 'CRITICAL'
+                            ? 'destructive'
+                            : r.severity === 'HIGH'
+                              ? 'warning'
+                              : 'info'
+                        }
+                      >
+                        {r.severity}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs font-bold text-[#222222]">
+                      {r.threshold} lần
+                    </TableCell>
+                    <TableCell className="text-xs font-bold text-[#222222]">
+                      {r.windowMinutes}m
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={enabled ? 'success' : 'neutral'}>
+                        {enabled ? 'Kích hoạt' : 'Đã tắt'}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>

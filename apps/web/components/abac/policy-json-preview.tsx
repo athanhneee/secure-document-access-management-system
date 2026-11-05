@@ -55,7 +55,7 @@ export function PolicyJsonPreview({
             type="button"
             size="sm"
             onClick={onApplyJson}
-            className="rounded-full bg-[#FF385C] hover:bg-[#E0294C] text-white text-xs h-8 font-semibold"
+            className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs h-8 font-semibold"
           >
             Cập nhật vào Trình Kéo Thả
           </Button>

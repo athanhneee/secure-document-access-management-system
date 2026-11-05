@@ -178,10 +178,14 @@ export async function executeCloseIncidentReport(
 ): Promise<string> {
   assertActorCanMutateIncidents(actor);
   const report = await requireIncidentRow(database, id);
-  if (report.status === 'CLOSED') {
+  // CONFLICT-RESOLVED: Chỉ cho phép đóng báo cáo sự cố đã ở trạng thái SUBMITTED (DRAFT -> SUBMITTED -> CLOSED) (HIGH-12)
+  if (report.status !== 'SUBMITTED') {
     throw new BadRequestException({
       errorCode: AppErrorCode.INCIDENT_INVALID_TRANSITION,
-      message: 'Incident report is already closed.',
+      message:
+        report.status === 'CLOSED'
+          ? 'Incident report is already closed.'
+          : `Cannot close incident report currently in ${report.status} status; submit it first.`,
     });
   }
 

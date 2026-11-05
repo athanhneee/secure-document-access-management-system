@@ -56,6 +56,7 @@ export interface IcapRequest {
   httpStatusCode?: number | undefined;
   httpStatusMessage?: string | undefined;
   body: Buffer;
+  readonly incompleteHeaders?: boolean | undefined;
   isComplete: boolean;
   isPreview?: boolean | undefined;
   isPreviewIof?: boolean | undefined;

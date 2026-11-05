@@ -14,9 +14,29 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import { AppErrorCode, type ErrorEnvelope } from '@sda/contracts';
+import {
+  DatabaseConflictError,
+  DatabaseConstraintError,
+  DatabaseError,
+  DatabaseNotFoundError,
+  DatabaseUnavailableError,
+  isDatabaseOperationError,
+  mapDatabaseError,
+} from '@sda/database';
 import { JsonLoggerService } from '../logger/json-logger.service.js';
 
 const SAFE_CORRELATION_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+
+/**
+ * Thuật toán: Trích xuất mã lỗi Prisma/SQLSTATE lồng nhau để phân biệt vi phạm khóa duy nhất (`P2002`/`23505`) với lỗi ràng buộc dữ liệu khác.
+ */
+function extractRawDbErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const rec = error as Record<string, unknown>;
+  if (typeof rec['code'] === 'string') return rec['code'];
+  if (typeof rec['sqlState'] === 'string') return rec['sqlState'];
+  return undefined;
+}
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -115,6 +135,32 @@ export class HttpExceptionFilter implements ExceptionFilter {
         path: issue.path.join('.'),
         message: issue.message,
       }));
+    } else if (exception instanceof DatabaseError || isDatabaseOperationError(exception)) {
+      // CONFLICT-RESOLVED: Ánh xạ các lớp DatabaseError từ @sda/database sang mã trạng thái HTTP ngữ nghĩa (409/400/404/503) thay vì để lọt thành 500.
+      const rawCode = extractRawDbErrorCode(exception);
+      const mapped = exception instanceof DatabaseError ? exception : mapDatabaseError(exception);
+      if (mapped instanceof DatabaseConflictError || rawCode === 'P2002' || rawCode === '23505') {
+        statusCode = HttpStatus.CONFLICT;
+        errorCode = AppErrorCode.RESOURCE_CONFLICT;
+        message = mapped.message;
+      } else if (mapped instanceof DatabaseConstraintError) {
+        statusCode = HttpStatus.BAD_REQUEST;
+        errorCode = AppErrorCode.VALIDATION_FAILED;
+        message = mapped.message;
+      } else if (mapped instanceof DatabaseNotFoundError) {
+        statusCode = HttpStatus.NOT_FOUND;
+        errorCode = AppErrorCode.RESOURCE_NOT_FOUND;
+        message = mapped.message;
+      } else if (mapped instanceof DatabaseUnavailableError) {
+        statusCode = HttpStatus.SERVICE_UNAVAILABLE;
+        errorCode = AppErrorCode.SERVICE_UNAVAILABLE;
+        message = mapped.message;
+      } else {
+        const errorMsg = exception instanceof Error ? exception.message : String(exception);
+        this.logger.error(`Database operation error [${correlationId}]: ${errorMsg}`, {
+          correlationId,
+        });
+      }
     } else {
       // Unhandled error: log internally with correlation ID, never leak internal error to client
       const errorMsg = exception instanceof Error ? exception.message : String(exception);

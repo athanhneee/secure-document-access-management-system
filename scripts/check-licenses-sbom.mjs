@@ -95,6 +95,10 @@ export function isPermissiveSpdxExpression(rawLicense) {
   return ALLOWED_LICENSES.has(expr);
 }
 
+/**
+ * Thuật toán: Tách Chuỗi Biểu Thức SPDX Ở Mức Ngoài Ngoặc (Parenthesis-Aware Top-Level SPDX Tokenizer)
+ * Duyệt tuyến tính với biến đếm độ sâu ngoặc `depth`, chỉ cắt chuỗi tại toán tử ` ${operator} ` khi `depth === 0`.
+ */
 function splitTopLevelSpdx(expr, operator) {
   const parts = [];
   let depth = 0;
@@ -114,6 +118,9 @@ function splitTopLevelSpdx(expr, operator) {
   return parts;
 }
 
+/**
+ * Thuật toán: Chuẩn Hóa Trường Giấy Phép Đa Định Dạng Trong `package.json` (`license` chuỗi/đối tượng hoặc mảng `licenses`).
+ */
 function extractLicenseField(pkgContent) {
   const lic = pkgContent.license || (Array.isArray(pkgContent.licenses) && pkgContent.licenses[0]);
   if (!lic) return null;
@@ -177,6 +184,9 @@ async function getDependencyLicense(depName, consumerPkgPaths) {
   return 'UNKNOWN';
 }
 
+/**
+ * Thuật toán: Điều Phối Kiểm Toán Giấy Phép Phụ Thuộc Runtime & Xuất Bản Kê CycloneDX 1.5 SBOM.
+ */
 async function main() {
   console.log('='.repeat(78));
   console.log('SDA SOFTWARE BILL OF MATERIALS (SBOM) & LICENSE AUDIT');

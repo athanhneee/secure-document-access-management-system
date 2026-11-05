@@ -85,8 +85,8 @@ export function NetworkDlpOverview() {
             </div>
             <p className="text-[11px] text-[#717171]">
               Phát hiện các mã token thủy ấn bí mật định dạng{' '}
-              <span className="font-mono font-medium">WM-[a-f0-9]{48}</span> bị người dùng cố ý sao
-              chép hoặc tuồn qua đường mạng biên.
+              <span className="font-mono font-medium">{'WM-[a-f0-9]{48}'}</span> bị người dùng cố ý
+              sao chép hoặc tuồn qua đường mạng biên.
             </p>
           </div>
 

@@ -5,7 +5,7 @@ import { appendChainedAuditLog, resolveActiveAuditKey } from '../audit/audit-cha
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 
 export interface AbacAuditEvent {
-  action: 'POLICY_SIMULATED' | 'POLICY_ACTIVATED';
+  action: 'POLICY_SIMULATED' | 'POLICY_ACTIVATED' | 'POLICY_CREATED' | 'POLICY_UPDATED';
   objectType: 'POLICY_SIMULATION' | 'POLICY';
   objectId: string;
   documentId?: string | undefined;

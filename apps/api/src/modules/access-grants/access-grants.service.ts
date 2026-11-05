@@ -231,9 +231,17 @@ export class AccessGrantsService {
           ? 'valid_until'
           : 'status';
 
+    // CONFLICT-RESOLVED: Nạp kèm thông tin tóm tắt tài liệu, người dùng và vai trò cho danh sách cấp quyền (CRIT-06)
     const grants = await this.database.accessGrant.findMany({
       where,
-      include: { access_grant_permissions: true },
+      include: {
+        access_grant_permissions: true,
+        documents: { select: { title: true, document_code: true } },
+        users_access_grants_principal_user_idTousers: {
+          select: { full_name: true, username: true },
+        },
+        roles: { select: { name: true, code: true } },
+      },
       orderBy: [{ [sortField]: input.order }, { id: 'asc' }],
       skip: (input.page - 1) * input.pageSize,
       take: input.pageSize + 1,

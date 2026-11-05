@@ -1,4 +1,8 @@
-import { SECURITY_DETECTION_ACTIONS, isOffHoursTimestampUtc } from '@sda/contracts';
+import {
+  SECURITY_DETECTION_ACTIONS,
+  isOffHoursTimestampUtc,
+  isUntrustedAuditEvent,
+} from '@sda/contracts';
 import type { DetectionRuleConfig, PrismaClient } from './rule-defaults.js';
 import { emitPerUserThresholdAlerts, emitAggregateThresholdAlert } from './alert-correlators.js';
 
@@ -6,7 +10,7 @@ import { emitPerUserThresholdAlerts, emitAggregateThresholdAlert } from './alert
  * Algorithm / Thuật toán: Bộ Điều Phối Đánh Giá 6 Mẫu Bất Thường An Ninh Cửa Sổ Trượt (Sliding-Window Rule Evaluator Dispatch)
  * Mục đích: Truy vấn tập sự kiện kiểm toán trong khoảng `[windowStart, now]` theo danh mục hành động chuẩn `@sda/contracts`
  *   cho từng quy tắc (`MASS_DOWNLOAD`, `REPEATED_DENIED`, `OFF_HOURS_ACCESS`, `UNTRUSTED_CONTEXT`, `REFRESH_TOKEN_REUSE`,
- *   `AUDIT_INTEGRITY_COMPROMISED`) và chuyển giao cho bộ tương quan có khử trùng lặp cooldown.
+ *   `AUDIT_INTEGRITY_COMPROMISED`), phân tách theo từng người dùng (`actor_user_id`) và nhánh ẩn danh (`detected_user_id: null`).
  */
 export async function evaluateDetectionRule(
   database: PrismaClient,
@@ -70,22 +74,34 @@ export async function evaluateDetectionRule(
   }
 
   if (rule.ruleCode === 'UNTRUSTED_CONTEXT') {
-    const logs = await database.auditLog.findMany({
+    // CONFLICT-RESOLVED: Kết hợp kiểm tra cờ telemetry (isUntrustedAuditEvent) và đánh giá độc lập theo từng người dùng + luồng ẩn danh đồng bộ với API.
+    const candidateLogs = await database.auditLog.findMany({
       where: {
-        action: { in: [...SECURITY_DETECTION_ACTIONS.UNTRUSTED_CONTEXT] },
         occurred_at: { gte: windowStart, lte: now },
+        OR: [
+          { action: { in: [...SECURITY_DETECTION_ACTIONS.UNTRUSTED_CONTEXT] } },
+          { details: { path: ['untrustedContext'], equals: true } },
+          { details: { path: ['untrustedIp'], equals: true } },
+          { details: { path: ['untrustedDevice'], equals: true } },
+        ],
       },
-      select: { id: true, actor_user_id: true, occurred_at: true },
+      select: { id: true, actor_user_id: true, action: true, details: true, occurred_at: true },
     });
-    return emitAggregateThresholdAlert(
+    const untrustedLogs = candidateLogs.filter((l) => isUntrustedAuditEvent(l.action, l.details));
+    return emitPerUserThresholdAlerts(
       database,
       rule,
-      logs,
+      untrustedLogs,
       now,
       cooldownStart,
-      true,
-      'Cảnh báo: Bối cảnh truy cập chưa tin cậy',
-      `Phát hiện ${logs.length} truy cập từ IP hoặc thiết bị chưa tin cậy.`,
+      (count, uid) => ({
+        title: `Cảnh báo: Bối cảnh truy cập chưa tin cậy (Người dùng #${uid.toString()})`,
+        description: `Phát hiện ${count} truy cập từ IP hoặc thiết bị chưa tin cậy bởi người dùng #${uid.toString()}.`,
+      }),
+      (count) => ({
+        title: 'Cảnh báo: Bối cảnh truy cập ẩn danh chưa tin cậy',
+        description: `Phát hiện ${count} truy cập chưa định danh từ IP hoặc thiết bị chưa tin cậy.`,
+      }),
     );
   }
 
@@ -97,15 +113,20 @@ export async function evaluateDetectionRule(
       },
       select: { id: true, actor_user_id: true, occurred_at: true },
     });
-    return emitAggregateThresholdAlert(
+    return emitPerUserThresholdAlerts(
       database,
       rule,
       logs,
       now,
       cooldownStart,
-      true,
-      'Cảnh báo nghiêm trọng: Tái sử dụng Refresh Token',
-      'Phát hiện nỗ lực sử dụng lại Refresh Token đã thu hồi. Phiên làm việc bị vô hiệu hóa.',
+      (_count, uid) => ({
+        title: `Cảnh báo nghiêm trọng: Tái sử dụng Refresh Token (Người dùng #${uid.toString()})`,
+        description: `Phát hiện nỗ lực sử dụng lại Refresh Token đã thu hồi trên tài khoản #${uid.toString()}. Phiên làm việc bị vô hiệu hóa.`,
+      }),
+      (count) => ({
+        title: 'Cảnh báo nghiêm trọng: Tái sử dụng Refresh Token',
+        description: `Phát hiện ${count} nỗ lực sử dụng lại Refresh Token đã thu hồi.`,
+      }),
     );
   }
 
@@ -123,7 +144,6 @@ export async function evaluateDetectionRule(
       logs,
       now,
       cooldownStart,
-      false,
       'Cảnh báo khẩn cấp: Vi phạm tính toàn vẹn Audit Log',
       'Hệ thống xác minh phát hiện chuỗi băm audit log không khớp hoặc có dấu hiệu can thiệp trái phép.',
     );

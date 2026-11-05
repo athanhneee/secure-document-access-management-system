@@ -30,28 +30,29 @@ interface VariantStyle {
   border: string;
 }
 
+// CONFLICT-RESOLVED: Chuẩn hóa các lớp hover về đúng bảng màu chuẩn (#E31C5F cho nút nhấn thương hiệu #FF385C và brightness-90 cho #C13515) theo rules/ui-design-system.md.
 const variantStyles: Record<InteractiveButtonVariant, VariantStyle> = {
   primary: {
     base: 'bg-[#FF385C]',
-    hover: 'hover:bg-[#E0294C]',
+    hover: 'hover:bg-[#E31C5F]',
     text: 'text-white',
     border: 'border-transparent',
   },
   solid: {
     base: 'bg-[#FF385C]',
-    hover: 'hover:bg-[#E0294C]',
+    hover: 'hover:bg-[#E31C5F]',
     text: 'text-white',
     border: 'border-transparent',
   },
   'solid-primary': {
     base: 'bg-[#FF385C]',
-    hover: 'hover:bg-[#E0294C]',
+    hover: 'hover:bg-[#E31C5F]',
     text: 'text-white',
     border: 'border-transparent',
   },
   default: {
     base: 'bg-[#FF385C]',
-    hover: 'hover:bg-[#E0294C]',
+    hover: 'hover:bg-[#E31C5F]',
     text: 'text-white',
     border: 'border-transparent',
   },
@@ -69,13 +70,13 @@ const variantStyles: Record<InteractiveButtonVariant, VariantStyle> = {
   },
   danger: {
     base: 'bg-[#C13515]',
-    hover: 'hover:bg-[#A32B0F]',
+    hover: 'hover:brightness-90',
     text: 'text-white',
     border: 'border-transparent',
   },
   destructive: {
     base: 'bg-[#C13515]',
-    hover: 'hover:bg-[#A32B0F]',
+    hover: 'hover:brightness-90',
     text: 'text-white',
     border: 'border-transparent',
   },
@@ -111,7 +112,7 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
   ) => {
     const buttonText =
       text || (typeof children === 'string' && children.trim() ? children : 'Button');
-    const style: VariantStyle = variantStyles[variant] ?? variantStyles.primary;
+    const variantStyle: VariantStyle = variantStyles[variant] ?? variantStyles.primary;
     const sizeClass = sizeStyles[size] || sizeStyles.md;
     const iconElement = icon || <ArrowRight size={16} strokeWidth={2} aria-hidden="true" />;
 
@@ -143,10 +144,10 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
 
     const baseClasses = cn(
       'group ihb-button rounded-full border text-center shadow-2xs select-none disabled:pointer-events-none disabled:opacity-50',
-      style.base,
-      style.hover,
-      style.text,
-      style.border,
+      variantStyle.base,
+      variantStyle.hover,
+      variantStyle.text,
+      variantStyle.border,
       sizeClass,
       className,
     );

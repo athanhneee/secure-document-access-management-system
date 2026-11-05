@@ -3,6 +3,8 @@
  * Algorithm: TOTP / WebAuthn MFA Factor Persistence, Recovery Code Consumption & Security Alert Sink.
  */
 import { randomUUID } from 'node:crypto';
+import { ConflictException } from '@nestjs/common';
+import { AppErrorCode } from '@sda/contracts';
 import type { getDatabaseClient } from '@sda/database';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -26,6 +28,26 @@ export async function createUserMfaEnrollment(
   methodType: 'TOTP' | 'WEBAUTHN' = 'TOTP',
 ): Promise<string> {
   if (methodType === 'TOTP') {
+    // CONFLICT-RESOLVED: Chặn đăng ký trùng TOTP đã kích hoạt bằng lỗi 409 trước khi chạm ràng buộc duy nhất uq_mfa_active_totp_per_user (HIGH-12)
+    const alreadyEnabled = await database.mfaMethod.findFirst({
+      where: {
+        user_id: userId,
+        method_type: 'TOTP',
+        enabled_at: { not: null },
+        disabled_at: null,
+      },
+      select: { id: true, enabled_at: true },
+    });
+    if (
+      alreadyEnabled &&
+      (!('enabled_at' in alreadyEnabled) || alreadyEnabled.enabled_at !== null)
+    ) {
+      throw new ConflictException({
+        errorCode: AppErrorCode.RESOURCE_CONFLICT,
+        message: 'An active TOTP authenticator is already enabled for this account.',
+      });
+    }
+
     const existing = await database.mfaMethod.findFirst({
       where: {
         user_id: userId,

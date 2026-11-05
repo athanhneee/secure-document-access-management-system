@@ -4,7 +4,7 @@
  */
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { getDatabaseClient } from '@sda/database';
+import { withSerializableTransaction, type getDatabaseClient } from '@sda/database';
 import { AppErrorCode, type CreateAccessGrantInput } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AccessGrantAuditService } from './access-grant-audit.service.js';
@@ -46,11 +46,12 @@ export async function executeCreateOrExtendGrantTx(
     database,
     audit,
   } = params;
-  const grantId = randomUUID();
   let resultGrant!: GrantDetail;
 
-  await database.$transaction(
+  // CONFLICT-RESOLVED: Dùng withSerializableTransaction có vòng lặp thử lại chống lỗi 40001/40P01/P2034 (MED-02)
+  await withSerializableTransaction(
     async (tx) => {
+      const grantId = randomUUID();
       await tx.$executeRawUnsafe(
         'SELECT id FROM documents WHERE id = $1::uuid FOR UPDATE',
         input.documentId,
@@ -196,7 +197,7 @@ export async function executeCreateOrExtendGrantTx(
 
       resultGrant = toGrantDetail(created);
     },
-    { isolationLevel: 'Serializable' },
+    { client: database },
   );
 
   return resultGrant;

@@ -15,12 +15,14 @@ import {
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import { PositiveBigIntSchema } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { RequirePermission } from './require-permission.js';
 import { RbacService } from './rbac.service.js';
 
-const IdSchema = z.string().regex(/^\d+$/u).transform(BigInt);
+// CONFLICT-RESOLVED: Chuẩn hóa định danh số nguyên 64-bit dương có trần PostgreSQL BIGINT (HIGH-12)
+const IdSchema = PositiveBigIntSchema;
 const RoleCreateSchema = z
   .object({
     code: z
@@ -49,12 +51,12 @@ const RoleUpdateSchema = z
   .strict();
 const VersionSchema = z.object({ expectedVersion: z.number().int().min(0) }).strict();
 const PermissionMappingSchema = z
-  .object({ permissionIds: z.array(z.string().regex(/^\d+$/u).transform(BigInt)).max(100) })
+  .object({ permissionIds: z.array(PositiveBigIntSchema).max(100) })
   .strict();
 const AssignmentSchema = z
   .object({
-    roleId: z.string().regex(/^\d+$/u).transform(BigInt),
-    scopeDepartmentId: z.string().regex(/^\d+$/u).transform(BigInt).nullable(),
+    roleId: PositiveBigIntSchema,
+    scopeDepartmentId: PositiveBigIntSchema.nullable(),
     validFrom: z.coerce.date(),
     validTo: z.coerce.date().nullable(),
   })

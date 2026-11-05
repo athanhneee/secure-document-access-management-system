@@ -185,3 +185,83 @@ test('ICAP DLP Action — resolves AUDIT_ONLY and MONITOR alias and passes traff
     await server.stop();
   }
 });
+
+test('IcapServer — immediately completes TCP-fragmented REQMOD and RESPMOD null-body split mid-ICAP and mid-HTTP headers without 30s hang', async () => {
+  const server = new IcapServer({
+    enabled: true,
+    port: 0,
+    host: '127.0.0.1',
+    action: 'BLOCK',
+  });
+  const { port } = await server.start();
+
+  const sendFragmentedWithTimeout = (chunks) =>
+    new Promise((resolve, reject) => {
+      const guard = setTimeout(
+        () => reject(new Error('Fragmented null-body request hung!')),
+        2_000,
+      );
+      const socket = net.createConnection({ host: '127.0.0.1', port }, async () => {
+        for (const chunk of chunks) {
+          socket.write(chunk);
+          await new Promise((r) => setTimeout(r, 15));
+        }
+      });
+      let buf = Buffer.alloc(0);
+      socket.on('data', (c) => {
+        buf = Buffer.concat([buf, c]);
+      });
+      socket.on('end', () => {
+        clearTimeout(guard);
+        resolve(buf.toString('utf-8'));
+      });
+      socket.on('error', (err) => {
+        clearTimeout(guard);
+        reject(err);
+      });
+    });
+
+  try {
+    const reqHttp =
+      'GET /api/v1/documents/metadata HTTP/1.1\r\nHost: internal.sda.local\r\nAccept: application/json\r\n\r\n';
+    const reqIcapHeader =
+      `REQMOD icap://127.0.0.1/sda-dlp ICAP/1.0\r\n` +
+      `Host: 127.0.0.1\r\n` +
+      `Encapsulated: req-hdr=0, null-body=${Buffer.byteLength(reqHttp)}\r\n\r\n`;
+    const reqFull = Buffer.from(reqIcapHeader + reqHttp, 'utf-8');
+    const reqMidIcap = 28;
+    const reqAfterIcapMidHttp = Buffer.byteLength(reqIcapHeader) + 24;
+
+    const reqRes = await sendFragmentedWithTimeout([
+      reqFull.subarray(0, reqMidIcap),
+      reqFull.subarray(reqMidIcap, reqAfterIcapMidHttp),
+      reqFull.subarray(reqAfterIcapMidHttp, reqAfterIcapMidHttp + 30),
+      reqFull.subarray(reqAfterIcapMidHttp + 30),
+    ]);
+    assert.ok(reqRes.includes('ICAP/1.0 204 No modifications'));
+
+    const resHttp =
+      'HTTP/1.1 304 Not Modified\r\nETag: "doc-etag-123"\r\nCache-Control: private, no-store\r\n\r\n';
+    const resIcapHeader =
+      `RESPMOD icap://127.0.0.1/sda-dlp ICAP/1.0\r\n` +
+      `Host: 127.0.0.1\r\n` +
+      `Encapsulated: res-hdr=0, null-body=${Buffer.byteLength(resHttp)}\r\n\r\n`;
+    const resFull = Buffer.from(resIcapHeader + resHttp, 'utf-8');
+    const resMidIcap = 32;
+    const resMidHttp = Buffer.byteLength(resIcapHeader) + 19;
+
+    const resReply = await sendFragmentedWithTimeout([
+      resFull.subarray(0, resMidIcap),
+      resFull.subarray(resMidIcap, resMidHttp),
+      resFull.subarray(resMidHttp),
+    ]);
+    assert.ok(resReply.includes('ICAP/1.0 204 No modifications'));
+
+    const metrics = server.getMetrics();
+    assert.equal(metrics.reqmodRequests, 1);
+    assert.equal(metrics.respmodRequests, 1);
+    assert.equal(metrics.cleanPassThrough, 2);
+  } finally {
+    await server.stop();
+  }
+});

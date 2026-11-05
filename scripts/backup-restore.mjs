@@ -9,7 +9,7 @@
  * Cơ chế hoạt động:
  *   - Bước 1-2: Khởi tạo dữ liệu nguồn kèm chuỗi băm liên kết `HMAC-SHA256`, kết xuất gói sao lưu JSON và tính tổng kiểm mật mã `SHA-256` (`backupSha256`).
  *   - Bước 3-5: Giả lập thảm họa trên phiên bản PostgreSQL WASM (`PGlite`) trống, xác thực lại chữ ký `SHA-256` của gói sao lưu trước khi nạp (Fail-Closed) và khôi phục tuần tự từng bảng.
- *   - Bước 6-8: Đối chiếu chẵn lẻ số dòng (Row Parity), tính lại toàn bộ mắt xích `previous_record_hash -> record_hash` và kiểm chứng khôi phục chính xác từng bit cho tệp mã hóa Object Storage.
+ *   - Bước 6-8: Đối chiếu chẵn lẻ số dòng (Row Parity), tính lại toàn bộ mắt xích `previous_hash -> entry_hash` theo `chain_sequence` và kiểm chứng khôi phục chính xác từng bit cho tệp mã hóa Object Storage.
  */
 
 import os from 'node:os';
@@ -53,15 +53,22 @@ async function main() {
   recordStep(
     '1. Initialize Source Database & Populate Data',
     'PASS',
-    'Created users, documents, and chained audit logs',
+    'Created users, documents, classification history, and chained audit logs',
     performance.now() - t0,
   );
 
   // Step 2: Perform Logical Backup & Create Checksummed Bundle
+  // CONFLICT-RESOLVED: Kết xuất đầy đủ các bảng liên kết theo chuẩn Prisma và sắp xếp audit_logs theo chain_sequence ASC.
   const t1 = performance.now();
+  const departmentsDump = await sourceDb.query('SELECT * FROM departments ORDER BY id ASC;');
   const usersDump = await sourceDb.query('SELECT * FROM users ORDER BY id ASC;');
+  const levelsDump = await sourceDb.query('SELECT * FROM classification_levels ORDER BY id ASC;');
+  const categoriesDump = await sourceDb.query('SELECT * FROM business_categories ORDER BY id ASC;');
   const docsDump = await sourceDb.query('SELECT * FROM documents ORDER BY id ASC;');
-  const auditDump = await sourceDb.query('SELECT * FROM audit_logs ORDER BY sequence ASC;');
+  const historyDump = await sourceDb.query(
+    'SELECT * FROM document_classification_history ORDER BY id ASC;',
+  );
+  const auditDump = await sourceDb.query('SELECT * FROM audit_logs ORDER BY chain_sequence ASC;');
 
   const backupPayload = JSON.stringify({
     metadata: {
@@ -70,8 +77,12 @@ async function main() {
       sourceSystem: 'SDA-PRODUCTION',
     },
     tables: {
+      departments: departmentsDump.rows,
       users: usersDump.rows,
+      classification_levels: levelsDump.rows,
+      business_categories: categoriesDump.rows,
       documents: docsDump.rows,
+      document_classification_history: historyDump.rows,
       audit_logs: auditDump.rows,
     },
   });
@@ -114,7 +125,7 @@ async function main() {
   recordStep(
     '5. Restore Table Records into Target',
     'PASS',
-    'Restored 100% of user, document, and audit rows',
+    'Restored 100% of relational and audit rows',
     performance.now() - t4,
   );
 
@@ -122,11 +133,15 @@ async function main() {
   const t5 = performance.now();
   const restoredUsers = await restoredDb.query('SELECT COUNT(*) as count FROM users;');
   const restoredDocs = await restoredDb.query('SELECT COUNT(*) as count FROM documents;');
+  const restoredHistory = await restoredDb.query(
+    'SELECT COUNT(*) as count FROM document_classification_history;',
+  );
   const restoredAudits = await restoredDb.query('SELECT COUNT(*) as count FROM audit_logs;');
 
   if (
     Number(restoredUsers.rows[0].count) !== usersDump.rows.length ||
     Number(restoredDocs.rows[0].count) !== docsDump.rows.length ||
+    Number(restoredHistory.rows[0].count) !== historyDump.rows.length ||
     Number(restoredAudits.rows[0].count) !== auditDump.rows.length
   ) {
     throw new Error('Row count mismatch after restoration!');

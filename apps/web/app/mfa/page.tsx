@@ -6,6 +6,7 @@ import { ShieldAlert } from 'lucide-react';
 import { apiClient, ApiError, sanitizeRedirectPath } from '@/lib/api-client';
 import { useAuth, type AuthUser } from '@/lib/auth-context';
 import { executeWebAuthnAssertion, formatWebAuthnError } from './webauthn-binary';
+import { MfaEnrollmentCard } from './mfa-enrollment-card';
 import { MfaMethodCards } from './mfa-method-cards';
 
 /**
@@ -18,8 +19,10 @@ function MfaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTarget = sanitizeRedirectPath(searchParams.get('redirect'));
+  const enrollParam = searchParams.get('enroll') === '1';
   const { refreshUser } = useAuth();
 
+  const [isEnrollMode, setIsEnrollMode] = useState(enrollParam);
   const [isRecoveryMode, setIsRecoveryMode] = useState(false);
   const [totpCode, setTotpCode] = useState('');
   const [recoveryCode, setRecoveryCode] = useState('');
@@ -124,22 +127,39 @@ function MfaContent() {
           </p>
         </div>
 
-        <MfaMethodCards
-          isRecoveryMode={isRecoveryMode}
-          totpCode={totpCode}
-          recoveryCode={recoveryCode}
-          isLoading={isLoading}
-          isWebAuthnLoading={isWebAuthnLoading}
-          errorMessage={errorMessage}
-          onChangeTotpCode={setTotpCode}
-          onChangeRecoveryCode={setRecoveryCode}
-          onToggleRecoveryMode={() => {
-            setIsRecoveryMode(!isRecoveryMode);
-            setErrorMessage(null);
-          }}
-          onWebAuthnVerify={handleWebAuthnVerify}
-          onSubmitVerify={handleVerify}
-        />
+        {isEnrollMode ? (
+          <MfaEnrollmentCard
+            onComplete={async () => {
+              const user = await refreshUser();
+              handlePostAuthRedirect(user);
+            }}
+            onSwitchToVerify={() => {
+              setIsEnrollMode(false);
+              setErrorMessage(null);
+            }}
+          />
+        ) : (
+          <MfaMethodCards
+            isRecoveryMode={isRecoveryMode}
+            totpCode={totpCode}
+            recoveryCode={recoveryCode}
+            isLoading={isLoading}
+            isWebAuthnLoading={isWebAuthnLoading}
+            errorMessage={errorMessage}
+            onChangeTotpCode={setTotpCode}
+            onChangeRecoveryCode={setRecoveryCode}
+            onToggleRecoveryMode={() => {
+              setIsRecoveryMode(!isRecoveryMode);
+              setErrorMessage(null);
+            }}
+            onStartEnrollment={() => {
+              setIsEnrollMode(true);
+              setErrorMessage(null);
+            }}
+            onWebAuthnVerify={handleWebAuthnVerify}
+            onSubmitVerify={handleVerify}
+          />
+        )}
       </div>
     </div>
   );

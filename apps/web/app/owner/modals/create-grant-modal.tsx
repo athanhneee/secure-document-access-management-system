@@ -184,11 +184,15 @@ export function CreateGrantModal({
                       type="checkbox"
                       checked={directPermissions.includes(perm)}
                       onChange={(e) => {
-                        setDirectPermissions((prev) =>
-                          e.target.checked
-                            ? Array.from(new Set([...prev, perm]))
-                            : prev.filter((p) => p !== perm),
-                        );
+                        // CONFLICT-RESOLVED: Chọn DOWNLOAD tự động bật kèm VIEW; bỏ chọn VIEW tự động gỡ DOWNLOAD để không bao giờ còn ['DOWNLOAD'] đơn lẻ.
+                        setDirectPermissions((prev) => {
+                          if (e.target.checked) {
+                            return perm === 'DOWNLOAD'
+                              ? ['VIEW', 'DOWNLOAD']
+                              : Array.from(new Set(['VIEW', ...prev]));
+                          }
+                          return perm === 'VIEW' ? [] : prev.filter((p) => p !== perm);
+                        });
                       }}
                       className="rounded border-[#dddddd] text-[#FF385C] focus:ring-[#FF385C]"
                     />

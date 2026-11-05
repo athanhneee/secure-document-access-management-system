@@ -32,6 +32,52 @@ export interface PaginatedAuditLogs {
   };
 }
 
+export interface SerializedAuditViolation {
+  code: string;
+  partition: string;
+  sequence: string;
+  logId?: string;
+  expected?: string;
+  actual?: string;
+  message: string;
+}
+
+export interface SerializedPartitionVerificationResult {
+  partition: string;
+  valid: boolean;
+  totalChecked: number;
+  anchorsChecked: number;
+  violations: SerializedAuditViolation[];
+  alertId?: string | undefined;
+}
+
+/**
+ * Thuật toán: Tuần tự hóa kết quả kiểm chứng chuỗi băm kiểm toán sang JSON-safe DTO.
+ * Giữ nguyên kiểu `bigint` bên trong `AuditVerifierService` cho kiểm thử đơn vị nhưng chuyển `sequence` và `logId`
+ * sang chuỗi thập phân tại ranh giới `AuditService.verifyChain` để ngăn lỗi Fastify `JSON.stringify` BigInt HTTP 500.
+ */
+function serializeVerificationResult(
+  result: PartitionVerificationResult,
+): SerializedPartitionVerificationResult {
+  // CONFLICT-RESOLVED: Chuyển đổi BigInt sequence/logId trong violations sang chuỗi JSON-safe mà vẫn bảo toàn giao diện nội bộ của AuditVerifierService.
+  return {
+    partition: result.partition,
+    valid: result.valid,
+    totalChecked: result.totalChecked,
+    anchorsChecked: result.anchorsChecked,
+    ...(result.alertId !== undefined ? { alertId: result.alertId } : {}),
+    violations: result.violations.map((v) => ({
+      code: v.code,
+      partition: v.partition,
+      sequence: v.sequence.toString(),
+      ...(v.logId !== undefined ? { logId: v.logId.toString() } : {}),
+      ...(v.expected !== undefined ? { expected: v.expected } : {}),
+      ...(v.actual !== undefined ? { actual: v.actual } : {}),
+      message: v.message,
+    })),
+  };
+}
+
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 @Injectable()
@@ -153,7 +199,9 @@ export class AuditService {
   async verifyChain(
     principal: AuthPrincipal,
     input: VerifyAuditChainInput,
-  ): Promise<PartitionVerificationResult | Record<string, PartitionVerificationResult>> {
+  ): Promise<
+    SerializedPartitionVerificationResult | Record<string, SerializedPartitionVerificationResult>
+  > {
     const isPrivileged = principal.roles.some((r) => r === 'SECURITY_OFFICER' || r === 'AUDITOR');
     if (!isPrivileged) {
       throw new ForbiddenException('Only Security Officer or Auditor can verify audit chains');
@@ -163,9 +211,13 @@ export class AuditService {
       const options: { fromSequence?: bigint; toSequence?: bigint } = {};
       if (input.fromSequence !== undefined) options.fromSequence = input.fromSequence;
       if (input.toSequence !== undefined) options.toSequence = input.toSequence;
-      return await this.verifierService.verifyPartition(input.chainPartition, options);
+      const single = await this.verifierService.verifyPartition(input.chainPartition, options);
+      return serializeVerificationResult(single);
     }
 
-    return await this.verifierService.verifyAllPartitions();
+    const all = await this.verifierService.verifyAllPartitions();
+    return Object.fromEntries(
+      Object.entries(all).map(([partition, res]) => [partition, serializeVerificationResult(res)]),
+    );
   }
 }

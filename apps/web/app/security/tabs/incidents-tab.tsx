@@ -72,8 +72,12 @@ export function IncidentsTab({ incidents, onOpenCreateIncident }: IncidentsTabPr
                     <TableCell className="text-xs text-[#222222]">
                       {inc.actions && inc.actions.length > 0 ? (
                         <span className="text-[#008A05] font-medium">
-                          {inc.actions.filter((a) => a.isCompleted).length}/{inc.actions.length}{' '}
-                          hoàn tất
+                          {
+                            inc.actions.filter(
+                              (a) => Boolean(a.completedAt) || Boolean(a.isCompleted),
+                            ).length
+                          }
+                          /{inc.actions.length} hoàn tất
                         </span>
                       ) : (
                         <span className="text-[#717171]">Chưa có hành động</span>

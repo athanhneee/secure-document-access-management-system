@@ -125,25 +125,86 @@ export async function cascadeRevokeOnRankIncrease(params: {
 }
 
 /**
- * Algorithm: Classification Download Prohibition Stripper
+ * Thuật toán: Tước quyền `DOWNLOAD` bị cấm bởi cấp độ mật và thu hồi dây chuyền grant rỗng quyền.
+ * Cơ chế hoạt động:
+ *   1. Xóa mọi bản ghi `DOWNLOAD` trên các grant `ACTIVE` của tài liệu khi `allow_download === false`.
+ *   2. Kiểm tra lại các grant vừa bị tác động: nếu số quyền còn lại bằng `0` (`access_grant_permissions`),
+ *      chuyển grant sang `REVOKED` và đóng toàn bộ phiên `ACTIVE` (`TERMINATED`) để không tồn tại grant rỗng.
  */
 export async function stripForbiddenDownloadPermissions(
   tx: PrismaTransaction,
   documentId: string,
-): Promise<void> {
+  actorUserId?: bigint,
+  now: Date = new Date(),
+): Promise<{ revokedEmptyGrantsCount: number; terminatedSessionsCount: number }> {
   if (
     typeof (tx as { accessGrantPermission?: { deleteMany?: unknown } }).accessGrantPermission
       ?.deleteMany !== 'function'
   ) {
-    return;
+    return { revokedEmptyGrantsCount: 0, terminatedSessionsCount: 0 };
   }
   const remainingActiveGrants = await tx.accessGrant.findMany({
     where: { document_id: documentId, status: 'ACTIVE' },
   });
   const grantIds = remainingActiveGrants.map((g) => g.id);
-  if (grantIds.length > 0) {
-    await tx.accessGrantPermission.deleteMany({
-      where: { access_grant_id: { in: grantIds }, permission: 'DOWNLOAD' },
-    });
+  if (grantIds.length === 0) {
+    return { revokedEmptyGrantsCount: 0, terminatedSessionsCount: 0 };
   }
+
+  let affectedGrantIds: string[] = [];
+  const hasPermFindMany =
+    typeof (tx as { accessGrantPermission?: { findMany?: unknown } }).accessGrantPermission
+      ?.findMany === 'function';
+  if (hasPermFindMany) {
+    const downloadRows = await tx.accessGrantPermission.findMany({
+      where: { access_grant_id: { in: grantIds }, permission: 'DOWNLOAD' },
+      select: { access_grant_id: true },
+    });
+    affectedGrantIds = [...new Set(downloadRows.map((r) => r.access_grant_id))];
+  }
+
+  await tx.accessGrantPermission.deleteMany({
+    where: { access_grant_id: { in: grantIds }, permission: 'DOWNLOAD' },
+  });
+
+  let revokedEmptyGrantsCount = 0;
+  let terminatedSessionsCount = 0;
+  if (hasPermFindMany && affectedGrantIds.length > 0) {
+    // CONFLICT-RESOLVED: Thu hồi ngay các grant ACTIVE chỉ có quyền DOWNLOAD sau khi bị tước quyền để tránh bản ghi mồ côi 0 quyền.
+    const survivingPerms = await tx.accessGrantPermission.findMany({
+      where: { access_grant_id: { in: affectedGrantIds } },
+      select: { access_grant_id: true },
+    });
+    const survivingGrantSet = new Set(survivingPerms.map((p) => p.access_grant_id));
+    for (const emptyGrantId of affectedGrantIds) {
+      if (survivingGrantSet.has(emptyGrantId)) continue;
+      if (typeof tx.accessGrant.update === 'function') {
+        await tx.accessGrant.update({
+          where: { id: emptyGrantId },
+          data: {
+            status: 'REVOKED',
+            ...(actorUserId !== undefined ? { revoked_by: actorUserId } : {}),
+            revoked_at: now,
+            revoke_reason:
+              'Reclassification forbids download and grant has no remaining permissions',
+            version: { increment: 1 },
+          },
+        });
+        revokedEmptyGrantsCount += 1;
+      }
+      if (typeof tx.accessSession?.updateMany === 'function') {
+        const terminated = await tx.accessSession.updateMany({
+          where: { access_grant_id: emptyGrantId, status: 'ACTIVE' },
+          data: {
+            status: 'TERMINATED',
+            ended_at: now,
+            terminated_reason: 'Grant revoked because classification forbids download',
+          },
+        });
+        terminatedSessionsCount += terminated.count;
+      }
+    }
+  }
+
+  return { revokedEmptyGrantsCount, terminatedSessionsCount };
 }

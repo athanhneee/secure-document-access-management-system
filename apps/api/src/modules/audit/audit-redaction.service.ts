@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { Injectable } from '@nestjs/common';
 
 /**
@@ -100,12 +101,14 @@ export class AuditRedactionService {
   }
 
   /**
-   * Sanitizes an IP address string.
+   * Thuật toán: Chuẩn hóa và kiểm định địa chỉ IPv4/IPv6 bằng `node:net.isIP`.
+   * Loại bỏ ký tự điều khiển, hậu tố zone index IPv6 (`%eth0`) và trả về `null` nếu chuỗi rỗng hoặc không phải địa chỉ IP hợp lệ.
    */
   sanitizeIp(ip?: string | null): string | null {
     if (!ip) return null;
-    const clean = stripControlCharacters(ip, '').trim();
-    return clean.length > 45 ? clean.substring(0, 45) : clean;
+    const clean = stripControlCharacters(ip, '').trim().split('%')[0]?.trim() ?? '';
+    if (clean.length === 0 || clean.length > 45) return null;
+    return isIP(clean) === 0 ? null : clean;
   }
 
   /**
@@ -161,7 +164,12 @@ export class AuditRedactionService {
       return this.scrubString(val);
     }
 
-    if (typeof val === 'number' || typeof val === 'boolean' || typeof val === 'bigint') {
+    if (typeof val === 'bigint') {
+      // CONFLICT-RESOLVED: Chuyển BigInt sang chuỗi thập phân tương thích chuẩn JCS RFC 8785 để Prisma JsonB không ném lỗi JSON.stringify.
+      return val.toString();
+    }
+
+    if (typeof val === 'number' || typeof val === 'boolean') {
       return val;
     }
 

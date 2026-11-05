@@ -99,6 +99,7 @@ export const EnvSchema = z
     WEBAUTHN_RP_ID: z.string().default('localhost'),
     WEBAUTHN_ORIGINS: z.string().default('http://localhost:3000,http://127.0.0.1:3000'),
     METRICS_SCRAPE_TOKEN: z.string().min(16).optional(),
+    EXPORT_STORAGE_DIR: z.string().min(1).optional(),
   })
   /**
    * Thuật toán: Kiểm chứng bất biến bảo mật môi trường Production theo cơ chế Fail-Fast (`superRefine`).

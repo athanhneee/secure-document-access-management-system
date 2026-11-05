@@ -25,7 +25,8 @@ export interface PepEvaluationResult {
   documentId: string;
   documentTitle: string;
   documentCode: string | null;
-  documentVersionId: bigint;
+  // CONFLICT-RESOLVED: Chuyển documentVersionId sang string để tránh lỗi Fastify JSON.stringify BigInt HTTP 500 trên POST /documents/:id/sessions.
+  documentVersionId: string;
   versionNo: number;
   grantId: string;
   watermarkRequired: boolean;
@@ -116,7 +117,8 @@ export async function buildPepSubjectAttributes(
         valid_from: { lte: now },
         AND: [
           { OR: [{ valid_to: null }, { valid_to: { gt: now } }] },
-          { OR: [{ attribute_option_id: null }, { attribute_options: { is_active: true } }] },
+          // CONFLICT-RESOLVED: Đồng bộ tên cột khóa ngoại option_id của bảng UserAttributeAssignment trong abac.prisma thay cho attribute_option_id không tồn tại.
+          { OR: [{ option_id: null }, { attribute_options: { is_active: true } }] },
         ],
       },
       include: { attribute_options: true },

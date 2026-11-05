@@ -1,6 +1,6 @@
 /**
  * @module AuthController
- * Algorithm: Cookie-Bound Authentication, TOTP/WebAuthn Step-Up MFA & CSRF-Protected HTTP Controller.
+ * Algorithm: Cookie-Bound Authentication, Session Management, TOTP/WebAuthn Step-Up MFA & CSRF-Protected HTTP Controller.
  */
 import {
   BadRequestException,
@@ -10,13 +10,13 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   Req,
   Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { AppConfigService } from '../../config/config.service.js';
 import { PublicEndpoint } from '../../public-endpoint.js';
 import { AllowPreMfa } from './allow-pre-mfa.js';
@@ -84,10 +84,7 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async logout(
-    @Req() request: FastifyRequest,
-    @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<void> {
+  async logout(@Req() request: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
     this.csrf.assertRequest(request);
     await this.auth.logout(requireAuthPrincipal(request), extractAuthRequestContext(request));
     clearAuthSessionCookies(reply, this.secureCookies);
@@ -95,13 +92,44 @@ export class AuthController {
 
   @Post('logout-all')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async logoutAll(
+  async logoutAll(@Req() request: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
+    this.csrf.assertRequest(request);
+    await this.auth.logoutAll(requireAuthPrincipal(request), extractAuthRequestContext(request));
+    clearAuthSessionCookies(reply, this.secureCookies);
+  }
+
+  // CONFLICT-RESOLVED: Bổ sung quản lý phiên thiết bị (sessions, logout-others, DELETE sessions/:sessionId) giữ nguyên logout-all (HIGH-10)
+  @Get('sessions')
+  listSessions(@Req() request: FastifyRequest) {
+    return this.auth.listSessions(requireAuthPrincipal(request));
+  }
+
+  @Post('logout-others')
+  @HttpCode(HttpStatus.OK)
+  logoutOthers(@Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    return this.auth.logoutOthers(
+      requireAuthPrincipal(request),
+      extractAuthRequestContext(request),
+    );
+  }
+
+  @Delete('sessions/:sessionId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async revokeSession(
+    @Param('sessionId') sessionId: string,
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<void> {
     this.csrf.assertRequest(request);
-    await this.auth.logoutAll(requireAuthPrincipal(request), extractAuthRequestContext(request));
-    clearAuthSessionCookies(reply, this.secureCookies);
+    const result = await this.auth.revokeTargetSession(
+      requireAuthPrincipal(request),
+      sessionId,
+      extractAuthRequestContext(request),
+    );
+    if (result.clearedCurrentCookies) {
+      clearAuthSessionCookies(reply, this.secureCookies);
+    }
   }
 
   @Post('change-password')
@@ -185,77 +213,6 @@ export class AuthController {
       body,
     );
     const result = await this.auth.verifyMfa(principal, input.code, input.recoveryCode, context);
-    setAuthSessionCookies(reply, result, this.secureCookies);
-    return { authenticated: true as const };
-  }
-
-  @AllowPreMfa()
-  @Post('mfa/webauthn/register/options')
-  async webauthnRegisterOptions(@Body() body: unknown, @Req() req: FastifyRequest) {
-    const { input, principal, context } = guardAuthenticatedBody(
-      this.csrf,
-      req,
-      S.WebAuthnRegistrationOptionsRequestSchema,
-      body,
-    );
-    return this.auth.beginWebAuthnEnrollment(principal, input.label, context);
-  }
-
-  @AllowPreMfa()
-  @Post('mfa/webauthn/register/verify')
-  async webauthnRegisterVerify(
-    @Body() body: unknown,
-    @Req() req: FastifyRequest,
-    @Res({ passthrough: true }) reply: FastifyReply,
-  ) {
-    const { input, principal, context } = guardAuthenticatedBody(
-      this.csrf,
-      req,
-      S.WebAuthnVerifyRegistrationRequestSchema,
-      body,
-    );
-    const result = await this.auth.verifyWebAuthnEnrollment(
-      principal,
-      input.response as unknown as RegistrationResponseJSON,
-      input.challengeToken,
-      input.label,
-      context,
-    );
-    setAuthSessionCookies(reply, result, this.secureCookies);
-    return { recoveryCodes: result.recoveryCodes };
-  }
-
-  @AllowPreMfa()
-  @Post('mfa/webauthn/auth/options')
-  async webauthnAuthOptions(@Body() body: unknown, @Req() request: FastifyRequest) {
-    this.csrf.assertRequest(request);
-    const input = S.parseAuthBody(S.WebAuthnAuthOptionsRequestSchema, body);
-    return this.auth.getWebAuthnAuthOptions(
-      request.auth,
-      input.username,
-      extractAuthRequestContext(request),
-    );
-  }
-
-  @AllowPreMfa()
-  @Post('mfa/webauthn/auth/verify')
-  async webauthnAuthVerify(
-    @Body() body: unknown,
-    @Req() req: FastifyRequest,
-    @Res({ passthrough: true }) reply: FastifyReply,
-  ) {
-    const { input, principal, context } = guardAuthenticatedBody(
-      this.csrf,
-      req,
-      S.WebAuthnVerifyAuthRequestSchema,
-      body,
-    );
-    const result = await this.auth.verifyWebAuthnAuth(
-      principal,
-      input.response as unknown as AuthenticationResponseJSON,
-      input.challengeToken,
-      context,
-    );
     setAuthSessionCookies(reply, result, this.secureCookies);
     return { authenticated: true as const };
   }

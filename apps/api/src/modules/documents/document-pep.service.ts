@@ -223,7 +223,7 @@ export class DocumentPepService {
       documentId,
       documentTitle: document.title,
       documentCode: document.document_code,
-      documentVersionId: currentVersion.id,
+      documentVersionId: currentVersion.id.toString(),
       versionNo: currentVersion.version_no,
       grantId: effectiveGrantId,
       watermarkRequired: policyOutcome.watermarkRequired,

@@ -22,6 +22,9 @@ services:
       - backend_isolated
     tmpfs:
       - /tmp:size=64m,noexec,nosuid,nodev
+    # CONFLICT-RESOLVED: Gắn chung volume export_data tại /var/lib/sda/exports cho cả api và worker thay vì /tmp/exports cô lập trên tmpfs riêng.
+    volumes:
+      - export_data:/var/lib/sda/exports
     ports:
       - '127.0.0.1:3001:3001'
     environment:
@@ -48,7 +51,7 @@ services:
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:?WebAuthn RP ID required}
       WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:?WebAuthn origins required}
       PASSWORD_RESET_BASE_URL: ${PASSWORD_RESET_BASE_URL:?Password reset base URL required}
-      EXPORT_STORAGE_DIR: /tmp/exports
+      EXPORT_STORAGE_DIR: /var/lib/sda/exports
       GOTENBERG_URL: http://gotenberg:3000
     cpus: 2.0
     mem_limit: 1g
@@ -80,6 +83,8 @@ services:
       - backend_isolated
     tmpfs:
       - /tmp:size=64m,noexec,nosuid,nodev
+    volumes:
+      - export_data:/var/lib/sda/exports
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:?Database connection required}
@@ -93,7 +98,13 @@ services:
       STORAGE_USE_SSL: ${STORAGE_USE_SSL:-false}
       STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?Object storage access key required}
       STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?Object storage secret key required}
-      EXPORT_STORAGE_DIR: /tmp/exports
+      EXPORT_STORAGE_DIR: /var/lib/sda/exports
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@sda.internal}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
       ICAP_SERVER_HOST: '0.0.0.0'
       ICAP_SERVER_PORT: '1344'
       ICAP_DLP_ACTION: ${ICAP_DLP_ACTION:-BLOCK}
@@ -161,3 +172,7 @@ networks:
   backend_isolated:
     name: sda-prod-isolated-network
     internal: true
+
+volumes:
+  export_data:
+    name: sda-prod-export-data

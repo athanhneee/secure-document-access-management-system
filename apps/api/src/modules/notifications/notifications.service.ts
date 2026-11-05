@@ -85,6 +85,7 @@ export class NotificationsService {
     if (channel === 'EMAIL' || channel === 'BOTH') {
       const outbox = await enqueueNotificationOutbox(this.database, this.logger, {
         recipientId: options.recipientId,
+        channel,
         notificationType: options.notificationType,
         title: options.title,
         body: options.body,

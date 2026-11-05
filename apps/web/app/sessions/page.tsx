@@ -1,58 +1,119 @@
 'use client';
 
-import { useState } from 'react';
-import { Laptop, ShieldCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { AuthGuard } from '@/components/auth-guard';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
-import { Badge } from '@/components/ui/badge';
 import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardFooter,
-} from '@/components/ui/card';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+  ActiveSessionsList,
+  SessionSecurityOverview,
+  type ActiveAuthSessionItem,
+} from './active-sessions-list';
 
 export default function SessionsPage() {
   const { user, logout } = useAuth();
-  const [isLoading, setIsLoading] = useState(false);
-  const [confirmLogoutAllOpen, setConfirmLogoutAllOpen] = useState(false);
+  const [sessions, setSessions] = useState<ActiveAuthSessionItem[]>([]);
+  const [isFetching, setIsFetching] = useState(true);
+  const [isRevokingOthers, setIsRevokingOthers] = useState(false);
+  const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
+  const [confirmLogoutOthersOpen, setConfirmLogoutOthersOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   /**
-   * Thuật toán: Thu Hồi Đồng Loạt Phiên Thiết Bị Từ Xa (Global Remote Session Revocation)
-   * Mục đích: Cho phép người dùng chủ động vô hiệu hóa toàn bộ các phiên đăng nhập và chuỗi xoay vòng token trên mọi thiết bị khác khi nghi ngờ lộ lọt.
-   * Cơ chế hoạt động:
-   *   - Yêu cầu xác nhận qua hộp thoại phương thức `ConfirmDialog` (thay cho `window.confirm`), kích hoạt điểm cuối `/auth/logout-all` kèm mã bảo vệ CSRF và phản hồi kết quả thu hồi tức thì.
+   * Thuật toán: Đồng Bộ Danh Sách Phiên Thiết Bị Đang Mở & Thu Hồi Chọn Lọc Không Hủy Phiên Hiện Tại (`loadActiveSessions`, `handleRevokeSingleSession`, `handleLogoutOthers`)
+   * Mục đích: Truy vấn `/auth/sessions` để liệt kê mọi phiên đăng nhập còn hiệu lực, cho phép thu hồi từng phiên qua `DELETE /auth/sessions/:id` hoặc thu hồi toàn bộ thiết bị khác qua `POST /auth/logout-others` mà vẫn bảo toàn cookie phiên hiện tại.
    */
-  async function handleLogoutAll() {
-    // CONFLICT-RESOLVED: Thay thế hộp thoại trình duyệt thô window.confirm bằng ConfirmDialog chuẩn WCAG (.showModal()).
-    setIsLoading(true);
+  const loadActiveSessions = useCallback(async () => {
+    setIsFetching(true);
+    try {
+      const res = await apiClient<{ data?: ActiveAuthSessionItem[] } | ActiveAuthSessionItem[]>(
+        '/auth/sessions',
+      );
+      const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
+      setSessions(list);
+    } catch {
+      setSessions([]);
+    } finally {
+      setIsFetching(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    const run = async () => {
+      await Promise.resolve();
+      if (!ignore) {
+        void loadActiveSessions();
+      }
+    };
+    void run();
+    return () => {
+      ignore = true;
+    };
+  }, [loadActiveSessions]);
+
+  async function handleRevokeSingleSession(target: ActiveAuthSessionItem) {
+    if (target.isCurrent) {
+      return;
+    }
+    setRevokingSessionId(target.id);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     try {
-      await apiClient('/auth/logout-all', { method: 'POST' });
-      setConfirmLogoutAllOpen(false);
-      setSuccessMessage('Đã hủy tất cả các phiên đăng nhập khác thành công.');
+      await apiClient(`/auth/sessions/${target.id}`, { method: 'DELETE' });
+      setSuccessMessage(
+        `Đã thu hồi phiên đăng nhập từ địa chỉ IP ${target.ipAddress || 'từ xa'} thành công.`,
+      );
+      await loadActiveSessions();
     } catch (err) {
-      setConfirmLogoutAllOpen(false);
-      if (err instanceof ApiError) {
-        setErrorMessage(err.message || 'Không thể đăng xuất tất cả phiên.');
-      } else {
-        setErrorMessage('Đã xảy ra lỗi khi hủy các phiên làm việc.');
-      }
+      setErrorMessage(
+        err instanceof ApiError
+          ? err.message || 'Không thể thu hồi phiên thiết bị này.'
+          : 'Đã xảy ra lỗi khi thu hồi phiên thiết bị.',
+      );
     } finally {
-      setIsLoading(false);
+      setRevokingSessionId(null);
     }
   }
+
+  async function handleLogoutOthers() {
+    // CONFLICT-RESOLVED: Chuyển từ /auth/logout-all sang /auth/logout-others kết hợp ConfirmDialog chuẩn WCAG để thu hồi các thiết bị khác mà không hủy cookie phiên hiện tại.
+    setIsRevokingOthers(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const res = await apiClient<{ revokedCount?: number }>('/auth/logout-others', {
+        method: 'POST',
+      });
+      setConfirmLogoutOthersOpen(false);
+      const count = typeof res?.revokedCount === 'number' ? res.revokedCount : null;
+      setSuccessMessage(
+        count !== null
+          ? `Đã đăng xuất thành công ${count} phiên trên các thiết bị khác. Phiên hiện tại vẫn được giữ nguyên.`
+          : 'Đã thu hồi toàn bộ các phiên đăng nhập trên thiết bị khác thành công.',
+      );
+      await loadActiveSessions();
+    } catch (err) {
+      setConfirmLogoutOthersOpen(false);
+      setErrorMessage(
+        err instanceof ApiError
+          ? err.message || 'Không thể đăng xuất các thiết bị khác.'
+          : 'Đã xảy ra lỗi khi thu hồi các phiên làm việc khác.',
+      );
+    } finally {
+      setIsRevokingOthers(false);
+    }
+  }
+
+  const otherSessionsCount = sessions.filter((s) => !s.isCurrent).length;
 
   return (
     <AuthGuard>
@@ -71,10 +132,14 @@ export default function SessionsPage() {
 
             <InteractiveHoverButton
               variant="destructive"
-              onClick={() => setConfirmLogoutAllOpen(true)}
-              disabled={isLoading}
-              isLoading={isLoading}
-              text="Đăng xuất tất cả thiết bị khác"
+              onClick={() => setConfirmLogoutOthersOpen(true)}
+              disabled={isRevokingOthers}
+              isLoading={isRevokingOthers}
+              text={
+                otherSessionsCount > 0
+                  ? `Đăng xuất tất cả thiết bị khác (${otherSessionsCount})`
+                  : 'Đăng xuất tất cả thiết bị khác'
+              }
               className="w-full sm:w-auto"
             />
           </div>
@@ -106,122 +171,30 @@ export default function SessionsPage() {
             </Alert>
           )}
 
-          <div className="grid gap-5 md:grid-cols-2">
-            {/* Current session */}
-            <Card className="rounded-[28px] border border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <Laptop
-                      size={20}
-                      strokeWidth={1.75}
-                      className="text-[#008A05] shrink-0"
-                      aria-hidden="true"
-                    />
-                    <div>
-                      <CardTitle className="text-sm font-bold text-[#222222]">
-                        Phiên hiện tại (Thiết bị này)
-                      </CardTitle>
-                      <CardDescription className="text-xs text-[#008A05] font-medium">
-                        Đang hoạt động · Được cấp quyền
-                      </CardDescription>
-                    </div>
-                  </div>
-                  <Badge variant="success">Active</Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3 text-xs text-[#222222]">
-                <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4 space-y-2.5">
-                  <div className="flex justify-between items-center">
-                    <span className="text-[#717171]">Người dùng:</span>
-                    <span className="font-semibold text-[#222222]">
-                      {user?.fullName} ({user?.username})
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[#717171]">Bảo mật Cookie:</span>
-                    <span className="font-bold text-[#008A05] text-[11px]">
-                      HttpOnly · SameSite=Strict
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[#717171]">Phòng chống CSRF:</span>
-                    <span className="font-bold text-[#008A05] text-[11px]">
-                      Double-Submit Cookie (sda_csrf)
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-              <CardFooter className="pt-2 border-t border-[#ebebeb] flex justify-end">
-                <InteractiveHoverButton
-                  variant="destructive"
-                  onClick={() => void logout()}
-                  text="Đăng xuất phiên này"
-                  className="w-full sm:w-auto text-xs"
-                />
-              </CardFooter>
-            </Card>
+          <ActiveSessionsList
+            sessions={sessions}
+            isFetching={isFetching}
+            revokingId={revokingSessionId}
+            onRefresh={() => void loadActiveSessions()}
+            onRevokeSession={(session) => void handleRevokeSingleSession(session)}
+          />
 
-            {/* Security Policies for Sessions */}
-            <Card className="rounded-[28px] border border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
-              <CardHeader className="pb-3">
-                <div className="flex items-center gap-2.5">
-                  <ShieldCheck
-                    size={20}
-                    strokeWidth={1.75}
-                    className="text-[#008A05] shrink-0"
-                    aria-hidden="true"
-                  />
-                  <div>
-                    <CardTitle className="text-sm font-bold text-[#222222]">
-                      Chính sách an toàn phiên
-                    </CardTitle>
-                    <CardDescription className="text-xs text-[#717171]">
-                      Tuân thủ tiêu chuẩn an toàn thông tin
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3 text-xs text-[#717171] leading-relaxed">
-                <div className="space-y-2.5">
-                  <div className="flex items-start gap-2">
-                    <span className="dot dot-success mt-1.5 shrink-0" aria-hidden="true" />
-                    <p className="text-[#717171]">
-                      <strong className="text-[#222222]">Hết hạn tự động:</strong> Phiên làm việc tự
-                      động hết hạn sau khoảng thời gian không hoạt động.
-                    </p>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="dot dot-success mt-1.5 shrink-0" aria-hidden="true" />
-                    <p className="text-[#717171]">
-                      <strong className="text-[#222222]">Thu hồi tức thì:</strong> Khi một giấy phép
-                      truy cập (Access Grant) bị thu hồi, mọi phiên đọc/xem tài liệu liên quan đều
-                      bị ngắt kết nối lập tức.
-                    </p>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="dot dot-success mt-1.5 shrink-0" aria-hidden="true" />
-                    <p className="text-[#717171]">
-                      <strong className="text-[#222222]">Chống phát lại:</strong> Refresh token sử
-                      dụng cơ chế xoay vòng (Rotation) với kiểm tra tái sử dụng nhằm phát hiện sớm
-                      hành vi chiếm quyền điều khiển phiên.
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <SessionSecurityOverview
+            fullName={user?.fullName}
+            username={user?.username}
+            onLogoutCurrent={() => void logout()}
+          />
 
           <ConfirmDialog
-            open={confirmLogoutAllOpen}
-            onOpenChange={setConfirmLogoutAllOpen}
+            open={confirmLogoutOthersOpen}
+            onOpenChange={setConfirmLogoutOthersOpen}
             title="Đăng xuất khỏi tất cả thiết bị khác"
-            description="Bạn có chắc chắn muốn thu hồi ngay lập tức toàn bộ các phiên đăng nhập đang mở trên những thiết bị khác không? Thiết bị hiện tại vẫn được giữ nguyên."
-            confirmText="Đăng xuất tất cả"
+            description="Bạn có chắc chắn muốn thu hồi ngay lập tức toàn bộ các phiên đăng nhập đang mở trên những thiết bị khác không? Thiết bị hiện tại và cookie phiên này vẫn được giữ nguyên."
+            confirmText="Đăng xuất thiết bị khác"
             cancelText="Giữ nguyên"
             variant="danger"
-            isLoading={isLoading}
-            onConfirm={handleLogoutAll}
+            isLoading={isRevokingOthers}
+            onConfirm={handleLogoutOthers}
           />
         </div>
       </AppLayout>

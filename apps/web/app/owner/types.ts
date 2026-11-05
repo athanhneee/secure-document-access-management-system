@@ -22,6 +22,9 @@ export interface DocumentApiDto {
   title?: string;
   documentCode?: string;
   document_code?: string;
+  // CONFLICT-RESOLVED: Bổ sung trường phẳng classificationLevelCode, classificationLevelName, departmentName từ GET /api/v1/documents.
+  classificationLevelCode?: ClassificationCode | null;
+  classificationLevelName?: string | null;
   classificationCode?: ClassificationCode;
   classification?: {
     id?: number;
@@ -31,10 +34,12 @@ export interface DocumentApiDto {
   };
   classification_level_id?: number;
   business_category_id?: number;
+  businessCategoryName?: string | null;
   businessCategory?: { id?: number; name?: string };
   business_categories?: { id?: number; name?: string };
   status?: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
   department_id?: number;
+  departmentName?: string | null;
   department?: { id?: number; name?: string };
   departments?: { id?: number; name?: string };
   allowDownload?: boolean;
@@ -47,14 +52,23 @@ export interface AccessGrantApiDto {
   id: string;
   documentId: string;
   document?: { title?: string };
-  principalType?: 'USER' | 'ROLE';
-  principalUser?: { fullName?: string };
-  principalRole?: { name?: string };
+  // CONFLICT-RESOLVED: Bổ sung principalUserId và principalRoleId khớp GrantDetail trả về từ GET /api/v1/access-grants.
+  principalType?: 'USER' | 'ROLE' | string;
+  principalUserId?: string | number | null;
+  principalRoleId?: string | number | null;
+  principalUser?: { fullName?: string; username?: string };
+  principalRole?: { name?: string; code?: string };
   permissions?: string[];
   validFrom?: string;
   validUntil?: string;
-  status?: 'ACTIVE' | 'REVOKED' | 'EXPIRED';
+  status?: 'ACTIVE' | 'REVOKED' | 'EXPIRED' | string;
   version?: number;
+}
+
+export interface GrantLookupMaps {
+  docsById?: ReadonlyMap<string, Pick<DocumentItem, 'title'>>;
+  usersById?: ReadonlyMap<string, Pick<UserLookupItem, 'fullName' | 'username'>>;
+  rolesById?: ReadonlyMap<string, Pick<RoleLookupItem, 'name' | 'code'>>;
 }
 
 export interface AccessRequestItem {

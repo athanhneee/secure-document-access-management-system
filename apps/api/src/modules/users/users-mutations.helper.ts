@@ -3,7 +3,7 @@
  * Algorithm: Executes `SERIALIZABLE` user provisioning, optimistic Compare-And-Swap (`version`) profile updates
  *   with automatic old-department role expiration, and status changes with cascading session revocation.
  */
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { withSerializableTransaction, type getDatabaseClient } from '@sda/database';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -199,6 +199,10 @@ export async function executeChangeUserStatus(params: {
       const before = await transaction.user.findUnique({ where: { id } });
       if (!before) throw new NotFoundException('User not found.');
       await assertUserDepartmentVisible(authorization, principal, before.department_id);
+      // CONFLICT-RESOLVED: Chặn mở khóa trực tiếp tài khoản đã bị vô hiệu hóa vĩnh viễn (`DISABLED`) qua luồng `unlock` (MED-07)
+      if (status === 'ACTIVE' && before.status === 'DISABLED') {
+        throw new BadRequestException('Disabled accounts cannot be unlocked.');
+      }
       const now = new Date();
       const changed = await transaction.user.updateMany({
         where: { id, version: expectedVersion },

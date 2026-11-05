@@ -29,9 +29,11 @@ RUN pnpm install --frozen-lockfile --config.node-linker=hoisted
 COPY packages/ ./packages/
 COPY apps/web/ ./apps/web/
 
-# Build contracts and Next.js web application
+# Build contracts and Next.js web application (same-origin /api/v1 proxied to internal API service)
 ARG NEXT_PUBLIC_API_BASE_URL=/api/v1
-ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+ARG INTERNAL_API_ORIGIN=http://api:3001
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL} \
+    INTERNAL_API_ORIGIN=${INTERNAL_API_ORIGIN}
 RUN pnpm --filter @sda/contracts build
 RUN pnpm --filter @sda/web build
 
@@ -45,10 +47,12 @@ WORKDIR /app
 
 RUN apk add --no-cache dumb-init wget
 
+# Default INTERNAL_API_ORIGIN rewrites /api/v1/* to http://api:3001/api/v1/* out of the box
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
-    HOSTNAME=0.0.0.0
+    HOSTNAME=0.0.0.0 \
+    INTERNAL_API_ORIGIN=http://api:3001
 
 COPY --from=builder --chown=node:node /app/package.json ./package.json
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules

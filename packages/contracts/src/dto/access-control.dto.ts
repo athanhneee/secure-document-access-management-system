@@ -1,19 +1,19 @@
 import { z } from 'zod';
+import { PositiveBigIntSchema } from './validation-primitives.js';
 
 export const GrantPermissionSchema = z.enum(['VIEW', 'DOWNLOAD']);
 export type GrantPermission = z.infer<typeof GrantPermissionSchema>;
 
 /**
- * Algorithm: Exclusive principal discriminator & temporal interval validation (`superRefine`).
- * Enforces XOR between `principalUserId` (USER) and `principalRoleId` (ROLE) and verifies
- * that `validUntil` strictly follows `validFrom`.
+ * Thuật toán: Kiểm định loại trừ tương hỗ chủ thể (XOR Principal Discriminator) & thứ tự khoảng thời gian hiệu lực (`superRefine`).
+ * Bắt buộc khai báo duy nhất `principalUserId` (khi `USER`) hoặc `principalRoleId` (khi `ROLE`), chặn tràn 64-bit `BIGINT` và đảm bảo `validUntil > validFrom`.
  */
 export const CreateAccessGrantSchema = z
   .object({
     documentId: z.string().uuid(),
     principalType: z.enum(['USER', 'ROLE']),
-    principalUserId: z.coerce.bigint().positive().optional(),
-    principalRoleId: z.coerce.bigint().positive().optional(),
+    principalUserId: PositiveBigIntSchema.optional(),
+    principalRoleId: PositiveBigIntSchema.optional(),
     permissions: z.array(GrantPermissionSchema).min(1).max(2),
     validFrom: z.string().datetime({ offset: true }),
     validUntil: z.string().datetime({ offset: true }),

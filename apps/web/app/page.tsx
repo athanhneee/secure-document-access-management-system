@@ -26,10 +26,7 @@ export default function HomePage() {
                 <span className="text-xs font-bold tracking-tight text-[#222222]">
                   Secure<span className="text-[#FF385C]">Document</span> Access System
                 </span>
-                <span
-                  className="staff-badge inline-flex items-center gap-1 text-[10px] font-bold text-[#008A05]"
-                  style={{ background: 'transparent', border: 'none', padding: 0 }}
-                >
+                <span className="staff-badge inline-flex items-center gap-1 text-[10px] font-bold text-[#008A05]">
                   <span className="dot dot-success" aria-hidden="true" />
                   <span>ONLINE</span>
                 </span>

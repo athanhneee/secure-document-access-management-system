@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { resolveUploadWizardDefaults } from '../helpers';
 import type {
   BusinessCategoryLookupItem,
   ClassificationLevelLookupItem,
@@ -19,10 +20,8 @@ interface UseUploadWizardParams {
 }
 
 /**
- * Algorithm: 3-Step Mandatory-Classification Upload Pipeline
- * Collects source file + mandatory security classification metadata, uploads multipart payload,
- * binds initial version pointer, and transitions document status to `ACTIVE`.
- * Time Complexity: O(K) over classification/department lookups | Space Complexity: O(1)
+ * Thuật toán: Quy trình Tải lên Tài liệu 3 Bước Bắt buộc Gắn Nhãn Mật (`useUploadWizard`)
+ * Khởi tạo phòng ban/danh mục/mức mật mặc định từ danh mục tra cứu thực, tải lên multipart, gắn phiên bản hiện hành và kích hoạt tài liệu `ACTIVE`.
  */
 export function useUploadWizard({
   userDepartmentId,
@@ -46,20 +45,17 @@ export function useUploadWizard({
   const [isSubmittingDoc, setIsSubmittingDoc] = useState(false);
 
   function openUploadWizard() {
-    if (!docDepartmentId && departments[0]) {
-      const parsedUserDept = userDepartmentId ? Number(userDepartmentId) : null;
-      const defaultDept = parsedUserDept
-        ? (departments.find((d) => d.id === parsedUserDept)?.id ?? departments[0].id)
-        : departments[0].id;
-      setDocDepartmentId(defaultDept);
-    }
-    if (!docCategoryId && businessCategories[0]) {
-      setDocCategoryId(businessCategories[0].id);
-    }
-    if (!docClassificationId && classificationLevels[0]) {
-      const conf =
-        classificationLevels.find((l) => l.code === 'CONFIDENTIAL') ?? classificationLevels[0];
-      setDocClassificationId(conf.id);
+    // CONFLICT-RESOLVED: Khắc phục điều kiện chết (!docDepartmentId / !docCategoryId / !docClassificationId khi state ban đầu là 1, 1, 3) để luôn khởi tạo đúng mặc định khi mở trình tải lên mới.
+    if (!docFile && !docTitle.trim()) {
+      const defaults = resolveUploadWizardDefaults({
+        userDepartmentId,
+        departments,
+        businessCategories,
+        classificationLevels,
+      });
+      setDocDepartmentId(defaults.departmentId);
+      setDocCategoryId(defaults.categoryId);
+      setDocClassificationId(defaults.classificationId);
     }
     setWizardStep(1);
     setUploadWizardOpen(true);

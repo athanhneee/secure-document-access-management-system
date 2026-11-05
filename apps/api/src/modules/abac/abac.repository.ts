@@ -105,22 +105,42 @@ export class AbacRepository {
     };
   }
 
+  /**
+   * Thuật toán: Liệt kê toàn bộ luật chính sách kèm mô tả, nghĩa vụ và danh sách điều kiện DNF sắp xếp tất định.
+   */
   async listPolicies() {
+    // CONFLICT-RESOLVED: Nạp đầy đủ description, obligations và policy_rule_conditions kèm attribute_definitions cho UI biên tập (HIGH-04)
     return this.database.policyRule.findMany({
       orderBy: [{ priority: 'asc' }, { id: 'asc' }],
       select: {
         id: true,
         code: true,
         name: true,
+        description: true,
         effect: true,
         priority: true,
         target_resource: true,
         target_action: true,
         combining_algorithm: true,
+        obligations: true,
         is_active: true,
         valid_from: true,
         valid_to: true,
         version: true,
+        policy_rule_conditions: {
+          orderBy: [{ condition_group: 'asc' }, { sequence_no: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            policy_rule_id: true,
+            attribute_definition_id: true,
+            context_key: true,
+            operator: true,
+            expected_value: true,
+            condition_group: true,
+            sequence_no: true,
+            attribute_definitions: { select: { code: true, scope: true, value_type: true } },
+          },
+        },
       },
     });
   }
@@ -206,11 +226,22 @@ export class AbacRepository {
         input.time,
       ),
     );
-    const clearance = activeAssignments.find(
-      (assignment) =>
+    // CONFLICT-RESOLVED: Chọn mức độ mật cao nhất (MAX numeric_rank) thay vì bản ghi đầu tiên theo id ASC (MED-04)
+    let highestClearanceRank: number | null = null;
+    for (const assignment of activeAssignments) {
+      if (
         assignment.attribute_definitions.code === 'CLEARANCE_LEVEL' &&
-        assignment.attribute_options?.is_active === true,
-    );
+        assignment.attribute_options?.is_active === true &&
+        typeof assignment.attribute_options.numeric_rank === 'number'
+      ) {
+        if (
+          highestClearanceRank === null ||
+          assignment.attribute_options.numeric_rank > highestClearanceRank
+        ) {
+          highestClearanceRank = assignment.attribute_options.numeric_rank;
+        }
+      }
+    }
     const projects = activeAssignments
       .filter(
         (assignment) =>
@@ -224,7 +255,7 @@ export class AbacRepository {
       resourceType: 'DOCUMENT',
       action: input.action,
       subject: {
-        clearanceRank: clearance?.attribute_options?.numeric_rank ?? null,
+        clearanceRank: highestClearanceRank,
         departmentId: user.department_id?.toString() ?? null,
         employmentStatus: user.status,
         projects,

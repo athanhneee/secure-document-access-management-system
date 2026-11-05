@@ -26,7 +26,7 @@ interface AbacTabProps {
   policies: AbacPolicyRow[];
   attributes: AttributeDefinitionRow[];
   onActivatePolicy: (policyId: string) => void;
-  onSaveDraftPolicy: (savedRule: VisualPolicyRule) => void;
+  onSaveDraftPolicy: (savedRule: VisualPolicyRule) => void | Promise<void>;
 }
 
 export function AbacTab({
@@ -74,7 +74,7 @@ export function AbacTab({
           <VisualPolicyBuilder
             initialRule={selectedRuleForBuilder}
             onSaveRule={(savedRule) => {
-              onSaveDraftPolicy(savedRule);
+              void onSaveDraftPolicy(savedRule);
               setBuilderOpen(false);
             }}
             onCancel={() => setBuilderOpen(false)}
@@ -114,7 +114,7 @@ export function AbacTab({
                     setSelectedRuleForBuilder(undefined);
                     setBuilderOpen(true);
                   }}
-                  className="rounded-full bg-[#FF385C] hover:bg-[#E0294C] text-white text-xs h-8 px-4 font-semibold flex items-center gap-1.5"
+                  className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs h-8 px-4 font-semibold flex items-center gap-1.5"
                 >
                   <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Soạn thảo Trực quan</span>

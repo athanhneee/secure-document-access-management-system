@@ -107,10 +107,17 @@ export async function executeAccessRequestDecision(
   }
 
   const validUntil = new Date(now.getTime() + input.validDays * 86400000);
-  const permissions =
+  const rawPermissions =
     input.permissions && input.permissions.length > 0
       ? input.permissions
-      : [request.access_request_permissions[0]?.permission || 'VIEW'];
+      : request.access_request_permissions.length > 0
+        ? request.access_request_permissions.map((p) => p.permission)
+        : ['VIEW'];
+  // CONFLICT-RESOLVED: Phòng thủ chiều sâu — khi phê duyệt DOWNLOAD bắt buộc bao gồm cả quyền VIEW (HIGH-06)
+  const permissions =
+    rawPermissions.includes('DOWNLOAD') && !rawPermissions.includes('VIEW')
+      ? ['VIEW', ...rawPermissions]
+      : [...new Set(rawPermissions)];
 
   const grant = await grantsService.createGrant(
     {

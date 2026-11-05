@@ -3,7 +3,7 @@
  * Algorithm: Acquires `SELECT ... FOR UPDATE` row lock, closes active classification (`effective_to = now`),
  *   inserts new SCD2 row, delegates cascading revocation on rank elevation, and preserves grants on downgrade.
  */
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode, type ReclassifyDocumentInput } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
@@ -13,6 +13,7 @@ import type { DocumentAuditService } from './document-audit.service.js';
 import {
   assertDocumentMutationPermission,
   assertDocumentReadAccess,
+  getUserClearanceRank,
 } from './document-access-guard.helper.js';
 import {
   cascadeRevokeOnRankIncrease,
@@ -51,7 +52,7 @@ export async function executeReclassifyDocument(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal);
+  await assertDocumentMutationPermission(authorization, doc, principal, 'CLASSIFY');
 
   const targetLevel = await database.classificationLevel.findUnique({
     where: { id: input.classificationLevelId },
@@ -99,6 +100,23 @@ export async function executeReclassifyDocument(params: {
     if (current) {
       oldRank = current.classification_levels.rank;
       isLevelIncrease = newRank > oldRank;
+    }
+
+    // CONFLICT-RESOLVED: Cưỡng chế bất biến thống trị độ mật Bell-LaPadula (actorClearanceRank >= max(oldRank, newRank)) trước khi nâng/hạ phân loại tài liệu.
+    const clearanceSource =
+      typeof (tx as unknown as PrismaClient)?.userAttributeAssignment?.findFirst === 'function'
+        ? (tx as unknown as PrismaClient)
+        : database;
+    const actorClearanceRank = await getUserClearanceRank(clearanceSource, principal.userId, now);
+    const requiredClearanceRank = Math.max(oldRank, newRank);
+    if (actorClearanceRank < requiredClearanceRank) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+        message: `Insufficient clearance level (${actorClearanceRank}) to reclassify document between rank ${oldRank} and rank ${newRank}.`,
+      });
+    }
+
+    if (current) {
       await tx.documentClassificationHistory.update({
         where: { id: current.id },
         data: { effective_to: now },
@@ -131,7 +149,14 @@ export async function executeReclassifyDocument(params: {
     }
 
     if (targetLevel.allow_download === false) {
-      await stripForbiddenDownloadPermissions(tx, documentId);
+      const stripped = await stripForbiddenDownloadPermissions(
+        tx,
+        documentId,
+        principal.userId,
+        now,
+      );
+      revokedGrantsCount += stripped.revokedEmptyGrantsCount;
+      terminatedSessionsCount += stripped.terminatedSessionsCount;
     }
   });
 

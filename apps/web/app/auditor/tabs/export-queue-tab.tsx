@@ -58,40 +58,62 @@ export function ExportQueueTab({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {exportJobs.map((job) => (
-                <TableRow key={job.id} className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60">
-                  <TableCell className="font-bold text-xs text-[#222222]">{job.id}</TableCell>
-                  <TableCell className="text-xs text-[#222222]">{job.exportType}</TableCell>
-                  <TableCell>
-                    <Badge variant="secondary">{job.format}</Badge>
-                  </TableCell>
-                  <TableCell className="text-xs font-bold text-[#717171]">
-                    {new Date(job.createdAt).toLocaleDateString('vi-VN')}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        job.status === 'COMPLETED'
-                          ? 'success'
-                          : job.status === 'FAILED'
-                            ? 'destructive'
-                            : 'warning'
-                      }
-                    >
-                      {job.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <InteractiveHoverButton
-                      size="sm"
-                      variant="secondary"
-                      text="Tải tệp"
-                      icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
-                      onClick={() => onDownloadExport(job)}
-                    />
+              {exportJobs.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center py-8 text-xs text-[#717171]">
+                    Chưa có tác vụ xuất báo cáo kiểm toán nào trong hàng đợi
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                exportJobs.map((job) => {
+                  const canDownload = job.status === 'COMPLETED' && !job.isExpired;
+                  const displayStatus = job.isExpired ? 'EXPIRED' : job.status;
+                  return (
+                    <TableRow
+                      key={job.id}
+                      className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
+                    >
+                      <TableCell className="font-bold text-xs text-[#222222]">{job.id}</TableCell>
+                      <TableCell className="text-xs text-[#222222]">{job.exportType}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{job.format}</Badge>
+                      </TableCell>
+                      <TableCell className="text-xs font-bold text-[#717171]">
+                        {new Date(job.createdAt).toLocaleDateString('vi-VN')}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            displayStatus === 'COMPLETED'
+                              ? 'success'
+                              : displayStatus === 'FAILED'
+                                ? 'destructive'
+                                : displayStatus === 'EXPIRED'
+                                  ? 'neutral'
+                                  : 'warning'
+                          }
+                        >
+                          {displayStatus}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <InteractiveHoverButton
+                          size="sm"
+                          variant="secondary"
+                          text="Tải tệp"
+                          icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
+                          disabled={!canDownload}
+                          onClick={() => {
+                            if (canDownload) {
+                              onDownloadExport(job);
+                            }
+                          }}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
             </TableBody>
           </Table>
         </div>

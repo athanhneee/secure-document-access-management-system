@@ -5,6 +5,57 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import type { WatermarkConfigRow } from '../types';
 
+const OPACITY_CLASS_MAP: Record<number, string> = {
+  10: 'opacity-10',
+  15: 'opacity-15',
+  20: 'opacity-20',
+  25: 'opacity-25',
+  30: 'opacity-30',
+  35: 'opacity-35',
+  40: 'opacity-40',
+  45: 'opacity-45',
+  50: 'opacity-50',
+  55: 'opacity-55',
+  60: 'opacity-60',
+  65: 'opacity-65',
+  70: 'opacity-70',
+  75: 'opacity-75',
+  80: 'opacity-80',
+};
+
+const FONT_SIZE_CLASS_MAP: Record<number, string> = {
+  10: 'text-[10px]',
+  11: 'text-[11px]',
+  12: 'text-[12px]',
+  13: 'text-[13px]',
+  14: 'text-[14px]',
+  15: 'text-[15px]',
+  16: 'text-[16px]',
+  17: 'text-[17px]',
+  18: 'text-[18px]',
+  19: 'text-[19px]',
+  20: 'text-[20px]',
+  21: 'text-[21px]',
+  22: 'text-[22px]',
+  23: 'text-[23px]',
+  24: 'text-[24px]',
+};
+
+/**
+ * Thuật toán: Lượng Tử Hóa Tĩnh Độ Đậm & Cỡ Chữ Thủy Ấn Tương Thích CSP Nonce (`resolveWatermarkPreviewClasses`)
+ * Mục đích: Ánh xạ thông số thanh trượt sang các lớp tiện ích Tailwind v4 tĩnh mà không sinh thuộc tính `style` nội tuyến bị chặn bởi CSP.
+ * Cơ chế hoạt động: Làm tròn `opacity` theo bội số 5 trong miền `[10, 80]` và kẹp `fontSize` nguyên trong miền `[10, 24]` để tra cứu `O(1)`.
+ */
+function resolveWatermarkPreviewClasses(opacity: number, fontSize: number) {
+  // CONFLICT-RESOLVED: Thay thế thuộc tính style nội tuyến bằng bảng ánh xạ lớp tĩnh Tailwind v4 nhằm tuân thủ tuyệt đối CSP style-src không cho phép mã nội tuyến.
+  const quantizedOpacity = Math.min(80, Math.max(10, Math.round(opacity / 5) * 5));
+  const clampedFontSize = Math.min(24, Math.max(10, Math.round(fontSize)));
+  return {
+    opacityClass: OPACITY_CLASS_MAP[quantizedOpacity] ?? 'opacity-25',
+    fontSizeClass: FONT_SIZE_CLASS_MAP[clampedFontSize] ?? 'text-[14px]',
+  };
+}
+
 interface WatermarkTabProps {
   configs: WatermarkConfigRow[];
   activeConfigId: string | null;
@@ -32,6 +83,8 @@ export function WatermarkTab({
   onFontSizeChange,
   onSaveConfig,
 }: WatermarkTabProps) {
+  const { opacityClass, fontSizeClass } = resolveWatermarkPreviewClasses(opacity, fontSize);
+
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
@@ -166,12 +219,10 @@ export function WatermarkTab({
             </div>
 
             <div
-              className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none rotate-[-25deg] transition-all"
-              style={{ opacity: opacity / 100 }}
+              className={`absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none rotate-[-25deg] transition-all ${opacityClass}`}
             >
               <div
-                className="font-bold text-center text-[#C13515] leading-tight space-y-1"
-                style={{ fontSize: `${fontSize}px` }}
+                className={`font-bold text-center text-[#C13515] leading-tight space-y-1 ${fontSizeClass}`}
               >
                 <div>NGUYEN VAN A · EMP-882190</div>
                 <div>DOC-TOPSECRET-001 · 2026-09-23 12:45:00 UTC</div>

@@ -76,7 +76,7 @@ test('Concurrency Scenario 4 — real DocumentsService.reclassifyDocument revoke
     },
     userAttributeAssignment: {
       findFirst: async ({ where }) =>
-        where.user_id === 20n
+        where.user_id === 20n || where.user_id === 101n
           ? { attribute_options: { numeric_rank: 4, is_active: true } }
           : { attribute_options: { numeric_rank: 2, is_active: true } },
     },

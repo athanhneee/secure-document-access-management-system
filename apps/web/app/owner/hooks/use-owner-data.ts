@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiClient } from '@/lib/api-client';
-import { mapDocumentDtoToItem, mapGrantDtoToItem } from '../helpers';
+import {
+  buildGrantLookupMaps,
+  extractAuditPagination,
+  mapDocumentDtoToItem,
+  mapGrantDtoToItem,
+} from '../helpers';
 import type {
   AccessGrantApiDto,
   AccessGrantItem,
@@ -18,10 +23,8 @@ import type {
 } from '../types';
 
 /**
- * Algorithm: Concurrent Owner Workspace Hydration
- * Dispatches 8 independent catalog/lookup requests concurrently via `Promise.allSettled`
- * so partial lookup failures degrade gracefully without blocking core document management.
- * Time Complexity: O(N) over returned payload items | Space Complexity: O(N)
+ * Thuật toán: Đồng bộ Song song Dữ liệu Không gian Chủ sở hữu (`useOwnerData`)
+ * Điều phối đồng thời 8 truy vấn danh mục/tra cứu qua `Promise.allSettled` và kết nối bảng băm khóa ngoại cho danh sách giấy phép trong `O(N)`.
  */
 export function useOwnerData() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -53,15 +56,23 @@ export function useOwnerData() {
     try {
       const res = await apiClient<{
         data: AuditLogItem[];
-        total: number;
-        page: number;
-        pageSize: number;
-        totalPages: number;
+        total?: number;
+        page?: number;
+        pageSize?: number;
+        totalPages?: number;
+        pagination?: {
+          page?: number;
+          pageSize?: number;
+          total?: number;
+          totalPages?: number;
+        };
       }>(`/audit-logs?page=${page}&pageSize=15`);
+      // CONFLICT-RESOLVED: Đọc thông tin phân trang từ res.pagination (page, totalPages, total) khớp phản hồi của AuditService.
+      const pageMeta = extractAuditPagination(res);
       setAuditLogs(res.data || []);
-      setAuditPage(res.page || 1);
-      setAuditTotalPages(res.totalPages || 1);
-      setAuditTotal(res.total || 0);
+      setAuditPage(pageMeta.page);
+      setAuditTotalPages(pageMeta.totalPages);
+      setAuditTotal(pageMeta.total);
     } catch {
       setAuditLogs([]);
     } finally {
@@ -93,14 +104,31 @@ export function useOwnerData() {
       apiClient<{ data: RoleLookupItem[] }>('/rbac/roles/lookup'),
     ]);
 
+    const mappedDocs =
+      docsResult.status === 'fulfilled'
+        ? (docsResult.value.data || []).map(mapDocumentDtoToItem)
+        : [];
     if (docsResult.status === 'fulfilled') {
-      setDocuments((docsResult.value.data || []).map(mapDocumentDtoToItem));
+      setDocuments(mappedDocs);
     } else {
       setErrorMessage('Không thể tải danh sách tài liệu từ máy chủ.');
     }
 
+    const loadedUsers = usersResult.status === 'fulfilled' ? usersResult.value.data || [] : [];
+    const loadedRoles = rolesResult.status === 'fulfilled' ? rolesResult.value.data || [] : [];
+
+    if (usersResult.status === 'fulfilled') {
+      setUsersLookup(loadedUsers);
+    }
+
+    if (rolesResult.status === 'fulfilled') {
+      setRolesLookup(loadedRoles);
+    }
+
     if (grantsResult.status === 'fulfilled') {
-      setGrants((grantsResult.value.data || []).map(mapGrantDtoToItem));
+      // CONFLICT-RESOLVED: Truyền bảng tra cứu docs/users/roles vào mapGrantDtoToItem để hiển thị đúng tên tài liệu và đối tượng nhận quyền.
+      const grantLookups = buildGrantLookupMaps(mappedDocs, loadedUsers, loadedRoles);
+      setGrants((grantsResult.value.data || []).map((g) => mapGrantDtoToItem(g, grantLookups)));
     }
 
     if (requestsResult.status === 'fulfilled') {
@@ -117,14 +145,6 @@ export function useOwnerData() {
 
     if (levelsResult.status === 'fulfilled') {
       setClassificationLevels(levelsResult.value.data || []);
-    }
-
-    if (usersResult.status === 'fulfilled') {
-      setUsersLookup(usersResult.value.data || []);
-    }
-
-    if (rolesResult.status === 'fulfilled') {
-      setRolesLookup(rolesResult.value.data || []);
     }
 
     setIsLoading(false);

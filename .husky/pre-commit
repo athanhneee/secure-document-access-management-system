@@ -1,2 +1,2 @@
-pnpm exec lint-staged
+pnpm exec lint-staged --relative --max-arg-length 2000
 pnpm security:secrets

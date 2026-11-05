@@ -5,7 +5,10 @@ import { cn } from '@/lib/utils';
 export type ClassificationCode =
   'UNCLASSIFIED' | 'INTERNAL' | 'RESTRICTED' | 'CONFIDENTIAL' | 'SECRET' | 'TOP_SECRET' | string;
 
-export interface ClassificationBadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
+export interface ClassificationBadgeProps extends Omit<
+  React.HTMLAttributes<HTMLSpanElement>,
+  'style'
+> {
   code?: ClassificationCode;
   level?: ClassificationCode;
   rank?: number;
@@ -26,7 +29,6 @@ export function ClassificationBadge({
   showRank = false,
   size = 'md',
   className,
-  style,
   ...props
 }: ClassificationBadgeProps) {
   const normalized = (level ?? code ?? '').toUpperCase();
@@ -37,15 +39,8 @@ export function ClassificationBadge({
     lg: 'text-sm gap-2',
   };
 
-  // CONFLICT-RESOLVED: Chuẩn hóa kích thước icon về thang {16, 20} (thay cho h-3.5/h-4.5 lệch thang) theo rules/ui-design-system.md.
+  // CONFLICT-RESOLVED: Chuẩn hóa kích thước icon về thang {16, 20} và loại bỏ thuộc tính style nội tuyến để tuân thủ CSP nghiêm ngặt.
   const iconPixelSize: 16 | 20 = size === 'lg' ? 20 : 16;
-
-  const baseStyle: React.CSSProperties = {
-    background: 'transparent',
-    border: 'none',
-    padding: 0,
-    ...style,
-  };
 
   // CONFLICT-RESOLVED: Đồng bộ nhãn cấp bậc hiển thị (UNCLASSIFIED: R0, INTERNAL/RESTRICTED: R1, CONFIDENTIAL: R2, SECRET: R3, TOP_SECRET: R4) khớp với thang bậc CSDL và @sda/contracts.
   switch (normalized) {
@@ -57,7 +52,6 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          style={baseStyle}
           title="Tài liệu không phân loại mật (Cấp 0)"
           aria-label={`Mức mật: Không mật (Unclassified)${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
@@ -82,7 +76,6 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          style={baseStyle}
           title="Tài liệu lưu hành nội bộ (Cấp 1)"
           aria-label={`Mức mật: Nội bộ (Internal)${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
@@ -107,7 +100,6 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          style={baseStyle}
           title="Tài liệu mật theo quy định tổ chức (Cấp 2)"
           aria-label={`Mức mật: Mật (Confidential)${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
@@ -126,7 +118,6 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          style={baseStyle}
           title="Tài liệu tối mật (Cấp 3)"
           aria-label={`Mức mật: Tối mật (Secret)${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
@@ -150,7 +141,6 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          style={baseStyle}
           title="Tài liệu tuyệt mật mức cao nhất (Cấp 4)"
           aria-label={`Mức mật: Tuyệt mật (Top Secret)${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
@@ -173,7 +163,6 @@ export function ClassificationBadge({
             'staff-badge inline-flex items-center text-xs font-semibold text-[#717171] select-none',
             className,
           )}
-          style={baseStyle}
           {...props}
         >
           <span>{normalized || 'CHƯA PHÂN LOẠI'}</span>

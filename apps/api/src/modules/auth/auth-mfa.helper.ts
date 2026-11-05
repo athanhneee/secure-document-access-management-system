@@ -1,17 +1,20 @@
 /**
  * @module AuthMfaHelper
- * Algorithm: Step-Up MFA Enrollment Guard, RFC 6238 TOTP Verification, One-Time Recovery Code Fallback & Re-Authenticated MFA Removal.
+ * Algorithm: Step-Up MFA Enrollment Guard, QR Code Provisioning, RFC 6238 TOTP Verification & One-Time Recovery Code Fallback.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import QRCode from 'qrcode';
 import type { AuthAuditService } from './auth-audit.service.js';
 import type { AuthRepository } from './auth.repository.js';
 import type { SessionArtifacts } from './auth.service.js';
-import { MFA_REQUIRED_ROLES, type AuthPrincipal, type RequestContext } from './auth.types.js';
+import type { AuthPrincipal, RequestContext } from './auth.types.js';
 import type { LoginRateLimitService } from './login-rate-limit.service.js';
 import type { MfaService } from './mfa.service.js';
 import type { PasswordService } from './password.service.js';
 import type { TokenService } from './token.service.js';
+
+export { executeDisableMfa } from './auth-mfa-disable.helper.js';
 
 export interface AuthMfaDeps {
   repository: AuthRepository;
@@ -85,22 +88,28 @@ export async function activateVerifiedMfaSession(
 }
 
 /**
- * Algorithm / Thuật toán: Khởi tạo đăng ký TOTP (mã hóa bí mật AES-256-GCM và tạo URI otpauth).
+ * Algorithm / Thuật toán: Khởi tạo đăng ký TOTP (mã hóa bí mật AES-256-GCM, tạo URI otpauth và kết xuất ảnh QR DataURL).
  */
 export async function executeBeginMfaEnrollment(
   deps: Pick<AuthMfaDeps, 'repository' | 'mfa' | 'audit'>,
   principal: AuthPrincipal,
   label: string | undefined,
   context: RequestContext,
-): Promise<{ secret: string; uri: string }> {
+): Promise<{ secret: string; uri: string; qrCodeDataUrl: string }> {
   await assertMfaEnrollmentAllowed(deps, principal, context);
   const enrollment = deps.mfa.createEnrollment(principal.username);
   await deps.repository.createMfaEnrollment(principal.userId, enrollment.encryptedSecret, label);
+  // CONFLICT-RESOLVED: Sinh trực tiếp ảnh QR DataURL từ otpauth URI trên máy chủ để giao diện đăng ký MFA hiển thị tức thời (HIGH-09)
+  const qrCodeDataUrl = await QRCode.toDataURL(enrollment.uri, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 220,
+  });
   await deps.audit.record(
     { action: 'MFA_ENROLLMENT_STARTED', outcome: 'SUCCESS', actorUserId: principal.userId },
     context,
   );
-  return { secret: enrollment.secret, uri: enrollment.uri };
+  return { secret: enrollment.secret, uri: enrollment.uri, qrCodeDataUrl };
 }
 
 /**
@@ -134,7 +143,10 @@ export async function executeVerifyMfaEnrollment(
   return { ...artifacts, recoveryCodes: recovery.plaintext };
 }
 
-async function verifyActiveMfaChallenge(
+/**
+ * Thuật toán: Xác minh thử thách MFA đang hoạt động qua mã TOTP RFC 6238 hoặc tiêu thụ nguyên tử mã khôi phục một lần.
+ */
+export async function verifyActiveMfaChallenge(
   deps: Pick<AuthMfaDeps, 'repository' | 'mfa'>,
   userId: bigint,
   code: string | undefined,
@@ -204,95 +216,4 @@ export async function executeVerifyMfa(
     context,
   );
   return artifacts;
-}
-
-/**
- * Algorithm / Thuật toán: Gỡ bỏ MFA có xác thực lại Step-Up hai nhân tố & khóa cứng vai trò bắt buộc MFA (`executeDisableMfa`).
- *   1. Yêu cầu phiên đã xác thực MFA (`principal.mfa === true`).
- *   2. Từ chối tuyệt đối nếu tài khoản giữ bất kỳ vai trò nào thuộc `MFA_REQUIRED_ROLES` (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`) trên cả JWT lẫn cơ sở dữ liệu hiện hành.
- *   3. Giới hạn tần suất chống vét cạn và bắt buộc xác minh đồng thời mật khẩu hiện tại (`passwords.verify`) VÀ mã TOTP hoặc mã khôi phục còn hiệu lực trước khi xóa MFA và thu hồi toàn bộ phiên.
- */
-export async function executeDisableMfa(
-  deps: Pick<AuthMfaDeps, 'repository' | 'passwords' | 'mfa' | 'rateLimit' | 'audit'>,
-  principal: AuthPrincipal,
-  currentPassword: string,
-  code: string | undefined,
-  recoveryCode: string | undefined,
-  context: RequestContext,
-): Promise<void> {
-  if (!principal.mfa) throw new ForbiddenException('Verified MFA is required.');
-  if (!currentPassword || (!code && !recoveryCode)) {
-    throw new UnauthorizedException('Password and live MFA verification are required.');
-  }
-
-  const hasMandatoryRoleInToken = (principal.roles ?? []).some((role) =>
-    MFA_REQUIRED_ROLES.has(role),
-  );
-  if (hasMandatoryRoleInToken) {
-    await deps.audit.record(
-      {
-        action: 'MFA_DISABLE_BLOCKED',
-        outcome: 'DENIED',
-        actorUserId: principal.userId,
-        actorUsername: principal.username,
-        reasonCode: 'MFA_MANDATORY_FOR_ROLE',
-      },
-      context,
-    );
-    throw new ForbiddenException(
-      'Privileged roles (SYSTEM_ADMIN, SECURITY_OFFICER, AUDITOR) must keep MFA enabled.',
-    );
-  }
-
-  const rateKey = `mfa-disable:${principal.userId}`;
-  deps.rateLimit.assertAllowed(context.ip, rateKey);
-
-  const user = await deps.repository.findUserById(principal.userId);
-  if (!user || user.status !== 'ACTIVE') {
-    deps.rateLimit.recordFailure(context.ip, rateKey);
-    throw new UnauthorizedException('Step-up authentication failed.');
-  }
-
-  if (user.roles.some((role) => MFA_REQUIRED_ROLES.has(role))) {
-    await deps.audit.record(
-      {
-        action: 'MFA_DISABLE_BLOCKED',
-        outcome: 'DENIED',
-        actorUserId: principal.userId,
-        actorUsername: principal.username,
-        reasonCode: 'MFA_MANDATORY_FOR_ROLE',
-      },
-      context,
-    );
-    throw new ForbiddenException(
-      'Privileged roles (SYSTEM_ADMIN, SECURITY_OFFICER, AUDITOR) must keep MFA enabled.',
-    );
-  }
-
-  const passwordValid = await deps.passwords.verify(user.passwordHash, currentPassword);
-  const mfaValid = passwordValid
-    ? await verifyActiveMfaChallenge(deps, principal.userId, code, recoveryCode)
-    : false;
-  if (!passwordValid || !mfaValid) {
-    deps.rateLimit.recordFailure(context.ip, rateKey);
-    await deps.audit.record(
-      {
-        action: 'MFA_DISABLE_DENIED',
-        outcome: 'DENIED',
-        actorUserId: principal.userId,
-        actorUsername: principal.username,
-        reasonCode: passwordValid ? 'INVALID_MFA_CHALLENGE' : 'INVALID_PASSWORD',
-      },
-      context,
-    );
-    throw new UnauthorizedException('Step-up authentication failed.');
-  }
-
-  deps.rateLimit.clearAccount(rateKey);
-  await deps.repository.disableMfa(principal.userId);
-  await deps.repository.revokeAllSessions(principal.userId, 'MFA_CHANGED');
-  await deps.audit.record(
-    { action: 'MFA_DISABLED', outcome: 'SUCCESS', actorUserId: principal.userId },
-    context,
-  );
 }

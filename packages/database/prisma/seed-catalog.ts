@@ -26,10 +26,13 @@ export const permissions = [
   ['POLICY_SIMULATE', 'POLICY', 'SIMULATE'],
   ['WATERMARK_CONFIG_MANAGE', 'WATERMARK_CONFIG', 'MANAGE'],
   ['SYSTEM_HEALTH_VIEW', 'SYSTEM_HEALTH', 'VIEW'],
+  // CONFLICT-RESOLVED: Bổ sung cặp quyền SYSTEM_HEALTH_MANAGE và DOCUMENT_MANAGE đồng bộ giữa Prisma seed-catalog, Supabase SQL và bộ quyền RBAC tầng API.
+  ['SYSTEM_HEALTH_MANAGE', 'SYSTEM_HEALTH', 'MANAGE'],
   ['DOCUMENT_UPLOAD', 'DOCUMENT', 'UPLOAD'],
   ['DOCUMENT_CLASSIFY', 'DOCUMENT', 'CLASSIFY'],
   ['DOCUMENT_VERSION_CREATE', 'DOCUMENT_VERSION', 'CREATE'],
   ['DOCUMENT_ARCHIVE', 'DOCUMENT', 'ARCHIVE'],
+  ['DOCUMENT_MANAGE', 'DOCUMENT', 'MANAGE'],
   ['DOCUMENT_DISCOVER', 'DOCUMENT', 'DISCOVER'],
   ['DOCUMENT_VIEW', 'DOCUMENT', 'VIEW'],
   ['DOCUMENT_DOWNLOAD', 'DOCUMENT', 'DOWNLOAD'],
@@ -62,6 +65,7 @@ export const rolePermissionCodes: Record<(typeof systemRoles)[number][0], readon
     'POLICY_SIMULATE',
     'WATERMARK_CONFIG_MANAGE',
     'SYSTEM_HEALTH_VIEW',
+    'SYSTEM_HEALTH_MANAGE',
   ],
   SECURITY_OFFICER: [
     'AUDIT_VIEW',
@@ -79,6 +83,7 @@ export const rolePermissionCodes: Record<(typeof systemRoles)[number][0], readon
     'DOCUMENT_CLASSIFY',
     'DOCUMENT_VERSION_CREATE',
     'DOCUMENT_ARCHIVE',
+    'DOCUMENT_MANAGE',
     'DOCUMENT_DISCOVER',
     'DOCUMENT_VIEW',
     'DOCUMENT_DOWNLOAD',
@@ -100,6 +105,13 @@ export const rolePermissionCodes: Record<(typeof systemRoles)[number][0], readon
     'NOTIFICATION_VIEW',
   ],
 };
+
+// CONFLICT-RESOLVED: Bổ sung danh mục giá trị chuẩn của thuộc tính EMPLOYMENT_STATUS đồng bộ với kịch bản Supabase SQL.
+export const employmentStatusOptions = [
+  ['ACTIVE_STAFF', 'Nhân sự chính thức', 2, 1],
+  ['CONTRACTOR', 'Cộng tác viên / Nhà thầu', 1, 2],
+  ['SUSPENDED', 'Tạm đình chỉ công tác', 0, 3],
+] as const;
 
 export const attributeDefinitions = [
   ['SUBJECT_DEPARTMENT', 'Phòng ban chủ thể', 'USER', 'STRING', true, false],

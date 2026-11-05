@@ -17,6 +17,7 @@ export interface SearchResultItem {
   departmentName: string;
   classificationLevelName: string | null;
   classificationLevelCode: string | null;
+  allowDownload: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -41,6 +42,8 @@ export interface GrantedDocumentItem {
     title: string;
     status: string;
     classificationLevelName: string | null;
+    classificationLevelCode: string | null;
+    allowDownload: boolean;
   };
 }
 

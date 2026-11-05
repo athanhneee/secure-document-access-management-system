@@ -6,15 +6,33 @@ import {
   aggregatePartitionVerifications,
   buildAuditLogsQueryParams,
   normalizeAuditLogDtos,
+  normalizeExportJob,
   triggerEphemeralBlobDownload,
 } from '../helpers';
 import type {
   AuditLogApiDto,
   AuditLogItem,
   ChainVerificationReport,
+  ExportFormat,
   ExportJobItem,
   PartitionVerificationResult,
 } from '../types';
+
+/**
+ * Thuật toán: Hợp Nhất Lịch Sử Tác Vụ Xuất Báo Cáo Bền Vững (`mergeExportJobHistory`)
+ * Mục đích: Đồng bộ danh sách tác vụ xuất từ `/reports/export` với các tác vụ vừa khởi tạo trong phiên mà không làm mất trạng thái hoặc sinh bản ghi trùng `id`.
+ */
+function mergeExportJobHistory(
+  incoming: ExportJobItem[],
+  previous: ExportJobItem[],
+): ExportJobItem[] {
+  if (incoming.length === 0) {
+    return previous;
+  }
+  const incomingIds = new Set(incoming.map((job) => job.id));
+  const localUnsynced = previous.filter((job) => !incomingIds.has(job.id));
+  return [...localUnsynced, ...incoming];
+}
 
 /**
  * Thuật toán: Quản lý Trạng thái Kiểm toán Chỉ đọc & Điều phối Xác minh Chuỗi Băm (`useAuditorData`)
@@ -50,11 +68,26 @@ export function useAuditorData() {
         fromDate,
         toDate,
       });
-      const logsRes = await apiClient<{ data: AuditLogApiDto[] }>(
-        `/audit-logs?${queryParams.toString()}`,
-      ).catch(() => ({ data: [] }));
+      const [logsRes, exportsRes] = await Promise.all([
+        apiClient<{ data: AuditLogApiDto[] }>(`/audit-logs?${queryParams.toString()}`).catch(
+          () => ({ data: [] }),
+        ),
+        apiClient<{ data?: Array<Partial<ExportJobItem> & { id: string }> } | ExportJobItem[]>(
+          '/reports/export',
+        ).catch(() => ({ data: [] })),
+      ]);
 
       setLogs(normalizeAuditLogDtos(logsRes.data || []));
+
+      const rawExportList = Array.isArray(exportsRes)
+        ? exportsRes
+        : Array.isArray(exportsRes?.data)
+          ? exportsRes.data
+          : [];
+      const normalizedExports = rawExportList
+        .filter((item): item is Partial<ExportJobItem> & { id: string } => Boolean(item?.id))
+        .map((item) => normalizeExportJob(item, (item.format as ExportFormat) || 'CSV'));
+      setExportJobs((prev) => mergeExportJobHistory(normalizedExports, prev));
     } catch (err) {
       setErrorMessage(err instanceof ApiError ? err.message : 'Không thể tải nhật ký kiểm toán.');
     } finally {
@@ -75,6 +108,65 @@ export function useAuditorData() {
       ignore = true;
     };
   }, [refreshData]);
+
+  const activeJobIdsKey = exportJobs
+    .filter((job) => job.status === 'PENDING' || job.status === 'PROCESSING')
+    .map((job) => job.id)
+    .join(',');
+
+  /**
+   * Thuật toán: Thăm Dò Định Kỳ Trạng Thái Kết Xuất Báo Cáo Bất Đồng Bộ (2000ms Bounded Export Job Polling)
+   * Mục đích: Tự động truy vấn `/reports/export/:id` mỗi 2 giây khi tồn tại tác vụ `PENDING` hoặc `PROCESSING` và dừng ngay khi mọi tác vụ chuyển sang trạng thái kết thúc (`COMPLETED`, `FAILED`, `EXPIRED`).
+   */
+  useEffect(() => {
+    if (!activeJobIdsKey) {
+      return;
+    }
+
+    const activeIds = activeJobIdsKey.split(',').filter(Boolean);
+    let cancelled = false;
+
+    const pollPendingJobs = async () => {
+      const settled = await Promise.all(
+        activeIds.map((id) =>
+          apiClient<Partial<ExportJobItem> & { id: string }>(`/reports/export/${id}`).catch(
+            () => null,
+          ),
+        ),
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      const updatesById = new Map<string, Partial<ExportJobItem> & { id: string }>();
+      for (const item of settled) {
+        if (item?.id) {
+          updatesById.set(item.id, item);
+        }
+      }
+
+      if (updatesById.size === 0) {
+        return;
+      }
+
+      setExportJobs((prev) =>
+        prev.map((job) => {
+          const fresh = updatesById.get(job.id);
+          return fresh ? normalizeExportJob({ ...job, ...fresh }, job.format) : job;
+        }),
+      );
+    };
+
+    const timer = setInterval(() => {
+      void pollPendingJobs();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeJobIdsKey]);
 
   async function verifyHashChain() {
     setIsVerifyingChain(true);
@@ -118,7 +210,7 @@ export function useAuditorData() {
   }
 
   function prependExportJob(job: ExportJobItem, msg: string) {
-    setExportJobs((prev) => [job, ...prev]);
+    setExportJobs((prev) => [job, ...prev.filter((existing) => existing.id !== job.id)]);
     setMessage(msg);
   }
 

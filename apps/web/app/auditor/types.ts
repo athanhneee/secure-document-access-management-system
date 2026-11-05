@@ -57,8 +57,12 @@ export interface ExportJobItem {
   id: string;
   exportType: string;
   format: ExportFormat;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'EXPIRED';
   createdAt: string;
+  completedAt?: string | null | undefined;
+  expiresAt?: string | null | undefined;
+  isExpired?: boolean | undefined;
+  rowCount?: number | null | undefined;
 }
 
 export interface AuditTrailFilters {

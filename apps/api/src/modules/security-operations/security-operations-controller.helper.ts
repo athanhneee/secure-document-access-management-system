@@ -1,12 +1,17 @@
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { z, type ZodType } from 'zod';
-import { UuidParamSchema, type UpdateDetectionRuleConfigInput } from '@sda/contracts';
+import type { ZodType } from 'zod';
+import {
+  PositiveBigIntSchema,
+  UuidParamSchema,
+  type UpdateDetectionRuleConfigInput,
+} from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { CsrfService } from '../auth/csrf.service.js';
 import type { DetectionRule } from './security-detection.service.js';
 
-const ActionIdParamSchema = z.string().regex(/^\d+$/u).transform(BigInt);
+// CONFLICT-RESOLVED: Giới hạn actionId trong miền số nguyên dương 64-bit MAX_PG_BIGINT tránh lỗi tràn kiểu PostgreSQL (HIGH-12)
+const ActionIdParamSchema = PositiveBigIntSchema;
 
 /**
  * Algorithm: Strict Request Boundary Validation (UUID / Numeric BigInt / Zod DTO / CSRF+Auth).

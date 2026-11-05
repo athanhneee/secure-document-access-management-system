@@ -57,30 +57,78 @@ export async function getUserClearanceRank(
   return clearance?.attribute_options?.numeric_rank ?? 0;
 }
 
+export type DocumentMutationOperation =
+  'METADATA' | 'ACTIVATE' | 'VERSION' | 'CLASSIFY' | 'ARCHIVE' | 'TRANSFER_OWNER';
+
 /**
- * Algorithm: Department-Scoped Document Mutation Authorization
- * Permits the document owner or a caller holding `CLASSIFY`, `MANAGE`, or `ARCHIVE` in `document.department_id`.
+ * Thuật toán: Kiểm định thẩm quyền thay đổi tài liệu phân tách theo từng nghiệp vụ cụ thể (Operation-Specific Scoped RBAC).
+ * Cơ chế hoạt động:
+ *   - Chủ sở hữu tài liệu (`document.owner_id === principal.userId`) được phép thực thi các thao tác vòng đời trên tài liệu của mình.
+ *   - Quản trị viên nghiệp vụ theo phòng ban chỉ được phép thực thi đúng hành động tương ứng:
+ *     + `METADATA` / `ACTIVATE` / `CLASSIFY`: yêu cầu `DOCUMENT:MANAGE` hoặc `DOCUMENT:CLASSIFY` trong `document.department_id`.
+ *     + `VERSION`: yêu cầu `DOCUMENT:MANAGE` hoặc `DOCUMENT_VERSION:CREATE` trong `document.department_id`.
+ *     + `ARCHIVE`: yêu cầu `DOCUMENT:MANAGE` hoặc `DOCUMENT:ARCHIVE` trong `document.department_id`.
+ *     + `TRANSFER_OWNER`: chỉ cho phép chủ sở hữu hoặc `DOCUMENT:MANAGE` (tuyệt đối chặn `ARCHIVE`/`CLASSIFY` tự ý chuyển quyền sở hữu).
  */
 export async function assertDocumentMutationPermission(
   authorization: AuthorizationService,
   document: { id: string; owner_id: bigint; department_id: bigint },
   principal: AuthPrincipal,
+  operation: DocumentMutationOperation = 'METADATA',
 ): Promise<void> {
+  if (isPureTechnicalOrAuditRole(principal)) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
+      message:
+        'Only the document owner or an authorized business administrator for this department may modify this document.',
+    });
+  }
+
   if (document.owner_id === principal.userId) {
     return;
   }
 
-  const hasClassify = await authorization.hasPermission(principal, 'DOCUMENT', 'CLASSIFY', {
-    targetDepartmentId: document.department_id,
-  });
-  const hasManage = await authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', {
-    targetDepartmentId: document.department_id,
-  });
-  const hasArchive = await authorization.hasPermission(principal, 'DOCUMENT', 'ARCHIVE', {
-    targetDepartmentId: document.department_id,
-  });
+  // CONFLICT-RESOLVED: Tách bạch kiểm tra quyền RBAC theo từng thao tác thay vì gộp chung DOCUMENT:ARCHIVE/CLASSIFY/MANAGE cho mọi đột biến.
+  const scope = { targetDepartmentId: document.department_id };
+  const hasManage = await authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', scope);
+  if (hasManage) {
+    return;
+  }
 
-  if (hasClassify || hasManage || hasArchive) {
+  let hasSpecificPermission = false;
+  switch (operation) {
+    case 'METADATA':
+    case 'ACTIVATE':
+    case 'CLASSIFY':
+      hasSpecificPermission = await authorization.hasPermission(
+        principal,
+        'DOCUMENT',
+        'CLASSIFY',
+        scope,
+      );
+      break;
+    case 'VERSION':
+      hasSpecificPermission = await authorization.hasPermission(
+        principal,
+        'DOCUMENT_VERSION',
+        'CREATE',
+        scope,
+      );
+      break;
+    case 'ARCHIVE':
+      hasSpecificPermission = await authorization.hasPermission(
+        principal,
+        'DOCUMENT',
+        'ARCHIVE',
+        scope,
+      );
+      break;
+    case 'TRANSFER_OWNER':
+      hasSpecificPermission = false;
+      break;
+  }
+
+  if (hasSpecificPermission) {
     return;
   }
 

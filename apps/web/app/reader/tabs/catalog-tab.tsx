@@ -57,7 +57,8 @@ export function CatalogTab({
           >
             <option value="ALL">Tất cả mức mật</option>
             <option value="UNCLASSIFIED">Không mật</option>
-            <option value="RESTRICTED">Nội bộ</option>
+            {/* CONFLICT-RESOLVED: Đổi mã lọc mức Nội bộ từ RESTRICTED sang INTERNAL khớp chuẩn classificationLevelCode từ máy chủ */}
+            <option value="INTERNAL">Nội bộ</option>
             <option value="CONFIDENTIAL">Mật</option>
             <option value="SECRET">Tối mật</option>
             <option value="TOP_SECRET">Tuyệt mật</option>
@@ -118,7 +119,7 @@ export function CatalogTab({
                         <ClassificationBadge level={doc.classificationCode} showRank />
                       </TableCell>
                       <TableCell className="text-xs text-[#222222]">
-                        {doc.departmentName || 'Phòng Kỹ thuật'}
+                        {doc.departmentName || '—'}
                       </TableCell>
                       <TableCell>
                         {doc.allowDownload ? (

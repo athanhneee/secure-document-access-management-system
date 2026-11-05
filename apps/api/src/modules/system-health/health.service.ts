@@ -1,7 +1,7 @@
 /**
  * Module: HealthService — Tổng hợp trạng thái sẵn sàng đa thành phần hạ tầng (PostgreSQL, Redis, S3/MinIO) và ảnh chụp sức khỏe vận hành.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import type { LivenessResponse, ReadinessResponse } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
@@ -13,7 +13,10 @@ import {
 
 @Injectable()
 export class HealthService {
-  constructor(private readonly configService: AppConfigService) {}
+  constructor(
+    private readonly configService: AppConfigService,
+    @Optional() private readonly databaseClient?: ReturnType<typeof getDatabaseClient>,
+  ) {}
 
   /**
    * Thuật toán: Kiểm tra sự sống tiến trình tức thời (Zero-Dependency Liveness Probe)
@@ -119,17 +122,18 @@ export class HealthService {
   }
 
   /**
-   * Captures a business snapshot purely for historical audit records.
+   * Thuật toán: Ghi nhận ảnh chụp sức khỏe vận hành chuẩn hóa kiểu dữ liệu JSON-safe (BigInt-Free Snapshot Serialization).
+   * Đảm bảo trạng thái thuộc tập `('HEALTHY', 'DEGRADED', 'DOWN')` và chuyển mọi trường `bigint`/`Date` sang chuỗi trước khi trả về.
    */
   async captureBusinessSnapshot(
     serviceName: string,
-    status: string,
+    status: 'HEALTHY' | 'DEGRADED' | 'DOWN',
     details: Record<string, unknown> = {},
   ) {
     const db = this.getDb();
     if (!db) return null;
 
-    return db.systemHealthSnapshot.create({
+    const created = await db.systemHealthSnapshot.create({
       data: {
         service_name: serviceName,
         status,
@@ -138,10 +142,43 @@ export class HealthService {
         details: details as never,
       },
     });
+
+    // CONFLICT-RESOLVED: Tuần tự hóa toàn bộ cột BigInt (id, storage_used_bytes, storage_total_bytes) sang chuỗi để Fastify JSON.stringify không sinh lỗi 500.
+    return {
+      id: created.id.toString(),
+      capturedAt: created.captured_at.toISOString(),
+      serviceName: created.service_name,
+      status: created.status,
+      responseTimeMs: created.response_time_ms,
+      storageUsedBytes: created.storage_used_bytes?.toString() ?? null,
+      storageTotalBytes: created.storage_total_bytes?.toString() ?? null,
+      errorCount: created.error_count,
+      details: created.details,
+    };
   }
 
   /**
-   * Retrieves historical business snapshots.
+   * Thuật toán: Thu dọn có giới hạn thời gian lưu trữ các ảnh chụp sức khỏe cũ và công việc xuất báo cáo hết hạn.
+   */
+  async runRetentionCleanup(retentionDays = 90) {
+    const db = this.getDb();
+    if (!db) {
+      return { deletedSnapshots: 0, deletedExpiredExports: 0 };
+    }
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    const [snapshots, exports] = await Promise.all([
+      db.systemHealthSnapshot.deleteMany({ where: { captured_at: { lt: cutoff } } }),
+      db.asyncExportJob.deleteMany({ where: { expires_at: { lt: now } } }),
+    ]);
+    return {
+      deletedSnapshots: snapshots.count,
+      deletedExpiredExports: exports.count,
+    };
+  }
+
+  /**
+   * Thuật toán: Truy vấn danh sách ảnh chụp sức khỏe lịch sử sắp xếp giảm dần theo thời điểm ghi nhận.
    */
   async listBusinessSnapshots(limit = 20) {
     const db = this.getDb();
@@ -158,12 +195,15 @@ export class HealthService {
       serviceName: s.service_name,
       status: s.status,
       responseTimeMs: s.response_time_ms,
+      storageUsedBytes: s.storage_used_bytes?.toString() ?? null,
+      storageTotalBytes: s.storage_total_bytes?.toString() ?? null,
       errorCount: s.error_count,
       details: s.details,
     }));
   }
 
   private getDb() {
+    if (this.databaseClient) return this.databaseClient;
     try {
       return getDatabaseClient();
     } catch {

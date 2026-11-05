@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useCallback, type FormEvent } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
-import { buildRequestWindowIso, mapReaderDocumentDto, mapReaderGrantDto } from '../helpers';
+import {
+  buildRequestWindowIso,
+  isActiveReaderGrant,
+  mapReaderDocumentDto,
+  mapReaderGrantDto,
+} from '../helpers';
 import type {
   DiscoverableDoc,
   MyGrantedDoc,
@@ -56,7 +61,14 @@ export function useReaderCatalog() {
       }
 
       if (myGrantsResult.status === 'fulfilled') {
-        setMyDocs((myGrantsResult.value.data || []).map(mapReaderGrantDto));
+        // CONFLICT-RESOLVED: Lọc bỏ các giấy phép đã thu hồi, hết hạn hoặc tài liệu không còn ACTIVE trước khi hiển thị cho người đọc.
+        const nowMs = Date.now();
+        setMyDocs(
+          (myGrantsResult.value.data || [])
+            .filter((g) => isActiveReaderGrant(g, nowMs))
+            .map((g, idx) => mapReaderGrantDto(g, idx))
+            .filter((g) => Boolean(g.documentId)),
+        );
       }
 
       if (requestsResult.status === 'fulfilled') {
@@ -85,6 +97,7 @@ export function useReaderCatalog() {
 
   function openRequestModal(doc: DiscoverableDoc) {
     setTargetDoc(doc);
+    setRequestedAction('VIEW');
     setJustification('');
     setRequestModalOpen(true);
   }

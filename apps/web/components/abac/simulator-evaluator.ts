@@ -110,6 +110,10 @@ export function evaluatePolicySimulation(
 const STRICT_ISO_DATE_PATTERN =
   /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
 
+/**
+ * Thuật toán: Chuẩn Hóa Giá Trị Vô Hướng Chống Ép Kiểu Mốc Thời Gian Sai Lệch (`toComparableScalar`)
+ * Cơ chế: Chỉ chuyển chuỗi sang mili-giây epoch khi khớp biểu thức chính quy ISO-8601 nghiêm ngặt; giữ nguyên chuỗi định danh thường.
+ */
 function toComparableScalar(value: unknown): number | string | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value !== 'string') return null;
@@ -120,6 +124,10 @@ function toComparableScalar(value: unknown): number | string | null {
   return value;
 }
 
+/**
+ * Thuật toán: So Sánh Thứ Bậc Vô Hướng Đồng Kiểu An Toàn (`compareScalars`)
+ * Cơ chế: Đối chiếu hiệu số khi cả hai vế cùng kiểu số hữu hạn hoặc `localeCompare` khi cùng chuỗi; trả về `NaN` nếu lệch kiểu.
+ */
 function compareScalars(leftRaw: unknown, rightRaw: unknown): number {
   const left = toComparableScalar(leftRaw);
   const right = toComparableScalar(rightRaw);
@@ -129,12 +137,8 @@ function compareScalars(leftRaw: unknown, rightRaw: unknown): number {
 }
 
 /**
- * Algorithm / Thuật toán: Chuẩn Hóa Địa Chỉ IPv4/IPv6 Sang Số Nguyên 128-Bit & Đối Sánh Mặt Nạ CIDR (128-Bit BigInt CIDR Matcher)
- * Mục đích: Xác định chính xác địa chỉ IP thực tế thuộc dải mạng con `/0`..`/32` (IPv4) hoặc `/0`..`/128` (IPv6) mà không cắt chuỗi 3 octet thủ công.
- * Cơ chế hoạt động:
- *   - Ánh xạ IPv4 sang không gian IPv4-mapped IPv6 `::ffff:a.b.c.d` (cộng bù 96 bit vào độ dài tiền tố).
- *   - Khai triển ký hiệu nén `::` của IPv6 thành đủ 8 nhóm 16-bit (`hextet`) tạo số nguyên 128-bit `BigInt`.
- *   - Dựng mặt nạ bit bậc cao `mask` và kiểm tra đẳng thức `(candidate & mask) === (network & mask)`.
+ * Thuật toán: Chuyển Đổi Địa Chỉ IPv4 Sang Không Gian Ánh Xạ IPv6 128-Bit (`parseIpv4Bits`)
+ * Cơ chế: Kiểm tra 4 octet thập phân trong đoạn `[0, 255]` không chứa số 0 dẫn đầu và ghép tiền tố `::ffff:0:0/96`.
  */
 function parseIpv4Bits(ip: string): bigint | null {
   const parts = ip.split('.');
@@ -149,6 +153,10 @@ function parseIpv4Bits(ip: string): bigint | null {
   return (0xffffn << 32n) | value;
 }
 
+/**
+ * Thuật toán: Giải Mã Địa Chỉ IPv4/IPv6 Nén Thành Số Nguyên `BigInt` 128-Bit (`parseIp128`)
+ * Cơ chế: Tách nhánh IPv4-mapped và khai triển ký hiệu rút gọn `::` của IPv6 thành đúng 8 nhóm hextet 16-bit chuẩn hóa.
+ */
 function parseIp128(rawIp: string): { bits: bigint; isIpv4: boolean } | null {
   const trimmed = rawIp.trim();
   const v4 = parseIpv4Bits(trimmed);
@@ -185,6 +193,10 @@ function parseIp128(rawIp: string): { bits: bigint; isIpv4: boolean } | null {
   return { bits: result, isIpv4: false };
 }
 
+/**
+ * Thuật toán: Đối Sánh Mặt Nạ Mạng Con CIDR 128-Bit Hằng Độ Phức Tạp (`simulatorCidrMatch`)
+ * Cơ chế: Dịch bù 96 bit cho tiền tố IPv4, dựng mặt nạ bit bậc cao `mask` và kiểm tra đẳng thức `(candidate.bits & mask) === (network.bits & mask)`.
+ */
 export function simulatorCidrMatch(ipRaw: string, cidrRaw: string): boolean {
   const candidate = parseIp128(ipRaw);
   if (!candidate) return false;

@@ -122,7 +122,8 @@ export function formatForensicWatermarkText(
     text = `${fullName} (${employeeCode}) | ${documentCode} | ${utcTimestamp} | ${shortToken}`;
   }
 
-  return text;
+  // CONFLICT-RESOLVED: Giới hạn độ dài `renderedText` tối đa 1000 ký tự khớp cột `watermark_instances.rendered_text VARCHAR(1000)` (MED-05)
+  return text.slice(0, 1000);
 }
 
 /**
@@ -152,21 +153,66 @@ export async function resolveWatermarkConfig(
   database: PrismaClient,
   classificationLevelId?: bigint | null,
 ): Promise<WatermarkConfigData> {
-  if (classificationLevelId) {
-    const config = await database.watermarkConfig.findFirst({
-      where: { classification_level_id: classificationLevelId, is_active: true },
-    });
-    if (config) return mapConfigRow(config);
-  }
+  const defaultTemplate =
+    '{fullName} ({employeeCode}) | {documentCode} | {utcTimestamp} | {shortToken}';
 
-  const defaultConfig = await database.watermarkConfig.findFirst({
-    where: { is_default: true, is_active: true },
-  });
-  if (defaultConfig) return mapConfigRow(defaultConfig);
+  if (database?.watermarkConfig) {
+    if (classificationLevelId) {
+      const config = await database.watermarkConfig.findFirst({
+        where: { classification_level_id: classificationLevelId, is_active: true },
+      });
+      if (config) return mapConfigRow(config);
+    }
+
+    const defaultConfig = await database.watermarkConfig.findFirst({
+      where: { is_default: true, is_active: true },
+    });
+    if (defaultConfig) return mapConfigRow(defaultConfig);
+
+    // CONFLICT-RESOLVED: Truy vấn bản ghi `watermark_configs` thực có sẵn (hoặc khởi tạo bản ghi mặc định trong CSDL) thay vì trả về `id: 1n` không tồn tại gây lỗi khóa ngoại khi ghi `watermark_instances` (MED-05)
+    const anyActiveConfig = await database.watermarkConfig.findFirst({
+      where: { is_active: true },
+      orderBy: { id: 'asc' },
+    });
+    if (anyActiveConfig) return mapConfigRow(anyActiveConfig);
+
+    const anyConfig = await database.watermarkConfig.findFirst({
+      orderBy: { id: 'asc' },
+    });
+    if (anyConfig) return mapConfigRow(anyConfig);
+
+    if (
+      typeof database.watermarkConfig.create === 'function' &&
+      typeof database.user?.findFirst === 'function'
+    ) {
+      const creator = await database.user.findFirst({
+        orderBy: { id: 'asc' },
+        select: { id: true },
+      });
+      if (creator) {
+        const created = await database.watermarkConfig.create({
+          data: {
+            name: 'System Fail-Safe Default',
+            is_default: true,
+            is_visible: true,
+            template_text: defaultTemplate,
+            opacity_percent: 25,
+            rotation_degrees: -30,
+            font_size: 11,
+            color_hex: '#808080',
+            include_qr_code: true,
+            is_active: true,
+            created_by: creator.id,
+          },
+        });
+        return mapConfigRow(created);
+      }
+    }
+  }
 
   return {
     id: 1n,
-    template_text: '{fullName} ({employeeCode}) | {documentCode} | {utcTimestamp} | {shortToken}',
+    template_text: defaultTemplate,
     opacity_percent: 25,
     rotation_degrees: -30,
     font_size: 11,
@@ -176,6 +222,9 @@ export async function resolveWatermarkConfig(
   };
 }
 
+/**
+ * Thuật toán: Chuẩn hóa dòng dữ liệu `watermark_configs` sang cấu trúc `WatermarkConfigData` thuần.
+ */
 function mapConfigRow(row: WatermarkConfigData): WatermarkConfigData {
   return {
     id: row.id,

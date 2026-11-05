@@ -1,23 +1,54 @@
 /**
- * Thuật toán: Chuẩn Hóa Điểm Cuối & Trích Xuất Nguồn Hợp Lệ Theo RFC 6454 (Canonical API Origin Resolution)
- * Mục đích: Cố định tiền tố `/api/v1` và trích xuất `origin` (`scheme + host + port`) duy nhất được phép nhận cookie xác thực từ trình duyệt.
+ * Thuật toán: Chuẩn Hóa Điểm Cuối Tương Đối Cùng Nguồn & Trích Xuất Nguồn Hợp Lệ Theo RFC 6454 (Same-Origin & SSR-Safe API Origin Resolution)
+ * Mục đích: Mặc định định tuyến trình duyệt qua đường dẫn tương đối `/api/v1` (cùng nguồn `'self'`), tự động rơi về `INTERNAL_API_ORIGIN` khi chạy SSR/Node không có `window`, và giải quyết `origin` an toàn không bao giờ ném ngoại lệ `TypeError` với đường dẫn tương đối.
  * Cơ chế hoạt động:
- *   - Cắt bỏ dấu gạch chéo dư ở cuối cấu hình môi trường trước khi ghép `/api/v1`, sau đó phân tích bằng bộ phân tích `URL` chuẩn để lấy `origin` tin cậy (hoặc rơi về loopback mặc định nếu cấu hình lỗi).
+ *   - Chuẩn hóa hậu tố `/api/v1` từ cấu hình môi trường; trên trình duyệt ưu tiên `'/api/v1'`, trên môi trường Node/SSR ghép với `INTERNAL_API_ORIGIN` (hoặc `http://127.0.0.1:3001`).
+ *   - Phân tích `new URL(baseUrl, baseOrigin)` với `window.location.origin` (hoặc loopback khi SSR) để trích xuất `origin` tin cậy duy nhất được nhận cookie xác thực.
  */
-const rawApiUrl = process.env['NEXT_PUBLIC_API_BASE_URL'] ?? process.env['NEXT_PUBLIC_API_URL'];
-const API_BASE_URL = rawApiUrl
-  ? rawApiUrl.endsWith('/api/v1')
-    ? rawApiUrl
-    : `${rawApiUrl.replace(/\/+$/u, '')}/api/v1`
-  : 'http://127.0.0.1:3001/api/v1';
+function resolveInternalSsrOrigin(): string {
+  const rawInternal = (
+    process.env['INTERNAL_API_ORIGIN'] ||
+    process.env['API_INTERNAL_URL'] ||
+    'http://127.0.0.1:3001'
+  ).trim();
+  return rawInternal.replace(/\/api\/v1\/?$/u, '').replace(/\/+$/u, '');
+}
 
-const ALLOWED_API_ORIGIN = (() => {
-  try {
-    return new URL(API_BASE_URL).origin;
-  } catch {
-    return 'http://127.0.0.1:3001';
+function resolveApiBaseUrl(): string {
+  // CONFLICT-RESOLVED: Chuyển mặc định trình duyệt sang đường dẫn cùng nguồn '/api/v1' khớp với Next.js rewrites và CSP connect-src 'self', đồng thời giữ nhánh dự phòng INTERNAL_API_ORIGIN cho SSR/Node.
+  const rawApiUrl = (
+    process.env['NEXT_PUBLIC_API_BASE_URL'] ??
+    process.env['NEXT_PUBLIC_API_URL'] ??
+    ''
+  ).trim();
+
+  if (rawApiUrl) {
+    const normalized = rawApiUrl.endsWith('/api/v1')
+      ? rawApiUrl
+      : `${rawApiUrl.replace(/\/+$/u, '')}/api/v1`;
+    if (normalized.startsWith('/') && typeof window === 'undefined') {
+      return `${resolveInternalSsrOrigin()}${normalized}`;
+    }
+    return normalized;
   }
-})();
+
+  if (typeof window !== 'undefined') {
+    return '/api/v1';
+  }
+  return `${resolveInternalSsrOrigin()}/api/v1`;
+}
+
+function resolveAllowedApiOrigin(baseUrl: string): string {
+  const fallbackOrigin =
+    typeof window !== 'undefined' ? window.location.origin : resolveInternalSsrOrigin();
+  try {
+    return new URL(baseUrl, fallbackOrigin).origin;
+  } catch {
+    return fallbackOrigin;
+  }
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 /**
  * Sanitizes post-login / post-MFA redirect targets to prevent Open Redirect attacks.
@@ -47,12 +78,15 @@ export function sanitizeRedirectPath(raw: string | null | undefined, fallback = 
 
 /**
  * Thuật toán: Xác Thực Ràng Buộc Nguồn Đích URL Chống SSRF & Rò Rỉ Thông Tin Xác Thực Chéo Nguồn (Origin-Pinned URL Resolver)
- * Mục đích: Đảm bảo mọi yêu cầu HTTP đính kèm cookie phiên (`credentials: 'include'`) chỉ được phép gửi tới đúng `ALLOWED_API_ORIGIN`.
+ * Mục đích: Đảm bảo mọi yêu cầu HTTP đính kèm cookie phiên (`credentials: 'include'`) chỉ được phép gửi tới đúng nguồn API hợp lệ.
  * Cơ chế hoạt động:
- *   - Nếu `endpoint` là URL tuyệt đối (`http://` hoặc `https://`), phân tích cú pháp qua `new URL()` và đối chiếu nghiêm ngặt `parsed.origin === ALLOWED_API_ORIGIN`; ném ngoại lệ chặn đứng nếu khác nguồn.
- *   - Nếu là đường dẫn tương đối, chuẩn hóa dấu `/` đầu chuỗi và ghép nối an toàn vào `API_BASE_URL`.
+ *   - Nếu `endpoint` là URL tuyệt đối (`http://` hoặc `https://`), phân tích cú pháp qua `new URL()` và đối chiếu nghiêm ngặt `parsed.origin === allowedOrigin`; ném ngoại lệ chặn đứng nếu khác nguồn.
+ *   - Nếu là đường dẫn tương đối, chuẩn hóa dấu `/` đầu chuỗi và ghép nối an toàn vào `baseUrl`.
  */
 function resolveSafeApiUrl(endpoint: string): string {
+  const baseUrl = resolveApiBaseUrl();
+  const allowedOrigin = resolveAllowedApiOrigin(baseUrl);
+
   if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
     let parsed: URL;
     try {
@@ -60,13 +94,13 @@ function resolveSafeApiUrl(endpoint: string): string {
     } catch {
       throw new Error('Invalid API endpoint URL.');
     }
-    if (parsed.origin !== ALLOWED_API_ORIGIN) {
+    if (parsed.origin !== allowedOrigin) {
       throw new Error('Blocked cross-origin credentialed API request.');
     }
     return parsed.toString();
   }
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  return `${API_BASE_URL}${normalizedEndpoint}`;
+  return `${baseUrl}${normalizedEndpoint}`;
 }
 
 /**
@@ -150,7 +184,6 @@ export async function apiClient<T>(endpoint: string, options: RequestInit = {}):
     ...(options.headers as Record<string, string>),
   };
 
-  // Only set Content-Type to JSON if not sending FormData
   if (!(options.body instanceof FormData) && !headers['Content-Type'] && options.body) {
     headers['Content-Type'] = 'application/json';
   }

@@ -102,6 +102,7 @@ export class DocumentSearchService {
         department_name: string;
         classification_level_name: string | null;
         classification_level_code: string | null;
+        classification_allow_download?: boolean | null;
         created_at: Date;
         updated_at: Date;
       }>
@@ -116,6 +117,7 @@ export class DocumentSearchService {
           dep."name" AS "department_name",
           cl."name" AS "classification_level_name",
           cl."code" AS "classification_level_code",
+          cl."allow_download" AS "classification_allow_download",
           d."created_at",
           d."updated_at"
         FROM documents d
@@ -141,6 +143,10 @@ export class DocumentSearchService {
       departmentName: row.department_name,
       classificationLevelName: row.classification_level_name,
       classificationLevelCode: row.classification_level_code,
+      allowDownload:
+        row.classification_allow_download ??
+        (row.classification_level_code !== 'SECRET' &&
+          row.classification_level_code !== 'TOP_SECRET'),
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     }));

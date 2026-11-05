@@ -38,20 +38,40 @@ export interface ReaderDocumentApiDto {
   title?: string;
   documentCode?: string;
   document_code?: string;
+  // CONFLICT-RESOLVED: Bổ sung các trường phẳng từ GET /api/v1/documents (classificationLevelCode, classificationLevelName, departmentName) song song cấu trúc lồng cũ.
+  classificationLevelCode?: ClassificationCode | null;
+  classificationLevelName?: string | null;
   classificationCode?: ClassificationCode;
-  classification?: { code?: ClassificationCode; rank?: number };
+  classification?: { code?: ClassificationCode; rank?: number; allowDownload?: boolean };
+  departmentName?: string | null;
   department?: { name?: string };
   allowDownload?: boolean;
 }
 
 export interface ReaderGrantApiDto {
+  // CONFLICT-RESOLVED: Đồng bộ cấu trúc trả về thực tế của GET /api/v1/documents/my-grants (grantId, grantStatus, validFrom, document lồng).
+  grantId?: string;
   id?: string;
   documentId?: string;
   title?: string;
+  documentTitle?: string;
   documentCode?: string;
   classificationCode?: ClassificationCode;
-  document?: { title?: string; documentCode?: string; classificationCode?: ClassificationCode };
-  permissions?: ('VIEW' | 'DOWNLOAD')[];
+  grantStatus?: string;
+  status?: string;
+  validFrom?: string;
   validUntil?: string;
+  grantedAt?: string;
+  permissions?: string[];
   allowDownload?: boolean;
+  document?: {
+    id?: string;
+    documentCode?: string;
+    title?: string;
+    status?: string;
+    classificationLevelName?: string | null;
+    classificationLevelCode?: ClassificationCode | null;
+    classificationCode?: ClassificationCode;
+    allowDownload?: boolean;
+  };
 }

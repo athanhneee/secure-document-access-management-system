@@ -8,10 +8,18 @@ node_modules/
 .local/
 **/.local/
 !.local.example/
+# CONFLICT-RESOLVED: Chặn hoàn toàn supabase/, docs/, rules/ và design-system/ trên kho lưu trữ công khai (chỉ giữ README.md) cùng các thư mục cache CLI đám mây cục bộ
 .supabase/
+**/.supabase/
 supabase/
 .wrangler/
-docs 
+**/.wrangler/
+.vercel/
+**/.vercel/
+docs/
+rules/
+design-system/
+
 # =========================================================================
 # 2. Build, framework, caches and test artifacts
 # =========================================================================
@@ -27,19 +35,29 @@ out/
 **/.turbo/
 coverage/
 **/coverage/
+.nyc_output/
+*.lcov
 test-results/
+**/test-results/
 playwright-report/
+**/playwright-report/
 blob-report/
+**/blob-report/
+playwright/.cache/
 *.tsbuildinfo
 **/*.tsbuildinfo
 next-env.d.ts
 **/next-env.d.ts
 *.sarif
+**/*.sarif
 sbom.spdx.json
 junit.xml
 .cache/
+**/.cache/
 .temp/
+**/.temp/
 .tmp/
+**/.tmp/
 tmp/
 temp/
 *.tmp
@@ -150,6 +168,7 @@ storage/
 # =========================================================================
 **/prisma/generated/
 **/generated/prisma/
+packages/database/src/generated/
 
 # =========================================================================
 # 8. IDE, Editor, Agent and Operating System artifacts
@@ -177,7 +196,18 @@ Thumbs.db
 Thumbs.db:encryptable
 desktop.ini
 .agents/
+.agent/
 .gemini/
+.claude/
+.cursor/
+.windsurf/
+.roo/
+.cline/
+.aider*
+AGENTS.md
+**/AGENTS.md
+CLAUDE.md
+**/CLAUDE.md
 
 # =========================================================================
 # 9. Docker mounts, volumes and Git hooks internal state

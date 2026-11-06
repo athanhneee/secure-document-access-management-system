@@ -36,7 +36,8 @@ RUN pnpm --filter @sda/database build
 RUN pnpm --filter @sda/api build
 
 # Prune devDependencies for minimal production bundle
-RUN pnpm prune --prod --ignore-scripts --config.node-linker=hoisted
+RUN pnpm prune --prod --ignore-scripts --config.node-linker=hoisted && \
+    rm -rf /app/node_modules/@typescript /app/node_modules/typescript
 
 # ── Stage 2: Production Hardened Minimal Runner ──────────────────────────────
 FROM node:24.14.1-alpine3.23 AS runner
@@ -44,7 +45,10 @@ FROM node:24.14.1-alpine3.23 AS runner
 WORKDIR /app
 
 # Security: Install dumb-init for proper PID 1 signal forwarding and pre-create shared export dir
-RUN apk add --no-cache dumb-init wget && \
+# CONFLICT-RESOLVED: Nâng cấp gói hệ thống Alpine (vá libcrypto3/libssl3) và gỡ bỏ npm/corepack/yarn khỏi ảnh runtime để vượt cổng quét lỗ hổng Trivy trên pipeline CD.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache dumb-init wget && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn* && \
     addgroup -g 10001 -S appgroup && \
     adduser -u 10001 -S appuser -G appgroup -s /sbin/nologin && \
     mkdir -p /var/lib/sda/exports && \

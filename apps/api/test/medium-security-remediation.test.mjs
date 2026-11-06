@@ -255,3 +255,13 @@ test('[MED-07] all GitHub Actions workflows pin actions to 40-char SHAs and cont
     }
   }
 });
+
+test('all production Dockerfiles upgrade Alpine OS packages and strip bundled npm/corepack from runtime stage', () => {
+  for (const rel of ['apps/api/Dockerfile', 'apps/worker/Dockerfile', 'apps/web/Dockerfile']) {
+    const content = fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+    const [, runnerStage = ''] = content.split(/FROM\s+[^\n]+\s+AS\s+runner/u);
+    assert.ok(runnerStage.length > 0, `${rel} must define a dedicated runner stage`);
+    assert.match(runnerStage, /apk upgrade --no-cache/u);
+    assert.match(runnerStage, /rm -rf \/usr\/local\/lib\/node_modules/u);
+  }
+});

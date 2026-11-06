@@ -39,14 +39,18 @@ RUN pnpm --filter @sda/contracts build
 RUN pnpm --filter @sda/web build
 
 # Prune devDependencies before copying into runner image
-RUN pnpm prune --prod --ignore-scripts --config.node-linker=hoisted
+RUN pnpm prune --prod --ignore-scripts --config.node-linker=hoisted && \
+    rm -rf /app/node_modules/@typescript /app/node_modules/typescript
 
 # ── Stage 2: Production Hardened Minimal Runner ──────────────────────────────
 FROM node:24.14.1-alpine3.23 AS runner
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init wget
+# CONFLICT-RESOLVED: Nâng cấp gói hệ thống Alpine (vá libcrypto3/libssl3) và gỡ bỏ npm/corepack/yarn khỏi ảnh runtime để loại bỏ lỗ hổng phụ thuộc đóng gói sẵn khi quét Trivy CD.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache dumb-init wget && \
+    rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn*
 
 # Default INTERNAL_API_ORIGIN rewrites /api/v1/* to http://api:3001/api/v1/* out of the box
 ENV NODE_ENV=production \

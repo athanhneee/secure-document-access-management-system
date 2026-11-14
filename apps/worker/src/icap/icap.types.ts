@@ -2,7 +2,8 @@
  * Thuật toán / Tổng quan module:
  * Định nghĩa hệ thống kiểu dữ liệu tĩnh và hợp đồng giao thức RFC 3507 ICAP (Internet Content Adaptation Protocol)
  * phục vụ máy chủ kiểm soát thất thoát dữ liệu biên mạng (Network DLP), bao gồm phương thức ICAP,
- * vị trí byte-offset của phần thân đóng gói (`EncapsulatedSection`), cấu trúc bản tin đã phân tách và kết quả quét DLP.
+ * vị trí byte-offset của phần thân đóng gói (`EncapsulatedSection`), độ dài khung đã tiêu thụ (`consumedBytes`)
+ * cho kết nối tái sử dụng keep-alive / pipelining và cấu hình giải nén bất đồng bộ giới hạn đồng thời.
  */
 export type IcapMethod = 'OPTIONS' | 'RESPMOD' | 'REQMOD';
 
@@ -35,6 +36,18 @@ export interface DlpScanResult {
   isClean: boolean;
 }
 
+export interface DlpScanOptions {
+  customKeywords?: string[] | undefined;
+  action?: 'BLOCK' | 'AUDIT_ONLY' | undefined;
+  contentEncoding?: string | undefined;
+  allowTruncatedPreview?: boolean | undefined;
+  maxBodyBytes?: number | undefined;
+  requestUri?: string | undefined;
+  httpUri?: string | undefined;
+  httpHeaders?: Record<string, string> | undefined;
+  icapHeaders?: Record<string, string> | undefined;
+}
+
 export interface EncapsulatedSection {
   reqHdr?: number | undefined;
   reqBody?: number | undefined;
@@ -58,6 +71,7 @@ export interface IcapRequest {
   body: Buffer;
   readonly incompleteHeaders?: boolean | undefined;
   isComplete: boolean;
+  consumedBytes?: number | undefined;
   isPreview?: boolean | undefined;
   isPreviewIof?: boolean | undefined;
   continuedAfterPreview?: boolean | undefined;
@@ -69,6 +83,8 @@ export interface IcapServerConfig {
   host?: string | undefined;
   serviceName?: string | undefined;
   maxConnections?: number | undefined;
+  maxConcurrentInspections?: number | undefined;
+  maxBodyBytes?: number | undefined;
   previewSize?: number | undefined;
   action?: 'BLOCK' | 'AUDIT_ONLY' | undefined;
   customKeywords?: string[] | undefined;

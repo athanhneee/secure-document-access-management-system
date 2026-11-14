@@ -40,11 +40,11 @@ export interface VerifiableAuditAnchorRow {
   entry_hash: string;
   signature: string;
   signer_key_id?: string | null;
+  status?: string | null;
 }
 
 /**
- * Algorithm / Thuật toán: So sánh hai chuỗi mã băm/chữ ký trong thời gian hằng số (Constant-Time Comparison)
- * Mục đích: Chuyển hai chuỗi sang `Buffer` UTF-8 và gọi `crypto.timingSafeEqual` để ngăn chặn tấn công kênh kề thời gian.
+ * Thuật toán: So sánh hai chuỗi mã băm/chữ ký trong thời gian hằng số (Constant-Time Comparison).
  */
 export function safeTimingEqual(
   left: string | null | undefined,
@@ -62,7 +62,22 @@ function resolveKeyFromSource(keySource: string | AuditKeyRing, version?: number
 }
 
 /**
- * Algorithm / Thuật toán: Xác Thực Mắt Xích Chuỗi Băm Kiểm Toán Đơn Lẻ Hỗ Trợ Vòng Khóa Xoay Vòng (Single-Entry Hash Chain & Versioned HMAC-SHA256 Verifier)
+ * Thuật toán: Xác thực độc lập chữ ký HMAC-SHA256 của điểm neo `AuditAnchor` có `status === 'VALID'`
+ * trước khi cho phép dùng làm mốc tiếp tục (checkpoint cursor) để ngăn tấn công giả mạo điểm neo trong CSDL.
+ */
+export function isAnchorCryptographicallyAuthentic(
+  anchor: VerifiableAuditAnchorRow,
+  keySource: string | AuditKeyRing,
+): boolean {
+  const anchorKey = resolveKeyFromSource(keySource, parseSignerKeyVersion(anchor.signer_key_id));
+  const expectedSig = createHmac('sha256', anchorKey)
+    .update(`${anchor.chain_partition}:${anchor.anchor_sequence}:${anchor.entry_hash}`)
+    .digest('hex');
+  return safeTimingEqual(anchor.signature, expectedSig);
+}
+
+/**
+ * Thuật toán: Xác Thực Mắt Xích Chuỗi Băm Kiểm Toán Đơn Lẻ Hỗ Trợ Vòng Khóa Xoay Vòng (Single-Entry Hash Chain & Versioned HMAC-SHA256 Verifier).
  */
 export function verifyAuditChainEntry(
   log: VerifiableAuditLogRow,
@@ -139,7 +154,7 @@ export function verifyAuditChainEntry(
 }
 
 /**
- * Algorithm / Thuật toán: Xác Thực Chéo Điểm Neo Độc Lập Theo Phiên Bản Khóa `signer_key_id` (Checkpoint Anchor Verification)
+ * Thuật toán: Xác Thực Chéo Điểm Neo Độc Lập Theo Phiên Bản Khóa `signer_key_id` (Checkpoint Anchor Verification).
  */
 export function verifyPartitionAnchors(
   anchors: readonly VerifiableAuditAnchorRow[],
@@ -168,13 +183,7 @@ export function verifyPartitionAnchors(
       });
     }
 
-    // CONFLICT-RESOLVED: Trích xuất phiên bản khóa từ signer_key_id qua parseSignerKeyVersion đồng bộ với AuditAnchorVerifier phía API.
-    const anchorKey = resolveKeyFromSource(keySource, parseSignerKeyVersion(anchor.signer_key_id));
-    const expectedSignature = createHmac('sha256', anchorKey)
-      .update(`${anchor.chain_partition}:${anchor.anchor_sequence}:${anchor.entry_hash}`)
-      .digest('hex');
-
-    if (!safeTimingEqual(anchor.signature, expectedSignature)) {
+    if (!isAnchorCryptographicallyAuthentic(anchor, keySource)) {
       violations.push({
         code: 'AUDIT_ANCHOR_MISMATCH',
         sequence: anchor.anchor_sequence,

@@ -1,6 +1,7 @@
 import { getDatabaseClient, withSerializableTransaction, type Prisma } from '@sda/database';
 import { buildAuditKeyRing, canonicalizeJson } from '@sda/contracts';
 import { createHmac, randomUUID } from 'node:crypto';
+import { recordWorkerJobRun } from './worker-metrics.js';
 
 /**
  * Grant Expiry Job (D-BR15 Defense-in-Depth)
@@ -190,10 +191,12 @@ export function startGrantExpiryJob(
     isRunning = true;
     try {
       const count = await runGrantExpiryBatch(hmacKey, keyRotationJson);
+      recordWorkerJobRun('grant_expiry', 'success');
       if (count > 0) {
         console.info(`Grant expiry worker: expired ${count} grants.`);
       }
     } catch (err: unknown) {
+      recordWorkerJobRun('grant_expiry', 'error');
       console.error('Grant expiry worker error:', err instanceof Error ? err.message : String(err));
     } finally {
       isRunning = false;

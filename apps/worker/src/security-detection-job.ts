@@ -5,6 +5,7 @@ import {
   type PrismaClient,
 } from './detection/rule-defaults.js';
 import { evaluateDetectionRule } from './detection/rule-evaluators.js';
+import { recordWorkerJobRun } from './worker-metrics.js';
 
 export { type DetectionRuleConfig, loadDetectionRules };
 
@@ -58,10 +59,12 @@ export function startSecurityDetectionJob(intervalMs: number, signal: AbortSigna
 
     try {
       const result = await runDetectionCycle();
+      recordWorkerJobRun('security_detection', 'success');
       if (result.alertsCreated > 0) {
         console.info('Security detection job generated %d alert(s).', result.alertsCreated);
       }
     } catch (err) {
+      recordWorkerJobRun('security_detection', 'error');
       console.error('Security detection cycle failed:', err);
     } finally {
       isRunning = false;

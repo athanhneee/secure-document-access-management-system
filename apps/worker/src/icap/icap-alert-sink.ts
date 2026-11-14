@@ -20,13 +20,15 @@ export interface ResolvedIcapConfig {
   host: string;
   serviceName: string;
   maxConnections: number;
+  maxConcurrentInspections: number;
+  maxBodyBytes: number;
   previewSize: number;
   action: 'BLOCK' | 'AUDIT_ONLY';
   customKeywords: string[];
 }
 
 /**
- * Algorithm / Thuật toán: Ghi nhận cảnh báo SOC `NETWORK_DLP_VIOLATION` cho cả hai chế độ `BLOCK` và `AUDIT_ONLY`.
+ * Thuật toán: Ghi nhận cảnh báo SOC `NETWORK_DLP_VIOLATION` cho cả hai chế độ `BLOCK` và `AUDIT_ONLY`.
  */
 export async function persistNetworkDlpSecurityAlert(
   scanResult: DlpScanResult,

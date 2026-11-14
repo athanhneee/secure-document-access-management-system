@@ -26,16 +26,14 @@ export {
 };
 
 /**
- * Algorithm / Thuật toán tổng quan module:
+ * Thuật toán tổng quan module:
  * Bộ phân tích cú pháp và đóng gói bản tin giao thức RFC 3507 ICAP (Internet Content Adaptation Protocol).
- * - Pha 1: Định vị ranh giới ICAP header `\r\n\r\n`; trả về `null` nếu khung header chưa truyền đủ.
- * - Pha 2: Xác thực dòng yêu cầu (`OPTIONS`, `REQMOD`, `RESPMOD`), phiên bản `ICAP/` và bảng header ICAP.
- * - Pha 3 & 4: Ủy quyền trích xuất phân đoạn HTTP đóng gói và giải mã khung truyền tải `hex-chunked` qua `icap-http-body.ts`.
+ * - Định vị ranh giới ICAP header `\r\n\r\n`, xác thực dòng yêu cầu (`OPTIONS`, `REQMOD`, `RESPMOD`) và bảng header ICAP.
+ * - Ủy quyền trích xuất HTTP đóng gói và trả về `consumedBytes` chính xác cho kết nối tái sử dụng keep-alive / pipelining.
  */
 export class IcapParser {
   /**
-   * Thuật toán: Phân tách khung bản tin ICAP RFC 3507 và lan truyền cờ `incompleteHeaders` cũng như trạng thái `continuedAfterPreview`
-   * khi HTTP header hoặc pha Preview `0\r\n\r\n` bị phân mảnh qua nhiều gói tin TCP.
+   * Thuật toán: Phân tách khung bản tin ICAP RFC 3507 và lan truyền `incompleteHeaders`, `consumedBytes` và `continuedAfterPreview`.
    */
   public static parseRequest(
     rawBuffer: Buffer,
@@ -46,8 +44,8 @@ export class IcapParser {
       return null;
     }
 
-    const icapHeaderPart = rawBuffer.slice(0, headerEndIndex).toString('utf-8');
-    const remainingBuffer = rawBuffer.slice(headerEndIndex + 4);
+    const icapHeaderPart = rawBuffer.subarray(0, headerEndIndex).toString('utf-8');
+    const remainingBuffer = rawBuffer.subarray(headerEndIndex + 4);
 
     const lines = icapHeaderPart.split('\r\n');
     const requestLine = lines[0];
@@ -61,7 +59,7 @@ export class IcapParser {
     }
 
     const rawMethod = requestLineParts[0]?.toUpperCase() ?? '';
-    const uri = (requestLineParts[1] ?? '').replace(/\p{Cc}/gu, '').slice(0, 256);
+    const uri = (requestLineParts[1] ?? '').replace(/\p{Cc}/gu, '').slice(0, 1024);
     const version = (requestLineParts[2] ?? 'ICAP/1.0').trim();
 
     if (!version.startsWith('ICAP/')) {
@@ -98,7 +96,7 @@ export class IcapParser {
     const payload = extractEncapsulatedHttpPayload(method, remainingBuffer, encapsulated, {
       expectPostPreviewTerminator: Boolean(isPreview && options?.continuedAfterPreview),
     });
-    // CONFLICT-RESOLVED: Lan truyền tường minh incompleteHeaders để IcapServer không khóa sớm headersValidated khi HTTP header đóng gói bị phân mảnh TCP.
+
     if (payload.incompleteHeaders) {
       return {
         method,
@@ -131,6 +129,7 @@ export class IcapParser {
       body: payload.body,
       incompleteHeaders: payload.incompleteHeaders,
       isComplete: payload.isComplete,
+      consumedBytes: headerEndIndex + 4 + payload.consumedBytes,
     };
   }
 
@@ -141,6 +140,7 @@ export class IcapParser {
   public static decodeIcapChunks(chunkBuffer: Buffer): {
     data: Buffer;
     isComplete: boolean;
+    consumedBytes: number;
     isPreviewIof?: boolean;
   } {
     return decodeIcapChunks(chunkBuffer);
@@ -150,11 +150,14 @@ export class IcapParser {
     return buildOptionsResponse(config);
   }
 
-  public static build204Response(): Buffer {
-    return build204Response();
+  public static build204Response(options?: { keepAlive?: boolean }): Buffer {
+    return build204Response(options);
   }
 
-  public static buildBlockResponse(violations: DlpViolation[]): Buffer {
-    return buildBlockResponse(violations);
+  public static buildBlockResponse(
+    violations: DlpViolation[],
+    options?: { keepAlive?: boolean },
+  ): Buffer {
+    return buildBlockResponse(violations, options);
   }
 }

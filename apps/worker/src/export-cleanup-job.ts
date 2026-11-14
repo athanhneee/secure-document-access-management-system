@@ -1,14 +1,21 @@
 import { getDatabaseClient } from '@sda/database';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { recordWorkerJobRun } from './worker-metrics.js';
 
 /**
  * Thuật toán / Tổng quan module:
  * Tiến trình thu hồi tệp kết xuất kiểm toán bất đồng bộ (`async_export_jobs`) đã hết hạn thời gian sống (`expires_at < now`),
- * đảm bảo xóa cả tệp vật lý trên đĩa (với kiểm tra giam cầm đường dẫn Path Containment) lẫn bản ghi metadata trong CSDL.
+ * neo thư mục dự phòng chuẩn theo `import.meta.dirname` (`../../../.local/exports` đồng bộ 100% với `@sda/api`)
+ * và kiểm tra giam cầm đường dẫn (Path Containment) trước khi `unlink`.
  */
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
+
+export const DEFAULT_EXPORT_CLEANUP_DIR = path.resolve(
+  import.meta.dirname,
+  '../../../.local/exports',
+);
 
 export interface ExportCleanupResult {
   expiredJobsCleaned: number;
@@ -16,12 +23,9 @@ export interface ExportCleanupResult {
 }
 
 /**
- * Cleans up expired async export files and jobs whose TTL has elapsed.
- *
  * Thuật toán: Thu dọn công việc xuất dữ liệu hết hạn có kiểm soát biên thư mục (Bounded Path Containment Cleanup).
- * - Truy vấn tất cả bản ghi `async_export_jobs` có `expires_at < now`.
- * - Với mỗi bản ghi có `file_path`, chuẩn hóa đường dẫn tuyệt đối và đối chiếu tiền tố `${resolvedBaseDir}${path.sep}`
- *   để ngăn chặn xóa nhầm tệp ngoài vùng `.local/exports`; dùng `lstat` xác minh là tệp thường trước khi `unlink`, rồi xóa bản ghi CSDL.
+ * - Neo thư mục gốc mặc định vào `path.resolve(import.meta.dirname, '../../../.local/exports')` thay vì `process.cwd()`.
+ * - Dùng `lstat` xác minh là tệp thường nằm bên trong `resolvedBaseDir` trước khi xóa tệp vật lý và bản ghi CSDL.
  */
 export async function cleanExpiredExportJobs(options?: {
   databaseClient?: PrismaClient;
@@ -30,10 +34,9 @@ export async function cleanExpiredExportJobs(options?: {
 }): Promise<ExportCleanupResult> {
   const database = options?.databaseClient ?? getDatabaseClient();
   const now = options?.now ?? new Date();
-  // CONFLICT-RESOLVED: Đồng bộ biến môi trường EXPORT_STORAGE_DIR giữa API và Worker, chỉ xóa bản ghi CSDL khi tệp nằm đúng biên thư mục và đã xóa hoặc không còn tồn tại (ENOENT).
   const resolvedBaseDir = path.resolve(
     options?.exportBaseDir ??
-      (process.env['EXPORT_STORAGE_DIR']?.trim() || path.join(process.cwd(), '.local', 'exports')),
+      (process.env['EXPORT_STORAGE_DIR']?.trim() || DEFAULT_EXPORT_CLEANUP_DIR),
   );
 
   let expiredJobsCleaned = 0;
@@ -100,10 +103,7 @@ export async function cleanExpiredExportJobs(options?: {
 }
 
 /**
- * Starts the export cleanup background runner.
- *
- * Thuật toán: Bộ lập lịch định kỳ chống chồng lấn chu kỳ (Non-Overlapping Interval Scheduler)
- * bảo vệ bằng cờ `isRunning` và dừng sạch theo tín hiệu `AbortSignal`.
+ * Thuật toán: Bộ lập lịch định kỳ chống chồng lấn chu kỳ (Non-Overlapping Interval Scheduler) cho `ExportCleanupJob`.
  */
 export function startExportCleanupJob(intervalMs: number, signal: AbortSignal): void {
   if (signal.aborted) return;
@@ -119,12 +119,14 @@ export function startExportCleanupJob(intervalMs: number, signal: AbortSignal): 
 
     try {
       const result = await cleanExpiredExportJobs();
+      recordWorkerJobRun('export_cleanup', 'success');
       if (result.expiredJobsCleaned > 0) {
         console.info(
           `Export cleanup job purged ${result.expiredJobsCleaned} expired export job(s) and ${result.filesDeleted} file(s).`,
         );
       }
     } catch (err) {
+      recordWorkerJobRun('export_cleanup', 'error');
       console.error(`Export cleanup cycle failed: ${err}`);
     } finally {
       isRunning = false;

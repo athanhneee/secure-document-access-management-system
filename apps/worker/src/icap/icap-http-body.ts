@@ -9,13 +9,12 @@ export interface ExtractedEncapsulatedPayload {
   httpStatusMessage?: string;
   body: Buffer;
   isComplete: boolean;
+  consumedBytes: number;
   isPreviewIof: boolean;
 }
 
 /**
- * Algorithm / Thuật toán: Phân tách ánh xạ byte-offset của trường header `Encapsulated` theo RFC 3507 §4.4.1.
- * Cơ chế: Tách danh sách `section=offset`, kiểm tra định dạng số nguyên không âm an toàn (`Number.isSafeInteger`)
- * và gán vị trí tương đối cho `req-hdr`, `req-body`, `res-hdr`, `res-body`, `null-body`.
+ * Thuật toán: Phân tách ánh xạ byte-offset của trường header `Encapsulated` theo RFC 3507 §4.4.1.
  */
 export function parseEncapsulatedHeader(headerValue?: string): EncapsulatedSection {
   const result: EncapsulatedSection = {};
@@ -32,33 +31,23 @@ export function parseEncapsulatedHeader(headerValue?: string): EncapsulatedSecti
     if (!Number.isSafeInteger(offset) || offset < 0) {
       throw new Error(`ICAP_400: Out-of-range Encapsulated offset "${trimmedVal}"`);
     }
-    switch (key.toLowerCase()) {
-      case 'req-hdr':
-        result.reqHdr = offset;
-        break;
-      case 'req-body':
-        result.reqBody = offset;
-        break;
-      case 'res-hdr':
-        result.resHdr = offset;
-        break;
-      case 'res-body':
-        result.resBody = offset;
-        break;
-      case 'null-body':
-        result.nullBody = offset;
-        break;
-    }
+    const k = key.toLowerCase();
+    if (k === 'req-hdr') result.reqHdr = offset;
+    else if (k === 'req-body') result.reqBody = offset;
+    else if (k === 'res-hdr') result.resHdr = offset;
+    else if (k === 'res-body') result.resBody = offset;
+    else if (k === 'null-body') result.nullBody = offset;
   }
   return result;
 }
 
 /**
- * Algorithm / Thuật toán: Giải mã tuần tự khung truyền tải phân mảnh hệ thập lục phân (Hex-Chunked Stream Decoder - RFC 3507 / RFC 2616).
+ * Thuật toán: Giải mã tuần tự khung truyền tải phân mảnh hệ thập lục phân (Hex-Chunked Stream Decoder - RFC 3507 / RFC 2616).
  * Cơ chế:
  *   - Duyệt con trỏ `offset` qua từng khung `<hex-size>[;ext]\r\n<payload>\r\n` và kiểm tra hậu tố `\r\n`.
- *   - Hỗ trợ đầy đủ phần mở rộng `;ext` và trailer tùy chọn tại chunk kết thúc `0[;ext]\r\n...\r\n`.
- *   - Khi `expectPostPreviewTerminator === true` (đã gửi `100 Continue` sau pha Preview), bắt buộc đợi đủ dấu kết thúc `0` thứ hai của phần thân thật để chống vượt rào DLP qua `Preview: 0` (CRIT-03).
+ *   - Dừng sạch ngay tại điểm kết thúc `0[;ext]\r\n...\r\n` (`consumedBytes = terminatorEnd`) mà KHÔNG đọc lấn hoặc vứt bỏ
+ *     các byte pipelined thuộc yêu cầu ICAP kế tiếp trên cùng kết nối TCP keep-alive.
+ *   - Khi `expectPostPreviewTerminator === true` (đã gửi `100 Continue` sau pha Preview), đợi đủ dấu kết thúc `0` thứ hai.
  */
 export function decodeIcapChunks(
   chunkBuffer: Buffer,
@@ -66,6 +55,7 @@ export function decodeIcapChunks(
 ): {
   data: Buffer;
   isComplete: boolean;
+  consumedBytes: number;
   isPreviewIof?: boolean;
 } {
   const chunks: Buffer[] = [];
@@ -73,12 +63,13 @@ export function decodeIcapChunks(
   let isComplete = false;
   let isPreviewIof = false;
   let zeroChunksSeen = 0;
+  let consumedBytes = 0;
 
   while (offset < chunkBuffer.length) {
     const newlineIndex = chunkBuffer.indexOf('\r\n', offset);
     if (newlineIndex === -1) break;
 
-    const sizeLine = chunkBuffer.slice(offset, newlineIndex).toString('utf-8').trim();
+    const sizeLine = chunkBuffer.subarray(offset, newlineIndex).toString('utf-8').trim();
     const semiParts = sizeLine.split(';');
     const hexSizeStr = semiParts[0]?.trim() ?? '';
     if (!/^[0-9a-fA-F]+$/u.test(hexSizeStr)) {
@@ -91,7 +82,6 @@ export function decodeIcapChunks(
     }
 
     if (chunkSize === 0) {
-      // CONFLICT-RESOLVED: Định vị ranh giới kết thúc trailer `\r\n\r\n` bắt đầu từ `newlineIndex` để hỗ trợ mọi `;ext` hợp lệ và trailer tùy chọn.
       const trailerBlankIndex = chunkBuffer.indexOf('\r\n\r\n', newlineIndex);
       if (trailerBlankIndex === -1) break;
       const terminatorEnd = trailerBlankIndex + 4;
@@ -103,21 +93,19 @@ export function decodeIcapChunks(
       if (extensions.includes('ieof')) {
         isPreviewIof = true;
         isComplete = true;
+        consumedBytes = terminatorEnd;
         break;
       }
 
       zeroChunksSeen += 1;
       if (options?.expectPostPreviewTerminator && zeroChunksSeen < 2) {
         offset = terminatorEnd;
-        isComplete = false;
-        continue;
-      }
-      if (terminatorEnd < chunkBuffer.length) {
-        offset = terminatorEnd;
+        consumedBytes = terminatorEnd;
         isComplete = false;
         continue;
       }
       isComplete = true;
+      consumedBytes = terminatorEnd;
       break;
     }
 
@@ -126,7 +114,9 @@ export function decodeIcapChunks(
 
     if (chunkDataEnd + 2 > chunkBuffer.length) {
       if (chunkDataStart < chunkBuffer.length) {
-        chunks.push(chunkBuffer.slice(chunkDataStart, Math.min(chunkDataEnd, chunkBuffer.length)));
+        chunks.push(
+          chunkBuffer.subarray(chunkDataStart, Math.min(chunkDataEnd, chunkBuffer.length)),
+        );
       }
       isComplete = false;
       break;
@@ -136,21 +126,23 @@ export function decodeIcapChunks(
       throw new Error('ICAP_400: Missing CRLF after chunk payload');
     }
 
-    chunks.push(chunkBuffer.slice(chunkDataStart, chunkDataEnd));
+    chunks.push(chunkBuffer.subarray(chunkDataStart, chunkDataEnd));
     offset = chunkDataEnd + 2;
+    consumedBytes = offset;
   }
 
   return {
     data: Buffer.concat(chunks),
     isComplete,
+    consumedBytes,
     ...(isPreviewIof ? { isPreviewIof: true } : {}),
   };
 }
 
 /**
- * Algorithm / Thuật toán: Trích Xuất Phân Đoạn HTTP Header Đóng Gói & Giải Mã Thân Dữ Liệu (Encapsulated HTTP Payload Extractor)
- * Cơ chế: Kiểm tra tính đơn điệu của các byte-offset `Encapsulated`, đợi nhận đủ vùng HTTP header nếu luồng TCP bị phân mảnh,
- * tách dòng trạng thái/yêu cầu HTTP và gọi `decodeIcapChunks` trên phần thân.
+ * Thuật toán: Trích Xuất Phân Đoạn HTTP Header Đóng Gói & Giải Mã Thân Dữ Liệu (Encapsulated HTTP Payload Extractor)
+ * Cơ chế: Kiểm tra tính đơn điệu của byte-offset `Encapsulated`, tách dòng trạng thái/yêu cầu HTTP, gọi `decodeIcapChunks`
+ * và trả về chính xác `consumedBytes` phục vụ cắt phần dư pipelining trên cùng kết nối TCP.
  */
 export function extractEncapsulatedHttpPayload(
   method: IcapMethod,
@@ -164,22 +156,11 @@ export function extractEncapsulatedHttpPayload(
   let httpStatusCode: number | undefined;
   let httpStatusMessage: string | undefined;
 
-  const bodyOffset =
-    encapsulated.resBody !== undefined
-      ? encapsulated.resBody
-      : encapsulated.reqBody !== undefined
-        ? encapsulated.reqBody
-        : undefined;
+  const bodyOffset = encapsulated.resBody ?? encapsulated.reqBody;
 
   if (encapsulated.resHdr !== undefined || encapsulated.reqHdr !== undefined) {
-    const httpHeaderStart =
-      encapsulated.resHdr !== undefined ? encapsulated.resHdr : encapsulated.reqHdr!;
-    const httpHeaderEnd =
-      bodyOffset !== undefined
-        ? bodyOffset
-        : encapsulated.nullBody !== undefined
-          ? encapsulated.nullBody
-          : remainingBuffer.length;
+    const httpHeaderStart = encapsulated.resHdr ?? encapsulated.reqHdr!;
+    const httpHeaderEnd = bodyOffset ?? encapsulated.nullBody ?? remainingBuffer.length;
 
     if (httpHeaderEnd < httpHeaderStart) {
       throw new Error('ICAP_400: Invalid Encapsulated section ordering');
@@ -193,13 +174,14 @@ export function extractEncapsulatedHttpPayload(
         incompleteHeaders: true,
         body: Buffer.alloc(0),
         isComplete: false,
+        consumedBytes: 0,
         isPreviewIof: false,
       };
     }
 
     if (httpHeaderStart < remainingBuffer.length) {
       const httpHeaderText = remainingBuffer
-        .slice(httpHeaderStart, Math.min(httpHeaderEnd, remainingBuffer.length))
+        .subarray(httpHeaderStart, Math.min(httpHeaderEnd, remainingBuffer.length))
         .toString('utf-8');
       const httpLines = httpHeaderText.split('\r\n');
       const firstHttpLine = httpLines[0]?.trim();
@@ -230,13 +212,16 @@ export function extractEncapsulatedHttpPayload(
   let body = Buffer.alloc(0);
   let isComplete = false;
   let isPreviewIof = false;
+  let consumedBytes = 0;
 
   if (method === 'OPTIONS' || encapsulated.nullBody !== undefined || bodyOffset === undefined) {
     isComplete = true;
+    consumedBytes = encapsulated.nullBody ?? 0;
   } else if (bodyOffset < remainingBuffer.length) {
-    const decoded = decodeIcapChunks(remainingBuffer.slice(bodyOffset), options);
+    const decoded = decodeIcapChunks(remainingBuffer.subarray(bodyOffset), options);
     body = Buffer.from(decoded.data);
     isComplete = decoded.isComplete;
+    consumedBytes = bodyOffset + decoded.consumedBytes;
     isPreviewIof = decoded.isPreviewIof ?? false;
   }
 
@@ -249,6 +234,7 @@ export function extractEncapsulatedHttpPayload(
     ...(httpStatusMessage !== undefined ? { httpStatusMessage } : {}),
     body,
     isComplete,
+    consumedBytes,
     isPreviewIof,
   };
 }

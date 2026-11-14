@@ -1,7 +1,7 @@
 import type { IcapServerConfig, DlpViolation } from './icap.types.js';
 
 /**
- * Algorithm / Thuật toán: Mã hóa thực thể ký tự đặc biệt HTML (HTML Entity Escaping) chống XSS
+ * Thuật toán: Mã hóa thực thể ký tự đặc biệt HTML (HTML Entity Escaping) chống XSS
  * và khử độc ký tự xuống dòng CRLF trong trường header chống tấn công Response Splitting.
  */
 export function escapeHtml(input: string): string {
@@ -18,20 +18,24 @@ export function sanitizeHeaderToken(input: string): string {
 }
 
 /**
- * Algorithm / Thuật toán: Tạo bản tin thương lượng năng lực dịch vụ ICAP `OPTIONS 200 OK` (RFC 3507 §4.10),
+ * Thuật toán: Tạo bản tin thương lượng năng lực dịch vụ ICAP `OPTIONS 200 OK` (RFC 3507 §4.10),
  * công bố phương thức hỗ trợ (`RESPMOD, REQMOD`), kích thước `Preview`, `Allow: 204`, `ISTag` và `Encapsulated: null-body=0`.
  */
-export function buildOptionsResponse(config?: IcapServerConfig): Buffer {
+export function buildOptionsResponse(
+  config?: IcapServerConfig,
+  options?: { keepAlive?: boolean | undefined },
+): Buffer {
   const dateStr = new Date().toUTCString();
   const serviceName = sanitizeHeaderToken(config?.serviceName ?? 'sda-dlp');
   const previewSize = config?.previewSize ?? 2048;
   const maxConnections = config?.maxConnections ?? 100;
+  const connectionHeader = options?.keepAlive ? 'keep-alive' : 'close';
 
   const response = [
     'ICAP/1.0 200 OK',
     `Date: ${dateStr}`,
     'Server: SDA Network DLP ICAP Server/1.0',
-    'Connection: close',
+    `Connection: ${connectionHeader}`,
     'Methods: RESPMOD, REQMOD',
     `Service: SDA Enterprise Network Data Loss Prevention (${serviceName})`,
     'ISTag: "SDA-DLP-1.0.0"',
@@ -48,16 +52,16 @@ export function buildOptionsResponse(config?: IcapServerConfig): Buffer {
 }
 
 /**
- * Algorithm / Thuật toán: Đóng gói phản hồi thông qua nhanh `ICAP/1.0 204 No modifications` (RFC 3507 §4.6)
- * báo cho cổng proxy/gateway giữ nguyên bản tin HTTP gốc khi nội dung vượt qua kiểm tra DLP sạch.
+ * Thuật toán: Đóng gói phản hồi thông qua nhanh `ICAP/1.0 204 No modifications` (RFC 3507 §4.6).
  */
-export function build204Response(): Buffer {
+export function build204Response(options?: { keepAlive?: boolean | undefined }): Buffer {
   const dateStr = new Date().toUTCString();
+  const connectionHeader = options?.keepAlive ? 'keep-alive' : 'close';
   const response = [
     'ICAP/1.0 204 No modifications',
     `Date: ${dateStr}`,
     'Server: SDA Network DLP ICAP Server/1.0',
-    'Connection: close',
+    `Connection: ${connectionHeader}`,
     'ISTag: "SDA-DLP-1.0.0"',
     '',
     '',
@@ -77,12 +81,14 @@ export function buildProtocolErrorResponse(statusCode: 400 | 405 | 500): Buffer 
 }
 
 /**
- * Algorithm / Thuật toán: Đóng gói bản tin thay thế nội dung `ICAP/1.0 200 OK` chứa phản hồi chặn `HTTP/1.1 403 Forbidden`.
- * Cơ chế: Làm sạch mã vi phạm chống XSS/CRLF injection, mã hóa thân HTML theo khung hex-chunked `<hexLen>\r\n<html>\r\n0\r\n\r\n`
- * và tính toán chính xác cặp byte-offset `Encapsulated: res-hdr=0, res-body=<httpHeaderLength>`.
+ * Thuật toán: Đóng gói bản tin thay thế nội dung `ICAP/1.0 200 OK` chứa phản hồi chặn `HTTP/1.1 403 Forbidden`.
  */
-export function buildBlockResponse(violations: DlpViolation[]): Buffer {
+export function buildBlockResponse(
+  violations: DlpViolation[],
+  options?: { keepAlive?: boolean | undefined },
+): Buffer {
   const dateStr = new Date().toUTCString();
+  const connectionHeader = options?.keepAlive ? 'keep-alive' : 'close';
   const violationSummary = escapeHtml(
     violations.map((v) => `[${v.severity}] ${v.rule}: ${v.description}`).join('\n'),
   );
@@ -141,7 +147,7 @@ export function buildBlockResponse(violations: DlpViolation[]): Buffer {
     'ICAP/1.0 200 OK',
     `Date: ${dateStr}`,
     'Server: SDA Network DLP ICAP Server/1.0',
-    'Connection: close',
+    `Connection: ${connectionHeader}`,
     'ISTag: "SDA-DLP-1.0.0"',
     `Encapsulated: res-hdr=0, res-body=${httpHeaderBuffer.length}`,
     '',

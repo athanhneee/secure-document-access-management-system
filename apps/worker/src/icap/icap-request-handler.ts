@@ -1,4 +1,3 @@
-import type * as net from 'node:net';
 import { DlpEngine } from './dlp-engine.js';
 import {
   build204Response,
@@ -10,19 +9,58 @@ import {
   type IcapServerMetrics,
   type ResolvedIcapConfig,
 } from './icap-alert-sink.js';
+import { incrementIcapBlocked } from '../worker-metrics.js';
 import type { DlpScanResult, IcapRequest } from './icap.types.js';
 
+/**
+ * Thuật toán: Đèn Hiệu Đếm FIFO Bất Đồng Bộ Không Khóa Bận (Bounded Async Inspection Semaphore).
+ * Giới hạn tối đa `maxConcurrent` luồng giải nén và quét DLP chạy song song bảo vệ trần bộ nhớ `512m`.
+ */
+export class InspectionSemaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly maxConcurrent = 16) {}
+
+  public getActiveCount(): number {
+    return this.active;
+  }
+
+  public async acquire(): Promise<() => void> {
+    if (this.active < this.maxConcurrent) {
+      this.active += 1;
+    } else {
+      await new Promise<void>((resolve) => {
+        this.waiters.push(resolve);
+      });
+      this.active += 1;
+    }
+
+    let released = false;
+    return (): void => {
+      if (released) return;
+      released = true;
+      this.active -= 1;
+      const next = this.waiters.shift();
+      if (next) next();
+    };
+  }
+}
+
 export interface ConnectionStreamState {
-  isProcessing: boolean;
   continuedAfterPreview: boolean;
 }
 
+export type IcapEvaluationOutcome =
+  { type: 'CONTINUE'; payload: Buffer } | { type: 'FINAL'; payload: Buffer };
+
 export interface IcapRequestHandlerContext {
-  readonly socket: net.Socket;
   readonly request: IcapRequest;
   readonly state: ConnectionStreamState;
+  readonly keepAlive: boolean;
   readonly config: ResolvedIcapConfig;
   readonly metrics: IcapServerMetrics;
+  readonly semaphore: InspectionSemaphore;
   readonly onViolationCallback?:
     ((violation: DlpScanResult, request: IcapRequest) => Promise<void> | void) | undefined;
 }
@@ -47,21 +85,35 @@ async function notifyDlpViolation(
 }
 
 /**
- * Thuật toán: Quét DLP và phản hồi khung tin `REQMOD`/`RESPMOD` đã hoàn chỉnh (bao gồm thương lượng Preview `100 Continue`,
- * chặn `HTTP 403` ở chế độ `BLOCK`, và ghi cảnh báo `AUDIT_ONLY` kèm `204 No modifications`).
+ * Thuật toán: Quét DLP bất đồng bộ dưới sự bảo vệ của `InspectionSemaphore` (`maxConcurrentInspections = 16`),
+ * kiểm tra đầy đủ URI/query, HTTP headers, thân nén (`gzip`/`deflate`/`br`/`zstd`) và kho lưu trữ `.docx`/`.xlsx`.
  */
-export async function executeIcapDlpEvaluation(ctx: IcapRequestHandlerContext): Promise<void> {
-  const { socket, request, state, config, metrics, onViolationCallback } = ctx;
+export async function executeIcapDlpEvaluation(
+  ctx: IcapRequestHandlerContext,
+): Promise<IcapEvaluationOutcome> {
+  const { request, state, keepAlive, config, metrics, semaphore, onViolationCallback } = ctx;
 
   const isIncompletePreviewPhase = Boolean(
     request.isPreview && !request.isPreviewIof && !state.continuedAfterPreview,
   );
-  const scanResult = DlpEngine.scanPayload(request.body, {
-    customKeywords: config.customKeywords,
-    action: config.action,
-    contentEncoding: request.httpHeaders?.['content-encoding'],
-    allowTruncatedPreview: isIncompletePreviewPhase,
-  });
+
+  const release = await semaphore.acquire();
+  let scanResult: DlpScanResult;
+  try {
+    scanResult = await DlpEngine.scanPayloadAsync(request.body, {
+      customKeywords: config.customKeywords,
+      action: config.action,
+      contentEncoding: request.httpHeaders?.['content-encoding'],
+      allowTruncatedPreview: isIncompletePreviewPhase,
+      maxBodyBytes: config.maxBodyBytes,
+      requestUri: request.uri,
+      httpUri: request.httpUri,
+      httpHeaders: request.httpHeaders,
+      icapHeaders: request.headers,
+    });
+  } finally {
+    release();
+  }
 
   if (
     request.isPreview &&
@@ -70,30 +122,23 @@ export async function executeIcapDlpEvaluation(ctx: IcapRequestHandlerContext): 
     scanResult.action !== 'BLOCK'
   ) {
     state.continuedAfterPreview = true;
-    socket.write(buildContinueResponse());
-    return;
+    return { type: 'CONTINUE', payload: buildContinueResponse() };
   }
 
-  state.isProcessing = true;
-  socket.pause();
   metrics.totalRequests++;
   if (request.method === 'RESPMOD') metrics.respmodRequests++;
   else metrics.reqmodRequests++;
   metrics.scannedBytes += scanResult.scannedBytes;
 
-  const replyAndClose = (payload: Buffer): void => {
-    socket.write(payload, () => socket.end());
-  };
-
   const safeUri = request.uri.replace(/\p{Cc}/gu, '').slice(0, 200);
   if (scanResult.action === 'BLOCK') {
     metrics.blockedViolations++;
+    incrementIcapBlocked(1);
     console.warn(
       `[ICAP Server] DLP VIOLATION BLOCKED: ${scanResult.violations.map((v) => v.rule).join(', ')} (${request.method} ${safeUri})`,
     );
     await notifyDlpViolation(scanResult, request, onViolationCallback);
-    replyAndClose(buildBlockResponse(scanResult.violations));
-    return;
+    return { type: 'FINAL', payload: buildBlockResponse(scanResult.violations, { keepAlive }) };
   }
 
   if (scanResult.action === 'AUDIT' || !scanResult.isClean) {
@@ -102,10 +147,9 @@ export async function executeIcapDlpEvaluation(ctx: IcapRequestHandlerContext): 
       `[ICAP Server] DLP VIOLATION AUDITED (pass-through): ${scanResult.violations.map((v) => v.rule).join(', ')} (${request.method} ${safeUri})`,
     );
     await notifyDlpViolation(scanResult, request, onViolationCallback);
-    replyAndClose(build204Response());
-    return;
+    return { type: 'FINAL', payload: build204Response({ keepAlive }) };
   }
 
   metrics.cleanPassThrough++;
-  replyAndClose(build204Response());
+  return { type: 'FINAL', payload: build204Response({ keepAlive }) };
 }

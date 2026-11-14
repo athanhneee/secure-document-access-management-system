@@ -5,7 +5,7 @@ import { baselineAbacPolicies, tierWatermarkConfigs } from './seed-catalog.js';
  * Thuật toán: Gieo dữ liệu cấu hình đóng dấu theo cấp độ mật (`SECRET`, `TOP_SECRET`) và các chính sách ABAC Zero-Trust nền tảng (`seedGovernanceConfigsAndPolicies`).
  * Cơ chế hoạt động:
  *   - Đảm bảo luôn tồn tại cấu hình đóng dấu mặc định toàn cục cùng cấu hình riêng cho bậc `SECRET` và `TOP_SECRET` (chống lỗi khóa ngoại `23503`).
- *   - Cập nhật lũy đẳng (`upsert`) các luật `POL-DENY-HIGH-RISK-SESSION` và `POL-DENY-TOP-SECRET-WITHOUT-MFA` kèm danh sách điều kiện thuộc tính ngữ cảnh.
+ *   - Cập nhật lũy đẳng (`upsert`) các luật `POL-DENY-HIGH-RISK-SESSION`, `POL-DENY-TOP-SECRET-WITHOUT-MFA` và `POL-PERMIT-CLEARED-ACTIVE-STAFF` kèm danh sách điều kiện thuộc tính ngữ cảnh.
  */
 export async function seedGovernanceConfigsAndPolicies(params: {
   transaction: Prisma.TransactionClient;

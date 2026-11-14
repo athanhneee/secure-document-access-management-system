@@ -107,10 +107,15 @@ export function buildPgPoolConfig(connectionString?: string): ResolvedPgConfig {
   if (forceSsl) {
     // Remove sslmode from URL so pg-connection-string does not override explicit PoolConfig.ssl.
     url.searchParams.delete('sslmode');
+    // Standard PostgreSQL libpq `verify-ca` semantics: verify the cryptographic X.509 chain
+    // (`rejectUnauthorized: true`) against an explicitly pinned `DATABASE_CA_CERT` while permitting
+    // Layer-4 TCP proxy hostnames (e.g. Railway `*.proxy.rlwy.net` fronting `postgres.railway.internal`).
+    const allowProxyHostnameWithPinnedCa = sslMode === 'verify-ca' && Boolean(ca);
     const sslOptions: tls.ConnectionOptions = {
       minVersion: 'TLSv1.2',
       rejectUnauthorized: !explicitDisableVerify,
       ...(ca ? { ca } : {}),
+      ...(allowProxyHostnameWithPinnedCa ? { checkServerIdentity: () => undefined } : {}),
     };
     poolConfig.ssl = sslOptions;
   }

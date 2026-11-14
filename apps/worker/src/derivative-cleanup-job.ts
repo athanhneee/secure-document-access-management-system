@@ -122,7 +122,12 @@ export async function expireIdleAccessSessions(options?: {
     return updated.count;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('invalid input value for enum') || msg.includes('22P02')) {
+    // CONFLICT-RESOLVED: Bắt thêm lỗi kiểm chứng kiểu phía client của Prisma 7 ('Expected session_status') bên cạnh mã lỗi PostgreSQL 22P02 để chuyển tiếp sang trạng thái 'ENDED' hợp lệ.
+    if (
+      msg.includes('invalid input value for enum') ||
+      msg.includes('22P02') ||
+      msg.includes('Expected session_status')
+    ) {
       const fallback = await database.accessSession.updateMany({
         where: {
           status: 'ACTIVE',

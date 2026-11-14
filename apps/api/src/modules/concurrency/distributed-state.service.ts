@@ -64,9 +64,10 @@ export class DistributedStateService implements OnModuleDestroy {
     const safeUrl = redactRedisEndpointUrl(redisUrl);
     this.redis = new Redis(redisUrl, {
       lazyConnect: true,
-      enableOfflineQueue: false,
+      enableOfflineQueue: true,
       maxRetriesPerRequest: 1,
-      connectTimeout: 1_000,
+      connectTimeout: 3_000,
+      commandTimeout: 2_500,
       retryStrategy: (times) => (times > 3 ? null : Math.min(times * 250, 1_000)),
     });
     this.redis.on('error', (err) => {

@@ -79,9 +79,10 @@ export function createRedlockClients(config: AppConfigService, logger: Logger): 
     const safeUrl = redactRedisEndpointUrl(url);
     const client = new Redis(url, {
       lazyConnect: true,
-      enableOfflineQueue: false,
+      enableOfflineQueue: true,
       maxRetriesPerRequest: 1,
-      connectTimeout: 1_000,
+      connectTimeout: 3_000,
+      commandTimeout: 2_500,
     });
     client.on('error', (err) => {
       logger.debug(`Redis node (${safeUrl}) error: ${err.message}`);
@@ -189,7 +190,7 @@ export async function unlockAllRedisInstances(
 }
 
 /**
- * Algorithm / Thuật toán: Thăm dò sức khỏe nhanh 500ms kiểm tra ít nhất một nút Redis còn phản hồi `PING`.
+ * Algorithm / Thuật toán: Thăm dò sức khỏe nhanh 2000ms kiểm tra ít nhất một nút Redis còn phản hồi `PING`.
  */
 export async function probeAnyRedisHealthy(clients: Redis[]): Promise<boolean> {
   try {
@@ -197,7 +198,10 @@ export async function probeAnyRedisHealthy(clients: Redis[]): Promise<boolean> {
       clients.map((c) =>
         Promise.race([
           c.ping(),
-          new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 500)),
+          new Promise<string>((_, reject) => {
+            const t = setTimeout(() => reject(new Error('timeout')), 2_000);
+            t.unref();
+          }),
         ]),
       ),
     );

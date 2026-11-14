@@ -1733,7 +1733,7 @@ SET display_name = EXCLUDED.display_name, numeric_rank = EXCLUDED.numeric_rank, 
 
 -- 9.9. Chính sách ABAC Mặc định (Zero-Trust Baseline Rules)
 -- Thuật toán: Gieo cặp luật từ chối ưu tiên cao (`DENY_OVERRIDES`) chặn phiên có điểm rủi ro >= 80 và chặn xem tài liệu `TOP_SECRET` (hạng 4) khi thiếu xác thực đa nhân tố MFA,
--- kèm danh sách nghĩa vụ JSONB (`obligations`) và tổ hợp điều kiện thuộc tính ngữ cảnh tương ứng.
+-- kết hợp luật cho phép nền tảng (`POL-PERMIT-CLEARED-ACTIVE-STAFF`) kèm nghĩa vụ đóng dấu bắt buộc và điều kiện thuộc tính ngữ cảnh tương ứng.
 INSERT INTO public.policy_rules (code, name, description, effect, priority, target_resource, target_action, combining_algorithm, obligations, is_active, created_by)
 VALUES
   (
@@ -1745,7 +1745,7 @@ VALUES
     'DOCUMENT',
     NULL,
     'DENY_OVERRIDES',
-    '["AUDIT_ELEVATED"]'::jsonb,
+    '["NO_CACHE"]'::jsonb,
     TRUE,
     (SELECT id FROM public.users WHERE username = 'system.seed')
   ),
@@ -1759,6 +1759,19 @@ VALUES
     'VIEW',
     'DENY_OVERRIDES',
     '["REQUIRE_MFA"]'::jsonb,
+    TRUE,
+    (SELECT id FROM public.users WHERE username = 'system.seed')
+  ),
+  (
+    'POL-PERMIT-CLEARED-ACTIVE-STAFF',
+    'Cho phép nhân sự đang hoạt động truy cập tài liệu đủ cấp độ mật',
+    'Cho phép tài khoản đang hoạt động truy cập tài liệu ACTIVE khi thỏa bất biến Bell-LaPadula và không vi phạm luật DENY ưu tiên cao',
+    'PERMIT',
+    100,
+    'DOCUMENT',
+    NULL,
+    'DENY_OVERRIDES',
+    '["REQUIRE_WATERMARK", "NO_CACHE"]'::jsonb,
     TRUE,
     (SELECT id FROM public.users WHERE username = 'system.seed')
   )
@@ -1796,6 +1809,24 @@ VALUES
     'environment.mfa',
     'EQ',
     'false'::jsonb,
+    1,
+    2
+  ),
+  (
+    (SELECT id FROM public.policy_rules WHERE code = 'POL-PERMIT-CLEARED-ACTIVE-STAFF'),
+    NULL,
+    'subject.employmentStatus',
+    'IN',
+    '["ACTIVE", "ACTIVE_STAFF"]'::jsonb,
+    1,
+    1
+  ),
+  (
+    (SELECT id FROM public.policy_rules WHERE code = 'POL-PERMIT-CLEARED-ACTIVE-STAFF'),
+    NULL,
+    'resource.status',
+    'EQ',
+    '"ACTIVE"'::jsonb,
     1,
     2
   )

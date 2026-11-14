@@ -1,3 +1,7 @@
+/**
+ * Thuật toán: Danh mục dữ liệu nền tảng bất biến cho quá trình khởi tạo lũy đẳng (`seed-catalog`)
+ * gồm phân loại độ mật Bell-LaPadula, ma trận RBAC tách quyền (SoD), từ điển thuộc tính ABAC và tập luật Zero-Trust gốc.
+ */
 export const fixedSeedTime = new Date('2026-01-01T00:00:00.000Z');
 export const disabledPasswordHash = '!AUTHENTICATION_NOT_CONFIGURED_DEMO_ACCOUNT!';
 
@@ -197,6 +201,7 @@ export const tierWatermarkConfigs = [
   ],
 ] as const;
 
+// CONFLICT-RESOLVED: Chuẩn hóa nghĩa vụ hợp lệ theo VALID_SIMPLE_OBLIGATION_TYPES ('NO_CACHE' thay cho 'AUDIT_ELEVATED') và bổ sung luật PERMIT nền tảng cho nhân sự đang hoạt động trên tài liệu ACTIVE.
 export const baselineAbacPolicies = [
   {
     code: 'POL-DENY-HIGH-RISK-SESSION',
@@ -207,7 +212,7 @@ export const baselineAbacPolicies = [
     target_resource: 'DOCUMENT',
     target_action: null,
     combining_algorithm: 'DENY_OVERRIDES' as const,
-    obligations: ['AUDIT_ELEVATED'],
+    obligations: ['NO_CACHE'],
     conditions: [
       {
         context_key: 'environment.riskScore',
@@ -240,6 +245,34 @@ export const baselineAbacPolicies = [
         context_key: 'environment.mfa',
         operator: 'EQ' as const,
         expected_value: false,
+        condition_group: 1,
+        sequence_no: 2,
+      },
+    ],
+  },
+  {
+    code: 'POL-PERMIT-CLEARED-ACTIVE-STAFF',
+    name: 'Cho phép nhân sự đang hoạt động truy cập tài liệu đủ cấp độ mật',
+    description:
+      'Cho phép tài khoản đang hoạt động truy cập tài liệu ACTIVE khi thỏa bất biến Bell-LaPadula và không vi phạm luật DENY ưu tiên cao',
+    effect: 'PERMIT' as const,
+    priority: 100,
+    target_resource: 'DOCUMENT',
+    target_action: null,
+    combining_algorithm: 'DENY_OVERRIDES' as const,
+    obligations: ['REQUIRE_WATERMARK', 'NO_CACHE'],
+    conditions: [
+      {
+        context_key: 'subject.employmentStatus',
+        operator: 'IN' as const,
+        expected_value: ['ACTIVE', 'ACTIVE_STAFF'],
+        condition_group: 1,
+        sequence_no: 1,
+      },
+      {
+        context_key: 'resource.status',
+        operator: 'EQ' as const,
+        expected_value: 'ACTIVE',
         condition_group: 1,
         sequence_no: 2,
       },

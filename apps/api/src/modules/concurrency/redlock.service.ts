@@ -98,7 +98,7 @@ export class RedlockService implements OnModuleDestroy {
     for (let attempt = 0; attempt <= retryCount; attempt++) {
       const token = crypto.randomUUID();
       const startTime = Date.now();
-      const nodeTimeoutMs = Math.max(10, Math.min(150, Math.floor(ttlMs / 10)));
+      const nodeTimeoutMs = Math.max(50, Math.min(2_000, Math.floor(ttlMs / 2)));
 
       const results = await Promise.allSettled(
         this.clients.map((client) =>

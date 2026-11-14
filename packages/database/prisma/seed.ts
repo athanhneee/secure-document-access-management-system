@@ -240,7 +240,7 @@ async function seed(): Promise<void> {
         clearanceOptionByCode,
       });
     },
-    { client },
+    { client, maxWaitMs: 15_000, timeoutMs: 120_000 },
   );
 }
 

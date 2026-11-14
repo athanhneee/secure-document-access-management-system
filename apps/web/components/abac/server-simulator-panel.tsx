@@ -1,23 +1,16 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { AlertCircle, CheckCircle2, Play, Server, XCircle } from 'lucide-react';
+import { AlertCircle, Play, Server } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { SimulationEnvironment } from './simulator-evaluator';
-
-interface ServerSimulationResponse {
-  decision: 'PERMIT' | 'DENY';
-  reasonCode: string;
-  obligations?: Array<{ type: string; minutes?: number }>;
-  matchedRules?: string[];
-  matchedRuleIds?: string[];
-  policyVersion?: string;
-  evaluationTimeMs?: number;
-}
+import {
+  ServerSimulatorResultCard,
+  type ServerSimulationResponse,
+} from './server-simulator-result';
 
 interface ServerSimulatorPanelProps {
   defaultEnvironment: SimulationEnvironment;
@@ -89,8 +82,6 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
     }
   }
 
-  const matchedList = serverResult?.matchedRules ?? serverResult?.matchedRuleIds ?? [];
-
   return (
     <div className="space-y-4 text-xs">
       <form
@@ -98,7 +89,12 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
         className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-4 space-y-3"
       >
         <div className="flex items-center gap-2 font-bold text-[#222222]">
-          <Server size={16} strokeWidth={1.75} className="text-[#008489]" aria-hidden="true" />
+          <Server
+            size={16}
+            strokeWidth={1.75}
+            className="text-[#008489] shrink-0"
+            aria-hidden="true"
+          />
           <span>Tham số đánh giá PDP Máy chủ (Có ghi nhận nhật ký kiểm toán POLICY_SIMULATED)</span>
         </div>
 
@@ -112,7 +108,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
               value={subjectUserId}
               onChange={(e) => setSubjectUserId(e.target.value)}
               placeholder="VD: 1"
-              className="h-8 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
+              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
             />
           </div>
 
@@ -125,7 +121,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
               value={resourceDocumentId}
               onChange={(e) => setResourceDocumentId(e.target.value)}
               placeholder="00000000-0000-0000-0000-000000000000"
-              className="h-8 text-xs rounded-full border-[#dddddd] bg-[#ffffff] font-mono"
+              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] font-mono"
             />
           </div>
 
@@ -139,7 +135,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
               onChange={(e) =>
                 setAction(e.target.value as 'DISCOVER' | 'VIEW' | 'DOWNLOAD' | 'SHARE' | 'MANAGE')
               }
-              className="w-full h-8 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+              className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
             >
               <option value="DISCOVER">DISCOVER</option>
               <option value="VIEW">VIEW</option>
@@ -150,7 +146,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1">
           <div className="space-y-1">
             <label htmlFor="sim-server-ip" className="font-semibold text-[#222222] block">
               Địa chỉ IP nguồn
@@ -159,7 +155,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
               id="sim-server-ip"
               value={ip}
               onChange={(e) => setIp(e.target.value)}
-              className="h-8 text-xs rounded-full border-[#dddddd] bg-[#ffffff] font-mono"
+              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] font-mono"
             />
           </div>
 
@@ -174,14 +170,14 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
               max={100}
               value={riskScore}
               onChange={(e) => setRiskScore(Number(e.target.value))}
-              className="h-8 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
+              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
             />
           </div>
 
           <div className="flex items-end pb-1.5">
             <label
               htmlFor="sim-server-device-trust"
-              className="flex items-center gap-2 font-medium text-[#222222] cursor-pointer"
+              className="flex min-h-11 sm:min-h-9 items-center gap-2 font-medium text-[#222222] cursor-pointer"
             >
               <input
                 id="sim-server-device-trust"
@@ -197,7 +193,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
           <div className="flex items-end pb-1.5">
             <label
               htmlFor="sim-server-mfa"
-              className="flex items-center gap-2 font-medium text-[#222222] cursor-pointer"
+              className="flex min-h-11 sm:min-h-9 items-center gap-2 font-medium text-[#222222] cursor-pointer"
             >
               <input
                 id="sim-server-mfa"
@@ -216,7 +212,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
             type="submit"
             isLoading={isSubmitting}
             disabled={isSubmitting}
-            className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white px-6 h-9 text-xs font-semibold flex items-center gap-2"
+            className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white px-6 min-h-11 sm:h-9 text-xs font-semibold flex items-center gap-2"
           >
             <Play size={16} strokeWidth={1.75} className="fill-current" aria-hidden="true" />
             <span>Thực Thi Mô Phỏng Máy Chủ (/abac/simulate)</span>
@@ -234,57 +230,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
         </Alert>
       )}
 
-      {serverResult && (
-        <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-4 space-y-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#ebebeb] pb-2.5">
-            <div className="flex items-center gap-2">
-              {serverResult.decision === 'PERMIT' ? (
-                <CheckCircle2
-                  size={16}
-                  strokeWidth={1.75}
-                  className="text-[#008A05]"
-                  aria-hidden="true"
-                />
-              ) : (
-                <XCircle
-                  size={16}
-                  strokeWidth={1.75}
-                  className="text-[#C13515]"
-                  aria-hidden="true"
-                />
-              )}
-              <Badge variant={serverResult.decision === 'PERMIT' ? 'success' : 'danger'}>
-                {serverResult.decision}
-              </Badge>
-              <span className="font-mono text-[#717171]">
-                Reason: <strong className="text-[#222222]">{serverResult.reasonCode}</strong>
-              </span>
-            </div>
-            <span className="font-mono text-[#717171]">
-              Thời gian đánh giá:{' '}
-              <strong className="text-[#222222]">{serverResult.evaluationTimeMs}ms</strong>
-            </span>
-          </div>
-
-          <div className="flex flex-wrap gap-3 text-xs text-[#717171]">
-            <span>
-              Quy tắc khớp:{' '}
-              <strong className="font-mono text-[#222222]">
-                {matchedList.length > 0 ? matchedList.join(', ') : '—'}
-              </strong>
-            </span>
-            <span>·</span>
-            <span>
-              Nghĩa vụ:{' '}
-              <strong className="font-mono text-[#008489]">
-                {serverResult.obligations && serverResult.obligations.length > 0
-                  ? serverResult.obligations.map((o) => o.type).join(', ')
-                  : 'Không có'}
-              </strong>
-            </span>
-          </div>
-        </div>
-      )}
+      {serverResult && <ServerSimulatorResultCard serverResult={serverResult} />}
     </div>
   );
 }

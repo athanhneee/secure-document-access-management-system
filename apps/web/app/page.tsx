@@ -5,7 +5,7 @@ import { SecurityPillarsSection } from '@/components/landing/security-pillars-se
 
 export default function HomePage() {
   return (
-    <div className="flex min-h-screen flex-col bg-[#ffffff] text-[#222222] antialiased selection:bg-[#FF385C]/15 selection:text-[#FF385C]">
+    <div className="flex min-h-screen flex-col bg-[#ffffff] text-[#222222] antialiased selection:bg-[#FF385C]/15 selection:text-[#E31C5F]">
       <a href="#main-content" className="skip-to-content">
         Chuyển đến nội dung chính
       </a>
@@ -24,7 +24,7 @@ export default function HomePage() {
             <div className="space-y-1 sm:space-y-1.5 max-w-md">
               <div className="flex items-center justify-center sm:justify-start gap-2">
                 <span className="text-xs font-bold tracking-tight text-[#222222]">
-                  Secure<span className="text-[#FF385C]">Document</span> Access System
+                  Secure<span className="text-[#E31C5F]">Document</span> Access System
                 </span>
                 <span className="staff-badge inline-flex items-center gap-1 text-[13px] font-bold text-[#008A05]">
                   <span className="dot dot-success" aria-hidden="true" />
@@ -45,7 +45,7 @@ export default function HomePage() {
                 <span className="text-[#ebebeb]">·</span>
                 <span className="font-bold text-[#008A05]">STATUS: NORMAL</span>
               </div>
-              <p className="hidden sm:block text-[13px] text-[#b0b0b0]">
+              <p className="hidden sm:block text-[13px] text-[#717171]">
                 Mã hóa AES-256-GCM · Kiểm toán chuỗi bất biến HMAC-SHA256
               </p>
             </div>

@@ -59,10 +59,9 @@ export function ConditionGroupCard({
         }}
         className="p-4 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-3 shadow-xs hover:border-[#dddddd] transition-all"
       >
-        <div className="flex items-center justify-between border-b border-[#ebebeb] pb-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#ebebeb] pb-2.5">
           <div className="flex items-center gap-2.5">
-            {/* // CONFLICT-RESOLVED: Phẳng hóa nhãn chỉ số nhóm theo chuẩn staff-001 (không bọc hộp tròn màu nền) tại rules/ui-design-system.md. */}
-            <span className="staff-badge inline-flex items-center gap-1.5 text-xs font-extrabold text-[#FF385C]">
+            <span className="staff-badge inline-flex items-center gap-1.5 text-xs font-extrabold text-[#E31C5F]">
               <span className="dot dot-primary" aria-hidden="true" />
               <span>#{groupIdx + 1}</span>
             </span>
@@ -76,15 +75,15 @@ export function ConditionGroupCard({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => onAddCondition(group.id)}
-              className="h-7 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C] flex items-center gap-1"
+              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C] flex items-center gap-1"
             >
-              <Plus size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
+              <Plus size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
               <span>Thêm AND</span>
             </Button>
 
@@ -95,7 +94,7 @@ export function ConditionGroupCard({
               onClick={() => onDuplicateGroup(group)}
               title="Nhân bản nhóm điều kiện"
               aria-label={`Nhân bản nhóm điều kiện ${group.id}`}
-              className="h-7 w-7 p-0 rounded-full hover:bg-[#f7f7f7] text-[#717171]"
+              className="min-h-11 min-w-11 sm:h-9 sm:w-9 p-0 rounded-full hover:bg-[#f7f7f7] text-[#717171]"
             >
               <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
             </Button>
@@ -107,7 +106,7 @@ export function ConditionGroupCard({
               onClick={() => onRemoveGroup(group.id)}
               title="Xóa nhóm"
               aria-label={`Xóa nhóm điều kiện ${group.id}`}
-              className="h-7 w-7 p-0 rounded-full hover:bg-[#C13515]/10 text-[#C13515]"
+              className="min-h-11 min-w-11 sm:h-9 sm:w-9 p-0 rounded-full hover:bg-[#C13515]/10 text-[#C13515]"
             >
               <Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />
             </Button>

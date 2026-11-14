@@ -134,7 +134,7 @@ export function NetworkDlpBlueprint() {
       </p>
       <div className="p-3 bg-[#222222] text-[#f7f7f7] rounded-[12px] font-mono text-xs overflow-x-auto space-y-1">
         <div># squid.conf - Network DLP ICAP Service Integration</div>
-        <div className="text-[#008489]">icap_enable on</div>
+        <div className="text-[#ffffff]">icap_enable on</div>
         <div>icap_service sda_dlp respmod_precache icap://127.0.0.1:1344/dlp-respmod bypass=0</div>
         <div>adaptation_access sda_dlp allow all</div>
       </div>

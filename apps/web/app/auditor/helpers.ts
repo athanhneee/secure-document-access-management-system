@@ -6,13 +6,12 @@ import type {
   ExportFormat,
   ExportJobItem,
   PartitionVerificationResult,
+  VerifyHashChainResponse,
 } from './types';
 
 /**
- * Thuật toán: Truy vấn Có Lọc & Chuẩn hóa Lược đồ Nhật ký Kiểm toán (Filtered Audit Trail Normalization)
+ * Thuật toán: Truy vấn Có Lọc & Chuẩn hóa Lược đồ Nhật ký Kiểm toán (`buildAuditLogsQueryParams`)
  * Mục đích: Đồng bộ danh sách sự kiện kiểm toán theo bộ lọc đa chiều (`outcome`, `action`, khoảng ngày) và ánh xạ thống nhất giữa định dạng `camelCase` và `snake_case`.
- * Cơ chế hoạt động:
- *   - Xây dựng chuỗi truy vấn `URLSearchParams` giới hạn kích thước trang (`pageSize = 50`) và chuẩn hóa từng bản ghi, bảo toàn số thứ tự liên tiếp `chainSequence` cùng chữ ký băm `entryHash`.
  */
 export function buildAuditLogsQueryParams(filters: AuditTrailFilters): URLSearchParams {
   const queryParams = new URLSearchParams();
@@ -26,7 +25,6 @@ export function buildAuditLogsQueryParams(filters: AuditTrailFilters): URLSearch
 
 export function normalizeAuditLogDtos(dtos: AuditLogApiDto[]): AuditLogItem[] {
   return dtos.map((l, i) => ({
-    // CONFLICT-RESOLVED: Removed fabricated audit fallback literals to preserve forensic integrity.
     id: l.id || `log-${i}`,
     occurredAt: l.occurredAt || l.occurred_at || '',
     actorUsername: l.actorUsername || l.actor_username || 'SYSTEM',
@@ -42,23 +40,47 @@ export function normalizeAuditLogDtos(dtos: AuditLogApiDto[]): AuditLogItem[] {
 }
 
 /**
- * Thuật toán: Tổng hợp Xác minh Toàn vẹn Chuỗi Băm Đa phân vùng (Multi-Partition HMAC-SHA256 Hash Chain Verification)
- * Mục đích: Kiểm chứng không có bất kỳ bản ghi nhật ký nào bị sửa đổi, xóa bỏ hoặc chèn trái phép trên toàn bộ các phân vùng chuỗi kiểm toán.
+ * Thuật toán: Tổng hợp Xác minh Toàn vẹn Chuỗi Băm Đa phân vùng (`aggregatePartitionVerifications`)
+ * Mục đích: Kiểm chứng không có bất kỳ bản ghi nhật ký nào bị sửa đổi, xóa bỏ hoặc chèn trái phép trên các phân vùng chuỗi kiểm toán thực tế.
  * Cơ chế hoạt động:
- *   - Máy chủ tính lại chữ ký HMAC-SHA256 từng bản ghi tại `/audit-logs/verify`, đối chiếu liên kết mắt xích `previous_hash -> entry_hash`, kiểm tra tính đơn điệu liên tục của `chain_sequence` và xác thực các mỏ neo chữ ký (`anchorsChecked`).
- *   - Duyệt toàn bộ tập phân vùng `O(P + V)` bằng phép khử `reduce` để cộng dồn tổng bản ghi đã kiểm tra (`totalChecked`), áp dụng phép hội logic `every(p => p.valid)` xác định tính toàn vẹn toàn cục, và làm phẳng (`flatMap`) mọi điểm đứt gãy chuỗi thành danh sách vi phạm định danh theo từng phân vùng.
+ *   - Trích xuất danh sách phân vùng thực từ phản hồi `/audit-logs/verify` (mặc định nhãn `GLOBAL` thay vì hằng số giả `GLOBAL_CHAIN`).
+ *   - Khi `partitions.length === 0` và `tamperedCount === 0`, đánh giá `isChainValid: true` (`CHƯA CÓ BẢN GHI / HỢP LỆ`) thay vì phát cảnh báo giả mạo sai lệch.
  */
-export function aggregatePartitionVerifications(res: Record<string, PartitionVerificationResult>): {
+export function aggregatePartitionVerifications(res: VerifyHashChainResponse): {
   report: ChainVerificationReport;
   partitionCount: number;
   violationCount: number;
 } {
-  const partitions = Object.values(res || {});
+  const structured = res as {
+    partitions?: PartitionVerificationResult[];
+    tamperedCount?: number;
+  };
+
+  const partitions: PartitionVerificationResult[] = Array.isArray(structured?.partitions)
+    ? structured.partitions
+    : Object.entries(res || {})
+        .filter(([, val]) => Boolean(val && typeof val === 'object' && !Array.isArray(val)))
+        .map(([key, val]) => {
+          const item = val as PartitionVerificationResult;
+          return {
+            ...item,
+            partition: item.partition || key,
+          };
+        });
+
   const totalChecked = partitions.reduce((acc, p) => acc + (p.totalChecked || 0), 0);
-  const isAllValid = partitions.length > 0 && partitions.every((p) => p.valid);
   const allViolations = partitions.flatMap((p) =>
-    (p.violations || []).map((v) => `${p.partition}: ${v.message || v.code}`),
+    (p.violations || []).map((v) => `${p.partition || 'GLOBAL'}: ${v.message || v.code}`),
   );
+  const tamperedCount =
+    typeof structured?.tamperedCount === 'number' ? structured.tamperedCount : allViolations.length;
+  const isAllValid =
+    tamperedCount === 0 && (partitions.length === 0 || partitions.every((p) => p.valid !== false));
+  const partitionLabel =
+    partitions
+      .map((p) => p.partition)
+      .filter(Boolean)
+      .join(', ') || 'GLOBAL';
 
   return {
     report: {
@@ -67,19 +89,16 @@ export function aggregatePartitionVerifications(res: Record<string, PartitionVer
       tamperingDetected: !isAllValid,
       brokenSequences: allViolations,
       verifiedAt: new Date().toISOString(),
-      chainPartition: partitions.map((p) => p.partition).join(', ') || 'ALL_PARTITIONS',
+      chainPartition: partitionLabel,
     },
     partitionCount: partitions.length,
-    violationCount: allViolations.length,
+    violationCount: Math.max(tamperedCount, allViolations.length),
   };
 }
 
 /**
- * Thuật toán: Xuất Báo cáo Bất đồng bộ Chống Formula Injection & Tải Luồng Nhị phân (Async Safe-Export & Ephemeral Blob URL)
- * Mục đích: Theo dõi tiến trình hàng đợi kết xuất nhật ký kiểm toán (`CSV`, `JSON`, `PDF`, `EXCEL`) với TTL 24 giờ và lưu tệp `Blob` xuống máy trạm mà không rò rỉ bộ nhớ trình duyệt.
- * Cơ chế hoạt động:
- *   - Chuẩn hóa trạng thái tác vụ xuất mới tạo (với khử độc tiền tố nháy đơn cho `=`, `+`, `-`, `@`, tab, CR/LF trên máy chủ).
- *   - Ánh xạ phần mở rộng tệp chuẩn (`excel -> xlsx`), cấp phát Object URL qua `URL.createObjectURL`, kích hoạt thẻ neo ẩn tải tệp và gọi `URL.revokeObjectURL` ngay sau khi gỡ nút DOM.
+ * Thuật toán: Xuất Báo cáo Bất đồng bộ Chống Formula Injection & Tải Luồng Nhị phân (`normalizeExportJob`)
+ * Mục đích: Chuẩn hóa trạng thái tác vụ xuất (`CSV`, `JSON`, `PDF`, `EXCEL`) với TTL 24 giờ và tải tệp `Blob` qua Object URL tự thu hồi.
  */
 export function normalizeExportJob(
   newJob: Partial<ExportJobItem> & { id: string },

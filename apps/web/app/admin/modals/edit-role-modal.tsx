@@ -113,7 +113,7 @@ function EditRoleForm({ role, onClose, onClearError, onSuccess, onError }: EditR
           required
           value={editRoleName}
           onChange={(e) => setEditRoleName(e.target.value)}
-          className="h-8 text-xs rounded-full"
+          className="min-h-11 sm:h-9 text-xs rounded-full"
         />
       </div>
 

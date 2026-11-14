@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { Ban, Edit2, Plus, Settings2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import type { RoleRow } from '../types';
 
@@ -21,9 +23,11 @@ export function RolesTab({
   onOpenEditRole,
   onDisableRole,
 }: RolesTabProps) {
+  const [roleToDisable, setRoleToDisable] = useState<RoleRow | null>(null);
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-base font-semibold text-[#222222]">
             Quản trị Vai trò &amp; Quyền hạn (RBAC)
@@ -48,9 +52,9 @@ export function RolesTab({
             className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)] flex flex-col justify-between"
           >
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <CardTitle className="text-sm font-semibold text-[#222222]">{role.name}</CardTitle>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   {role.isSystemRole && (
                     <Badge variant="secondary" className="text-[13px]">
                       Hệ thống
@@ -77,7 +81,6 @@ export function RolesTab({
               </div>
               <div className="flex flex-wrap gap-x-3 gap-y-1 max-h-24 overflow-y-auto pr-1">
                 {role.permissions.map((p, idx) => (
-                  // CONFLICT-RESOLVED: Phẳng hóa nhãn quyền RBAC theo chuẩn staff-001 (không bọc nền #f7f7f7 / viền #ebebeb) tại rules/ui-design-system.md.
                   <span
                     key={idx}
                     className="staff-badge inline-flex items-center gap-1 font-mono text-[13px] text-[#008489]"
@@ -88,7 +91,7 @@ export function RolesTab({
                 ))}
               </div>
 
-              <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-[#ebebeb]">
+              <div className="flex flex-wrap items-center justify-end gap-1.5 pt-2 border-t border-[#ebebeb]">
                 <InteractiveHoverButton
                   variant="secondary"
                   size="sm"
@@ -111,7 +114,7 @@ export function RolesTab({
                         size="sm"
                         text="Vô hiệu"
                         icon={<Ban size={16} strokeWidth={1.75} aria-hidden="true" />}
-                        onClick={() => onDisableRole(role)}
+                        onClick={() => setRoleToDisable(role)}
                       />
                     )}
                   </>
@@ -121,6 +124,23 @@ export function RolesTab({
           </Card>
         ))}
       </div>
+
+      <ConfirmDialog
+        open={Boolean(roleToDisable)}
+        onOpenChange={(open) => {
+          if (!open) setRoleToDisable(null);
+        }}
+        title="Xác nhận vô hiệu hóa vai trò RBAC"
+        description={`Vai trò "${roleToDisable?.name ?? ''}" (${roleToDisable?.code ?? ''}) sẽ ngưng cấp quyền cho mọi nhân sự đang liên kết.`}
+        confirmLabel="Xác nhận vô hiệu hóa"
+        variant="danger"
+        onConfirm={() => {
+          if (roleToDisable) {
+            onDisableRole(roleToDisable);
+            setRoleToDisable(null);
+          }
+        }}
+      />
     </div>
   );
 }

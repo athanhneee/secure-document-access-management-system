@@ -76,9 +76,9 @@ export function SimulatorTracePanel({ result }: SimulatorTracePanelProps) {
                 {group.conditionResults.map((c) => (
                   <div
                     key={c.conditionId}
-                    className="flex items-center justify-between text-[#717171]"
+                    className="flex flex-wrap items-center justify-between gap-1.5 text-[#717171]"
                   >
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {c.matched ? (
                         <CheckCircle2
                           size={16}
@@ -95,7 +95,7 @@ export function SimulatorTracePanel({ result }: SimulatorTracePanelProps) {
                         />
                       )}
                       <span className="text-[#222222]">{c.attribute}</span>
-                      <span className="text-[#FF385C]">{c.operator}</span>
+                      <span className="text-[#E31C5F]">{c.operator}</span>
                       <span>{JSON.stringify(c.expected)}</span>
                     </div>
                     <span className="text-[#717171]">

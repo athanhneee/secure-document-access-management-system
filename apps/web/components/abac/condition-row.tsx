@@ -1,12 +1,12 @@
 'use client';
 
-import { GripVertical, ArrowUp, ArrowDown, Copy, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Copy, GripVertical, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   ATTRIBUTE_REGISTRY,
   OPERATOR_LABELS,
-  type VisualCondition,
   type PolicyOperator,
+  type VisualCondition,
 } from './abac-models';
 import { ExpectedValueWidget } from './expected-value-widget';
 
@@ -46,15 +46,15 @@ export function ConditionRow({
       onDragStart={() => onDragStart(groupId, conditionIndex)}
       className="group flex flex-col md:flex-row items-stretch md:items-center gap-2 p-2.5 rounded-[12px] bg-[#f7f7f7] border border-[#ebebeb] hover:border-[#dddddd] transition-all text-xs"
     >
-      <div className="flex items-center gap-1 text-[#b0b0b0]">
+      <div className="flex items-center gap-1 text-[#717171]">
         <GripVertical size={16} strokeWidth={1.75} className="cursor-grab" aria-hidden="true" />
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-row md:flex-col gap-1">
           <button
             type="button"
             aria-label="Di chuyển điều kiện lên"
             onClick={() => onMove(groupId, conditionIndex, 'up')}
             disabled={conditionIndex === 0}
-            className="rounded-full p-0.5 hover:bg-[#ffffff] hover:text-[#222222] disabled:opacity-30 cursor-pointer"
+            className="flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-full hover:bg-[#ffffff] hover:text-[#222222] disabled:opacity-30 cursor-pointer"
           >
             <ArrowUp size={16} strokeWidth={1.75} aria-hidden="true" />
           </button>
@@ -63,19 +63,19 @@ export function ConditionRow({
             aria-label="Di chuyển điều kiện xuống"
             onClick={() => onMove(groupId, conditionIndex, 'down')}
             disabled={conditionIndex === totalConditions - 1}
-            className="rounded-full p-0.5 hover:bg-[#ffffff] hover:text-[#222222] disabled:opacity-30 cursor-pointer"
+            className="flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-full hover:bg-[#ffffff] hover:text-[#222222] disabled:opacity-30 cursor-pointer"
           >
             <ArrowDown size={16} strokeWidth={1.75} aria-hidden="true" />
           </button>
         </div>
       </div>
 
-      <div className="flex-1 min-w-[200px]">
+      <div className="flex-1 min-w-0 sm:min-w-[180px]">
         <select
           aria-label="Thuộc tính điều kiện"
           value={condition.attribute}
           onChange={(e) => onChangeField(groupId, condition.id, 'attribute', e.target.value)}
-          className="w-full h-8 text-xs font-medium rounded-full border border-[#dddddd] px-2.5 bg-[#ffffff] text-[#222222]"
+          className="w-full min-h-11 sm:h-9 text-xs font-medium rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
         >
           {Object.values(ATTRIBUTE_REGISTRY).map((a) => (
             <option key={a.key} value={a.key}>
@@ -92,7 +92,7 @@ export function ConditionRow({
           onChange={(e) =>
             onChangeField(groupId, condition.id, 'operator', e.target.value as PolicyOperator)
           }
-          className="w-full h-8 text-xs font-semibold rounded-full border border-[#dddddd] px-2.5 bg-[#ffffff] text-[#FF385C]"
+          className="w-full min-h-11 sm:h-9 text-xs font-semibold rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#E31C5F]"
         >
           {(meta?.supportedOperators || ['EQ']).map((op) => (
             <option key={op} value={op}>
@@ -102,7 +102,7 @@ export function ConditionRow({
         </select>
       </div>
 
-      <div className="flex-1 min-w-[200px]">
+      <div className="flex-1 min-w-0 sm:min-w-[180px]">
         <ExpectedValueWidget
           attributeMeta={meta}
           operator={condition.operator}
@@ -119,7 +119,7 @@ export function ConditionRow({
           onClick={() => onDuplicate(groupId, condition)}
           title="Nhân bản điều kiện"
           aria-label="Nhân bản điều kiện"
-          className="h-7 w-7 p-0 rounded-full hover:bg-white text-[#717171]"
+          className="min-h-11 min-w-11 sm:h-9 sm:w-9 p-0 rounded-full hover:bg-white text-[#717171]"
         >
           <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
         </Button>
@@ -130,7 +130,7 @@ export function ConditionRow({
           onClick={() => onRemove(groupId, condition.id)}
           title="Xóa điều kiện"
           aria-label="Xóa điều kiện"
-          className="h-7 w-7 p-0 rounded-full hover:bg-[#C13515]/10 text-[#C13515]"
+          className="min-h-11 min-w-11 sm:h-9 sm:w-9 p-0 rounded-full hover:bg-[#C13515]/10 text-[#C13515]"
         >
           <Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />
         </Button>

@@ -98,7 +98,7 @@ export function PolicySimulatorDialog({
               <button
                 type="button"
                 onClick={() => setSimMode('draft')}
-                className={`px-3 py-1 rounded-full font-semibold transition-colors cursor-pointer ${
+                className={`min-h-11 sm:min-h-8 px-3 py-1 rounded-full font-semibold transition-colors cursor-pointer ${
                   simMode === 'draft'
                     ? 'bg-[#ffffff] text-[#222222] shadow-2xs'
                     : 'text-[#717171] hover:text-[#222222]'
@@ -109,7 +109,7 @@ export function PolicySimulatorDialog({
               <button
                 type="button"
                 onClick={() => setSimMode('server')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold transition-colors cursor-pointer ${
+                className={`inline-flex min-h-11 sm:min-h-8 items-center gap-1.5 px-3 py-1 rounded-full font-semibold transition-colors cursor-pointer ${
                   simMode === 'server'
                     ? 'bg-[#ffffff] text-[#008489] shadow-2xs'
                     : 'text-[#717171] hover:text-[#222222]'
@@ -129,7 +129,7 @@ export function PolicySimulatorDialog({
 
         {simMode === 'draft' ? (
           <>
-            <div className="flex items-center gap-2 p-2.5 rounded-[16px] bg-[#f7f7f7] border border-[#ebebeb] text-xs">
+            <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-[16px] bg-[#f7f7f7] border border-[#ebebeb] text-xs">
               <span className="font-semibold text-[#717171] shrink-0">Kịch bản thử nghiệm:</span>
               <div className="flex flex-wrap gap-2">
                 <Button
@@ -137,7 +137,7 @@ export function PolicySimulatorDialog({
                   variant="outline"
                   size="sm"
                   onClick={() => applyPreset('trusted_employee')}
-                  className="h-7 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
+                  className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
                 >
                   Nhân sự An toàn (Mạng cơ quan, MFA)
                 </Button>
@@ -146,7 +146,7 @@ export function PolicySimulatorDialog({
                   variant="outline"
                   size="sm"
                   onClick={() => applyPreset('remote_suspicious')}
-                  className="h-7 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
+                  className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
                 >
                   Truy cập Rủi ro cao từ xa
                 </Button>
@@ -155,7 +155,7 @@ export function PolicySimulatorDialog({
                   variant="outline"
                   size="sm"
                   onClick={() => applyPreset('cross_dept')}
-                  className="h-7 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
+                  className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
                 >
                   Yêu cầu chéo phòng ban
                 </Button>
@@ -177,7 +177,7 @@ export function PolicySimulatorDialog({
               <Button
                 type="button"
                 onClick={runEvaluation}
-                className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white px-8 h-9 text-xs font-semibold shadow-sm flex items-center gap-2"
+                className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white px-8 min-h-11 sm:h-9 text-xs font-semibold shadow-sm flex items-center gap-2"
               >
                 <Play size={16} strokeWidth={1.75} className="fill-current" aria-hidden="true" />
                 <span>Thực Thi Đánh Giá PDP (Evaluate Rule)</span>
@@ -195,7 +195,7 @@ export function PolicySimulatorDialog({
             type="button"
             variant="outline"
             onClick={() => onOpenChange(false)}
-            className="rounded-full text-xs h-8 border-[#dddddd]"
+            className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd]"
           >
             Đóng Trình Giả Lập
           </Button>

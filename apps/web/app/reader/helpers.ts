@@ -1,3 +1,4 @@
+import { ClassificationRank, resolveClassificationRank } from '@sda/contracts';
 import type { ClassificationCode } from '@/components/classification-badge';
 import type {
   DiscoverableDoc,
@@ -7,26 +8,14 @@ import type {
 } from './types';
 
 /**
- * Thuật toán: Ánh xạ Mã Mức Mật sang Thứ Bậc Bell-LaPadula (`rankFromCode`)
+ * Thuật toán: Ánh xạ Mã Mức Mật sang Thứ Bậc Bell-LaPadula Qua Hợp Đồng `@sda/contracts` (`rankFromCode`)
  * Chuẩn hóa mã mức độ mật về thang số nguyên đơn điệu `0..4` khớp chính sách CSDL (`UNCLASSIFIED/PUBLIC: 0`, `INTERNAL/RESTRICTED: 1`, `CONFIDENTIAL: 2`, `SECRET: 3`, `TOP_SECRET: 4`) trong `O(1)`.
  */
 export function rankFromCode(code?: string | null): number {
-  switch ((code ?? '').trim().toUpperCase()) {
-    case 'UNCLASSIFIED':
-    case 'PUBLIC':
-      return 0;
-    case 'INTERNAL':
-    case 'RESTRICTED':
-      return 1;
-    case 'CONFIDENTIAL':
-      return 2;
-    case 'SECRET':
-      return 3;
-    case 'TOP_SECRET':
-      return 4;
-    default:
-      return 1;
-  }
+  const upper = (code ?? '').trim().toUpperCase();
+  if (upper === 'PUBLIC') return ClassificationRank.UNCLASSIFIED;
+  if (upper === 'RESTRICTED') return ClassificationRank.INTERNAL;
+  return resolveClassificationRank(upper) ?? ClassificationRank.INTERNAL;
 }
 
 /**

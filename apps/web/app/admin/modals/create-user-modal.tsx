@@ -97,7 +97,7 @@ export function CreateUserModal({
               value={newUsername}
               onChange={(e) => setNewUsername(e.target.value)}
               placeholder="nguyenvana"
-              className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
+              className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
             />
           </div>
 
@@ -111,7 +111,7 @@ export function CreateUserModal({
               value={newFullName}
               onChange={(e) => setNewFullName(e.target.value)}
               placeholder="Nguyễn Văn A"
-              className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
+              className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
             />
           </div>
 
@@ -126,7 +126,7 @@ export function CreateUserModal({
               value={newEmail}
               onChange={(e) => setNewEmail(e.target.value)}
               placeholder="a.nguyen@tochuc.gov.vn"
-              className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
+              className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
             />
           </div>
 
@@ -142,7 +142,7 @@ export function CreateUserModal({
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               placeholder="••••••••••••••••"
-              className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
+              className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
             />
           </div>
 
@@ -154,7 +154,7 @@ export function CreateUserModal({
               id="modal-department"
               value={newDepartmentId}
               onChange={(e) => setNewDepartmentId(e.target.value)}
-              className="w-full h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+              className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
               <option value="">Không gán phòng ban</option>
               {departments

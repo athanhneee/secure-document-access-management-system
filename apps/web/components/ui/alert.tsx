@@ -10,7 +10,7 @@ export function Alert({ className, variant = 'default', role = 'alert', ...props
     default: 'bg-[#ffffff] text-[#222222] border-[#ebebeb] shadow-xs',
     destructive: 'border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] [&>svg]:text-[#C13515]',
     success: 'border-[#008A05]/30 bg-[#008A05]/10 text-[#008A05] [&>svg]:text-[#008A05]',
-    warning: 'border-[#E07912]/30 bg-[#E07912]/10 text-[#E07912] [&>svg]:text-[#E07912]',
+    warning: 'border-[#E07912]/30 bg-[#E07912]/10 text-[#222222] [&>svg]:text-[#E07912]',
     info: 'border-[#008489]/30 bg-[#008489]/10 text-[#008489] [&>svg]:text-[#008489]',
   };
 

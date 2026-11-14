@@ -71,12 +71,12 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
 
           <fieldset className="space-y-1 border-0 p-0 m-0 min-w-0">
             <legend className="font-medium text-[#222222] block mb-1">Mức quyền yêu cầu:</legend>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
                 aria-pressed={requestedAction === 'VIEW'}
                 onClick={() => setRequestedAction('VIEW')}
-                className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
+                className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                   requestedAction === 'VIEW'
                     ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
                     : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd] hover:bg-[#f7f7f7]'
@@ -90,7 +90,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                 aria-pressed={requestedAction === 'DOWNLOAD'}
                 disabled={!targetDoc?.allowDownload}
                 onClick={() => setRequestedAction('DOWNLOAD')}
-                className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
+                className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                   requestedAction === 'DOWNLOAD'
                     ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
                     : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd] hover:bg-[#f7f7f7]'
@@ -106,8 +106,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
             <legend className="font-medium text-[#222222] block mb-1.5">
               Thời gian sử dụng mong muốn:
             </legend>
-            {/* CONFLICT-RESOLVED: Chuyển bo góc nút chọn thời hạn sang hình viên thuốc rounded-full và màu dấu sao sang #C13515 theo chuẩn ui-design-system.md §4–5 */}
-            <div className="grid grid-cols-4 gap-1.5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {DURATION_OPTIONS.map((opt) => (
                 <button
                   key={opt.days}
@@ -117,9 +116,9 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                     setRequestDurationDays(opt.days);
                     setIsCustomDuration(false);
                   }}
-                  className={`px-2.5 py-1.5 rounded-full border text-xs font-semibold transition-all cursor-pointer ${
+                  className={`min-h-11 sm:min-h-9 px-2.5 py-1.5 rounded-full border text-xs font-semibold transition-all cursor-pointer ${
                     !isCustomDuration && requestDurationDays === opt.days
-                      ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#FF385C]'
+                      ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#E31C5F]'
                       : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
                   }`}
                 >
@@ -132,7 +131,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
               <button
                 type="button"
                 onClick={() => setIsCustomDuration(!isCustomDuration)}
-                className="rounded-full px-2 py-0.5 text-xs text-[#008489] hover:underline font-medium cursor-pointer"
+                className="min-h-11 sm:min-h-8 inline-flex items-center rounded-full px-2 py-1 text-xs text-[#008489] hover:underline font-medium cursor-pointer"
               >
                 {isCustomDuration
                   ? '← Chọn thời hạn nhanh'
@@ -141,7 +140,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
             </div>
 
             {isCustomDuration && (
-              <div className="grid grid-cols-2 gap-2 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                 <div>
                   <label
                     htmlFor="custom-requested-from"
@@ -154,7 +153,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                     type="datetime-local"
                     value={customRequestedFrom}
                     onChange={(e) => setCustomRequestedFrom(e.target.value)}
-                    className="w-full text-xs px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+                    className="w-full min-h-11 sm:h-9 text-xs px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
                   />
                 </div>
                 <div>
@@ -169,7 +168,7 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                     type="datetime-local"
                     value={customRequestedUntil}
                     onChange={(e) => setCustomRequestedUntil(e.target.value)}
-                    className="w-full text-xs px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+                    className="w-full min-h-11 sm:h-9 text-xs px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
                   />
                 </div>
               </div>

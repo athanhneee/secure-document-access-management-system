@@ -1,30 +1,30 @@
-import type { VisualPolicyRule, VisualCondition, TargetAction, TimeWindow } from './abac-models';
+import type { TargetAction, TimeWindow, VisualCondition, VisualPolicyRule } from './abac-models';
+import { simulatorCidrMatch } from './cidr-matcher';
 import {
   buildSimulationPreset,
-  type SimulationPresetName,
-  type SimulationSubject,
-  type SimulationResource,
   type SimulationEnvironment,
+  type SimulationPresetName,
+  type SimulationResource,
   type SimulationResult,
+  type SimulationSubject,
 } from './simulator-presets';
 
 export {
   buildSimulationPreset,
-  type SimulationPresetName,
-  type SimulationSubject,
-  type SimulationResource,
+  simulatorCidrMatch,
   type SimulationEnvironment,
+  type SimulationPresetName,
+  type SimulationResource,
   type SimulationResult,
+  type SimulationSubject,
 };
 
 /**
- * Algorithm / Thuật toán: Bộ Đánh Giá Biểu Thức Chính Sách Dạng Chuẩn Tuyển DNF & Luật Kết Hợp XACML DENY_OVERRIDES
- * Mục đích: Xác định quyết định cấp quyền (`PERMIT` / `DENY`), mã lý do (`reasonCode`), vết đánh giá từng nhánh logic và gộp danh sách nghĩa vụ (`obligations`).
+ * Thuật toán: Bộ Đánh Giá Biểu Thức Chính Sách DNF & Chuẩn Hóa Tập Hợp Số `IN` / `NOT_IN` (`evaluatePolicySimulation`)
+ * Mục đích: Xác định quyết định cấp quyền (`PERMIT` / `DENY`), mã lý do (`reasonCode`), vết đánh giá từng nhánh logic và nghĩa vụ đi kèm.
  * Cơ chế hoạt động:
- *   - Bước 1: Phẳng hóa không gian thuộc tính 3 chiều `(subject, resource, environment)` thành bảng tra cứu khóa phẳng `O(1)`.
- *   - Bước 2: Kiểm tra phạm vi hành động mục tiêu (`targetAction === 'ALL'` hoặc trùng khớp `action`); nếu lệch thì trả về `DENY` (`ACTION_NOT_TARGETED`) theo nguyên lý Fail-Secure.
- *   - Bước 3: Duyệt cấu trúc DNF độ phức tạp `O(G * C)` — mỗi nhóm điều kiện (`group`) thỏa mãn khi không rỗng và mọi vị từ con đồng thời đúng (AND `every`); toàn quy tắc khớp khi tồn tại ít nhất một nhóm thỏa mãn (OR `some`).
- *   - Bước 4: Áp dụng hiệu lực `effect` của quy tắc hoặc rơi về `DEFAULT_DENY_NO_GROUP_MATCH`.
+ *   - Phẳng hóa không gian thuộc tính `(subject, resource, environment)` sang bảng tra cứu khóa phẳng `O(1)` và kiểm tra phạm vi `targetAction`.
+ *   - Duyệt cấu trúc DNF độ phức tạp `O(G * C)` với chuẩn hóa tương đương số học/chuỗi số trong toán tử tập hợp `IN` / `NOT_IN` để `clearance_rank IN [3, 4]` luôn đánh giá chính xác.
  */
 export function evaluatePolicySimulation(
   activeRule: VisualPolicyRule,
@@ -110,10 +110,6 @@ export function evaluatePolicySimulation(
 const STRICT_ISO_DATE_PATTERN =
   /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
 
-/**
- * Thuật toán: Chuẩn Hóa Giá Trị Vô Hướng Chống Ép Kiểu Mốc Thời Gian Sai Lệch (`toComparableScalar`)
- * Cơ chế: Chỉ chuyển chuỗi sang mili-giây epoch khi khớp biểu thức chính quy ISO-8601 nghiêm ngặt; giữ nguyên chuỗi định danh thường.
- */
 function toComparableScalar(value: unknown): number | string | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value !== 'string') return null;
@@ -124,10 +120,6 @@ function toComparableScalar(value: unknown): number | string | null {
   return value;
 }
 
-/**
- * Thuật toán: So Sánh Thứ Bậc Vô Hướng Đồng Kiểu An Toàn (`compareScalars`)
- * Cơ chế: Đối chiếu hiệu số khi cả hai vế cùng kiểu số hữu hạn hoặc `localeCompare` khi cùng chuỗi; trả về `NaN` nếu lệch kiểu.
- */
 function compareScalars(leftRaw: unknown, rightRaw: unknown): number {
   const left = toComparableScalar(leftRaw);
   const right = toComparableScalar(rightRaw);
@@ -136,91 +128,21 @@ function compareScalars(leftRaw: unknown, rightRaw: unknown): number {
   return String(left).localeCompare(String(right));
 }
 
-/**
- * Thuật toán: Chuyển Đổi Địa Chỉ IPv4 Sang Không Gian Ánh Xạ IPv6 128-Bit (`parseIpv4Bits`)
- * Cơ chế: Kiểm tra 4 octet thập phân trong đoạn `[0, 255]` không chứa số 0 dẫn đầu và ghép tiền tố `::ffff:0:0/96`.
- */
-function parseIpv4Bits(ip: string): bigint | null {
-  const parts = ip.split('.');
-  if (parts.length !== 4) return null;
-  let value = 0n;
-  for (const part of parts) {
-    if (!/^(?:0|[1-9]\d{0,2})$/.test(part)) return null;
-    const octet = Number(part);
-    if (octet < 0 || octet > 255) return null;
-    value = (value << 8n) | BigInt(octet);
-  }
-  return (0xffffn << 32n) | value;
+function isSetMemberNormalized(candidate: unknown, expectedSet: unknown[]): boolean {
+  return expectedSet.some((item) => {
+    if (item === candidate) return true;
+    if (typeof item === 'number' || typeof candidate === 'number') {
+      const leftStr = String(candidate).trim();
+      const rightStr = String(item).trim();
+      if (!leftStr || !rightStr) return false;
+      const leftNum = Number(leftStr);
+      const rightNum = Number(rightStr);
+      return Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum === rightNum;
+    }
+    return false;
+  });
 }
 
-/**
- * Thuật toán: Giải Mã Địa Chỉ IPv4/IPv6 Nén Thành Số Nguyên `BigInt` 128-Bit (`parseIp128`)
- * Cơ chế: Tách nhánh IPv4-mapped và khai triển ký hiệu rút gọn `::` của IPv6 thành đúng 8 nhóm hextet 16-bit chuẩn hóa.
- */
-function parseIp128(rawIp: string): { bits: bigint; isIpv4: boolean } | null {
-  const trimmed = rawIp.trim();
-  const v4 = parseIpv4Bits(trimmed);
-  if (v4 !== null) return { bits: v4, isIpv4: true };
-  if (!trimmed.includes(':') || trimmed.includes(':::')) return null;
-
-  let normalized = trimmed;
-  if (normalized.includes('.')) {
-    const lastColon = normalized.lastIndexOf(':');
-    const embeddedV4 = parseIpv4Bits(normalized.slice(lastColon + 1));
-    if (embeddedV4 === null) return null;
-    const low32 = embeddedV4 & 0xffffffffn;
-    const hi = Number((low32 >> 16n) & 0xffffn).toString(16);
-    const lo = Number(low32 & 0xffffn).toString(16);
-    normalized = `${normalized.slice(0, lastColon)}:${hi}:${lo}`;
-  }
-
-  const halves = normalized.split('::');
-  if (halves.length > 2) return null;
-  const left = halves[0] ? halves[0].split(':') : [];
-  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
-  const missing = halves.length === 2 ? 8 - (left.length + right.length) : 0;
-  if ((halves.length === 1 && left.length !== 8) || (halves.length === 2 && missing < 1)) {
-    return null;
-  }
-  const groups = [...left, ...Array<string>(missing).fill('0'), ...right];
-  if (groups.length !== 8) return null;
-
-  let result = 0n;
-  for (const group of groups) {
-    if (!/^[0-9a-fA-F]{1,4}$/.test(group)) return null;
-    result = (result << 16n) | BigInt(Number.parseInt(group, 16));
-  }
-  return { bits: result, isIpv4: false };
-}
-
-/**
- * Thuật toán: Đối Sánh Mặt Nạ Mạng Con CIDR 128-Bit Hằng Độ Phức Tạp (`simulatorCidrMatch`)
- * Cơ chế: Dịch bù 96 bit cho tiền tố IPv4, dựng mặt nạ bit bậc cao `mask` và kiểm tra đẳng thức `(candidate.bits & mask) === (network.bits & mask)`.
- */
-export function simulatorCidrMatch(ipRaw: string, cidrRaw: string): boolean {
-  const candidate = parseIp128(ipRaw);
-  if (!candidate) return false;
-  const slashIdx = cidrRaw.indexOf('/');
-  if (slashIdx <= 0) return false;
-  const network = parseIp128(cidrRaw.slice(0, slashIdx));
-  const prefixText = cidrRaw.slice(slashIdx + 1);
-  if (!network || !/^\d{1,3}$/.test(prefixText)) return false;
-  const prefixLen = Number(prefixText);
-  const maxPrefix = network.isIpv4 ? 32 : 128;
-  if (prefixLen < 0 || prefixLen > maxPrefix) return false;
-  const effectivePrefix = network.isIpv4 ? 96 + prefixLen : prefixLen;
-  if (effectivePrefix === 0) return true;
-  const shift = BigInt(128 - effectivePrefix);
-  const mask = ((1n << BigInt(effectivePrefix)) - 1n) << shift;
-  return (candidate.bits & mask) === (network.bits & mask);
-}
-
-/**
- * Algorithm / Thuật toán: Đối Sánh Vị Từ Thuộc Tính Đa Hình (Polymorphic Attribute Predicate Evaluator)
- * Cơ chế hoạt động:
- *   - Toán tử `EXISTS` kiểm tra khác rỗng; các toán tử còn lại trả về `false` ngay khi thực tế rỗng (Fail-Closed).
- *   - Hỗ trợ so sánh thứ bậc an toàn kiểu (`GTE`, `LTE`, `BETWEEN`), tập hợp (`IN`, `NOT_IN`), khung giờ 24h có vắt qua nửa đêm (`TIME_BETWEEN`) và mặt nạ mạng con 128-bit (`CIDR_MATCH`).
- */
 export function evaluateCondition(cond: VisualCondition, actual: unknown): boolean {
   if (cond.operator === 'EXISTS') return actual !== undefined && actual !== null && actual !== '';
   if (actual === undefined || actual === null) return false;
@@ -245,13 +167,13 @@ export function evaluateCondition(cond: VisualCondition, actual: unknown): boole
     case 'IN':
       if (!Array.isArray(cond.expected)) return false;
       return Array.isArray(actual)
-        ? actual.some((a) => (cond.expected as unknown[]).includes(a))
-        : (cond.expected as unknown[]).includes(actual);
+        ? actual.some((a) => isSetMemberNormalized(a, cond.expected as unknown[]))
+        : isSetMemberNormalized(actual, cond.expected as unknown[]);
     case 'NOT_IN':
       if (!Array.isArray(cond.expected)) return false;
       return Array.isArray(actual)
-        ? !actual.some((a) => (cond.expected as unknown[]).includes(a))
-        : !(cond.expected as unknown[]).includes(actual);
+        ? !actual.some((a) => isSetMemberNormalized(a, cond.expected as unknown[]))
+        : !isSetMemberNormalized(actual, cond.expected as unknown[]);
     case 'TIME_BETWEEN':
       if (typeof cond.expected === 'object' && cond.expected !== null) {
         const tw = cond.expected as TimeWindow;

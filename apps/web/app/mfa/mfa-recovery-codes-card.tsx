@@ -35,7 +35,7 @@ export function MfaRecoveryCodesCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-2 rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 font-mono text-xs font-semibold text-[#222222]">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 font-mono text-xs font-semibold text-[#222222]">
           {recoveryCodes.map((code) => (
             <div
               key={code}
@@ -48,7 +48,7 @@ export function MfaRecoveryCodesCard({
         <button
           type="button"
           onClick={onCopyAll}
-          className="w-full rounded-full border border-[#dddddd] bg-[#ffffff] hover:bg-[#f7f7f7] px-4 py-2 text-xs font-semibold text-[#222222] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          className="w-full min-h-11 rounded-full border border-[#dddddd] bg-[#ffffff] hover:bg-[#f7f7f7] px-4 py-2 text-xs font-semibold text-[#222222] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
         >
           {copied ? (
             <Check size={16} strokeWidth={2} className="text-[#008A05]" aria-hidden="true" />

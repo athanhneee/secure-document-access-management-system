@@ -75,7 +75,7 @@ export function TabsList({ className, onKeyDown, ...props }: React.HTMLAttribute
         onKeyDown?.(e);
       }}
       className={cn(
-        'inline-flex h-11 items-center justify-center rounded-full bg-[#f7f7f7] p-1 text-[#717171] border border-[#ebebeb]',
+        'inline-flex min-h-11 h-auto items-center justify-center rounded-full bg-[#f7f7f7] p-1 text-[#717171] border border-[#ebebeb]',
         className,
       )}
       {...props}
@@ -105,7 +105,7 @@ export function TabsTrigger({ id, className, value, children, ...props }: TabsTr
       tabIndex={isSelected ? 0 : -1}
       onClick={() => context.onValueChange(value)}
       className={cn(
-        'inline-flex items-center justify-center whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
+        'inline-flex min-h-9 items-center justify-center whitespace-nowrap rounded-full px-3 sm:px-4 py-1.5 text-xs font-medium transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
         isSelected
           ? 'bg-[#ffffff] text-[#222222] shadow-xs font-semibold'
           : 'text-[#717171] hover:text-[#222222] hover:bg-[#ffffff]/80',

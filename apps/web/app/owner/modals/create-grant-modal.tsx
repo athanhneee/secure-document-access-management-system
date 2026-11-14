@@ -1,16 +1,16 @@
 'use client';
 
-import { KeyRound, AlertTriangle } from 'lucide-react';
-import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
-import { Input } from '@/components/ui/input';
+import { AlertTriangle, KeyRound } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import type { useOwnerGrants } from '../hooks/use-owner-grants';
 import type { DocumentItem, RoleLookupItem, UserLookupItem } from '../types';
 
@@ -48,7 +48,7 @@ export function CreateGrantModal({
     handleCreateDirectGrant,
   } = grantsControl;
 
-  // Thuật toán: Kiểm tra Thống trị Độ mật Bell-LaPadula Phía Giao diện (Simple Security Property — No Read Up: clearanceRank >= classificationRank)
+  // Thuật toán: Kiểm tra Thống trị Độ mật Bell-LaPadula Phía Giao diện (clearanceRank >= classificationRank)
   const selectedDirectDoc = documents.find((d) => d.id === directDocId);
   const selectedDirectUser = usersLookup.find((u) => u.id === directUserId);
   const isClearanceWarning =
@@ -81,7 +81,7 @@ export function CreateGrantModal({
               id="direct-doc"
               value={directDocId}
               onChange={(e) => setDirectDocId(e.target.value)}
-              className="w-full h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+              className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
               {documents.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -95,14 +95,14 @@ export function CreateGrantModal({
             <legend className="font-medium text-[#222222] block mb-1">
               Loại đối tượng được cấp:
             </legend>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {(['USER', 'ROLE'] as const).map((pType) => (
                 <button
                   key={pType}
                   type="button"
                   aria-pressed={directPrincipalType === pType}
                   onClick={() => setDirectPrincipalType(pType)}
-                  className={`py-2 px-3 rounded-full border text-xs font-semibold cursor-pointer ${
+                  className={`min-h-11 sm:min-h-9 py-2 px-3 rounded-full border text-xs font-semibold cursor-pointer ${
                     directPrincipalType === pType
                       ? 'border-[#FF385C] bg-[#FF385C] text-white'
                       : 'border-[#dddddd] bg-white text-[#222222]'
@@ -123,12 +123,11 @@ export function CreateGrantModal({
                 id="direct-user"
                 value={directUserId}
                 onChange={(e) => setDirectUserId(e.target.value)}
-                className="w-full h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
               >
                 {usersLookup.map((u) => (
                   <option key={u.id} value={u.id}>
-                    {u.fullName} ({u.username}) · {u.departmentName} · Cấp mật Rank{' '}
-                    {u.clearanceRank}
+                    {u.fullName} ({u.username}) · {u.departmentName} · Rank {u.clearanceRank}
                   </option>
                 ))}
               </select>
@@ -142,7 +141,7 @@ export function CreateGrantModal({
                 id="direct-role"
                 value={directRoleId}
                 onChange={(e) => setDirectRoleId(e.target.value)}
-                className="w-full h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
               >
                 {rolesLookup.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -161,30 +160,28 @@ export function CreateGrantModal({
               </div>
               <div>
                 Người dùng {selectedDirectUser?.fullName} có bậc Clearance Rank{' '}
-                {selectedDirectUser?.clearanceRank}, thấp hơn mức mật của tài liệu (Rank{' '}
-                {selectedDirectDoc?.classificationRank}). Hệ thống ABAC sẽ từ chối cấp quyền hoặc
-                người dùng không thể giải mã tài liệu!
+                {selectedDirectUser?.clearanceRank}, thấp hơn mức mật tài liệu (Rank{' '}
+                {selectedDirectDoc?.classificationRank}).
               </div>
             </div>
           )}
 
           <div className="space-y-1">
             <span className="font-medium text-[#222222] block">Quyền hạn cấp:</span>
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-4">
               {(['VIEW', 'DOWNLOAD'] as const).map((perm) => {
                 const checkboxId = `direct-perm-${perm.toLowerCase()}`;
                 return (
                   <label
                     key={perm}
                     htmlFor={checkboxId}
-                    className="flex items-center gap-2 cursor-pointer"
+                    className="flex items-center gap-2 cursor-pointer min-h-9"
                   >
                     <input
                       id={checkboxId}
                       type="checkbox"
                       checked={directPermissions.includes(perm)}
                       onChange={(e) => {
-                        // CONFLICT-RESOLVED: Chọn DOWNLOAD tự động bật kèm VIEW; bỏ chọn VIEW tự động gỡ DOWNLOAD để không bao giờ còn ['DOWNLOAD'] đơn lẻ.
                         setDirectPermissions((prev) => {
                           if (e.target.checked) {
                             return perm === 'DOWNLOAD'
@@ -194,7 +191,7 @@ export function CreateGrantModal({
                           return perm === 'VIEW' ? [] : prev.filter((p) => p !== perm);
                         });
                       }}
-                      className="rounded border-[#dddddd] text-[#FF385C] focus:ring-[#FF385C]"
+                      className="h-4 w-4 rounded border-[#dddddd] accent-[#FF385C]"
                     />
                     <span>
                       {perm === 'VIEW'
@@ -207,7 +204,7 @@ export function CreateGrantModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
               <label htmlFor="valid-from" className="font-medium text-[#222222]">
                 Thời điểm bắt đầu:
@@ -217,7 +214,7 @@ export function CreateGrantModal({
                 type="datetime-local"
                 value={directValidFrom}
                 onChange={(e) => setDirectValidFrom(e.target.value)}
-                className="h-8 text-xs rounded-full bg-white border-[#dddddd]"
+                className="min-h-11 sm:h-9 text-xs rounded-full bg-white border-[#dddddd]"
               />
             </div>
             <div className="space-y-1">
@@ -229,7 +226,7 @@ export function CreateGrantModal({
                 type="datetime-local"
                 value={directValidUntil}
                 onChange={(e) => setDirectValidUntil(e.target.value)}
-                className="h-8 text-xs rounded-full bg-white border-[#dddddd]"
+                className="min-h-11 sm:h-9 text-xs rounded-full bg-white border-[#dddddd]"
               />
             </div>
           </div>

@@ -2,80 +2,10 @@
  * Module: End-to-End Authentication, Zero-Trust Route Guards & Role Workspace Verification
  * Thuật toán: Kiểm chứng trực tiếp DOM nghiệp vụ thật trên trình duyệt Chromium qua hai pha:
  *   1. Pha Zero-Trust chưa đăng nhập: Mọi không gian vai trò chuyển hướng về `/login?redirect=...` và ẩn nút đặc quyền.
- *   2. Pha Đã xác thực theo từng vai trò RBAC: Dựng đúng tiêu đề `<h1>`, thanh tab, cảnh báo chỉ đọc SoD và chặn 403 chéo vai trò.
+ *   2. Pha Đã xác thực theo từng vai trò RBAC (`SYSTEM_ADMIN`, `DOCUMENT_OWNER`, `DOCUMENT_READER`, `SECURITY_OFFICER`, `AUDITOR`): Dựng đúng tiêu đề `<h1>`, thanh tab, cảnh báo chỉ đọc SoD và chặn 403 chéo vai trò.
  */
-import { expect, test, type Page } from '@playwright/test';
-
-type RoleName =
-  'SYSTEM_ADMIN' | 'DOCUMENT_OWNER' | 'DOCUMENT_READER' | 'SECURITY_OFFICER' | 'AUDITOR';
-
-async function mockAuthenticatedRoleSession(page: Page, role: RoleName): Promise<void> {
-  await page.route('**/api/v1/**', async (route) => {
-    const url = new URL(route.request().url());
-    const pathname = url.pathname;
-
-    if (pathname === '/api/v1/users/me') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          id: '10',
-          username: `${role.toLowerCase()}_e2e`,
-          fullName: `Nhân sự ${role}`,
-          email: `${role.toLowerCase()}@corp.internal`,
-          departmentId: '1',
-          status: 'ACTIVE',
-          version: 1,
-          roles: [role],
-          permissions: [],
-        }),
-      });
-      return;
-    }
-
-    if (pathname === '/api/v1/audit-logs/verify') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          valid: true,
-          checkedCount: 12,
-          chainPartition: 'GLOBAL_CHAIN',
-          issues: [],
-        }),
-      });
-      return;
-    }
-
-    if (pathname === '/api/v1/auth/sessions') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          data: [
-            {
-              id: 'sess-current-001',
-              ipAddress: '127.0.0.1',
-              userAgent: 'Playwright Chromium',
-              createdAt: '2026-11-05T10:00:00.000Z',
-              lastSeenAt: '2026-11-05T10:05:00.000Z',
-              expiresAt: '2026-11-12T10:00:00.000Z',
-              mfaVerified: true,
-              isCurrent: true,
-            },
-          ],
-        }),
-      });
-      return;
-    }
-
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ data: [], items: [], total: 0, page: 1, pageSize: 20 }),
-    });
-  });
-}
+import { expect, test } from '@playwright/test';
+import { mockAuthenticatedRoleSession } from './helpers.js';
 
 test.describe('Authentication Pages Smoke Tests', () => {
   test('Login page renders with accessible form and security notice', async ({ page }) => {
@@ -141,6 +71,24 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
     }
   });
 
+  test('System Admin workspace renders user management, RBAC, ABAC, and Watermark controls', async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+    await mockAuthenticatedRoleSession(page, 'SYSTEM_ADMIN');
+
+    await page.goto('/admin');
+    await expect(
+      page.getByRole('heading', { name: 'Users · RBAC · ABAC · Watermark', level: 1 }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tạo tài khoản' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Vai trò RBAC/i })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Chính sách ABAC/i })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Cấu hình Watermark/i })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
   test('Owner workspace renders document lifecycle controls and blocks cross-role /admin with 403', async ({
     page,
   }) => {
@@ -176,7 +124,7 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
     expect(errors).toEqual([]);
   });
 
-  test('Security workspace renders SOC alert queue, watermark trace tab, and incident action', async ({
+  test('Security & Auditor workspaces render SOC alert controls and SoD read-only audit controls', async ({
     page,
   }) => {
     const errors: string[] = [];
@@ -189,16 +137,8 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Lập báo cáo sự cố' })).toBeVisible();
     await expect(page.getByRole('tab', { name: /Truy vết Watermark/i })).toBeVisible();
-    expect(errors).toEqual([]);
-  });
 
-  test('Auditor workspace renders strict SoD read-only notice and audit export trigger', async ({
-    page,
-  }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
     await mockAuthenticatedRoleSession(page, 'AUDITOR');
-
     await page.goto('/auditor');
     await expect(
       page.getByRole('heading', { name: 'Kiểm toán Toàn vẹn & Báo cáo Tuân thủ', level: 1 }),

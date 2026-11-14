@@ -8,12 +8,15 @@ test('Vietnamese landing renders without browser errors', async ({ page }) => {
   await page.goto('/');
   await expect(
     page.getByRole('heading', {
-      name: /Bảo vệ tài liệu tối mật với kiến trúc phân quyền đa tầng/i,
+      name: /(Bảo vệ tài liệu tối mật với kiến trúc phân quyền đa tầng|Kiểm soát & Bảo vệ Tài liệu Tối mật)/i,
       level: 1,
     }),
   ).toBeVisible();
+  const isMobile = (page.viewportSize()?.width ?? 1280) < 640;
   await expect(
-    page.getByText('KIỂM SOÁT TRUY CẬP TÀI LIỆU MẬT TỔ CHỨC', { exact: true }),
+    page.getByText(isMobile ? 'BẢO MẬT ĐA TẦNG' : 'KIỂM SOÁT TRUY CẬP TÀI LIỆU MẬT TỔ CHỨC', {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('lang', 'vi');
   expect(errors).toEqual([]);

@@ -1,5 +1,16 @@
+import type { SharedPaginationMeta } from '@sda/contracts';
+
 export type AlertLifecycleStatus =
   'OPEN' | 'INVESTIGATING' | 'ESCALATED' | 'RESOLVED' | 'FALSE_POSITIVE';
+
+export type GatewayHealthStatus = 'ONLINE' | 'DEGRADED' | 'OFFLINE';
+
+export interface AlertNoteItem {
+  id?: string | undefined;
+  note: string;
+  authorName: string;
+  createdAt: string;
+}
 
 export interface SecurityAlertItem {
   id: string;
@@ -12,8 +23,14 @@ export interface SecurityAlertItem {
   documentId?: string | undefined;
   ipAddress?: string | undefined;
   detectedAt: string;
+  resolutionNote?: string | null | undefined;
   details?: Record<string, unknown> | undefined;
-  notes?: Array<{ note: string; authorName: string; createdAt: string }> | undefined;
+  notes?: AlertNoteItem[] | undefined;
+}
+
+export interface SecurityPaginatedResponse<T> {
+  data: T[];
+  meta?: SharedPaginationMeta | undefined;
 }
 
 export interface IncidentActionItem {
@@ -44,6 +61,15 @@ export interface DetectionRuleItem {
   isEnabled?: boolean | undefined;
 }
 
+export interface AlertApiNoteDto {
+  id?: string;
+  note?: string;
+  content?: string;
+  authorName?: string;
+  author?: { fullName?: string; username?: string };
+  createdAt?: string;
+}
+
 export interface AlertApiDto {
   id?: string;
   alertType?: string;
@@ -57,7 +83,10 @@ export interface AlertApiDto {
   documentId?: string;
   ipAddress?: string;
   detectedAt?: string;
+  resolutionNote?: string | null;
+  resolution_note?: string | null;
   details?: Record<string, unknown>;
+  notes?: AlertApiNoteDto[];
 }
 
 export interface IncidentApiDto {

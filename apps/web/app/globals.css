@@ -115,11 +115,17 @@ body {
 
 /* Mobile Responsiveness & Touch Optimization */
 @media screen and (max-width: 767px) {
+  input:not([type]),
   input[type='text'],
   input[type='email'],
   input[type='password'],
   input[type='search'],
   input[type='number'],
+  input[type='tel'],
+  input[type='url'],
+  input[type='date'],
+  input[type='datetime-local'],
+  input[type='time'],
   textarea,
   select {
     font-size: 16px !important;

@@ -81,21 +81,21 @@ export function ExportReportModal({
           <fieldset className="space-y-1.5 border-0 p-0 m-0 min-w-0">
             <legend className="font-medium text-[#222222] block mb-1.5">Chọn định dạng tệp:</legend>
             {/* CONFLICT-RESOLVED: Chuyển các nút chọn định dạng xuất báo cáo sang rounded-full chuẩn pill theo rules/ui-design-system.md §4 */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
                 aria-pressed={exportFormat === 'CSV'}
                 onClick={() => setExportFormat('CSV')}
-                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
+                className={`flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                   exportFormat === 'CSV'
-                    ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#FF385C]'
+                    ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#E31C5F]'
                     : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
                 }`}
               >
                 <FileSpreadsheet
                   size={20}
                   strokeWidth={1.75}
-                  className="text-[#FF385C] shrink-0"
+                  className="text-[#E31C5F] shrink-0"
                   aria-hidden="true"
                 />
                 <span>CSV</span>
@@ -104,7 +104,7 @@ export function ExportReportModal({
                 type="button"
                 aria-pressed={exportFormat === 'EXCEL'}
                 onClick={() => setExportFormat('EXCEL')}
-                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
+                className={`flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                   exportFormat === 'EXCEL'
                     ? 'border-[#008A05] bg-[#008A05]/15 text-[#008A05]'
                     : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
@@ -122,9 +122,9 @@ export function ExportReportModal({
                 type="button"
                 aria-pressed={exportFormat === 'JSON'}
                 onClick={() => setExportFormat('JSON')}
-                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
+                className={`flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                   exportFormat === 'JSON'
-                    ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#FF385C]'
+                    ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#E31C5F]'
                     : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
                 }`}
               >
@@ -140,7 +140,7 @@ export function ExportReportModal({
                 type="button"
                 aria-pressed={exportFormat === 'PDF'}
                 onClick={() => setExportFormat('PDF')}
-                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
+                className={`flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                   exportFormat === 'PDF'
                     ? 'border-[#C13515] bg-[#C13515]/15 text-[#C13515]'
                     : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'

@@ -68,7 +68,7 @@ export function DocumentsTab({
           <Search
             size={16}
             strokeWidth={1.75}
-            className="pointer-events-none absolute left-3 top-2 text-[#717171]"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#717171]"
             aria-hidden="true"
           />
           <Input
@@ -77,7 +77,7 @@ export function DocumentsTab({
             placeholder="Tìm theo tiêu đề, mã số..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="pl-9 h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+            className="pl-9 min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
           />
         </div>
       </CardHeader>
@@ -132,8 +132,13 @@ export function DocumentsTab({
                           <span>Cho phép tải kèm Watermark</span>
                         </span>
                       ) : (
-                        <span className="flex items-center gap-1.5 text-xs text-[#E07912]">
-                          <Eye size={16} strokeWidth={1.75} aria-hidden="true" />
+                        <span className="flex items-center gap-1.5 text-xs text-[#222222] font-medium">
+                          <Eye
+                            size={16}
+                            strokeWidth={1.75}
+                            className="text-[#E07912]"
+                            aria-hidden="true"
+                          />
                           <span>Chỉ xem trực tuyến</span>
                         </span>
                       )}

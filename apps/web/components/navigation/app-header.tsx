@@ -21,8 +21,8 @@ import { useAuth, ROLE_LABELS, type RoleType } from '@/lib/auth-context';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
 interface AppHeaderProps {
-  onToggleSidebar?: () => void;
-  isSidebarOpen?: boolean;
+  onToggleSidebar?: (() => void) | undefined;
+  isSidebarOpen?: boolean | undefined;
 }
 
 export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
@@ -67,45 +67,45 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
   ];
 
   return (
-    <header className="sticky top-0 z-40 flex h-14 w-full items-center justify-between border-b border-[#ebebeb] bg-[#ffffff]/90 px-4 sm:px-6 backdrop-blur-md">
-      <div className="flex items-center gap-3">
+    <header className="sticky top-0 z-40 flex h-14 w-full items-center justify-between border-b border-[#ebebeb] bg-[#ffffff]/90 px-3 sm:px-6 backdrop-blur-md">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         {onToggleSidebar && (
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] lg:hidden cursor-pointer transition-colors"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] lg:hidden cursor-pointer transition-colors"
             onClick={onToggleSidebar}
             aria-label={isSidebarOpen ? 'Đóng bảng điều hướng' : 'Mở bảng điều hướng'}
           >
             {isSidebarOpen ? (
-              <X size={16} strokeWidth={2} aria-hidden="true" />
+              <X size={20} strokeWidth={2} aria-hidden="true" />
             ) : (
-              <Menu size={16} strokeWidth={2} aria-hidden="true" />
+              <Menu size={20} strokeWidth={2} aria-hidden="true" />
             )}
           </button>
         )}
 
         <Link
           href="/"
-          className="flex items-center gap-2 transition-opacity hover:opacity-90"
+          className="flex items-center gap-2 shrink-0 transition-opacity hover:opacity-90"
           aria-label="Về trang chủ Secure Document"
         >
-          <ShieldCheck size={20} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
+          <ShieldCheck size={20} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
           <span className="hidden text-sm font-semibold tracking-tight text-[#222222] sm:inline-block">
-            Secure<span className="font-light text-[#FF385C]">Document</span>
+            Secure<span className="font-light text-[#E31C5F]">Document</span>
           </span>
         </Link>
 
         {isAuthenticated && user && (
-          <div className="relative ml-2" ref={menuRef}>
+          <div className="relative ml-1 sm:ml-2" ref={menuRef}>
             <button
               type="button"
               onClick={() => setRoleMenuOpen(!roleMenuOpen)}
-              className="flex items-center gap-1.5 sm:gap-2 rounded-full border border-[#ebebeb] bg-[#ffffff] px-2.5 py-1 sm:px-3 text-xs font-medium text-[#222222] transition-colors hover:border-[#dddddd] hover:bg-[#f7f7f7] cursor-pointer shadow-2xs"
+              className="flex min-h-11 sm:min-h-9 items-center gap-1.5 sm:gap-2 rounded-full border border-[#ebebeb] bg-[#ffffff] px-2.5 py-1 sm:px-3 text-xs font-medium text-[#222222] transition-colors hover:border-[#dddddd] hover:bg-[#f7f7f7] cursor-pointer shadow-2xs"
               aria-expanded={roleMenuOpen}
               aria-haspopup="true"
             >
               <span className="dot dot-success" aria-hidden="true" />
-              <span className="max-w-[100px] sm:max-w-none truncate">
+              <span className="max-w-[84px] sm:max-w-none truncate">
                 {activeRole ? ROLE_LABELS[activeRole] : 'Góc nhìn'}
               </span>
               <ChevronDown
@@ -139,12 +139,12 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                         setRoleMenuOpen(false);
                         router.push(item.href);
                       }}
-                      className={`flex w-full items-center justify-between rounded-full px-3 py-2 text-xs transition-colors cursor-pointer ${
+                      className={`flex min-h-11 sm:min-h-9 w-full items-center justify-between rounded-full px-3 py-2 text-xs transition-colors cursor-pointer ${
                         isCurrent
-                          ? 'bg-[#FF385C]/10 font-semibold text-[#FF385C] border border-[#FF385C]/30'
+                          ? 'bg-[#FF385C]/10 font-semibold text-[#E31C5F] border border-[#E31C5F]/30'
                           : hasAccess
                             ? 'text-[#222222] hover:bg-[#f7f7f7]'
-                            : 'cursor-not-allowed text-[#b0b0b0]'
+                            : 'cursor-not-allowed text-[#717171] opacity-75'
                       }`}
                       role="menuitem"
                     >
@@ -153,9 +153,9 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                         <span>{item.label}</span>
                       </div>
                       {hasAccess ? (
-                        <span className="text-[13px] text-[#008A05] font-bold">Được cấp</span>
+                        <span className="text-[12px] text-[#008A05] font-bold">Được cấp</span>
                       ) : (
-                        <span className="text-[13px] text-[#b0b0b0]">Khóa</span>
+                        <span className="text-[12px] text-[#717171]">Khóa</span>
                       )}
                     </button>
                   );
@@ -166,13 +166,13 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
         )}
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
         {isAuthenticated && user ? (
           <>
             <Link
               href="/sessions"
-              className={`flex items-center gap-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] px-3 py-1 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors shadow-2xs ${
-                pathname === '/sessions' ? 'border-[#FF385C]/40 bg-[#FF385C]/10 text-[#FF385C]' : ''
+              className={`flex min-h-11 sm:min-h-9 items-center justify-center gap-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] px-3 py-1 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors shadow-2xs ${
+                pathname === '/sessions' ? 'border-[#E31C5F]/40 bg-[#FF385C]/10 text-[#E31C5F]' : ''
               }`}
               title="Quản lý phiên đăng nhập thiết bị"
               aria-label="Quản lý phiên đăng nhập"

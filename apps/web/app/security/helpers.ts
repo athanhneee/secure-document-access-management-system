@@ -1,5 +1,6 @@
 import type {
   AlertApiDto,
+  AlertNoteItem,
   IncidentApiDto,
   IncidentItem,
   SecurityAlertItem,
@@ -8,10 +9,24 @@ import type {
 } from './types';
 
 /**
- * Algorithm / Thuật toán: Chuẩn hóa dữ liệu cảnh báo & sự cố an ninh trung thực không bịa đặt bằng chứng (Zero-Fabrication Alert DTO Normalization).
- * Chỉ ánh xạ đúng dữ liệu nhận từ máy chủ; khi trường tùy chọn vắng mặt, hiển thị nhãn trung tính `'—'` hoặc `'Chưa định danh'` thay vì gán cứng IP/ID giả.
+ * Thuật toán: Chuẩn hóa Dữ liệu Cảnh báo, Lịch sử Ghi chú Điều tra & Sự cố An ninh Không Bịa đặt (`mapAlertDto`)
+ * Mục đích: Ánh xạ trung thực dữ liệu cảnh báo từ máy chủ kèm `resolutionNote` và danh sách `notes` điều tra; khi trường tùy chọn vắng mặt, hiển thị nhãn trung tính `'—'`.
  */
 export function mapAlertDto(a: AlertApiDto): SecurityAlertItem {
+  const detailResolution =
+    typeof a.details?.['resolutionNote'] === 'string' ? a.details['resolutionNote'] : null;
+  const normalizedNotes: AlertNoteItem[] = Array.isArray(a.notes)
+    ? a.notes
+        .map((n) => ({
+          id: n.id,
+          note: (n.note || n.content || '').trim(),
+          authorName:
+            n.authorName || n.author?.fullName || n.author?.username || 'Cán bộ An ninh (SOC)',
+          createdAt: n.createdAt || a.detectedAt || '',
+        }))
+        .filter((item) => item.note.length > 0)
+    : [];
+
   return {
     id: a.id || '—',
     ruleCode: a.alertType || a.ruleCode || a.alert_type || 'ANOMALY_DETECTION',
@@ -25,7 +40,9 @@ export function mapAlertDto(a: AlertApiDto): SecurityAlertItem {
     documentId: a.documentId,
     ipAddress: a.ipAddress || '—',
     detectedAt: a.detectedAt || '',
+    resolutionNote: a.resolutionNote ?? a.resolution_note ?? detailResolution,
     details: a.details,
+    notes: normalizedNotes,
   };
 }
 
@@ -44,7 +61,6 @@ export function mapIncidentDto(inc: IncidentApiDto): IncidentItem {
 /**
  * Thuật toán: Lọc Phân loại Cảnh báo Rò rỉ Dữ liệu Mạng (`filterNetworkDlpAlerts`)
  * Mục đích: Tách riêng các cảnh báo vi phạm chính sách cổng kiểm soát luồng ra ICAP RFC 3507 khỏi tập cảnh báo SOC chung.
- * Cơ chế hoạt động: Duyệt tuyến tính `O(N)` đối chiếu mã luật `NETWORK_DLP_VIOLATION`, chuỗi con `DLP` hoặc tiêu đề cảnh báo.
  */
 export function filterNetworkDlpAlerts(alerts: SecurityAlertItem[]): SecurityAlertItem[] {
   return alerts.filter(
@@ -56,13 +72,11 @@ export function filterNetworkDlpAlerts(alerts: SecurityAlertItem[]): SecurityAle
 }
 
 /**
- * Algorithm / Thuật toán: Chuẩn hóa Bằng chứng Thủy vân Pháp chứng Chế độ Fail-Closed (`mapWatermarkVerifyDto`).
- * Bắt buộc `res.verified === true` tường minh từ máy chủ; mọi phản hồi thiếu cờ xác thực đều bị đánh dấu `verified: false`
- * và tuyệt đối không tự điền nhãn độ mật, mã tài liệu, nhân viên hay IP giả.
+ * Thuật toán: Chuẩn hóa Bằng chứng Thủy vân Pháp chứng Chế độ Fail-Closed (`mapWatermarkVerifyDto`)
+ * Mục đích: Bắt buộc `res.verified === true` tường minh từ máy chủ; mọi phản hồi thiếu cờ xác thực đều bị đánh dấu `verified: false`.
  */
 export function mapWatermarkVerifyDto(res: WatermarkVerifyDto): WatermarkProvenance {
   return {
-    // CONFLICT-RESOLVED: Enforced strict Fail-Closed `res.verified === true` and removed all fabricated forensic defaults.
     verified: res.verified === true,
     documentTitle: res.document?.title || res.documentTitle || 'Chưa ghi nhận',
     documentCode: res.document?.documentCode || res.documentCode || '—',

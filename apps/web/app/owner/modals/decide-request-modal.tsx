@@ -65,12 +65,12 @@ export function DecideRequestModal({
 
           <fieldset className="space-y-1 border-0 p-0 m-0 min-w-0">
             <legend className="font-medium text-[#222222] block mb-1">Phạm vi quyền cấp:</legend>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
                 aria-pressed={grantAction === 'VIEW'}
                 onClick={() => onActionChange('VIEW')}
-                className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold cursor-pointer ${
+                className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold cursor-pointer ${
                   grantAction === 'VIEW'
                     ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
                     : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd]'
@@ -83,7 +83,7 @@ export function DecideRequestModal({
                 type="button"
                 aria-pressed={grantAction === 'DOWNLOAD'}
                 onClick={() => onActionChange('DOWNLOAD')}
-                className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold cursor-pointer ${
+                className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold cursor-pointer ${
                   grantAction === 'DOWNLOAD'
                     ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
                     : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd]'
@@ -103,7 +103,7 @@ export function DecideRequestModal({
               id="grant-duration"
               value={grantValidDays}
               onChange={(e) => onValidDaysChange(Number(e.target.value))}
-              className="w-full h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+              className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
               <option value={1}>1 ngày (24 giờ khẩn cấp)</option>
               <option value={3}>3 ngày</option>

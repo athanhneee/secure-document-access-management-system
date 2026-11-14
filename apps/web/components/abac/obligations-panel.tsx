@@ -117,7 +117,7 @@ export function ObligationsPanel({
                     )?.minutes || 30
                   }
                   onChange={(e) => onSetSessionMinutes(Number(e.target.value))}
-                  className="w-24 h-7 text-xs rounded-full border-[#dddddd]"
+                  className="w-24 min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd]"
                 />
                 <label htmlFor="ob-session-minutes-input" className="text-xs text-[#717171]">
                   phút

@@ -70,9 +70,9 @@ export function PolicyPresetsBar({
             variant="outline"
             size="sm"
             onClick={() => onTemplateDialogChange(true)}
-            className="rounded-full text-xs h-8 border-[#dddddd] hover:border-[#FF385C] flex items-center gap-1.5"
+            className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd] hover:border-[#FF385C] flex items-center gap-1.5"
           >
-            <Sparkles size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
+            <Sparkles size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
             <span>Mẫu dựng sẵn (Presets)</span>
           </Button>
 
@@ -81,7 +81,7 @@ export function PolicyPresetsBar({
             variant="outline"
             size="sm"
             onClick={onOpenSimulator}
-            className="rounded-full text-xs h-8 border-[#dddddd] hover:border-[#008A05] text-[#222222] flex items-center gap-1.5"
+            className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd] hover:border-[#008A05] text-[#222222] flex items-center gap-1.5"
           >
             <Play
               size={16}
@@ -96,7 +96,7 @@ export function PolicyPresetsBar({
             <button
               type="button"
               onClick={() => onSetViewMode('visual')}
-              className={`px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`min-h-11 sm:min-h-8 px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 cursor-pointer ${
                 viewMode === 'visual'
                   ? 'bg-white text-[#222222] shadow-xs'
                   : 'text-[#717171] hover:text-[#222222]'
@@ -108,7 +108,7 @@ export function PolicyPresetsBar({
             <button
               type="button"
               onClick={() => onSetViewMode('json')}
-              className={`px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`min-h-11 sm:min-h-8 px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 cursor-pointer ${
                 viewMode === 'json'
                   ? 'bg-white text-[#222222] shadow-xs'
                   : 'text-[#717171] hover:text-[#222222]'
@@ -124,7 +124,7 @@ export function PolicyPresetsBar({
               type="button"
               size="sm"
               onClick={() => onSaveRule(rule)}
-              className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs h-8 px-4 font-semibold"
+              className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs min-h-11 sm:h-9 px-4 font-semibold"
             >
               Lưu Chính Sách
             </Button>
@@ -136,7 +136,7 @@ export function PolicyPresetsBar({
               variant="outline"
               size="sm"
               onClick={onCancel}
-              className="rounded-full text-xs h-8 border-[#dddddd]"
+              className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd]"
             >
               Đóng
             </Button>
@@ -171,8 +171,8 @@ export function PolicyPresetsBar({
                 key={tpl.id}
                 className="p-3.5 rounded-[16px] border border-[#ebebeb] hover:border-[#FF385C] bg-[#ffffff] transition-all space-y-2"
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="font-bold text-xs text-[#222222]">{tpl.name}</span>
                     <Badge variant="primary">{tpl.badge}</Badge>
                   </div>
@@ -180,7 +180,7 @@ export function PolicyPresetsBar({
                     type="button"
                     size="sm"
                     onClick={() => onSelectTemplate(tpl)}
-                    className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs h-7 px-3.5 font-semibold"
+                    className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs min-h-11 sm:h-9 px-3.5 font-semibold"
                   >
                     Áp dụng mẫu này
                   </Button>

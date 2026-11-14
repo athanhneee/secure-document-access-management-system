@@ -41,13 +41,13 @@ export function AttributePalettePanel({
         <span className="text-xs text-[#717171]">{filteredAttributes.length} thuộc tính</span>
       </div>
 
-      <div className="flex flex-wrap gap-1 text-xs">
+      <div className="flex flex-wrap gap-1.5 text-xs">
         {(['ALL', 'SUBJECT', 'RESOURCE', 'ENVIRONMENT'] as const).map((cat) => (
           <button
             key={cat}
             type="button"
             onClick={() => onSelectCategory(cat)}
-            className={`px-2.5 py-0.5 rounded-full font-medium transition-all cursor-pointer ${
+            className={`min-h-11 sm:min-h-8 px-3 py-1 rounded-full font-medium transition-all cursor-pointer ${
               selectedCategory === cat
                 ? 'bg-[#222222] text-white'
                 : 'bg-[#f7f7f7] text-[#717171] hover:text-[#222222]'
@@ -68,7 +68,7 @@ export function AttributePalettePanel({
         <Search
           size={16}
           strokeWidth={1.75}
-          className="absolute left-3 top-2 text-[#717171]"
+          className="absolute left-3 top-3.5 sm:top-2.5 text-[#717171]"
           aria-hidden="true"
         />
         <Input
@@ -76,7 +76,7 @@ export function AttributePalettePanel({
           value={searchPalette}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Tìm thuộc tính..."
-          className="pl-9 h-8 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
+          className="pl-9 min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
         />
       </div>
 
@@ -130,7 +130,7 @@ export function AttributePalettePanel({
                   onClick={() => onAddAttributeToFirstGroup(firstGroupId, attr.key)}
                   title="Thêm vào nhóm đầu tiên"
                   aria-label={`Thêm thuộc tính ${attr.label}`}
-                  className="h-7 w-7 p-0 rounded-full hover:bg-[#FF385C]/10 hover:text-[#FF385C]"
+                  className="min-h-11 min-w-11 sm:h-9 sm:w-9 p-0 rounded-full hover:bg-[#FF385C]/10 hover:text-[#E31C5F]"
                 >
                   <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
                 </Button>
@@ -138,7 +138,7 @@ export function AttributePalettePanel({
 
               <div className="mt-1 flex items-center justify-between text-xs text-[#717171]">
                 <span className="font-mono text-[13px] text-[#717171]">{attr.key}</span>
-                <span className="text-[13px] uppercase font-bold text-[#b0b0b0]">{attr.type}</span>
+                <span className="text-[13px] uppercase font-bold text-[#717171]">{attr.type}</span>
               </div>
 
               <p className="mt-1 text-xs text-[#717171] line-clamp-2">{attr.description}</p>

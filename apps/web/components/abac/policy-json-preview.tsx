@@ -22,7 +22,7 @@ export function PolicyJsonPreview({
 
   return (
     <Card className="border-[#ebebeb] bg-[#ffffff] shadow-xs flex-1">
-      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+      <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <CardTitle className="text-base text-[#222222] flex items-center gap-2">
             <Code2 size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
@@ -32,7 +32,7 @@ export function PolicyJsonPreview({
             Xem hoặc chỉnh sửa trực tiếp biểu diễn trừu tượng (Abstract Syntax Tree) của quy tắc.
           </CardDescription>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
             variant="outline"
@@ -42,7 +42,7 @@ export function PolicyJsonPreview({
               setCopied(true);
               setTimeout(() => setCopied(false), 2000);
             }}
-            className="rounded-full text-xs h-8 border-[#dddddd] flex items-center gap-1.5"
+            className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd] flex items-center gap-1.5"
           >
             {copied ? (
               <Check size={16} strokeWidth={1.75} className="text-[#008A05]" aria-hidden="true" />
@@ -55,7 +55,7 @@ export function PolicyJsonPreview({
             type="button"
             size="sm"
             onClick={onApplyJson}
-            className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs h-8 font-semibold"
+            className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs min-h-11 sm:h-9 font-semibold"
           >
             Cập nhật vào Trình Kéo Thả
           </Button>

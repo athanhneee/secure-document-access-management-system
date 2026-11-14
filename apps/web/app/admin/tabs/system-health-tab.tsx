@@ -14,12 +14,12 @@ interface SystemHealthTabProps {
  */
 function resolveStatusTheme(status: HealthStatusLabel) {
   if (status === 'ONLINE') {
-    return { textClass: 'text-[#008A05]', Icon: CheckCircle2 };
+    return { textClass: 'text-[#008A05]', iconClass: 'text-[#008A05]', Icon: CheckCircle2 };
   }
   if (status === 'DEGRADED') {
-    return { textClass: 'text-[#E07912]', Icon: AlertTriangle };
+    return { textClass: 'text-[#222222]', iconClass: 'text-[#E07912]', Icon: AlertTriangle };
   }
-  return { textClass: 'text-[#C13515]', Icon: XCircle };
+  return { textClass: 'text-[#C13515]', iconClass: 'text-[#C13515]', Icon: XCircle };
 }
 
 function formatUptimeDuration(seconds: number | undefined): string {
@@ -56,7 +56,12 @@ export function SystemHealthTab({ healthData }: SystemHealthTabProps) {
           <CardTitle
             className={`text-xl font-bold flex items-center gap-2 ${gatewayTheme.textClass}`}
           >
-            <GatewayIcon size={20} strokeWidth={1.75} aria-hidden="true" />
+            <GatewayIcon
+              size={20}
+              strokeWidth={1.75}
+              className={gatewayTheme.iconClass}
+              aria-hidden="true"
+            />
             <span>{gatewayStatus}</span>
           </CardTitle>
         </CardHeader>
@@ -71,7 +76,7 @@ export function SystemHealthTab({ healthData }: SystemHealthTabProps) {
         <CardHeader className="pb-2">
           <CardDescription className="text-xs text-[#717171]">PostgreSQL Cluster</CardDescription>
           <CardTitle className={`text-xl font-bold flex items-center gap-2 ${dbTheme.textClass}`}>
-            <DbIcon size={20} strokeWidth={1.75} aria-hidden="true" />
+            <DbIcon size={20} strokeWidth={1.75} className={dbTheme.iconClass} aria-hidden="true" />
             <span>{dbStatus}</span>
           </CardTitle>
         </CardHeader>
@@ -91,7 +96,12 @@ export function SystemHealthTab({ healthData }: SystemHealthTabProps) {
           <CardTitle
             className={`text-xl font-bold flex items-center gap-2 ${cacheTheme.textClass}`}
           >
-            <CacheIcon size={20} strokeWidth={1.75} aria-hidden="true" />
+            <CacheIcon
+              size={20}
+              strokeWidth={1.75}
+              className={cacheTheme.iconClass}
+              aria-hidden="true"
+            />
             <span>{cacheStatus}</span>
           </CardTitle>
         </CardHeader>

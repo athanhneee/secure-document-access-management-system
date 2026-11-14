@@ -92,9 +92,9 @@ const variantStyles: Record<InteractiveButtonVariant, VariantStyle> = {
 };
 
 const sizeStyles: Record<'sm' | 'md' | 'lg', string> = {
-  sm: 'h-8 px-4 text-xs font-semibold min-w-[5.5rem]',
-  md: 'h-9.5 px-5 text-xs font-semibold min-w-[7rem]',
-  lg: 'h-11 px-6 text-sm font-semibold min-w-[8.5rem]',
+  sm: 'min-h-11 sm:min-h-9 px-4 text-xs font-semibold min-w-[5.5rem]',
+  md: 'min-h-11 px-5 text-xs font-semibold min-w-[7rem]',
+  lg: 'min-h-11 px-6 text-sm font-semibold min-w-[8.5rem]',
 };
 
 /**

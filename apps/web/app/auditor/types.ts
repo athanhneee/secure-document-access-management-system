@@ -1,3 +1,5 @@
+import type { SharedExportJobSummary, SharedPaginationMeta } from '@sda/contracts';
+
 export interface AuditLogItem {
   id: string;
   occurredAt: string;
@@ -10,6 +12,11 @@ export interface AuditLogItem {
   correlationId: string;
   chainSequence?: number | undefined;
   entryHash?: string | undefined;
+}
+
+export interface AuditLogsPaginatedResponse {
+  data: AuditLogApiDto[];
+  meta?: SharedPaginationMeta | undefined;
 }
 
 export interface AuditLogApiDto {
@@ -42,6 +49,14 @@ export interface PartitionVerificationResult {
   violations: { code: string; message: string }[];
 }
 
+export type VerifyHashChainResponse =
+  | Record<string, PartitionVerificationResult>
+  | {
+      partitions?: PartitionVerificationResult[];
+      tamperedCount?: number;
+      valid?: boolean;
+    };
+
 export interface ChainVerificationReport {
   isChainValid: boolean;
   totalEntriesChecked: number;
@@ -53,12 +68,11 @@ export interface ChainVerificationReport {
 
 export type ExportFormat = 'CSV' | 'JSON' | 'PDF' | 'EXCEL';
 
-export interface ExportJobItem {
-  id: string;
-  exportType: string;
+export interface ExportJobItem extends Pick<
+  SharedExportJobSummary,
+  'id' | 'exportType' | 'status' | 'createdAt'
+> {
   format: ExportFormat;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'EXPIRED';
-  createdAt: string;
   completedAt?: string | null | undefined;
   expiresAt?: string | null | undefined;
   isExpired?: boolean | undefined;

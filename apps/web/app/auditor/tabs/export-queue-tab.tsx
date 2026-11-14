@@ -27,7 +27,7 @@ export function ExportQueueTab({
 }: ExportQueueTabProps) {
   return (
     <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
-      <CardHeader className="flex flex-row items-center justify-between pb-3">
+      <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3">
         <div>
           <CardTitle className="text-base text-[#222222]">
             Hàng đợi xuất báo cáo kiểm toán bất đồng bộ

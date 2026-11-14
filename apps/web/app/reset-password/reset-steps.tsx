@@ -1,7 +1,7 @@
 'use client';
 
 import type { FormEvent } from 'react';
-import { Lock, Mail, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { Lock, Mail, ShieldCheck, CheckCircle2, Circle } from 'lucide-react';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Input } from '@/components/ui/input';
 import { evaluatePasswordStrength } from './password-strength';
@@ -117,12 +117,16 @@ export function ConfirmResetStepForm({
                     req.met ? 'text-[#008A05] font-medium' : 'text-[#717171]'
                   }`}
                 >
-                  <CheckCircle2
-                    size={16}
-                    strokeWidth={1.75}
-                    className="shrink-0"
-                    aria-hidden="true"
-                  />
+                  {req.met ? (
+                    <CheckCircle2
+                      size={16}
+                      strokeWidth={2}
+                      className="shrink-0"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Circle size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                  )}
                   <span>{req.label}</span>
                 </div>
               ))}

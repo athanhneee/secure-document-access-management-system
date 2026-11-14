@@ -76,7 +76,7 @@ export function UploadVersionModal({
               value={newVersionNote}
               onChange={(e) => onNoteChange(e.target.value)}
               placeholder="Ví dụ: Bổ sung phụ lục giải trình tài chính..."
-              className="h-8 text-xs rounded-full bg-white border-[#dddddd]"
+              className="min-h-11 sm:h-9 text-xs rounded-full bg-white border-[#dddddd]"
             />
           </div>
 

@@ -84,11 +84,11 @@ export function UploadStepMetadata({
           value={docTitle}
           onChange={(e) => setDocTitle(e.target.value)}
           placeholder="Ví dụ: Báo cáo tài chính quý 3/2026"
-          className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+          className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1">
           <label htmlFor="doc-dept" className="text-xs font-medium text-[#222222]">
             Phòng ban chủ quản <span className="text-[#C13515]">*</span>
@@ -97,7 +97,7 @@ export function UploadStepMetadata({
             id="doc-dept"
             value={docDepartmentId}
             onChange={(e) => setDocDepartmentId(Number(e.target.value))}
-            className="w-full h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+            className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
           >
             {departments.map((dept) => (
               <option key={dept.id} value={dept.id}>
@@ -115,7 +115,7 @@ export function UploadStepMetadata({
             id="doc-category"
             value={docCategoryId}
             onChange={(e) => setDocCategoryId(Number(e.target.value))}
-            className="w-full h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+            className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
           >
             {businessCategories.map((cat) => (
               <option key={cat.id} value={cat.id}>
@@ -135,7 +135,7 @@ export function UploadStepMetadata({
           value={docCode}
           onChange={(e) => setDocCode(e.target.value)}
           placeholder="DOC-TC-2026-001"
-          className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+          className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
         />
       </div>
 
@@ -151,7 +151,7 @@ export function UploadStepMetadata({
               aria-label={`Chọn mức độ mật ${level.name} (${level.code})`}
               aria-pressed={docClassificationId === level.id}
               onClick={() => setDocClassificationId(level.id)}
-              className={`flex flex-col items-center justify-center py-2 px-3 rounded-full border text-center transition-all duration-200 cursor-pointer ${
+              className={`min-h-11 flex flex-col items-center justify-center py-2 px-3 rounded-full border text-center transition-all duration-200 cursor-pointer ${
                 docClassificationId === level.id
                   ? 'border-[#FF385C] bg-[#FF385C]/10 ring-1 ring-[#FF385C]'
                   : 'border-[#ebebeb] bg-[#ffffff] hover:bg-[#f7f7f7] hover:border-[#dddddd]'

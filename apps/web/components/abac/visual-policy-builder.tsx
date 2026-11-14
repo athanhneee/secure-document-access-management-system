@@ -108,7 +108,7 @@ export function VisualPolicyBuilder({
 
   const handleRemoveGroup = (groupId: number) => {
     if (rule.groups.length <= 1) {
-      // CONFLICT-RESOLVED: Thay thế hộp thoại trình duyệt thô window.alert bằng cảnh báo nội dòng Alert chuẩn WCAG.
+      // CONFLICT-RESOLVED: Thay thế hộp thoại cảnh báo trình duyệt mặc định bằng cảnh báo nội dòng Alert chuẩn WCAG.
       setBuilderWarning('Chính sách ABAC bắt buộc phải duy trì ít nhất một nhóm điều kiện (AND).');
       return;
     }
@@ -208,9 +208,9 @@ export function VisualPolicyBuilder({
                 type="button"
                 variant="outline"
                 onClick={() => updateRule(addDisjunctiveGroup(rule))}
-                className="rounded-full border-dashed border-[#dddddd] hover:border-[#FF385C] bg-[#ffffff] text-[#222222] text-xs h-9 px-6 flex items-center gap-2 shadow-xs"
+                className="rounded-full border-dashed border-[#dddddd] hover:border-[#FF385C] bg-[#ffffff] text-[#222222] text-xs min-h-11 sm:h-10 px-6 flex items-center gap-2 shadow-xs"
               >
-                <Plus size={16} strokeWidth={2} className="text-[#FF385C]" aria-hidden="true" />
+                <Plus size={16} strokeWidth={2} className="text-[#E31C5F]" aria-hidden="true" />
                 <span className="font-semibold">Thêm Nhóm Điều Kiện Mới (OR Clause)</span>
               </Button>
             </div>

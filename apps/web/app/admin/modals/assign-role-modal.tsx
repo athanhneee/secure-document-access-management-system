@@ -133,7 +133,7 @@ function AssignRoleForm({
           id="assign-role-id"
           value={assignRoleId}
           onChange={(e) => setAssignRoleId(e.target.value)}
-          className="w-full h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+          className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
         >
           {roles.map((r) => (
             <option key={r.id} value={r.id}>
@@ -143,7 +143,7 @@ function AssignRoleForm({
         </select>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1">
           <label htmlFor="assign-valid-from" className="font-medium text-[#222222]">
             Bắt đầu:
@@ -153,7 +153,7 @@ function AssignRoleForm({
             type="datetime-local"
             value={assignValidFrom}
             onChange={(e) => setAssignValidFrom(e.target.value)}
-            className="h-8 text-xs rounded-full"
+            className="min-h-11 sm:h-9 text-xs rounded-full"
           />
         </div>
         <div className="space-y-1">
@@ -165,7 +165,7 @@ function AssignRoleForm({
             type="datetime-local"
             value={assignValidTo}
             onChange={(e) => setAssignValidTo(e.target.value)}
-            className="h-8 text-xs rounded-full"
+            className="min-h-11 sm:h-9 text-xs rounded-full"
           />
         </div>
       </div>

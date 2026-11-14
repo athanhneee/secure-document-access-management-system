@@ -1,7 +1,7 @@
 'use client';
 
 import { Input } from '@/components/ui/input';
-import type { VisualPolicyRule, TargetAction } from './abac-models';
+import type { TargetAction, VisualPolicyRule } from './abac-models';
 
 interface PolicyMetaCardProps {
   rule: VisualPolicyRule;
@@ -24,7 +24,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             value={rule.code}
             onChange={(e) => onUpdateRule({ ...rule, code: e.target.value.toUpperCase() })}
             placeholder="VD: POL_SECRET_RESTRICTED"
-            className="h-8 text-xs font-mono font-semibold rounded-full bg-[#f7f7f7] border-[#dddddd] text-[#222222]"
+            className="min-h-11 sm:h-9 text-xs font-mono font-semibold rounded-full bg-[#f7f7f7] border-[#dddddd] text-[#222222]"
           />
         </div>
 
@@ -40,7 +40,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             value={rule.name}
             onChange={(e) => onUpdateRule({ ...rule, name: e.target.value })}
             placeholder="Tên gợi nhớ quy tắc..."
-            className="h-8 text-xs rounded-full border-[#dddddd] text-[#222222]"
+            className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] text-[#222222]"
           />
         </div>
 
@@ -53,7 +53,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
               type="button"
               aria-pressed={rule.effect === 'PERMIT'}
               onClick={() => onUpdateRule({ ...rule, effect: 'PERMIT' })}
-              className={`flex-1 h-8 rounded-full text-xs font-bold transition-all border cursor-pointer ${
+              className={`flex-1 min-h-11 sm:h-9 rounded-full text-xs font-bold transition-all border cursor-pointer ${
                 rule.effect === 'PERMIT'
                   ? 'bg-[#008A05]/10 border-[#008A05] text-[#008A05]'
                   : 'border-[#dddddd] text-[#717171] hover:bg-[#f7f7f7]'
@@ -65,7 +65,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
               type="button"
               aria-pressed={rule.effect === 'DENY'}
               onClick={() => onUpdateRule({ ...rule, effect: 'DENY' })}
-              className={`flex-1 h-8 rounded-full text-xs font-bold transition-all border cursor-pointer ${
+              className={`flex-1 min-h-11 sm:h-9 rounded-full text-xs font-bold transition-all border cursor-pointer ${
                 rule.effect === 'DENY'
                   ? 'bg-[#C13515]/10 border-[#C13515] text-[#C13515]'
                   : 'border-[#dddddd] text-[#717171] hover:bg-[#f7f7f7]'
@@ -91,7 +91,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             onChange={(e) =>
               onUpdateRule({ ...rule, targetAction: e.target.value as TargetAction })
             }
-            className="w-full h-8 text-xs rounded-full border border-[#dddddd] px-2.5 bg-[#ffffff] font-semibold text-[#222222]"
+            className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] font-semibold text-[#222222]"
           >
             <option value="ALL">TẤT CẢ HÀNH ĐỘNG (ALL ACTIONS)</option>
             <option value="VIEW">XEM TRỰC TUYẾN (VIEW)</option>
@@ -116,7 +116,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             max="100"
             value={rule.priority}
             onChange={(e) => onUpdateRule({ ...rule, priority: Number(e.target.value) })}
-            className="h-8 text-xs rounded-full border-[#dddddd] text-[#222222]"
+            className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] text-[#222222]"
           />
         </div>
 
@@ -132,7 +132,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             value={rule.description}
             onChange={(e) => onUpdateRule({ ...rule, description: e.target.value })}
             placeholder="Giải thích ngắn gọn nghiệp vụ của chính sách..."
-            className="h-8 text-xs rounded-full border-[#dddddd] text-[#222222]"
+            className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] text-[#222222]"
           />
         </div>
       </div>

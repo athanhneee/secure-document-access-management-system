@@ -109,7 +109,7 @@ function RolePermissionsForm({
   return (
     <form onSubmit={handleSaveRolePermissions} className="space-y-4 py-2 text-xs">
       <div className="max-h-80 overflow-y-auto pr-1 space-y-2">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {permissions.map((perm) => {
             const isChecked = selectedPermIds.includes(perm.id);
             return (

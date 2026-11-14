@@ -1,12 +1,12 @@
 'use client';
 
 import type { Dispatch, SetStateAction } from 'react';
-import { Network, KeyRound, FileCheck2 } from 'lucide-react';
+import { FileCheck2, KeyRound, Network } from 'lucide-react';
 import { CLEARANCE_OPTIONS, DEPARTMENT_OPTIONS, type TargetAction } from './abac-models';
 import type {
-  SimulationSubject,
-  SimulationResource,
   SimulationEnvironment,
+  SimulationResource,
+  SimulationSubject,
 } from './simulator-evaluator';
 
 interface SimulatorContextFormProps {
@@ -31,12 +31,11 @@ export function SimulatorContextForm({
   setEnvironment,
 }: SimulatorContextFormProps) {
   const selectCls =
-    'w-full text-xs h-8 rounded-full border border-[#dddddd] px-2.5 bg-[#ffffff] focus:border-[#FF385C]';
+    'w-full text-xs min-h-11 sm:h-9 rounded-full border border-[#dddddd] px-3 bg-[#ffffff] focus:border-[#FF385C]';
   const labelCls = 'block text-xs font-medium text-[#717171] mb-1';
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-      {/* SUBJECT CONTEXT */}
       <div className="p-3.5 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-3 shadow-xs">
         <div className="flex items-center gap-1.5 font-bold text-[#222222] border-b border-[#ebebeb] pb-2">
           <KeyRound size={16} strokeWidth={1.75} className="text-[#008489]" aria-hidden="true" />
@@ -96,7 +95,6 @@ export function SimulatorContextForm({
         </div>
       </div>
 
-      {/* RESOURCE CONTEXT */}
       <div className="p-3.5 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-3 shadow-xs">
         <div className="flex items-center gap-1.5 font-bold text-[#222222] border-b border-[#ebebeb] pb-2">
           <FileCheck2 size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
@@ -149,7 +147,7 @@ export function SimulatorContextForm({
             id="sim-resource-action"
             value={action}
             onChange={(e) => setAction(e.target.value as TargetAction)}
-            className="w-full text-xs h-8 rounded-full border border-[#dddddd] px-2.5 bg-[#ffffff] font-semibold text-[#FF385C]"
+            className="w-full text-xs min-h-11 sm:h-9 rounded-full border border-[#dddddd] px-3 bg-[#ffffff] font-semibold text-[#E31C5F]"
           >
             <option value="VIEW">XEM TRỰC TUYẾN (VIEW)</option>
             <option value="DOWNLOAD">TẢI BẢN SAO (DOWNLOAD)</option>
@@ -160,14 +158,13 @@ export function SimulatorContextForm({
         </div>
       </div>
 
-      {/* ENVIRONMENT CONTEXT */}
       <div className="p-3.5 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-3 shadow-xs">
         <div className="flex items-center gap-1.5 font-bold text-[#222222] border-b border-[#ebebeb] pb-2">
           <Network size={16} strokeWidth={1.75} className="text-[#008A05]" aria-hidden="true" />
           <span>3. Môi trường &amp; Thiết bị</span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label htmlFor="sim-env-network" className={labelCls}>
               Mạng nội bộ:
@@ -178,7 +175,7 @@ export function SimulatorContextForm({
               onChange={(e) =>
                 setEnvironment((env) => ({ ...env, trustedNetwork: e.target.value === 'true' }))
               }
-              className="w-full text-xs h-8 rounded-full border border-[#dddddd] px-2 bg-[#ffffff]"
+              className={selectCls}
             >
               <option value="true">Tin cậy (Yes)</option>
               <option value="false">Mạng ngoài (No)</option>
@@ -195,7 +192,7 @@ export function SimulatorContextForm({
               onChange={(e) =>
                 setEnvironment((env) => ({ ...env, mfa: e.target.value === 'true' }))
               }
-              className="w-full text-xs h-8 rounded-full border border-[#dddddd] px-2 bg-[#ffffff]"
+              className={selectCls}
             >
               <option value="true">Đã bật (Yes)</option>
               <option value="false">Chưa bật (No)</option>
@@ -203,7 +200,7 @@ export function SimulatorContextForm({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label htmlFor="sim-env-time" className={labelCls}>
               Giờ truy cập:

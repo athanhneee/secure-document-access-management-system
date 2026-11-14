@@ -81,11 +81,11 @@ export function MfaMethodCards({
               type="button"
               onClick={onWebAuthnVerify}
               disabled={isLoading || isWebAuthnLoading}
-              className="w-full py-3 px-4 rounded-full border border-[#222222] bg-[#222222] text-[#ffffff] hover:opacity-90 transition-all flex items-center justify-center gap-2.5 text-xs font-semibold shadow-xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              className="w-full min-h-11 py-3 px-4 rounded-full border border-[#222222] bg-[#222222] text-[#ffffff] hover:opacity-90 transition-all flex items-center justify-center gap-2.5 text-xs font-semibold shadow-xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isWebAuthnLoading ? (
                 <>
-                  <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  <div className="h-4 w-4 rounded-full border-2 border-[#ffffff]/30 border-t-[#ffffff] animate-spin" />
                   <span>Đang chạm khóa bảo mật FIDO2…</span>
                 </>
               ) : (
@@ -153,7 +153,7 @@ export function MfaMethodCards({
                 className="text-center font-bold text-sm tracking-wider bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
                 aria-label="Mã khôi phục khẩn cấp"
               />
-              <p className="text-xs text-[#E07912] text-center">
+              <p className="text-xs text-[#C13515] font-medium text-center">
                 Lưu ý: Mỗi mã khôi phục chỉ sử dụng được duy nhất một lần
               </p>
             </div>
@@ -169,12 +169,12 @@ export function MfaMethodCards({
         </form>
       </CardContent>
 
-      <CardFooter className="flex flex-col space-y-3 pt-2 border-t border-[#ebebeb]">
+      <CardFooter className="flex flex-col space-y-1.5 pt-2 border-t border-[#ebebeb]">
         <button
           type="button"
           disabled={isLoading || isWebAuthnLoading}
           onClick={onToggleRecoveryMode}
-          className="rounded-full px-3 py-1 text-xs text-[#FF385C] hover:bg-[#f7f7f7] hover:underline transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+          className="min-h-11 sm:min-h-9 rounded-full px-3 py-1.5 text-xs font-medium text-[#E31C5F] hover:bg-[#f7f7f7] hover:underline transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
         >
           <Key size={16} strokeWidth={1.75} aria-hidden="true" />
           <span>
@@ -188,15 +188,15 @@ export function MfaMethodCards({
           type="button"
           disabled={isLoading || isWebAuthnLoading}
           onClick={onStartEnrollment}
-          className="rounded-full px-3 py-1 text-xs text-[#222222] hover:bg-[#f7f7f7] hover:underline transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+          className="min-h-11 sm:min-h-9 rounded-full px-3 py-1.5 text-xs text-[#222222] hover:bg-[#f7f7f7] hover:underline transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
         >
-          <ShieldPlus size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
+          <ShieldPlus size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
           <span>Thiết lập MFA lần đầu</span>
         </button>
 
         <Link
           href="/login"
-          className="rounded-full px-3 py-1 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors flex items-center justify-center gap-1.5"
+          className="min-h-11 sm:min-h-9 rounded-full px-3 py-1.5 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors flex items-center justify-center gap-1.5"
         >
           <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
           <span>Quay về trang đăng nhập</span>

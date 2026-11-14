@@ -76,8 +76,13 @@ export function UploadStepPolicyReview({
                 </span>
               </div>
             ) : (
-              <div className="text-[#E07912] flex items-center gap-1.5 font-medium">
-                <Eye size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+              <div className="text-[#222222] flex items-center gap-1.5 font-medium">
+                <Eye
+                  size={16}
+                  strokeWidth={1.75}
+                  className="shrink-0 text-[#E07912]"
+                  aria-hidden="true"
+                />
                 <span>
                   Mức mật này <strong>cấm tải về ngoại tuyến</strong> theo quy chế an toàn dữ liệu.
                   Người dùng chỉ được xem trực tuyến qua Secure Sandbox.
@@ -96,7 +101,7 @@ export function UploadStepPolicyReview({
             type="date"
             value={docRetentionDate}
             onChange={(e) => setDocRetentionDate(e.target.value)}
-            className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+            className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
           />
         </div>
       </div>
@@ -110,7 +115,7 @@ export function UploadStepPolicyReview({
           <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
           <span>Xác minh trước khi mã hóa lưu trữ</span>
         </div>
-        <div className="grid grid-cols-2 gap-1.5 text-[#222222] pt-1 border-t border-[#008A05]/15">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[#222222] pt-1 border-t border-[#008A05]/15">
           <span className="text-[#717171]">Tiêu đề:</span>
           <span className="font-semibold text-[#222222]">{docTitle}</span>
           <span className="text-[#717171]">Tệp nguồn:</span>

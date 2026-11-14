@@ -86,9 +86,11 @@ export function GrantedDocumentsTab({
                           ))}
                         </div>
                       </TableCell>
-                      {/* CONFLICT-RESOLVED: Chuẩn hóa màu hạn hiệu lực sang mã cảnh báo #E07912 trong bảng màu chính thức (rules/ui-design-system.md §5) */}
-                      <TableCell className="text-xs font-bold text-[#E07912]">
-                        {new Date(doc.validUntil).toLocaleDateString('vi-VN')}
+                      <TableCell className="text-xs font-bold text-[#222222]">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="dot dot-warning" aria-hidden="true" />
+                          <span>{new Date(doc.validUntil).toLocaleDateString('vi-VN')}</span>
+                        </span>
                       </TableCell>
                       <TableCell className="text-right space-x-1">
                         <InteractiveHoverButton

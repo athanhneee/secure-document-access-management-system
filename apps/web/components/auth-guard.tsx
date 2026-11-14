@@ -77,27 +77,27 @@ export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGu
           </CardHeader>
           <CardContent className="space-y-6 pt-4 text-center">
             <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4 text-left space-y-2 text-sm">
-              <div className="flex items-center justify-between text-[#222222]">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[#222222]">
                 <span className="text-[#717171]">Tài khoản:</span>
                 <span className="font-bold text-[#222222]">
                   {user.username} ({user.fullName})
                 </span>
               </div>
               {requiredRole && (
-                <div className="flex items-center justify-between text-[#222222]">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[#222222]">
                   <span className="text-[#717171]">Vai trò yêu cầu:</span>
-                  <span className="font-semibold text-[#E07912]">
+                  <span className="font-semibold text-[#C13515]">
                     {ROLE_LABELS[requiredRole]} ({requiredRole})
                   </span>
                 </div>
               )}
               {requiredPermission && (
-                <div className="flex items-center justify-between text-[#222222]">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[#222222]">
                   <span className="text-[#717171]">Thẩm quyền yêu cầu:</span>
-                  <span className="font-bold text-xs text-[#E07912]">{requiredPermission}</span>
+                  <span className="font-bold text-xs text-[#C13515]">{requiredPermission}</span>
                 </div>
               )}
-              <div className="flex items-center justify-between text-[#222222] pt-1 border-t border-[#ebebeb]">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[#222222] pt-1 border-t border-[#ebebeb]">
                 <span className="text-[#717171]">Vai trò hiện có:</span>
                 <span className="text-xs text-[#222222]">
                   {user.roles.length > 0 ? user.roles.join(', ') : 'Chưa gán vai trò'}

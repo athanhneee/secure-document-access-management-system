@@ -1,6 +1,6 @@
 'use client';
 
-import { Network, Search, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Network, Search, ShieldCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -12,15 +12,33 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { SecurityAlertItem } from '../types';
+import type { GatewayHealthStatus, SecurityAlertItem } from '../types';
 import { NetworkDlpBlueprint, NetworkDlpOverview } from './network-dlp-overview';
 
 interface NetworkDlpTabProps {
   dlpAlerts: SecurityAlertItem[];
+  gatewayHealth?: GatewayHealthStatus | undefined;
   onSelectAlert: (alert: SecurityAlertItem) => void;
 }
 
-export function NetworkDlpTab({ dlpAlerts, onSelectAlert }: NetworkDlpTabProps) {
+export function NetworkDlpTab({
+  dlpAlerts,
+  gatewayHealth = 'ONLINE',
+  onSelectAlert,
+}: NetworkDlpTabProps) {
+  const healthBadgeVariant =
+    gatewayHealth === 'ONLINE'
+      ? 'success'
+      : gatewayHealth === 'DEGRADED'
+        ? 'warning'
+        : 'destructive';
+  const healthLabel =
+    gatewayHealth === 'ONLINE'
+      ? 'ONLINE · TCP 1344'
+      : gatewayHealth === 'DEGRADED'
+        ? 'DEGRADED · TCP 1344'
+        : 'OFFLINE · TCP 1344';
+
   return (
     <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
       <CardHeader>
@@ -35,8 +53,8 @@ export function NetworkDlpTab({ dlpAlerts, onSelectAlert }: NetworkDlpTabProps) 
               (Egress Traffic) kết nối thiết bị biên (Squid, Symantec, Forcepoint, F5)
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="success">ONLINE · TCP 1344</Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={healthBadgeVariant}>{healthLabel}</Badge>
             <Badge variant="danger">BLOCK VIOLATIONS</Badge>
           </div>
         </div>
@@ -45,7 +63,7 @@ export function NetworkDlpTab({ dlpAlerts, onSelectAlert }: NetworkDlpTabProps) 
         <NetworkDlpOverview />
 
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-bold text-[#222222] uppercase tracking-wider">
               Cảnh báo rò rỉ dữ liệu tầng mạng gần đây ({dlpAlerts.length})
             </h3>
@@ -68,21 +86,39 @@ export function NetworkDlpTab({ dlpAlerts, onSelectAlert }: NetworkDlpTabProps) 
                 {dlpAlerts.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center py-8 text-[#717171] text-xs">
-                      <div className="flex flex-col items-center justify-center gap-1.5">
-                        <ShieldCheck
-                          size={24}
-                          strokeWidth={1.75}
-                          className="text-[#008A05]"
-                          aria-hidden="true"
-                        />
-                        <span className="font-medium text-[#222222]">
-                          Cổng Network DLP ICAP Server đang bảo vệ an toàn luồng dữ liệu Egress
-                        </span>
-                        <span className="text-xs text-[#717171]">
-                          Chưa ghi nhận sự cố rò rỉ dữ liệu mật hoặc khóa bí mật ra ngoài thiết bị
-                          biên.
-                        </span>
-                      </div>
+                      {gatewayHealth === 'ONLINE' ? (
+                        <div className="flex flex-col items-center justify-center gap-1.5">
+                          <ShieldCheck
+                            size={24}
+                            strokeWidth={1.75}
+                            className="text-[#008A05]"
+                            aria-hidden="true"
+                          />
+                          <span className="font-medium text-[#222222]">
+                            Cổng Network DLP ICAP Server đang bảo vệ an toàn luồng dữ liệu Egress
+                          </span>
+                          <span className="text-xs text-[#717171]">
+                            Chưa ghi nhận sự cố rò rỉ dữ liệu mật hoặc khóa bí mật ra ngoài thiết bị
+                            biên.
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center gap-1.5">
+                          <AlertTriangle
+                            size={24}
+                            strokeWidth={1.75}
+                            className="text-[#C13515]"
+                            aria-hidden="true"
+                          />
+                          <span className="font-medium text-[#222222]">
+                            Trạng thái kết nối dịch vụ giám sát DLP đang suy giảm ({gatewayHealth})
+                          </span>
+                          <span className="text-xs text-[#717171]">
+                            Vui lòng kiểm tra kết nối máy chủ API / ICAP Gateway trước khi kết luận
+                            không có vi phạm.
+                          </span>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ) : (

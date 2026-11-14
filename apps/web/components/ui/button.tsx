@@ -97,14 +97,14 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       secondary:
         'bg-[#f7f7f7] text-[#222222] border border-[#ebebeb] hover:border-[#dddddd] hover:brightness-95 active:scale-[0.98]',
       ghost: 'text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] active:scale-[0.98]',
-      link: 'text-[#FF385C] underline-offset-4 hover:underline p-0 h-auto',
+      link: 'text-[#E31C5F] underline-offset-4 hover:underline p-0 h-auto',
     };
 
     const sizes: Record<string, string> = {
-      default: 'h-9 px-5 py-2 text-xs font-semibold',
-      sm: 'h-8 px-3.5 text-xs font-medium',
-      lg: 'h-10 px-6 text-sm font-semibold',
-      icon: 'h-9 w-9 p-0',
+      default: 'min-h-11 px-5 py-2 text-xs font-semibold',
+      sm: 'min-h-11 sm:min-h-9 px-3.5 text-xs font-medium',
+      lg: 'min-h-11 px-6 text-sm font-semibold',
+      icon: 'h-11 w-11 p-0',
     };
 
     if (variant === 'interactive') {
@@ -116,7 +116,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           aria-busy={effectiveLoading || undefined}
           onClick={onClick ? handleInstantClick : undefined}
           className={cn(
-            'group relative min-w-[8rem] w-auto inline-flex items-center justify-center cursor-pointer overflow-hidden rounded-full border border-transparent bg-[#FF385C] hover:bg-[#E31C5F] px-5 py-2 text-center text-xs font-semibold text-white shadow-2xs transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] select-none disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]',
+            'group relative min-h-11 min-w-[8rem] w-auto inline-flex items-center justify-center cursor-pointer overflow-hidden rounded-full border border-transparent bg-[#FF385C] hover:bg-[#E31C5F] px-5 py-2 text-center text-xs font-semibold text-white shadow-2xs transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] select-none disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]',
             className,
           )}
           {...props}

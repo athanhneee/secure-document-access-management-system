@@ -93,7 +93,7 @@ export function CreateRoleModal({
               value={newRoleCode}
               onChange={(e) => setNewRoleCode(e.target.value.toUpperCase())}
               placeholder="COMPLIANCE_OFFICER"
-              className="h-8 text-xs rounded-full uppercase"
+              className="min-h-11 sm:h-9 text-xs rounded-full uppercase"
             />
           </div>
 
@@ -107,7 +107,7 @@ export function CreateRoleModal({
               value={newRoleName}
               onChange={(e) => setNewRoleName(e.target.value)}
               placeholder="Cán bộ Giám sát Tuân thủ"
-              className="h-8 text-xs rounded-full"
+              className="min-h-11 sm:h-9 text-xs rounded-full"
             />
           </div>
 

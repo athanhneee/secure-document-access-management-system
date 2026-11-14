@@ -24,16 +24,29 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: { baseURL: webUrl, trace: 'retain-on-failure' },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'mobile-375',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 375, height: 667 },
+        isMobile: true,
+        hasTouch: true,
+      },
+    },
+  ],
   webServer: [
     {
-      command: `pnpm --filter @sda/web exec next start -H 127.0.0.1 -p ${webPort}`,
+      command: 'node apps/web/.next/standalone/apps/web/server.js',
       cwd: repositoryRoot,
       url: webUrl,
       timeout: 60_000,
       reuseExistingServer: false,
       env: {
         NODE_ENV: 'production',
+        HOSTNAME: '127.0.0.1',
+        PORT: String(webPort),
         NEXT_TELEMETRY_DISABLED: '1',
         INTERNAL_API_ORIGIN: API_BASE,
         NEXT_PUBLIC_API_BASE_URL: '/api/v1',

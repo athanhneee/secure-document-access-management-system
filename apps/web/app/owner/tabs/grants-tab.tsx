@@ -92,7 +92,7 @@ export function GrantsTab({ grants, onOpenDirectGrant, onOpenRevoke }: GrantsTab
                     </TableCell>
                     <TableCell className="text-xs text-[#222222] font-bold">
                       <div>Từ: {new Date(grant.validFrom).toLocaleDateString('vi-VN')}</div>
-                      <div className="text-[#E07912]">
+                      <div className="text-[#717171]">
                         Đến: {new Date(grant.validUntil).toLocaleDateString('vi-VN')}
                       </div>
                     </TableCell>

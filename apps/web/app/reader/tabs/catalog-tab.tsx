@@ -53,7 +53,7 @@ export function CatalogTab({
             aria-label="Lọc theo mức độ mật"
             value={selectedClassification}
             onChange={(e) => onClassificationChange(e.target.value)}
-            className="h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+            className="min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
           >
             <option value="ALL">Tất cả mức mật</option>
             <option value="UNCLASSIFIED">Không mật</option>
@@ -68,7 +68,7 @@ export function CatalogTab({
             <Search
               size={16}
               strokeWidth={1.75}
-              className="pointer-events-none absolute left-3.5 top-3 text-[#717171]"
+              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#717171]"
               aria-hidden="true"
             />
             <Input
@@ -77,7 +77,7 @@ export function CatalogTab({
               placeholder="Tìm kiếm tài liệu..."
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
-              className="pl-10 h-10 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+              className="pl-10 min-h-11 sm:h-10 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
             />
           </div>
         </div>
@@ -125,8 +125,9 @@ export function CatalogTab({
                         {doc.allowDownload ? (
                           <span className="text-xs text-[#008A05] font-medium">Cho phép tải</span>
                         ) : (
-                          <span className="text-xs text-[#E07912] font-medium">
-                            Chỉ xem trực tuyến
+                          <span className="inline-flex items-center gap-1.5 text-xs text-[#222222] font-medium">
+                            <span className="dot dot-warning" aria-hidden="true" />
+                            <span>Chỉ xem trực tuyến</span>
                           </span>
                         )}
                       </TableCell>

@@ -6,24 +6,48 @@ import { applyOptimisticStatusById } from '@/lib/optimistic-state';
 import { mapAlertDto, mapIncidentDto } from '../helpers';
 import type {
   AlertApiDto,
+  AlertNoteItem,
   DetectionRuleItem,
   DocumentSessionItem,
+  GatewayHealthStatus,
   IncidentApiDto,
   IncidentItem,
   SecurityAlertItem,
+  SecurityPaginatedResponse,
 } from '../types';
 
+export interface OptimisticAlertPatch {
+  status?: SecurityAlertItem['status'] | undefined;
+  resolutionNote?: string | undefined;
+  addedNote?: AlertNoteItem | undefined;
+}
+
+async function probeGatewayHealth(signal?: AbortSignal): Promise<GatewayHealthStatus> {
+  try {
+    const res = await apiClient<{ status?: string }>('/health/ready', { signal });
+    const normalized = (res?.status || '').toUpperCase();
+    return normalized === 'READY' || normalized === 'OK' ? 'ONLINE' : 'DEGRADED';
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 503) {
+      return 'DEGRADED';
+    }
+    return 'OFFLINE';
+  }
+}
+
 /**
- * Thuật toán: Đồng bộ Dữ liệu Giám sát SOC Chịu lỗi & Cắt Phiên Truy cập Khẩn cấp (`useSecurityData`)
- * Mục đích: Nạp song song cảnh báo bảo mật, hồ sơ sự cố, cấu hình luật phát hiện và danh sách phiên đọc đang mở, đồng thời cho phép cưỡng bức ngắt phiên nghi vấn.
+ * Thuật toán: Đồng bộ Dữ liệu Giám sát SOC Chế độ Fail-Closed & Ngắt Phiên Khẩn cấp (`useSecurityData`)
+ * Mục đích: Tải song song cảnh báo bảo mật, hồ sơ sự cố, luật phát hiện, phiên đọc đang hoạt động và trạng thái sức khỏe cổng DLP mà tuyệt đối không nuốt lỗi API thành mảng rỗng giả.
  * Cơ chế hoạt động:
- *   - Chạy `Promise.all` kèm nhánh dự phòng `.catch()` riêng cho từng điểm cuối để cô lập lỗi mạng cục bộ; cập nhật lạc quan trạng thái phiên sang `TERMINATED` ngay sau lệnh ngắt `/access-sessions/:id/terminate`.
+ *   - Chạy `Promise.all` không che giấu ngoại lệ mạng/`401`/`403`/`500` để cảnh báo rõ ràng cho cán bộ SOC kèm nút thử lại.
+ *   - Hỗ trợ cập nhật lạc quan trạng thái cảnh báo, kết luận xử lý (`resolutionNote`) và ghi chú điều tra (`notes`) kèm hàm hoàn tác nguyên tử.
  */
 export function useSecurityData() {
   const [alerts, setAlerts] = useState<SecurityAlertItem[]>([]);
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [detectionRules, setDetectionRules] = useState<DetectionRuleItem[]>([]);
   const [documentSessions, setDocumentSessions] = useState<DocumentSessionItem[]>([]);
+  const [gatewayHealth, setGatewayHealth] = useState<GatewayHealthStatus>('ONLINE');
   const [terminatingSessionId, setTerminatingSessionId] = useState<string | null>(null);
   const [pendingTerminateSessionId, setPendingTerminateSessionId] = useState<string | null>(null);
 
@@ -31,55 +55,97 @@ export function useSecurityData() {
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const refreshData = useCallback(async (options?: { silent?: boolean }) => {
-    if (!options?.silent) {
-      setIsLoading(true);
-    }
-    setErrorMessage(null);
-    try {
-      const [alertsRes, incRes, rulesRes, sessionsRes] = await Promise.all([
-        apiClient<{ data: AlertApiDto[] }>('/security-alerts?pageSize=50').catch(() => ({
-          data: [],
-        })),
-        apiClient<{ data: IncidentApiDto[] }>('/incidents?pageSize=50').catch(() => ({ data: [] })),
-        apiClient<DetectionRuleItem[] | { data?: DetectionRuleItem[] }>(
-          '/security-detection/rules',
-        ).catch(() => []),
-        apiClient<{ data: DocumentSessionItem[] }>('/access-sessions').catch(() => ({ data: [] })),
-      ]);
-
-      setDocumentSessions(sessionsRes.data || []);
-      setAlerts((alertsRes.data || []).map(mapAlertDto));
-      setIncidents((incRes.data || []).map(mapIncidentDto));
-      setDetectionRules(
-        Array.isArray(rulesRes) ? rulesRes : Array.isArray(rulesRes?.data) ? rulesRes.data : [],
-      );
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setErrorMessage(err.message);
-      } else {
-        setErrorMessage('Không thể tải dữ liệu an ninh thông tin.');
-      }
-    } finally {
-      if (!options?.silent) {
-        setIsLoading(false);
-      }
-    }
+  const loadSnapshot = useCallback(async (signal?: AbortSignal) => {
+    const reqOpts = signal ? { signal } : undefined;
+    const [alertsRes, incRes, rulesRes, sessionsRes, healthStatus] = await Promise.all([
+      apiClient<SecurityPaginatedResponse<AlertApiDto>>('/security-alerts?pageSize=50', reqOpts),
+      apiClient<SecurityPaginatedResponse<IncidentApiDto>>('/incidents?pageSize=50', reqOpts),
+      apiClient<DetectionRuleItem[] | { data?: DetectionRuleItem[] }>(
+        '/security-detection/rules',
+        reqOpts,
+      ),
+      apiClient<SecurityPaginatedResponse<DocumentSessionItem>>('/access-sessions', reqOpts),
+      probeGatewayHealth(signal),
+    ]);
+    return { alertsRes, incRes, rulesRes, sessionsRes, healthStatus };
   }, []);
 
-  useEffect(() => {
-    let ignore = false;
-    const run = async () => {
-      await Promise.resolve();
-      if (!ignore) {
-        void refreshData();
+  const refreshData = useCallback(
+    async (options?: { silent?: boolean; signal?: AbortSignal }) => {
+      if (!options?.silent) {
+        setIsLoading(true);
       }
-    };
-    void run();
+      setErrorMessage(null);
+      try {
+        const snap = await loadSnapshot(options?.signal);
+        if (options?.signal?.aborted) return;
+
+        setGatewayHealth(snap.healthStatus);
+        setDocumentSessions(snap.sessionsRes.data || []);
+        setAlerts((snap.alertsRes.data || []).map(mapAlertDto));
+        setIncidents((snap.incRes.data || []).map(mapIncidentDto));
+        setDetectionRules(
+          Array.isArray(snap.rulesRes)
+            ? snap.rulesRes
+            : Array.isArray(snap.rulesRes?.data)
+              ? snap.rulesRes.data
+              : [],
+        );
+      } catch (err) {
+        if (options?.signal?.aborted) return;
+        setGatewayHealth('DEGRADED');
+        setErrorMessage(
+          err instanceof ApiError
+            ? err.message || 'Không thể tải dữ liệu giám sát an ninh SOC.'
+            : 'Không thể kết nối máy chủ giám sát an ninh thông tin.',
+        );
+      } finally {
+        if (!options?.silent && !options?.signal?.aborted) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [loadSnapshot],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await loadSnapshot(controller.signal);
+        if (cancelled) return;
+        setGatewayHealth(snap.healthStatus);
+        setDocumentSessions(snap.sessionsRes.data || []);
+        setAlerts((snap.alertsRes.data || []).map(mapAlertDto));
+        setIncidents((snap.incRes.data || []).map(mapIncidentDto));
+        setDetectionRules(
+          Array.isArray(snap.rulesRes)
+            ? snap.rulesRes
+            : Array.isArray(snap.rulesRes?.data)
+              ? snap.rulesRes.data
+              : [],
+        );
+        setErrorMessage(null);
+      } catch (err) {
+        if (cancelled) return;
+        setGatewayHealth('DEGRADED');
+        setErrorMessage(
+          err instanceof ApiError
+            ? err.message || 'Không thể tải dữ liệu giám sát an ninh SOC.'
+            : 'Không thể kết nối máy chủ giám sát an ninh thông tin.',
+        );
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    })();
     return () => {
-      ignore = true;
+      cancelled = true;
+      controller.abort();
     };
-  }, [refreshData]);
+  }, [loadSnapshot]);
 
   async function runDetection() {
     setErrorMessage(null);
@@ -91,31 +157,35 @@ export function useSecurityData() {
       setMessage('Đã kích hoạt quét phát hiện bất thường trên toàn bộ audit log 60 phút qua.');
       await refreshData({ silent: true });
     } catch (err) {
-      if (err instanceof ApiError) {
-        setErrorMessage(err.message);
-      } else {
-        setErrorMessage('Không thể chạy quét bất thường.');
-      }
+      setErrorMessage(
+        err instanceof ApiError ? err.message : 'Không thể chạy quét phát hiện bất thường.',
+      );
     }
   }
 
-  function applyOptimisticAlertStatus(
-    alertId: string,
-    nextStatus: SecurityAlertItem['status'],
-  ): () => void {
+  function applyOptimisticAlertUpdate(alertId: string, patch: OptimisticAlertPatch): () => void {
     const previousAlerts = alerts;
-    setAlerts((prev) => applyOptimisticStatusById(prev, alertId, nextStatus));
+    setAlerts((prev) =>
+      prev.map((item) => {
+        if (item.id !== alertId) return item;
+        return {
+          ...item,
+          status: patch.status ?? item.status,
+          resolutionNote:
+            patch.resolutionNote !== undefined ? patch.resolutionNote : item.resolutionNote,
+          notes: patch.addedNote ? [...(item.notes ?? []), patch.addedNote] : item.notes,
+        };
+      }),
+    );
     return () => {
       setAlerts(previousAlerts);
     };
   }
 
-  // CONFLICT-RESOLVED: Gỡ bỏ hộp thoại xác nhận gốc của trình duyệt, chuyển sang hộp thoại phương thức ConfirmDialog chuẩn WCAG 2.1 AA (rules/ui-design-system.md §6.3) kèm ngắt phiên lạc quan dưới 16ms
   async function terminateSession(explicitId?: string) {
     const sessionId = explicitId ?? pendingTerminateSessionId;
-    if (!sessionId) {
-      return;
-    }
+    if (!sessionId) return;
+
     const previousSessions = documentSessions;
     setTerminatingSessionId(sessionId);
     setPendingTerminateSessionId(null);
@@ -124,17 +194,15 @@ export function useSecurityData() {
     setMessage('Đã ngắt phiên truy cập tài liệu thành công.');
 
     try {
-      await apiClient(`/access-sessions/${sessionId}/terminate`, {
-        method: 'POST',
-      });
+      await apiClient(`/access-sessions/${sessionId}/terminate`, { method: 'POST' });
     } catch (err) {
       setDocumentSessions(previousSessions);
       setMessage(null);
-      if (err instanceof ApiError) {
-        setErrorMessage(err.message || 'Không thể ngắt phiên truy cập.');
-      } else {
-        setErrorMessage('Không thể ngắt phiên truy cập.');
-      }
+      setErrorMessage(
+        err instanceof ApiError
+          ? err.message || 'Không thể ngắt phiên truy cập.'
+          : 'Không thể ngắt phiên truy cập.',
+      );
     } finally {
       setTerminatingSessionId(null);
     }
@@ -145,6 +213,7 @@ export function useSecurityData() {
     incidents,
     detectionRules,
     documentSessions,
+    gatewayHealth,
     terminatingSessionId,
     pendingTerminateSessionId,
     setPendingTerminateSessionId,
@@ -155,7 +224,7 @@ export function useSecurityData() {
     setErrorMessage,
     refreshData,
     runDetection,
-    applyOptimisticAlertStatus,
+    applyOptimisticAlertUpdate,
     terminateSession,
   };
 }

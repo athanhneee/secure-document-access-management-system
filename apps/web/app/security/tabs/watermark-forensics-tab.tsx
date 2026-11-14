@@ -81,7 +81,7 @@ export function WatermarkForensicsTab({
                 value={wmInputToken}
                 onChange={(e) => setWmInputToken(e.target.value)}
                 placeholder="Ví dụ: WM-8f3a9b2c1e7d4410"
-                className="h-9 font-bold text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+                className="min-h-11 sm:h-9 font-bold text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
               />
             </div>
 
@@ -126,14 +126,16 @@ export function WatermarkForensicsTab({
                   <CheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Đối soát thành công · Bằng chứng hợp lệ</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-[#222222]">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[#222222]">
                   <span className="text-[#717171]">Tài liệu:</span>
                   <span className="font-semibold text-[#222222]">
                     {wmTraceResult.documentTitle}
                   </span>
 
                   <span className="text-[#717171]">Mã số tài liệu:</span>
-                  <span className="font-bold text-[#222222]">{wmTraceResult.documentCode}</span>
+                  <span className="font-bold text-[#222222] break-all">
+                    {wmTraceResult.documentCode}
+                  </span>
 
                   <span className="text-[#717171]">Mức độ mật:</span>
                   <span className="font-semibold text-[#C13515]">
@@ -155,7 +157,7 @@ export function WatermarkForensicsTab({
                   <span className="font-bold text-[#222222]">{wmTraceResult.generatedAtUtc}</span>
 
                   <span className="text-[#717171]">Session ID:</span>
-                  <span className="font-bold text-[13px] text-[#717171]">
+                  <span className="font-bold text-[13px] text-[#717171] break-all">
                     {wmTraceResult.sessionId}
                   </span>
                 </div>
@@ -175,7 +177,7 @@ export function WatermarkForensicsTab({
           ) : (
             <div className="flex flex-col items-center justify-center text-center p-8 text-[#717171] space-y-2">
               {/* CONFLICT-RESOLVED: Giới hạn icon QrCode tối đa 24px chuẩn strokeWidth 1.75 thay cho 40px (rules/ui-design-system.md §2) */}
-              <QrCode size={24} strokeWidth={1.75} className="text-[#b0b0b0]" aria-hidden="true" />
+              <QrCode size={24} strokeWidth={1.75} className="text-[#717171]" aria-hidden="true" />
               <p>Nhập mã token ở bên trái và bấm đối soát để hiển thị thông tin chứng cứ</p>
             </div>
           )}

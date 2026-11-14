@@ -13,16 +13,17 @@ import {
 } from '@/components/ui/dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Textarea } from '@/components/ui/textarea';
-import type { SecurityAlertItem } from '../types';
+import type { OptimisticAlertPatch } from '../hooks/use-security-data';
+import type { AlertNoteItem, SecurityAlertItem } from '../types';
+import { AlertNotesHistory } from './alert-notes-history';
+import { STATUS_LABELS, VALID_TRANSITIONS } from './alert-status-config';
 
 interface AlertDetailModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   alert: SecurityAlertItem | null;
   onClearError: () => void;
-  // CONFLICT-RESOLVED: Bổ sung `| undefined` tường minh để tương thích `exactOptionalPropertyTypes: true` khi truyền callback cập nhật lạc quan xuống AlertDetailForm.
-  onOptimisticStatusChange?:
-    ((alertId: string, nextStatus: SecurityAlertItem['status']) => () => void) | undefined;
+  onOptimisticUpdate?: ((alertId: string, patch: OptimisticAlertPatch) => () => void) | undefined;
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
 }
@@ -32,7 +33,7 @@ export function AlertDetailModal({
   onOpenChange,
   alert,
   onClearError,
-  onOptimisticStatusChange,
+  onOptimisticUpdate,
   onSuccess,
   onError,
 }: AlertDetailModalProps) {
@@ -44,7 +45,7 @@ export function AlertDetailModal({
             Chi tiết cảnh báo an ninh #{alert?.id}
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Cập nhật trạng thái điều tra theo máy trạng thái nghiêm ngặt
+            Cập nhật trạng thái điều tra theo máy trạng thái nghiêm ngặt và lưu vết ghi chú nội bộ
           </DialogDescription>
         </DialogHeader>
 
@@ -54,7 +55,7 @@ export function AlertDetailModal({
             alert={alert}
             onClose={() => onOpenChange(false)}
             onClearError={onClearError}
-            onOptimisticStatusChange={onOptimisticStatusChange}
+            onOptimisticUpdate={onOptimisticUpdate}
             onSuccess={onSuccess}
             onError={onError}
           />
@@ -64,46 +65,24 @@ export function AlertDetailModal({
   );
 }
 
-/**
- * Thuật toán: Máy Trạng Thái Chuyển Tiếp Cảnh Báo An Ninh & Bổ Sung Ghi Chú Điều Tra Độc Lập (`VALID_TRANSITIONS`)
- * Mục đích: Khóa danh sách trạng thái đích hợp lệ theo trạng thái hiện tại, bỏ qua lệnh tự chuyển tiếp (`PATCH /status`) khi chỉ ghi chú điều tra và cho phép đính kèm ghi chú ngay cả ở trạng thái kết thúc.
- * Cơ chế hoạt động:
- *   - Sinh tập trạng thái cho phép `[alert.status, ...VALID_TRANSITIONS[alert.status]]`; vô hiệu hóa thẻ `<select>` khi cảnh báo đã đóng (`RESOLVED` / `FALSE_POSITIVE`).
- *   - Chỉ phát truy vấn `PATCH /security-alerts/:id/status` khi `newStatus !== alert.status`; nếu `newStatus === alert.status` và có `investigationNote`, chuyển thẳng tới `POST /security-alerts/:id/notes`.
- */
-// CONFLICT-RESOLVED: Đồng bộ tập trạng thái chuyển tiếp với AlertStatusSchema (@sda/contracts) và enum CSDL alert_status để không gửi ESCALATED gây lỗi 400, vẫn hỗ trợ ESCALATED -> RESOLVED nếu nhận từ API.
-const VALID_TRANSITIONS: Record<SecurityAlertItem['status'], SecurityAlertItem['status'][]> = {
-  OPEN: ['INVESTIGATING', 'RESOLVED', 'FALSE_POSITIVE'],
-  INVESTIGATING: ['RESOLVED', 'FALSE_POSITIVE'],
-  ESCALATED: ['RESOLVED'],
-  RESOLVED: [],
-  FALSE_POSITIVE: [],
-};
-
-const STATUS_LABELS: Record<SecurityAlertItem['status'], string> = {
-  OPEN: 'OPEN (Đang mở)',
-  INVESTIGATING: 'INVESTIGATING (Đang điều tra)',
-  ESCALATED: 'ESCALATED (Đã leo thang)',
-  RESOLVED: 'RESOLVED (Đã xử lý)',
-  FALSE_POSITIVE: 'FALSE_POSITIVE (Báo động giả)',
-};
-
 interface AlertDetailFormProps {
   alert: SecurityAlertItem;
   onClose: () => void;
   onClearError: () => void;
-  // CONFLICT-RESOLVED: Bổ sung `| undefined` tường minh để tương thích `exactOptionalPropertyTypes: true` khi truyền callback cập nhật lạc quan xuống AlertDetailForm.
-  onOptimisticStatusChange?:
-    ((alertId: string, nextStatus: SecurityAlertItem['status']) => () => void) | undefined;
+  onOptimisticUpdate?: ((alertId: string, patch: OptimisticAlertPatch) => () => void) | undefined;
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
 }
 
+/**
+ * Thuật toán: Máy Trạng Thái Chuyển Tiếp Cảnh Báo An Ninh & Nối Tức Thì Ghi Chú Điều Tra (`AlertDetailForm`)
+ * Mục đích: Khóa trạng thái đích theo `VALID_TRANSITIONS`, hiển thị lịch sử `resolutionNote` + `notes`, và nối lạc quan ghi chú vừa gửi ngay lập tức.
+ */
 function AlertDetailForm({
   alert,
   onClose,
   onClearError,
-  onOptimisticStatusChange,
+  onOptimisticUpdate,
   onSuccess,
   onError,
 }: AlertDetailFormProps) {
@@ -132,14 +111,12 @@ function AlertDetailForm({
       onError('Vui lòng chọn trạng thái chuyển tiếp mới hoặc nhập ghi chú điều tra nội bộ.');
       return;
     }
-
     if (requiresResolutionNote && trimmedResNote.length < 5) {
       onError(
         'Cần ghi rõ ghi chú kết luận xử lý (ít nhất 5 ký tự) khi đóng hoặc đánh dấu false-positive.',
       );
       return;
     }
-
     if (trimmedInvNote && trimmedInvNote.length < 5) {
       onError('Ghi chú điều tra nội bộ cần tối thiểu 5 ký tự.');
       return;
@@ -147,39 +124,45 @@ function AlertDetailForm({
 
     setIsUpdatingAlert(true);
     onClearError();
-    const rollback = statusChanged ? onOptimisticStatusChange?.(alert.id, newStatus) : undefined;
-    onClose();
+
+    const optimisticNote: AlertNoteItem | undefined = trimmedInvNote
+      ? {
+          id: `temp-${Date.now()}`,
+          note: trimmedInvNote,
+          authorName: 'Cán bộ An ninh (SOC)',
+          createdAt: new Date().toISOString(),
+        }
+      : undefined;
+    const rollback = onOptimisticUpdate?.(alert.id, {
+      status: statusChanged ? newStatus : undefined,
+      resolutionNote: trimmedResNote || undefined,
+      addedNote: optimisticNote,
+    });
 
     try {
       if (statusChanged) {
         await apiClient(`/security-alerts/${alert.id}/status`, {
           method: 'PATCH',
-          body: JSON.stringify({
-            status: newStatus,
-            resolutionNote: trimmedResNote || undefined,
-          }),
+          body: JSON.stringify({ status: newStatus, resolutionNote: trimmedResNote || undefined }),
         });
       }
-
       if (trimmedInvNote) {
         await apiClient(`/security-alerts/${alert.id}/notes`, {
           method: 'POST',
           body: JSON.stringify({ note: trimmedInvNote }),
         });
       }
-
+      setInvestigationNote('');
+      if (trimmedResNote) setResolutionNote('');
       await onSuccess(
         statusChanged
           ? `Đã cập nhật trạng thái cảnh báo thành ${newStatus}.`
           : 'Đã lưu ghi chú điều tra nội bộ cho cảnh báo.',
       );
+      if (statusChanged) onClose();
     } catch (err) {
       rollback?.();
-      if (err instanceof ApiError) {
-        onError(err.message || 'Không thể cập nhật cảnh báo.');
-      } else {
-        onError('Đã xảy ra lỗi khi cập nhật cảnh báo.');
-      }
+      onError(err instanceof ApiError ? err.message : 'Đã xảy ra lỗi khi cập nhật cảnh báo.');
     } finally {
       setIsUpdatingAlert(false);
     }
@@ -188,20 +171,13 @@ function AlertDetailForm({
   return (
     <>
       <div className="space-y-3.5 py-2 text-xs">
-        <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5">
-          <div className="flex justify-between">
-            <span className="text-[#717171]">Quy tắc:</span>
-            <span className="font-bold text-[#222222]">{alert.ruleCode}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-[#717171]">Đối tượng:</span>
-            <span className="font-medium text-[#222222]">{alert.detectedUserName}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-[#717171]">Địa chỉ IP:</span>
-            <span className="font-bold text-[#222222]">{alert.ipAddress}</span>
-          </div>
-        </div>
+        <AlertNotesHistory
+          ruleCode={alert.ruleCode}
+          detectedUserName={alert.detectedUserName}
+          ipAddress={alert.ipAddress}
+          resolutionNote={alert.resolutionNote}
+          notes={alert.notes}
+        />
 
         <div className="space-y-1">
           <label htmlFor="alert-status-select" className="font-medium text-[#222222]">
@@ -212,11 +188,11 @@ function AlertDetailForm({
             value={newStatus}
             disabled={isTerminalStatus || isUpdatingAlert}
             onChange={(e) => setNewStatus(e.target.value as SecurityAlertItem['status'])}
-            className="w-full h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {allowedStatuses.map((statusOption) => (
-              <option key={statusOption} value={statusOption}>
-                {STATUS_LABELS[statusOption]}
+            {allowedStatuses.map((opt) => (
+              <option key={opt} value={opt}>
+                {STATUS_LABELS[opt]}
               </option>
             ))}
           </select>

@@ -90,7 +90,7 @@ export function CreateIncidentModal({
               value={incTitle}
               onChange={(e) => setIncTitle(e.target.value)}
               placeholder="Ví dụ: Nghi vấn rò rỉ tài liệu mật phòng Tài chính"
-              className="h-8 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+              className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
             />
           </div>
 

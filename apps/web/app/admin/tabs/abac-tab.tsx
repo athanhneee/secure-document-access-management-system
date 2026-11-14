@@ -44,11 +44,11 @@ export function AbacTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 border-b border-[#ebebeb] pb-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#ebebeb] pb-2">
         <button
           type="button"
           onClick={() => setAbacSubTab('policies')}
-          className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer ${
+          className={`min-h-11 sm:min-h-9 px-3.5 py-1.5 rounded-full text-xs font-semibold cursor-pointer ${
             abacSubTab === 'policies'
               ? 'bg-[#FF385C] text-white shadow-xs'
               : 'bg-[#f7f7f7] text-[#717171] hover:bg-[#ebebeb]'
@@ -59,7 +59,7 @@ export function AbacTab({
         <button
           type="button"
           onClick={() => setAbacSubTab('attributes')}
-          className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer ${
+          className={`min-h-11 sm:min-h-9 px-3.5 py-1.5 rounded-full text-xs font-semibold cursor-pointer ${
             abacSubTab === 'attributes'
               ? 'bg-[#FF385C] text-white shadow-xs'
               : 'bg-[#f7f7f7] text-[#717171] hover:bg-[#ebebeb]'
@@ -91,13 +91,13 @@ export function AbacTab({
                   Department và Obligations
                 </CardDescription>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => setSimulatorOpen(true)}
-                  className="rounded-full text-xs h-8 border-[#dddddd] hover:border-[#008A05] flex items-center gap-1.5"
+                  className="rounded-full text-xs border-[#dddddd] hover:border-[#008A05] flex items-center gap-1.5"
                 >
                   <Play
                     size={16}
@@ -114,7 +114,7 @@ export function AbacTab({
                     setSelectedRuleForBuilder(undefined);
                     setBuilderOpen(true);
                   }}
-                  className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs h-8 px-4 font-semibold flex items-center gap-1.5"
+                  className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs px-4 font-semibold flex items-center gap-1.5"
                 >
                   <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Soạn thảo Trực quan</span>
@@ -183,7 +183,7 @@ export function AbacTab({
                                 setSelectedRuleForBuilder(resolveVisualRuleForPolicy(p));
                                 setBuilderOpen(true);
                               }}
-                              className="h-7 text-xs rounded-full hover:bg-[#f7f7f7] text-[#FF385C] font-semibold"
+                              className="text-xs rounded-full hover:bg-[#f7f7f7] text-[#E31C5F] font-semibold"
                             >
                               Sửa Trực quan
                             </Button>

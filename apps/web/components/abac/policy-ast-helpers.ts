@@ -1,28 +1,32 @@
 import type {
-  VisualPolicyRule,
-  VisualCondition,
-  VisualConditionGroup,
-  VisualObligation,
   AttributeMetadata,
   ExpectedValue,
   PolicyOperator,
+  VisualCondition,
+  VisualPolicyRule,
 } from './abac-models';
 import { ATTRIBUTE_REGISTRY } from './abac-models';
 import type { PolicyTemplate } from './policy-templates';
 
+export {
+  addDisjunctiveGroup,
+  duplicateDisjunctiveGroup,
+  filterAttributePalette,
+  relocateConditionAcrossGroups,
+  toggleRuleObligation,
+} from './policy-group-helpers';
+
 let conditionCounter = 0;
 
 /**
- * Thuật toán: Bộ Đếm Đơn Điệu Sinh Định Danh Nút AST (`createConditionId`)
+ * Thuật toán: Biến Đổi Cây Cú Pháp Trừu Tượng Chính Sách ABAC Có Ràng Buộc Kiểu (`policy-ast-helpers`)
+ * Mục đích: Sinh định danh đơn điệu cho các nút vị từ, khởi tạo giá trị kỳ vọng mặc định đồng bộ theo `(attributeMeta, operator)` và tuần tự hóa hai chiều giữa biểu diễn DNF trực quan với JSON AST.
  */
 export function createConditionId(): string {
   conditionCounter += 1;
   return `cond-${conditionCounter}`;
 }
 
-/**
- * Thuật toán: Khởi Tạo Giá Trị Kỳ Vọng Mặc Định Đồng Bộ Theo Toán Tử & Miền Kiểu (`defaultExpectedValue`)
- */
 export function defaultExpectedValue(
   meta: AttributeMetadata | undefined,
   operator: PolicyOperator,
@@ -73,16 +77,10 @@ export const DEFAULT_INITIAL_RULE: VisualPolicyRule = {
   obligations: [{ type: 'REQUIRE_WATERMARK' }],
 };
 
-/**
- * Thuật toán: Chuẩn Hóa & Tuần Tự Hóa Trạng Thái DNF Sang JSON AST (`serializePolicyAst`)
- */
 export function serializePolicyAst(rule: VisualPolicyRule): string {
   return JSON.stringify(rule, null, 2);
 }
 
-/**
- * Thuật toán: Giải Tuần Tự Hóa & Kiểm Định Lược Đồ JSON AST Sang Biểu Diễn DNF (`deserializePolicyAst`)
- */
 export function deserializePolicyAst(jsonText: string): VisualPolicyRule {
   const parsed = JSON.parse(jsonText) as VisualPolicyRule;
   if (!parsed.code || !parsed.effect || !Array.isArray(parsed.groups)) {
@@ -91,16 +89,10 @@ export function deserializePolicyAst(jsonText: string): VisualPolicyRule {
   return parsed;
 }
 
-/**
- * Thuật toán: Sao Chép Sâu Cây Mẫu Chính Sách (`clonePolicyTemplate`)
- */
 export function clonePolicyTemplate(tpl: PolicyTemplate): VisualPolicyRule {
   return JSON.parse(JSON.stringify(tpl.rule)) as VisualPolicyRule;
 }
 
-/**
- * Thuật toán: Bổ Sung & Chỉnh Sửa Nút Điều Kiện Liên Hội Có Ràng Buộc Kiểu (`addConditionToGroup` .. `updateConditionField`)
- */
 export function addConditionToGroup(
   rule: VisualPolicyRule,
   groupId: number,
@@ -205,90 +197,4 @@ export function updateConditionField(
       };
     }),
   };
-}
-
-/**
- * Thuật toán: Quản Lý Nhánh Tuyển DNF & Kéo-Thả Liên Nhóm (`addDisjunctiveGroup` .. `relocateConditionAcrossGroups`)
- */
-export function addDisjunctiveGroup(rule: VisualPolicyRule): VisualPolicyRule {
-  const nextId = rule.groups.length > 0 ? Math.max(...rule.groups.map((g) => g.id)) + 1 : 1;
-  const newGroup: VisualConditionGroup = {
-    id: nextId,
-    conditions: [
-      {
-        id: createConditionId(),
-        attribute: 'environment.trustedNetwork',
-        operator: 'EQ',
-        expected: true,
-      },
-    ],
-  };
-  return { ...rule, groups: [...rule.groups, newGroup] };
-}
-
-export function duplicateDisjunctiveGroup(
-  rule: VisualPolicyRule,
-  group: VisualConditionGroup,
-): VisualPolicyRule {
-  const nextId = Math.max(...rule.groups.map((g) => g.id)) + 1;
-  return {
-    ...rule,
-    groups: [
-      ...rule.groups,
-      { id: nextId, conditions: group.conditions.map((c) => ({ ...c, id: createConditionId() })) },
-    ],
-  };
-}
-
-export function relocateConditionAcrossGroups(
-  rule: VisualPolicyRule,
-  srcGroupId: number,
-  srcIndex: number,
-  targetGroupId: number,
-): VisualPolicyRule | null {
-  if (srcGroupId === targetGroupId) return null;
-  const condToMove = rule.groups.find((g) => g.id === srcGroupId)?.conditions[srcIndex];
-  if (!condToMove) return null;
-  return {
-    ...rule,
-    groups: rule.groups.map((group) => {
-      if (group.id === srcGroupId)
-        return { ...group, conditions: group.conditions.filter((_, idx) => idx !== srcIndex) };
-      if (group.id === targetGroupId)
-        return { ...group, conditions: [...group.conditions, condToMove] };
-      return group;
-    }),
-  };
-}
-
-/**
- * Thuật toán: Quản Lý Tập Nghĩa Vụ Thực Thi Duy Nhất Theo Loại & Lọc Đa Tiêu Chí Thuộc Tính
- */
-export function toggleRuleObligation(
-  obligations: VisualObligation[],
-  type: string,
-): VisualObligation[] {
-  if (obligations.some((o) => o.type === type)) return obligations.filter((o) => o.type !== type);
-  if (type === 'MAX_SESSION_MINUTES')
-    return [...obligations, { type: 'MAX_SESSION_MINUTES', minutes: 30 }];
-  if (type === 'REQUIRE_WATERMARK') return [...obligations, { type: 'REQUIRE_WATERMARK' }];
-  if (type === 'REQUIRE_MFA') return [...obligations, { type: 'REQUIRE_MFA' }];
-  if (type === 'FORBID_DOWNLOAD') return [...obligations, { type: 'FORBID_DOWNLOAD' }];
-  return [...obligations, { type: 'NO_CACHE' }];
-}
-
-export function filterAttributePalette(
-  selectedCategory: 'ALL' | 'SUBJECT' | 'RESOURCE' | 'ENVIRONMENT',
-  searchPalette: string,
-): AttributeMetadata[] {
-  const query = searchPalette.toLowerCase();
-  return Object.values(ATTRIBUTE_REGISTRY).filter((attr) => {
-    const matchesCategory = selectedCategory === 'ALL' || attr.category === selectedCategory;
-    return (
-      matchesCategory &&
-      (attr.label.toLowerCase().includes(query) ||
-        attr.key.toLowerCase().includes(query) ||
-        attr.description.toLowerCase().includes(query))
-    );
-  });
 }

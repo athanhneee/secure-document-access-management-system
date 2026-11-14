@@ -41,7 +41,7 @@ const rolePortals = [
       'Giám sát cảnh báo vi phạm chính sách theo thời gian thực, điều tra truy cập bất thường và truy vết watermark.',
     path: '/security',
     icon: ShieldAlert,
-    badgeColor: 'text-[#E07912]',
+    badgeColor: 'text-[#222222]',
     dotClass: 'dot-warning',
   },
   {
@@ -63,7 +63,7 @@ const rolePortals = [
       'Quản trị định danh người dùng, phòng ban, cấu hình chính sách truy cập RBAC và theo dõi tình trạng dịch vụ.',
     path: '/admin',
     icon: Settings,
-    badgeColor: 'text-[#FF385C]',
+    badgeColor: 'text-[#E31C5F]',
     dotClass: 'dot-primary',
   },
   {
@@ -135,7 +135,7 @@ export function RolePortalsSection() {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center text-[#b0b0b0] group-hover:text-[#222222] group-hover:translate-x-0.5 transition-all">
+                <div className="flex items-center text-[#717171] group-hover:text-[#222222] group-hover:translate-x-0.5 transition-all">
                   <ChevronRight size={16} strokeWidth={2} aria-hidden="true" />
                 </div>
               </Link>
@@ -177,7 +177,7 @@ export function RolePortalsSection() {
                   <InteractiveHoverButton
                     href={portal.path}
                     text="Truy cập không gian"
-                    className="w-full text-xs h-8.5 sm:h-9.5"
+                    className="w-full text-xs min-h-11 sm:h-9.5"
                   />
                 </div>
               </article>

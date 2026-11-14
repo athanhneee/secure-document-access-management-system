@@ -33,7 +33,7 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
 
         {auditLog && (
           <div className="py-2 text-xs space-y-2">
-            <div className="grid grid-cols-2 gap-2 bg-[#f7f7f7] p-3 rounded-[20px] border border-[#ebebeb]">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-[#f7f7f7] p-3 rounded-[20px] border border-[#ebebeb]">
               <div>
                 Thời điểm: <strong>{new Date(auditLog.occurredAt).toLocaleString('vi-VN')}</strong>
               </div>

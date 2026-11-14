@@ -68,7 +68,7 @@ export function LoginFormFields({
           </label>
           <Link
             href="/reset-password"
-            className="text-xs font-medium text-[#FF385C] hover:underline transition-colors"
+            className="text-xs font-medium text-[#E31C5F] hover:underline transition-colors"
           >
             Quên mật khẩu?
           </Link>

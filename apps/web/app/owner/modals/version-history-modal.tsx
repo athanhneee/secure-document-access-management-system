@@ -33,7 +33,7 @@ export function VersionHistoryModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl border-[#ebebeb] bg-[#ffffff] text-[#222222]">
-        <DialogHeader className="flex flex-row items-center justify-between">
+        <DialogHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pr-12">
           <div>
             <DialogTitle className="text-base font-semibold text-[#222222]">
               Lịch sử các phiên bản: {document?.title}
@@ -84,7 +84,7 @@ export function VersionHistoryModal({
                       {v.scanStatus}
                     </Badge>
                   </div>
-                  <div className="grid grid-cols-2 gap-1 text-xs text-[#717171]">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs text-[#717171]">
                     <div>
                       Tệp: <strong className="text-[#222222]">{v.originalFilename}</strong>
                     </div>

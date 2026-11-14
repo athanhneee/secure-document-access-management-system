@@ -92,7 +92,7 @@ export function ReclassifyModal({
               id="reclass-level"
               value={reclassLevelId}
               onChange={(e) => onLevelChange(Number(e.target.value))}
-              className="w-full h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+              className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
               {classificationLevels.map((lvl) => (
                 <option key={lvl.id} value={lvl.id}>
@@ -110,7 +110,7 @@ export function ReclassifyModal({
               id="reclass-cat"
               value={reclassCategoryId}
               onChange={(e) => onCategoryChange(Number(e.target.value))}
-              className="w-full h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+              className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
               {businessCategories.map((c) => (
                 <option key={c.id} value={c.id}>

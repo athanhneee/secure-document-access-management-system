@@ -71,7 +71,7 @@ export function proxy(request: NextRequest): NextResponse {
 export const config: ProxyConfig = {
   matcher: [
     {
-      source: '/((?!_next/static|_next/image|favicon.ico).*)',
+      source: '/((?!_next/static|_next/image|favicon.ico|icon.svg).*)',
     },
   ],
 };

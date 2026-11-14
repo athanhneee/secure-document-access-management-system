@@ -3,19 +3,35 @@ import type { SharedExportJobSummary, SharedPaginationMeta } from '@sda/contract
 export interface AuditLogItem {
   id: string;
   occurredAt: string;
+  actorUserId?: string | null | undefined;
   actorUsername: string;
   action: string;
   objectType: string;
-  objectId?: string | undefined;
+  objectId?: string | null | undefined;
+  documentId?: string | null | undefined;
+  accessSessionId?: string | null | undefined;
   outcome: 'SUCCESS' | 'DENIED' | 'FAILED';
+  reasonCode?: string | null | undefined;
   ipAddress?: string | undefined;
+  userAgent?: string | null | undefined;
   correlationId: string;
-  chainSequence?: number | undefined;
+  chainPartition?: string | undefined;
+  chainSequence?: number | string | undefined;
+  previousHash?: string | null | undefined;
   entryHash?: string | undefined;
+  details?: Record<string, unknown> | null | undefined;
+}
+
+export interface AuditorPaginationInfo {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
 }
 
 export interface AuditLogsPaginatedResponse {
   data: AuditLogApiDto[];
+  pagination?: Partial<AuditorPaginationInfo> | undefined;
   meta?: SharedPaginationMeta | undefined;
 }
 
@@ -23,22 +39,37 @@ export interface AuditLogApiDto {
   id?: string;
   occurredAt?: string;
   occurred_at?: string;
+  actorUserId?: string | null;
+  actor_user_id?: string | null;
   actorUsername?: string;
   actor_username?: string;
   action?: string;
   objectType?: string;
   object_type?: string;
-  objectId?: string;
-  object_id?: string;
+  objectId?: string | null;
+  object_id?: string | null;
+  documentId?: string | null;
+  document_id?: string | null;
+  accessSessionId?: string | null;
+  access_session_id?: string | null;
   outcome?: 'SUCCESS' | 'DENIED' | 'FAILED';
+  reasonCode?: string | null;
+  reason_code?: string | null;
   ipAddress?: string;
   ip_address?: string;
+  userAgent?: string | null;
+  user_agent?: string | null;
   correlationId?: string;
   correlation_id?: string;
-  chainSequence?: number;
-  chain_sequence?: number;
+  chainPartition?: string;
+  chain_partition?: string;
+  chainSequence?: number | string;
+  chain_sequence?: number | string;
+  previousHash?: string | null;
+  previous_hash?: string | null;
   entryHash?: string;
   entry_hash?: string;
+  details?: Record<string, unknown> | null;
 }
 
 export interface PartitionVerificationResult {

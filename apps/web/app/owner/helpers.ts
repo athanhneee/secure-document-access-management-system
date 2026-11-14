@@ -31,20 +31,72 @@ export function rankFromCode(code?: string | null): number {
   return resolveClassificationRank(upper) ?? ClassificationRank.CONFIDENTIAL;
 }
 
+function toOptionalPositiveInt(raw: string | number | null | undefined): number | undefined {
+  if (raw === null || raw === undefined || raw === '') return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 /**
- * Thuật toán: Chuẩn hóa DTO Tài liệu Sở hữu (`mapDocumentDtoToItem`)
+ * Thuật toán: Chuẩn hóa DTO Tài liệu Sở hữu Có Đối Chiếu Danh Mục Nghiệp Vụ & Mức Mật (`mapDocumentDtoToItem`)
+ * Mục đích: Kết hợp các trường trực tiếp (`businessCategoryName`, `currentClassification`) với tra cứu chéo từ `businessCategories` và `classificationLevels` theo `id` hoặc `code` để không gán cứng nhãn danh mục giả.
  */
-export function mapDocumentDtoToItem(d: DocumentApiDto): DocumentItem {
+export function mapDocumentDtoToItem(
+  d: DocumentApiDto,
+  lookups?: {
+    businessCategories?: ReadonlyArray<BusinessCategoryLookupItem>;
+    classificationLevels?: ReadonlyArray<ClassificationLevelLookupItem>;
+  },
+): DocumentItem {
   const clsCode = (d.classificationLevelCode ||
+    d.currentClassification?.classificationLevelCode ||
     d.classification?.code ||
     d.classificationCode ||
     'CONFIDENTIAL') as ClassificationCode;
-  const clsRank = d.classification?.rank ?? rankFromCode(clsCode);
+  const rawLevelId =
+    d.classificationLevelId ??
+    d.currentClassification?.classificationLevelId ??
+    d.classification?.id ??
+    d.classification_level_id;
+  const matchedLevel = lookups?.classificationLevels?.find(
+    (lvl) => (rawLevelId != null && String(lvl.id) === String(rawLevelId)) || lvl.code === clsCode,
+  );
+  const clsRank =
+    d.currentClassification?.rank ??
+    d.classification?.rank ??
+    matchedLevel?.rank ??
+    rankFromCode(clsCode);
   const clsAllowDownload =
-    d.classification?.allowDownload ?? clsRank <= ClassificationRank.CONFIDENTIAL;
-  const deptName = d.departmentName || d.department?.name || d.departments?.name || '—';
+    d.classification?.allowDownload ??
+    matchedLevel?.allowDownload ??
+    clsRank <= ClassificationRank.CONFIDENTIAL;
+
+  const rawCategoryId =
+    d.businessCategoryId ??
+    d.business_category_id ??
+    d.currentClassification?.businessCategoryId ??
+    d.businessCategory?.id ??
+    d.business_categories?.id;
+  const rawCategoryCode =
+    d.businessCategoryCode ??
+    d.business_category_code ??
+    d.currentClassification?.businessCategoryCode ??
+    d.businessCategory?.code ??
+    d.business_categories?.code ??
+    undefined;
+  const matchedCategory = lookups?.businessCategories?.find(
+    (cat) =>
+      (rawCategoryId != null && String(cat.id) === String(rawCategoryId)) ||
+      (rawCategoryCode !== undefined && cat.code === rawCategoryCode),
+  );
   const catName =
-    d.businessCategoryName || d.businessCategory?.name || d.business_categories?.name || undefined;
+    d.businessCategoryName ||
+    d.business_category_name ||
+    d.currentClassification?.businessCategoryName ||
+    d.businessCategory?.name ||
+    d.business_categories?.name ||
+    matchedCategory?.name ||
+    undefined;
 
   return {
     id: d.id,
@@ -52,12 +104,15 @@ export function mapDocumentDtoToItem(d: DocumentApiDto): DocumentItem {
     documentCode: d.documentCode || d.document_code,
     classificationCode: clsCode,
     classificationRank: clsRank,
-    classificationLevelId: d.classification?.id ?? d.classification_level_id,
-    businessCategoryId: d.business_category_id,
+    classificationLevelId: toOptionalPositiveInt(rawLevelId ?? matchedLevel?.id),
+    businessCategoryId: toOptionalPositiveInt(rawCategoryId ?? matchedCategory?.id),
+    businessCategoryCode: rawCategoryCode ?? matchedCategory?.code,
     businessCategoryName: catName,
     status: d.status || 'ACTIVE',
-    departmentId: d.department_id,
-    departmentName: deptName,
+    departmentId: toOptionalPositiveInt(
+      d.departmentId ?? d.department_id ?? d.department?.id ?? d.departments?.id,
+    ),
+    departmentName: d.departmentName || d.department?.name || d.departments?.name || '—',
     allowDownload: d.allowDownload ?? clsAllowDownload,
     versionCount: d.versions?.length ?? 1,
     createdAt: d.createdAt || d.created_at || new Date().toISOString(),
@@ -173,16 +228,19 @@ export function resolveUploadWizardDefaults(params: {
       ? Number(userDepartmentId)
       : NaN;
   const hasValidUserDept = Number.isFinite(parsedUserDept) && parsedUserDept > 0;
-  const departmentId = hasValidUserDept
-    ? departments.length > 0
-      ? (departments.find((d) => d.id === parsedUserDept)?.id ?? departments[0]?.id ?? 1)
-      : parsedUserDept
-    : (departments[0]?.id ?? 1);
+  const matchedDept = hasValidUserDept
+    ? departments.find((d) => String(d.id) === String(parsedUserDept))
+    : undefined;
+  const departmentId = Number(
+    matchedDept?.id ??
+      (hasValidUserDept && departments.length === 0 ? parsedUserDept : (departments[0]?.id ?? 1)),
+  );
 
-  const categoryId = businessCategories[0]?.id ?? 1;
-  const classificationId =
+  const categoryId = Number(businessCategories[0]?.id ?? 1);
+  const classificationId = Number(
     (classificationLevels.find((l) => l.code === 'CONFIDENTIAL') ?? classificationLevels[0])?.id ??
-    3;
+      3,
+  );
 
   return { departmentId, categoryId, classificationId };
 }

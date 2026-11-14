@@ -3,23 +3,30 @@
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { applyOptimisticStatusById } from '@/lib/optimistic-state';
-import type { DocumentItem } from '../types';
+import type {
+  BusinessCategoryLookupItem,
+  ClassificationLevelLookupItem,
+  DocumentApiDto,
+  DocumentItem,
+} from '../types';
 
 interface UseDocumentLifecycleParams {
-  documents: DocumentItem[];
   setDocuments: Dispatch<SetStateAction<DocumentItem[]>>;
+  classificationLevels: ClassificationLevelLookupItem[];
+  businessCategories: BusinessCategoryLookupItem[];
   refreshData: (options?: { silent?: boolean }) => Promise<void>;
   setMessage: (msg: string | null) => void;
   setErrorMessage: (msg: string | null) => void;
 }
 
 /**
- * Thuật toán: Quản Lý Vòng Đời Tài Liệu Lạc Quan Kèm Hoàn Tác Tự Động (`useDocumentLifecycle`)
- * Mục đích: Phản hồi tức thì dưới `16ms` cho thao tác kích hoạt (`ACTIVE`), điều chỉnh mức mật SCD Loại 2 và lưu trữ (`ARCHIVED`), tự động khôi phục ảnh chụp danh sách tài liệu nếu máy chủ báo lỗi.
+ * Thuật toán: Quản Lý Vòng Đời Tài Liệu Xác Thực Máy Chủ Trước Khi Đóng Hộp Thoại (`useDocumentLifecycle`)
+ * Mục đích: Khởi tạo sẵn `classificationLevelId` và `businessCategoryId` hiện hành khi mở modal `Đổi mức mật`, đồng thời bắt buộc `await` phản hồi API thành công trước khi đóng `<dialog>` hoặc hiện thông báo xanh lá.
  */
 export function useDocumentLifecycle({
-  documents,
   setDocuments,
+  classificationLevels,
+  businessCategories,
   refreshData,
   setMessage,
   setErrorMessage,
@@ -43,17 +50,13 @@ export function useDocumentLifecycle({
   const [isArchiving, setIsArchiving] = useState(false);
 
   async function handleActivateDocument(doc: DocumentItem) {
-    const previousDocuments = documents;
     setErrorMessage(null);
-    setDocuments((prev) => applyOptimisticStatusById(prev, doc.id, 'ACTIVE'));
-    setMessage(`Đã kích hoạt tài liệu "${doc.title}" thành công.`);
-
     try {
       await apiClient(`/documents/${doc.id}/activate`, { method: 'POST' });
+      setDocuments((prev) => applyOptimisticStatusById(prev, doc.id, 'ACTIVE'));
+      setMessage(`Đã kích hoạt tài liệu "${doc.title}" thành công.`);
       void refreshData({ silent: true });
     } catch (err) {
-      setDocuments(previousDocuments);
-      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể kích hoạt tài liệu.'
@@ -63,11 +66,44 @@ export function useDocumentLifecycle({
   }
 
   function openReclassifyModal(doc: DocumentItem) {
+    setErrorMessage(null);
+    const fallbackLevelId = Number(
+      doc.classificationLevelId ??
+        classificationLevels.find((l) => l.code === doc.classificationCode)?.id ??
+        classificationLevels[0]?.id ??
+        1,
+    );
+    const fallbackCategoryId = Number(
+      doc.businessCategoryId ??
+        businessCategories.find(
+          (c) =>
+            (doc.businessCategoryCode && c.code === doc.businessCategoryCode) ||
+            (doc.businessCategoryName && c.name === doc.businessCategoryName),
+        )?.id ??
+        businessCategories[0]?.id ??
+        1,
+    );
+
     setDocForReclassify(doc);
-    setReclassLevelId(doc.classificationLevelId || 1);
-    setReclassCategoryId(doc.businessCategoryId || 1);
+    setReclassLevelId(fallbackLevelId);
+    setReclassCategoryId(fallbackCategoryId);
     setReclassReason('');
     setReclassifyOpen(true);
+
+    if (!doc.classificationLevelId || !doc.businessCategoryId) {
+      void apiClient<DocumentApiDto>(`/documents/${doc.id}`)
+        .then((detail) => {
+          const activeCls = detail.currentClassification;
+          if (!activeCls) return;
+          if (activeCls.classificationLevelId) {
+            setReclassLevelId(Number(activeCls.classificationLevelId));
+          }
+          if (activeCls.businessCategoryId) {
+            setReclassCategoryId(Number(activeCls.businessCategoryId));
+          }
+        })
+        .catch(() => undefined);
+    }
   }
 
   async function handleConfirmReclassify(e: FormEvent) {
@@ -90,11 +126,12 @@ export function useDocumentLifecycle({
         }),
       });
 
-      setMessage(`Đã điều chỉnh phân loại tài liệu "${docForReclassify.title}" thành công.`);
+      const targetTitle = docForReclassify.title;
       setReclassifyOpen(false);
       setDocForReclassify(null);
       setReclassReason('');
-      await refreshData();
+      setMessage(`Đã điều chỉnh phân loại tài liệu "${targetTitle}" thành công.`);
+      await refreshData({ silent: true });
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
@@ -107,6 +144,7 @@ export function useDocumentLifecycle({
   }
 
   function openNewVersionModal(doc: DocumentItem) {
+    setErrorMessage(null);
     setDocForNewVersion(doc);
     setNewVersionFile(null);
     setNewVersionNote('');
@@ -144,14 +182,13 @@ export function useDocumentLifecycle({
         console.warn('Could not auto-set current version:', vErr);
       }
 
-      setMessage(
-        `Đã tải lên phiên bản v${res.versionNo}.0 cho tài liệu "${docForNewVersion.title}".`,
-      );
+      const targetTitle = docForNewVersion.title;
       setNewVersionOpen(false);
       setDocForNewVersion(null);
       setNewVersionFile(null);
       setNewVersionNote('');
-      await refreshData();
+      setMessage(`Đã tải lên phiên bản v${res.versionNo}.0 cho tài liệu "${targetTitle}".`);
+      await refreshData({ silent: true });
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
@@ -164,6 +201,7 @@ export function useDocumentLifecycle({
   }
 
   function openArchiveModal(doc: DocumentItem) {
+    setErrorMessage(null);
     setDocForArchive(doc);
     setArchiveReason('');
     setArchiveOpen(true);
@@ -174,28 +212,25 @@ export function useDocumentLifecycle({
     if (!docForArchive) return;
 
     const target = docForArchive;
-    const previousDocuments = documents;
     const reasonPayload = archiveReason.trim() || 'Lưu trữ tài liệu theo quy chế an toàn';
 
     setIsArchiving(true);
     setErrorMessage(null);
-    setArchiveOpen(false);
-    setDocForArchive(null);
-    setArchiveReason('');
-    setDocuments((prev) => applyOptimisticStatusById(prev, target.id, 'ARCHIVED'));
-    setMessage(
-      `Tài liệu "${target.title}" đã được chuyển vào lưu trữ (ARCHIVED). Mọi phiên đọc đã bị chấm dứt.`,
-    );
 
     try {
       await apiClient(`/documents/${target.id}/archive`, {
         method: 'POST',
         body: JSON.stringify({ reason: reasonPayload }),
       });
+      setArchiveOpen(false);
+      setDocForArchive(null);
+      setArchiveReason('');
+      setDocuments((prev) => applyOptimisticStatusById(prev, target.id, 'ARCHIVED'));
+      setMessage(
+        `Tài liệu "${target.title}" đã được chuyển vào lưu trữ (ARCHIVED). Mọi phiên đọc đã bị chấm dứt.`,
+      );
       void refreshData({ silent: true });
     } catch (err) {
-      setDocuments(previousDocuments);
-      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể lưu trữ tài liệu.'

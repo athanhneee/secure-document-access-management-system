@@ -49,12 +49,58 @@ export function mapAlertDto(a: AlertApiDto): SecurityAlertItem {
 export function mapIncidentDto(inc: IncidentApiDto): IncidentItem {
   return {
     id: inc.id || '—',
+    incidentCode: inc.incidentCode,
+    alertId: inc.alertId ?? null,
     title: inc.title || 'Báo cáo sự cố bảo mật',
     summary: inc.summary || '',
+    findings: inc.findings ?? '',
+    impactAssessment: inc.impactAssessment ?? '',
     status: inc.status || 'DRAFT',
     severity: inc.severity || 'HIGH',
     createdAt: inc.createdAt || '',
+    submittedAt: inc.submittedAt ?? null,
+    closedAt: inc.closedAt ?? null,
     actions: inc.actions || [],
+  };
+}
+
+/**
+ * Thuật toán: Lọc Đa Chiều Hàng Đợi Cảnh Báo SOC Theo Mức Nghiêm Trọng & Trạng Thái (`filterSecurityAlerts`)
+ */
+export function filterSecurityAlerts(
+  alerts: SecurityAlertItem[],
+  severityFilter: string,
+  statusFilter: string,
+): SecurityAlertItem[] {
+  return alerts.filter((alert) => {
+    const matchSeverity = severityFilter === 'ALL' || alert.severity === severityFilter;
+    const matchStatus = statusFilter === 'ALL' || alert.status === statusFilter;
+    return matchSeverity && matchStatus;
+  });
+}
+
+/**
+ * Thuật toán: Chuẩn Hóa & Kiểm Định Định Dạng Token Thủy Vân Phía Máy Khách (`normalizeWatermarkTokenInput`)
+ * Mục đích: Tự động ghép tiền tố `WM-` nếu chuyên viên SOC dán chuỗi hex 12–48 ký tự từ PDF thiếu `WM-`; từ chối sớm bằng thông báo tiếng Việt nếu sai định dạng để tránh lỗi `400`.
+ */
+export function normalizeWatermarkTokenInput(
+  raw: string,
+): { valid: true; token: string } | { valid: false; error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return { valid: false, error: 'Vui lòng nhập mã token watermark cần đối soát.' };
+  }
+  if (/^[0-9a-fA-F]{12,48}$/u.test(trimmed)) {
+    return { valid: true, token: `WM-${trimmed.toLowerCase()}` };
+  }
+  const prefixedMatch = /^WM-([0-9a-fA-F]{12,48})$/iu.exec(trimmed);
+  if (prefixedMatch && prefixedMatch[1]) {
+    return { valid: true, token: `WM-${prefixedMatch[1].toLowerCase()}` };
+  }
+  return {
+    valid: false,
+    error:
+      'Mã watermark không đúng định dạng. Vui lòng nhập mã dạng WM-<12..48 ký tự hex> (ví dụ: WM-2e59958fa6c7) hoặc dán chuỗi hex 12–48 ký tự từ tài liệu PDF.',
   };
 }
 

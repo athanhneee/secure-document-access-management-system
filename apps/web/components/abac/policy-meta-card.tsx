@@ -8,6 +8,10 @@ interface PolicyMetaCardProps {
   onUpdateRule: (newRule: VisualPolicyRule) => void;
 }
 
+/**
+ * Thuật toán: Biểu Mẫu Siêu Dữ Liệu & Chọn Hiệu Lực Quy Tắc ABAC Chuẩn Pill (`PolicyMetaCard`)
+ * Mục đích: Chuẩn hóa nhập liệu mã quy tắc in hoa, mức ưu tiên `1..100`, hành động mục tiêu và hiệu lực `PERMIT` / `DENY` bằng nút pill đặc chuẩn hệ thống thiết kế (không dùng hộp nền màu nhạt).
+ */
 export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
   return (
     <div className="p-4 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-4 shadow-xs">
@@ -48,15 +52,15 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
           <legend className="block text-xs font-semibold text-[#717171] mb-1">
             Hiệu lực Thực thi (Effect):
           </legend>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap sm:flex-nowrap gap-2">
             <button
               type="button"
               aria-pressed={rule.effect === 'PERMIT'}
               onClick={() => onUpdateRule({ ...rule, effect: 'PERMIT' })}
-              className={`flex-1 min-h-11 sm:h-9 rounded-full text-xs font-bold transition-all border cursor-pointer ${
+              className={`flex-1 min-h-11 sm:h-9 px-3 rounded-full text-xs font-semibold transition-all border cursor-pointer ${
                 rule.effect === 'PERMIT'
-                  ? 'bg-[#008A05]/10 border-[#008A05] text-[#008A05]'
-                  : 'border-[#dddddd] text-[#717171] hover:bg-[#f7f7f7]'
+                  ? 'bg-[#008A05] border-[#008A05] text-white'
+                  : 'bg-[#ffffff] border-[#dddddd] text-[#717171] hover:bg-[#f7f7f7]'
               }`}
             >
               CHO PHÉP (PERMIT)
@@ -65,10 +69,10 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
               type="button"
               aria-pressed={rule.effect === 'DENY'}
               onClick={() => onUpdateRule({ ...rule, effect: 'DENY' })}
-              className={`flex-1 min-h-11 sm:h-9 rounded-full text-xs font-bold transition-all border cursor-pointer ${
+              className={`flex-1 min-h-11 sm:h-9 px-3 rounded-full text-xs font-semibold transition-all border cursor-pointer ${
                 rule.effect === 'DENY'
-                  ? 'bg-[#C13515]/10 border-[#C13515] text-[#C13515]'
-                  : 'border-[#dddddd] text-[#717171] hover:bg-[#f7f7f7]'
+                  ? 'bg-[#222222] border-[#222222] text-white'
+                  : 'bg-[#ffffff] border-[#dddddd] text-[#717171] hover:bg-[#f7f7f7]'
               }`}
             >
               TỪ CHỐI (DENY)

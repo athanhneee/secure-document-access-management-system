@@ -125,20 +125,6 @@ function AlertDetailForm({
     setIsUpdatingAlert(true);
     onClearError();
 
-    const optimisticNote: AlertNoteItem | undefined = trimmedInvNote
-      ? {
-          id: `temp-${Date.now()}`,
-          note: trimmedInvNote,
-          authorName: 'Cán bộ An ninh (SOC)',
-          createdAt: new Date().toISOString(),
-        }
-      : undefined;
-    const rollback = onOptimisticUpdate?.(alert.id, {
-      status: statusChanged ? newStatus : undefined,
-      resolutionNote: trimmedResNote || undefined,
-      addedNote: optimisticNote,
-    });
-
     try {
       if (statusChanged) {
         await apiClient(`/security-alerts/${alert.id}/status`, {
@@ -152,6 +138,19 @@ function AlertDetailForm({
           body: JSON.stringify({ note: trimmedInvNote }),
         });
       }
+      const confirmedNote: AlertNoteItem | undefined = trimmedInvNote
+        ? {
+            id: `note-${Date.now()}`,
+            note: trimmedInvNote,
+            authorName: 'Cán bộ An ninh (SOC)',
+            createdAt: new Date().toISOString(),
+          }
+        : undefined;
+      onOptimisticUpdate?.(alert.id, {
+        status: statusChanged ? newStatus : undefined,
+        resolutionNote: trimmedResNote || undefined,
+        addedNote: confirmedNote,
+      });
       setInvestigationNote('');
       if (trimmedResNote) setResolutionNote('');
       await onSuccess(
@@ -161,7 +160,6 @@ function AlertDetailForm({
       );
       if (statusChanged) onClose();
     } catch (err) {
-      rollback?.();
       onError(err instanceof ApiError ? err.message : 'Đã xảy ra lỗi khi cập nhật cảnh báo.');
     } finally {
       setIsUpdatingAlert(false);

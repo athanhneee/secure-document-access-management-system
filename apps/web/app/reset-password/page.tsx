@@ -1,5 +1,9 @@
 'use client';
 
+/**
+ * Thuật toán: Quy Trình Khôi Phục Mật Khẩu Hai Pha & Khử Độc Token Trên URL (`ResetPasswordPage`, `ResetPasswordContent`)
+ * Mục đích: Xử lý an toàn luồng yêu cầu khôi phục chống dò quét định danh (Anti-Enumeration) và luồng đặt lại mật khẩu mới sau khi xóa sạch tham số `?token=` khỏi thanh địa chỉ bằng `history.replaceState`.
+ */
 import { useState, useEffect, Suspense, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -116,7 +120,7 @@ function ResetPasswordContent() {
   const formDisabled = isLoading || Boolean(successMessage);
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#FF385C] overflow-hidden">
+    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#E31C5F] overflow-hidden">
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
         <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full bg-[#FF385C]/5 blur-3xl animate-float" />
         <div className="absolute -bottom-32 left-1/3 w-[500px] h-[400px] rounded-full bg-[#008489]/5 blur-3xl animate-float delay-200" />
@@ -164,7 +168,7 @@ function ResetPasswordContent() {
             )}
 
             {successMessage && (
-              <Alert className="rounded-[20px] border border-[#008A05]/30 bg-[#008A05]/10 text-[#008A05] text-xs">
+              <Alert variant="success" className="rounded-[20px] text-xs">
                 <CheckCircle2
                   size={16}
                   strokeWidth={1.75}

@@ -41,9 +41,9 @@ export function resolveParentDepartmentLabel(
 }
 
 /**
- * Thuật toán: Định Dạng Mốc Thời Gian Cục Bộ ISO-8601 & Khung Hiệu Lực Vai Trò 30 Ngày (`formatLocalDateTimeInput`)
+ * Thuật toán: Định Dạng Mốc Thời Gian Cục Bộ ISO-8601 & Khung Hiệu Lực Vai Trò 30 Ngày (`getDefaultRoleAssignmentWindow`)
  */
-export function formatLocalDateTimeInput(d: Date): string {
+function formatLocalDateTimeInput(d: Date): string {
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
@@ -58,10 +58,10 @@ export function getDefaultRoleAssignmentWindow(): { validFrom: string; validTo: 
 }
 
 /**
- * Thuật toán: Chuẩn Hóa Trạng Thái Thăm Dò Sức Khỏe Hạ Tầng Không Phân Biệt Hoa Thường (`normalizeProbeStatus` & `mapHealthReadyResponse`)
- * Mục đích: Ánh xạ trung thực phản hồi `/health/ready` (kể cả mã 503 chữ thường `'ready'`/`'up'`/`'degraded'`/`'down'`) và `/health/dashboard` sang miền trạng thái giao diện `ONLINE | DEGRADED | OFFLINE`.
+ * Thuật toán: Chuẩn Hóa Trạng Thái Thăm Dò Sức Khỏe Hạ Tầng Không Phân Biệt Hoa Thường (`mapHealthReadyResponse`)
+ * Mục đích: Ánh xạ trung thực phản hồi `/health/ready` (kể cả mã 503 chữ thường `'ready'`/`'up'`/`'degraded'`/`'down'`) và `/health/dashboard` (bao gồm `checks.storage` và bộ nhớ tiến trình `Heap / RSS`) sang miền trạng thái giao diện `ONLINE | DEGRADED | OFFLINE`.
  */
-export function normalizeProbeStatus(
+function normalizeProbeStatus(
   raw: string | undefined,
   fallback: HealthStatusLabel = 'OFFLINE',
 ): HealthStatusLabel {
@@ -105,8 +105,22 @@ export function mapHealthReadyResponse(
     },
     cache: {
       status: normalizeProbeStatus(checks?.redis?.status, 'OFFLINE'),
+      ...(checks?.redis?.latencyMs !== undefined ? { latencyMs: checks.redis.latencyMs } : {}),
+    },
+    storage: {
+      status: normalizeProbeStatus(checks?.storage?.status, 'OFFLINE'),
+      ...(checks?.storage?.latencyMs !== undefined ? { latencyMs: checks.storage.latencyMs } : {}),
     },
     uptimeSeconds: dashboard?.process?.uptimeSeconds ?? ready?.uptimeSeconds ?? 0,
+    ...(dashboard?.process
+      ? {
+          memory: {
+            heapUsedMb: dashboard.process.heapUsedMb,
+            heapTotalMb: dashboard.process.heapTotalMb,
+            rssMb: dashboard.process.rssMb,
+          },
+        }
+      : {}),
   };
 }
 

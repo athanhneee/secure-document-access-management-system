@@ -1,7 +1,11 @@
 'use client';
 
-import type { FormEvent } from 'react';
-import { Lock, Mail, ShieldCheck, CheckCircle2, Circle } from 'lucide-react';
+/**
+ * Thuật toán: Biểu Mẫu Hai Bước Yêu Cầu & Đặt Lại Mật Khẩu Có Chấm Điểm Entropy Thời Gian Thực (`ForgotPasswordStepForm`, `ConfirmResetStepForm`)
+ * Mục đích: Kết hợp kiểm tra 5 tiêu chí NIST SP 800-63B trực tiếp khi nhập và nút Hiện/Ẩn mật khẩu (`Eye`/`EyeOff`) chuẩn trợ năng WCAG 2.1 AA trên cả hai ô mật khẩu mới và xác nhận.
+ */
+import { useState, type FormEvent } from 'react';
+import { Eye, EyeOff, Lock, Mail, ShieldCheck, CheckCircle2, Circle } from 'lucide-react';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Input } from '@/components/ui/input';
 import { evaluatePasswordStrength } from './password-strength';
@@ -74,6 +78,8 @@ export function ConfirmResetStepForm({
   onChangeConfirmPassword,
   onSubmit,
 }: ConfirmResetStepProps) {
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const strength = evaluatePasswordStrength(newPassword);
   const requirements = [
     { label: 'Từ 15 ký tự trở lên', met: strength.hasMinLength },
@@ -94,13 +100,27 @@ export function ConfirmResetStepForm({
           <Input
             id="new-password"
             name="newPassword"
-            type="password"
+            type={showNewPassword ? 'text' : 'password'}
+            autoComplete="new-password"
             disabled={disabled}
             value={newPassword}
             onChange={(e) => onChangeNewPassword(e.target.value)}
             placeholder="•••••••••••••••"
-            className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+            className="pl-10 pr-11 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
           />
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setShowNewPassword((prev) => !prev)}
+            aria-label={showNewPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:opacity-50 cursor-pointer"
+          >
+            {showNewPassword ? (
+              <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" />
+            ) : (
+              <Eye size={16} strokeWidth={1.75} aria-hidden="true" />
+            )}
+          </button>
         </div>
 
         {newPassword && (
@@ -146,13 +166,27 @@ export function ConfirmResetStepForm({
           <Input
             id="confirm-password"
             name="confirmPassword"
-            type="password"
+            type={showConfirmPassword ? 'text' : 'password'}
+            autoComplete="new-password"
             disabled={disabled}
             value={confirmPassword}
             onChange={(e) => onChangeConfirmPassword(e.target.value)}
             placeholder="•••••••••••••••"
-            className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+            className="pl-10 pr-11 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
           />
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setShowConfirmPassword((prev) => !prev)}
+            aria-label={showConfirmPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:opacity-50 cursor-pointer"
+          >
+            {showConfirmPassword ? (
+              <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" />
+            ) : (
+              <Eye size={16} strokeWidth={1.75} aria-hidden="true" />
+            )}
+          </button>
         </div>
       </div>
 

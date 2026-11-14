@@ -182,27 +182,30 @@ export function useSecurityData() {
     };
   }
 
-  async function terminateSession(explicitId?: string) {
+  async function terminateSession(reason: string, explicitId?: string): Promise<boolean> {
     const sessionId = explicitId ?? pendingTerminateSessionId;
-    if (!sessionId) return;
+    if (!sessionId) return false;
 
-    const previousSessions = documentSessions;
     setTerminatingSessionId(sessionId);
-    setPendingTerminateSessionId(null);
     setErrorMessage(null);
-    setDocumentSessions((prev) => applyOptimisticStatusById(prev, sessionId, 'TERMINATED'));
-    setMessage('Đã ngắt phiên truy cập tài liệu thành công.');
 
     try {
-      await apiClient(`/access-sessions/${sessionId}/terminate`, { method: 'POST' });
+      await apiClient(`/access-sessions/${sessionId}/terminate`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+      setDocumentSessions((prev) => applyOptimisticStatusById(prev, sessionId, 'TERMINATED'));
+      setPendingTerminateSessionId(null);
+      setMessage('Đã cưỡng bức ngắt phiên truy cập tài liệu thành công.');
+      void refreshData({ silent: true });
+      return true;
     } catch (err) {
-      setDocumentSessions(previousSessions);
-      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể ngắt phiên truy cập.'
           : 'Không thể ngắt phiên truy cập.',
       );
+      return false;
     } finally {
       setTerminatingSessionId(null);
     }

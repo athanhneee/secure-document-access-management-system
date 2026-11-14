@@ -1,3 +1,9 @@
+/**
+ * Algorithm / Thuật toán: Giải Mã Nhị Phân Khóa Công Khai RFC 4648 §5 Base64URL -> Uint8Array & Xác Thực W3C WebAuthn
+ * Mục đích: Giải mã chuỗi `challenge` Base64URL sang `Uint8Array` nội bộ để kiểm định entropy tối thiểu 16 byte trước khi kích hoạt ký số phần cứng FIDO2 CTAP2.
+ * Cơ chế hoạt động:
+ *   - Giải mã (`base64UrlToUint8Array`): Thay thế `-` -> `+`, `_` -> `/`, bù độ dài chia hết cho 4 bằng `=`, giải mã chuỗi nhị phân sang mảng byte `Uint8Array`.
+ */
 import {
   browserSupportsWebAuthn,
   startAuthentication,
@@ -5,14 +11,7 @@ import {
 } from '@simplewebauthn/browser';
 import { apiClient, ApiError } from '@/lib/api-client';
 
-/**
- * Algorithm / Thuật toán: Chuyển Đổi Hai Chiều Nhị Phân Khóa Công Khai RFC 4648 §5 Base64URL <-> Uint8Array
- * Mục đích: Chuẩn hóa dữ liệu thách thức mật mã (`challenge`, `credential.id`, `signature`) không chứa ký tự đệm `=` hoặc ký tự không an toàn URL (`+`, `/`) phục vụ giao thức W3C WebAuthn.
- * Cơ chế hoạt động:
- *   - Giải mã (`base64UrlToUint8Array`): Thay thế `-` -> `+`, `_` -> `/`, bù độ dài chia hết cho 4 bằng `=`, giải mã chuỗi nhị phân sang mảng byte `Uint8Array`.
- *   - Mã hóa (`uint8ArrayToBase64Url`): Ghép chuỗi mã ký tự Latin-1 từ bộ đệm nhị phân, mã hóa Base64 chuẩn và cắt bỏ dấu đệm `=` cuối chuỗi sau khi ánh xạ sang bảng chữ cái an toàn URL.
- */
-export function base64UrlToUint8Array(base64Url: string): Uint8Array {
+function base64UrlToUint8Array(base64Url: string): Uint8Array {
   const normalized = base64Url.replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
   const binary = atob(padded);
@@ -21,14 +20,6 @@ export function base64UrlToUint8Array(base64Url: string): Uint8Array {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
-}
-
-export function uint8ArrayToBase64Url(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]!);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 /**

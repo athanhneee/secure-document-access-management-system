@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { apiClient, ApiError } from './api-client';
+import { apiClient, ApiError, getCsrfToken, sanitizeRedirectPath } from './api-client';
 
 export interface AuthUser {
   id: string;
@@ -35,6 +35,59 @@ export const ROLE_PATHS: Record<RoleType, string> = {
   AUDITOR: '/auditor',
 };
 
+const ROLE_PRIORITY_ORDER: readonly RoleType[] = [
+  'SYSTEM_ADMIN',
+  'DOCUMENT_OWNER',
+  'SECURITY_OFFICER',
+  'AUDITOR',
+  'DOCUMENT_READER',
+];
+
+/**
+ * Thuật toán: Suy Diễn Cổng Làm Việc Mặc Định & Chống Bẫy Chuyển Hướng Chéo Vai Trò (`resolveDefaultPortalForRoles`, `resolveAuthorizedRedirectPath`)
+ * Mục đích:
+ *   - Ngăn chặn tình huống người dùng đăng nhập qua liên kết `?redirect=/admin` (hoặc cổng vai trò khác) nhưng tài khoản thực tế thuộc vai trò khác (như `DOCUMENT_READER`) bị đẩy thẳng vào màn hình `403`.
+ *   - Nếu đường dẫn `redirect` thuộc một trong 5 tiền tố cổng phân quyền mà tài khoản không sở hữu vai trò tương ứng, tự động chuyển về cổng mặc định đúng với vai trò của tài khoản.
+ */
+export function resolveDefaultPortalForRoles(roles: readonly string[] | undefined): string {
+  if (!roles || roles.length === 0) return '/';
+  for (const candidate of ROLE_PRIORITY_ORDER) {
+    if (roles.includes(candidate)) {
+      return ROLE_PATHS[candidate];
+    }
+  }
+  return ROLE_PATHS.DOCUMENT_READER;
+}
+
+export function resolveAuthorizedRedirectPath(
+  rawRedirect: string | null | undefined,
+  roles: readonly string[] | undefined,
+): string {
+  const safeRedirect = sanitizeRedirectPath(rawRedirect, '/');
+  const defaultPortal = resolveDefaultPortalForRoles(roles);
+
+  if (!roles || roles.length === 0) {
+    return safeRedirect;
+  }
+  if (safeRedirect === '/') {
+    return defaultPortal;
+  }
+
+  const matchedPortal = (Object.entries(ROLE_PATHS) as Array<[RoleType, string]>).find(
+    ([, portalPrefix]) =>
+      safeRedirect === portalPrefix ||
+      safeRedirect.startsWith(`${portalPrefix}/`) ||
+      safeRedirect.startsWith(`${portalPrefix}?`),
+  );
+
+  if (matchedPortal) {
+    const [requiredRole] = matchedPortal;
+    return roles.includes(requiredRole) ? safeRedirect : defaultPortal;
+  }
+
+  return safeRedirect;
+}
+
 interface AuthContextValue {
   user: AuthUser | null;
   activeRole: RoleType | null;
@@ -50,11 +103,10 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 /**
- * Thuật toán: Máy Trạng Thái Phiên Xác Thực Không Chặn Điều Hướng & Suy Diễn Vai Trò Tức Thì (`AuthProvider`)
- * Mục đích: Duy trì trạng thái định danh người dùng trong bộ nhớ React mà không gọi lại `/users/me` mỗi khi chuyển tuyến đường Sidebar, giúp chuyển trang nội bộ phản hồi dưới `100ms`.
- * Cơ chế hoạt động:
- *   - `refreshUser`: Nạp `/users/me` đúng một lần khi khởi tạo phiên (hoặc khi gọi làm mới tường minh sau đăng nhập/MFA), xóa sạch trạng thái nếu gặp HTTP 401/403.
- *   - `activeRole`: Suy diễn đồng bộ trong bộ nhớ `O(1)` (`useMemo`) từ lựa chọn vai trò tức thời (`roleOverride`) và tiền tố `pathname` khớp bảng `ROLE_PATHS`, không phát sinh hiệu ứng phụ hay truy vấn mạng khi bấm chuyển trang.
+ * Thuật toán: Máy Trạng Thái Phiên Xác Thực Không Chặn Điều Hướng & Bỏ Qua Thăm Dò Khi Chưa Có Cookie (`AuthProvider`)
+ * Mục đích:
+ *   - Duy trì trạng thái định danh người dùng trong bộ nhớ React mà không gọi lại `/users/me` mỗi khi chuyển tuyến đường Sidebar, giúp chuyển trang nội bộ phản hồi dưới `100ms`.
+ *   - Khi khởi tạo trên trình duyệt chưa có cookie `sda_csrf` (khách vãng lai trên trang công khai `/`), bỏ qua lời gọi `/api/v1/users/me` để loại bỏ hoàn toàn lỗi `401` đỏ trên Console.
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -83,7 +135,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect
+    if (!getCsrfToken()) {
+      // oxlint-disable-next-line react/set-state-in-effect
+      setIsLoading(false);
+      return;
+    }
     void refreshUser();
   }, [refreshUser]);
 
@@ -125,14 +181,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await logoutPromise;
     } catch {
-      // Ignore errors on logout
+      // Bỏ qua lỗi mạng khi đăng xuất vì trạng thái cục bộ đã được xóa sạch
     }
   }, [router]);
 
   const hasPermission = useCallback(
     (permission: string) => {
       if (!user) return false;
-      return user.permissions.includes(permission);
+      const canonical = permission.replace(':', '_');
+      return user.permissions.some(
+        (granted) => granted === permission || granted.replace(':', '_') === canonical,
+      );
     },
     [user],
   );

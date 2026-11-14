@@ -19,6 +19,10 @@ interface ActiveSessionsTabProps {
   onTerminateSession: (sessionId: string) => void;
 }
 
+/**
+ * Thuật toán: Giám Sát Phiên Đọc Trực Tuyến & Thu Hồi Cưỡng Bức Tức Thời (`ActiveSessionsTab`)
+ * Mục đích: Hiển thị danh sách phiên đọc có nhúng thủy vân và mở hộp thoại nhập lý do cưỡng bức ngắt phiên đối với các phiên `ACTIVE`.
+ */
 export function ActiveSessionsTab({
   documentSessions,
   terminatingSessionId,

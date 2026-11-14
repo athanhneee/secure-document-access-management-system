@@ -5,7 +5,11 @@ import { Inter } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth-context';
 import './globals.css';
 
-export const inter = Inter({
+/**
+ * Thuật toán: Khởi Tạo Biến Phông Chữ Inter Tiếng Việt & Đồng Bộ Mã Nonce CSP Trên Khung Gốc (`RootLayout`)
+ * Mục đích: Nạp duy nhất họ phông `Inter` hỗ trợ đầy đủ bảng mã `vietnamese` tránh lỗi nhảy glyph, đồng thời đọc `x-nonce` từ `proxy.ts` để kích hoạt ngữ cảnh bảo mật nội dung theo từng yêu cầu.
+ */
+const inter = Inter({
   subsets: ['vietnamese', 'latin', 'latin-ext'],
   weight: ['300', '400', '500', '600', '700', '800', '900'],
   display: 'swap',
@@ -31,7 +35,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="vi" className={`${inter.variable}`} data-csp-nonce={nonce ? 'active' : undefined}>
       <body
-        className={`${inter.className} min-h-screen bg-[#ffffff] font-sans text-[#222222] antialiased selection:bg-[#FF385C]/20 selection:text-[#FF385C]`}
+        className={`${inter.className} min-h-screen bg-[#ffffff] font-sans text-[#222222] antialiased selection:bg-[#FF385C]/20 selection:text-[#E31C5F]`}
       >
         <AuthProvider>{children}</AuthProvider>
       </body>

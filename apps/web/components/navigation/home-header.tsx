@@ -1,31 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { ShieldCheck, Menu, X } from 'lucide-react';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { HomeMobileDrawer } from './home-mobile-drawer';
 
+/**
+ * Thuật toán: Thanh Đầu Đề Trang Giới Thiệu & Kích Hoạt Ngăn Kéo Phương Thức Di Động (`HomeHeader`)
+ * Mục đích: Hiển thị nhận diện thương hiệu, lối tắt neo nội dung trên màn hình rộng và mở ngăn kéo `<dialog>.showModal()` (`HomeMobileDrawer`) trên thiết bị di động `375px`.
+ */
 export function HomeHeader() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape' && mobileMenuOpen) {
-        setMobileMenuOpen(false);
-      }
-    }
-    if (mobileMenuOpen) {
-      document.addEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = '';
-    };
-  }, [mobileMenuOpen]);
 
   function closeMenu() {
     setMobileMenuOpen(false);
@@ -72,7 +58,7 @@ export function HomeHeader() {
           </nav>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-[#008A05]">
+            <div className="staff-badge bg-transparent border-0 p-0 hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-[#008A05]">
               <span className="dot dot-success animate-pulse" aria-hidden="true" />
               <span>Zero-Trust Active</span>
             </div>

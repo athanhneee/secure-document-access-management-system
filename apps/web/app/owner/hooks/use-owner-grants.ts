@@ -8,7 +8,6 @@ import type { AccessGrantItem, DocumentItem, RoleLookupItem, UserLookupItem } fr
 
 interface UseOwnerGrantsParams {
   documents: DocumentItem[];
-  grants: AccessGrantItem[];
   setGrants: Dispatch<SetStateAction<AccessGrantItem[]>>;
   usersLookup: UserLookupItem[];
   rolesLookup: RoleLookupItem[];
@@ -18,12 +17,11 @@ interface UseOwnerGrantsParams {
 }
 
 /**
- * Thuật toán: Cấp Quyền Trực Tiếp Có Thời Hạn & Thu Hồi Khẩn Cấp Lạc Quan (`useOwnerGrants`)
- * Kiểm định khoảng hiệu lực, chuẩn hóa tập quyền `DOWNLOAD => ['VIEW', 'DOWNLOAD']`, cập nhật lạc quan trạng thái `REVOKED` dưới `16ms` và hoàn tác tự động nếu máy chủ từ chối `expectedVersion`.
+ * Thuật toán: Cấp Quyền Trực Tiếp Có Thời Hạn & Thu Hồi Giấy Phép Xác Thực Máy Chủ (`useOwnerGrants`)
+ * Mục đích: Kiểm định khoảng hiệu lực, chuẩn hóa tập quyền `DOWNLOAD => ['VIEW', 'DOWNLOAD']`, bắt buộc `await` phản hồi thành công từ máy chủ trước khi đóng `<dialog>` hoặc hiển thị thông báo xanh lá.
  */
 export function useOwnerGrants({
   documents,
-  grants,
   setGrants,
   usersLookup,
   rolesLookup,
@@ -49,6 +47,7 @@ export function useOwnerGrants({
   const [isRevoking, setIsRevoking] = useState(false);
 
   function openDirectGrantModal() {
+    setErrorMessage(null);
     if (documents[0] && !directDocId) {
       setDirectDocId(documents[0].id);
     }
@@ -94,7 +93,6 @@ export function useOwnerGrants({
     setErrorMessage(null);
 
     try {
-      // CONFLICT-RESOLVED: Chuẩn hóa tập quyền trực tiếp để DOWNLOAD luôn đi kèm VIEW, ngăn gửi ['DOWNLOAD'] đơn lẻ.
       const normalizedPermissions = expandGrantPermissions(directPermissions);
       const payload: {
         documentId: string;
@@ -123,11 +121,11 @@ export function useOwnerGrants({
         body: JSON.stringify(payload),
       });
 
-      setMessage('Đã cấp giấy phép truy cập trực tiếp thành công.');
       setDirectGrantOpen(false);
       setDirectDocId('');
       setDirectUserId('');
       setDirectRoleId('');
+      setMessage('Đã cấp giấy phép truy cập trực tiếp thành công.');
       void refreshData({ silent: true });
     } catch (err) {
       setErrorMessage(
@@ -141,6 +139,7 @@ export function useOwnerGrants({
   }
 
   function openRevokeModal(grant: AccessGrantItem) {
+    setErrorMessage(null);
     setSelectedGrant(grant);
     setRevokeReason('');
     setRevokeOpen(true);
@@ -157,17 +156,8 @@ export function useOwnerGrants({
     }
 
     const target = selectedGrant;
-    const previousGrants = grants;
-
     setIsRevoking(true);
     setErrorMessage(null);
-    setRevokeOpen(false);
-    setSelectedGrant(null);
-    setRevokeReason('');
-    setGrants((prev) => applyOptimisticStatusById(prev, target.id, 'REVOKED'));
-    setMessage(
-      `Đã thu hồi quyền truy cập của ${target.principalName}. Mọi phiên làm việc đang chạy đã bị chấm dứt tức thì.`,
-    );
 
     try {
       await apiClient(`/access-grants/${target.id}/revoke`, {
@@ -177,10 +167,15 @@ export function useOwnerGrants({
           expectedVersion: target.version,
         }),
       });
+      setRevokeOpen(false);
+      setSelectedGrant(null);
+      setRevokeReason('');
+      setGrants((prev) => applyOptimisticStatusById(prev, target.id, 'REVOKED'));
+      setMessage(
+        `Đã thu hồi quyền truy cập của ${target.principalName}. Mọi phiên làm việc đang chạy đã bị chấm dứt tức thì.`,
+      );
       void refreshData({ silent: true });
     } catch (err) {
-      setGrants(previousGrants);
-      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể thu hồi quyền.'

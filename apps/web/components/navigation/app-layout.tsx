@@ -5,11 +5,15 @@ import { AppHeader } from './app-header';
 import { AppSidebar } from './app-sidebar';
 import { AppFooter } from './app-footer';
 
+/**
+ * Thuật toán: Khung Bố Cục Không Gian Làm Việc Phân Quyền & Chuyển Tiếp Tiêu Điểm Bỏ Qua (`AppLayout`)
+ * Mục đích: Kết nối liên kết trợ năng `skip-to-content` tới vùng `<main id="main-content">`, đồng bộ trạng thái đóng/mở ngăn kéo di động giữa `AppHeader` và `AppSidebar`.
+ */
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#f7f7f7] text-[#222222] antialiased selection:bg-[#FF385C]/15 selection:text-[#FF385C]">
+    <div className="flex min-h-screen flex-col bg-[#f7f7f7] text-[#222222] antialiased selection:bg-[#FF385C]/15 selection:text-[#E31C5F]">
       <a href="#main-content" className="skip-to-content">
         Chuyển đến nội dung chính
       </a>

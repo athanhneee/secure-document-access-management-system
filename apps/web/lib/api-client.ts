@@ -1,8 +1,12 @@
+import { localizeApiErrorMessage } from './api-error-messages';
 import { attemptSessionRefresh, isRefreshExcludedEndpoint } from './api-refresh';
 
 /**
- * Thuật toán: Chuẩn Hóa Điểm Cuối Cùng Nguồn `/api/v1`, Xoay Vòng Phiên `401` Đơn Luồng & Xác Thực Chữ Ký PDF (`api-client`)
- * Mục đích: Định tuyến trình duyệt qua `/api/v1` cùng nguồn `'self'`, bảo vệ CSRF Double-Submit Cookie (`sda_csrf` -> `x-csrf-token`), hỗ trợ hủy yêu cầu qua `AbortSignal`, và tự động làm mới phiên một lần duy nhất khi gặp mã `401`.
+ * Thuật toán: Chuẩn Hóa Điểm Cuối Cùng Nguồn `/api/v1`, Xoay Vòng Phiên `401` Đơn Luồng Liên Tab, Việt Hóa Lỗi & Xác Thực Chữ Ký PDF (`api-client`)
+ * Mục đích:
+ *   - Định tuyến mọi yêu cầu trình duyệt qua `/api/v1` cùng nguồn `'self'`, tự động đính kèm mã CSRF Double-Submit Cookie (`sda_csrf` -> `x-csrf-token`) và hỗ trợ hủy yêu cầu qua `AbortSignal`.
+ *   - Phối hợp cùng `attemptSessionRefresh` (Mutex Promise trong tab + `BroadcastChannel('sda_auth_refresh')` liên tab + dấu thời gian `requestStartedAt`) để gộp toàn bộ các yêu cầu nhận `401` song song vào đúng 1 lần gọi `POST /auth/refresh`.
+ *   - Tự động chuyển ngữ mã lỗi `errorCode` và thông điệp tiếng Anh của Backend sang tiếng Việt chuẩn xác qua `localizeApiErrorMessage`.
  */
 function resolveInternalSsrOrigin(): string {
   const rawInternal = (
@@ -72,10 +76,10 @@ function resolveSafeApiUrl(endpoint: string): string {
     try {
       parsed = new URL(endpoint);
     } catch {
-      throw new Error('Invalid API endpoint URL.');
+      throw new Error('Địa chỉ điểm cuối API không hợp lệ.');
     }
     if (parsed.origin !== allowedOrigin) {
-      throw new Error('Blocked cross-origin credentialed API request.');
+      throw new Error('Đã chặn yêu cầu API gửi thông tin xác thực chéo nguồn.');
     }
     return parsed.toString();
   }
@@ -114,25 +118,25 @@ export function getCsrfToken(): string {
 
 export interface ApiErrorResponse {
   statusCode?: number;
+  errorCode?: string;
+  code?: string;
   message?: string | string[];
   error?: string;
-  code?: string;
+  correlationId?: string;
   details?: unknown;
 }
 
 export class ApiError extends Error {
+  public readonly errorCode: string | undefined;
+
   constructor(
     public readonly status: number,
     public readonly response: ApiErrorResponse,
     message?: string,
   ) {
-    const errorMsg =
-      message ||
-      (Array.isArray(response.message) ? response.message.join(', ') : response.message) ||
-      response.error ||
-      `Yêu cầu thất bại với mã trạng thái ${status}`;
-    super(errorMsg);
+    super(localizeApiErrorMessage(status, response, message));
     this.name = 'ApiError';
+    this.errorCode = response.errorCode ?? response.code;
   }
 }
 
@@ -155,6 +159,7 @@ export async function apiClient<T>(endpoint: string, options: ApiRequestOptions 
   }
   if (csrf) headers['x-csrf-token'] = csrf;
 
+  const requestStartedAt = Date.now();
   const response = await fetch(url, {
     ...fetchInit,
     credentials: 'include',
@@ -168,7 +173,11 @@ export async function apiClient<T>(endpoint: string, options: ApiRequestOptions 
     !signal?.aborted &&
     !isRefreshExcludedEndpoint(endpoint)
   ) {
-    const refreshed = await attemptSessionRefresh(resolveSafeApiUrl, getCsrfToken);
+    const refreshed = await attemptSessionRefresh(
+      resolveSafeApiUrl,
+      getCsrfToken,
+      requestStartedAt,
+    );
     if (refreshed && !signal?.aborted) {
       return apiClient<T>(endpoint, { ...options, _retriedAfterRefresh: true });
     }
@@ -179,7 +188,7 @@ export async function apiClient<T>(endpoint: string, options: ApiRequestOptions 
   if (!response.ok) {
     let errorData: ApiErrorResponse = {};
     try {
-      errorData = await response.json();
+      errorData = (await response.json()) as ApiErrorResponse;
     } catch {
       errorData = { message: response.statusText };
     }
@@ -204,6 +213,7 @@ export async function apiDownload(
   const url = resolveSafeApiUrl(endpoint);
   const csrf = getCsrfToken();
 
+  const requestStartedAt = Date.now();
   const response = await fetch(url, {
     method: 'GET',
     credentials: 'include',
@@ -217,7 +227,11 @@ export async function apiDownload(
     !signal?.aborted &&
     !isRefreshExcludedEndpoint(endpoint)
   ) {
-    const refreshed = await attemptSessionRefresh(resolveSafeApiUrl, getCsrfToken);
+    const refreshed = await attemptSessionRefresh(
+      resolveSafeApiUrl,
+      getCsrfToken,
+      requestStartedAt,
+    );
     if (refreshed && !signal?.aborted) {
       return apiDownload(endpoint, { ...options, _retriedAfterRefresh: true });
     }
@@ -226,7 +240,7 @@ export async function apiDownload(
   if (!response.ok) {
     let errorData: ApiErrorResponse = {};
     try {
-      errorData = await response.json();
+      errorData = (await response.json()) as ApiErrorResponse;
     } catch {
       errorData = { message: response.statusText };
     }

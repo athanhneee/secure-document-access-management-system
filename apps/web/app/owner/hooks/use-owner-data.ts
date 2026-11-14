@@ -106,11 +106,68 @@ export function useOwnerData() {
       apiClient<{ data: RoleLookupItem[] }>('/rbac/roles/lookup'),
     ]);
 
-    const mappedDocs =
+    const loadedDepts = deptsResult.status === 'fulfilled' ? deptsResult.value.data || [] : [];
+    const loadedCats = catsResult.status === 'fulfilled' ? catsResult.value.data || [] : [];
+    const loadedLevels = levelsResult.status === 'fulfilled' ? levelsResult.value.data || [] : [];
+
+    if (deptsResult.status === 'fulfilled') {
+      setDepartments(loadedDepts);
+    }
+    if (catsResult.status === 'fulfilled') {
+      setBusinessCategories(loadedCats);
+    }
+    if (levelsResult.status === 'fulfilled') {
+      setClassificationLevels(loadedLevels);
+    }
+
+    let mappedDocs =
       docsResult.status === 'fulfilled'
-        ? (docsResult.value.data || []).map(mapDocumentDtoToItem)
+        ? (docsResult.value.data || []).map((d) =>
+            mapDocumentDtoToItem(d, {
+              businessCategories: loadedCats,
+              classificationLevels: loadedLevels,
+            }),
+          )
         : [];
+
     if (docsResult.status === 'fulfilled') {
+      const docsMissingCategory = mappedDocs.filter(
+        (doc) => !doc.businessCategoryName || !doc.businessCategoryId || !doc.classificationLevelId,
+      );
+      if (docsMissingCategory.length > 0) {
+        const detailResults = await Promise.allSettled(
+          docsMissingCategory.map((doc) => apiClient<DocumentApiDto>(`/documents/${doc.id}`)),
+        );
+        const detailMap = new Map<string, DocumentApiDto>();
+        detailResults.forEach((res, idx) => {
+          const targetDoc = docsMissingCategory[idx];
+          if (res.status === 'fulfilled' && targetDoc) {
+            detailMap.set(targetDoc.id, res.value);
+          }
+        });
+        if (detailMap.size > 0) {
+          mappedDocs = mappedDocs.map((doc) => {
+            const detail = detailMap.get(doc.id);
+            if (!detail) return doc;
+            const enriched = mapDocumentDtoToItem(detail, {
+              businessCategories: loadedCats,
+              classificationLevels: loadedLevels,
+            });
+            return {
+              ...doc,
+              classificationLevelId: enriched.classificationLevelId ?? doc.classificationLevelId,
+              businessCategoryId: enriched.businessCategoryId ?? doc.businessCategoryId,
+              businessCategoryCode: enriched.businessCategoryCode ?? doc.businessCategoryCode,
+              businessCategoryName: enriched.businessCategoryName ?? doc.businessCategoryName,
+              departmentId: enriched.departmentId ?? doc.departmentId,
+              departmentName:
+                doc.departmentName && doc.departmentName !== '—'
+                  ? doc.departmentName
+                  : enriched.departmentName,
+            };
+          });
+        }
+      }
       setDocuments(mappedDocs);
     } else {
       setErrorMessage('Không thể tải danh sách tài liệu từ máy chủ.');
@@ -135,18 +192,6 @@ export function useOwnerData() {
 
     if (requestsResult.status === 'fulfilled') {
       setRequests(requestsResult.value.data || []);
-    }
-
-    if (deptsResult.status === 'fulfilled') {
-      setDepartments(deptsResult.value.data || []);
-    }
-
-    if (catsResult.status === 'fulfilled') {
-      setBusinessCategories(catsResult.value.data || []);
-    }
-
-    if (levelsResult.status === 'fulfilled') {
-      setClassificationLevels(levelsResult.value.data || []);
     }
 
     if (!options?.silent) {

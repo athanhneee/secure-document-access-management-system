@@ -8,6 +8,7 @@ export interface DocumentItem {
   classificationRank?: number | undefined;
   classificationLevelId?: number | undefined;
   businessCategoryId?: number | undefined;
+  businessCategoryCode?: string | undefined;
   businessCategoryName?: string | undefined;
   status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
   departmentId?: number | undefined;
@@ -23,25 +24,40 @@ export interface DocumentApiDto {
   documentCode?: string;
   document_code?: string;
   // CONFLICT-RESOLVED: Bổ sung trường phẳng classificationLevelCode, classificationLevelName, departmentName từ GET /api/v1/documents.
+  classificationLevelId?: string | number | null;
   classificationLevelCode?: ClassificationCode | null;
   classificationLevelName?: string | null;
   classificationCode?: ClassificationCode;
   classification?: {
-    id?: number;
+    id?: string | number;
     code?: ClassificationCode;
     rank?: number;
     allowDownload?: boolean;
   };
-  classification_level_id?: number;
-  business_category_id?: number;
+  currentClassification?: {
+    classificationLevelId?: string | number;
+    classificationLevelCode?: ClassificationCode;
+    classificationLevelName?: string;
+    rank?: number;
+    businessCategoryId?: string | number;
+    businessCategoryCode?: string;
+    businessCategoryName?: string;
+  } | null;
+  classification_level_id?: string | number;
+  businessCategoryId?: string | number | null;
+  business_category_id?: string | number;
+  businessCategoryCode?: string | null;
+  business_category_code?: string | null;
   businessCategoryName?: string | null;
-  businessCategory?: { id?: number; name?: string };
-  business_categories?: { id?: number; name?: string };
+  business_category_name?: string | null;
+  businessCategory?: { id?: string | number; code?: string; name?: string };
+  business_categories?: { id?: string | number; code?: string; name?: string };
   status?: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
-  department_id?: number;
+  departmentId?: string | number | null;
+  department_id?: string | number;
   departmentName?: string | null;
-  department?: { id?: number; name?: string };
-  departments?: { id?: number; name?: string };
+  department?: { id?: string | number; name?: string };
+  departments?: { id?: string | number; name?: string };
   allowDownload?: boolean;
   versions?: unknown[];
   createdAt?: string;
@@ -99,20 +115,20 @@ export interface AccessGrantItem {
 }
 
 export interface DepartmentLookupItem {
-  id: number;
+  id: number | string;
   code: string;
   name: string;
 }
 
 export interface BusinessCategoryLookupItem {
-  id: number;
+  id: number | string;
   code: string;
   name: string;
-  departmentId: number | null;
+  departmentId: number | string | null;
 }
 
 export interface ClassificationLevelLookupItem {
-  id: number;
+  id: number | string;
   code: ClassificationCode;
   name: string;
   rank: number;

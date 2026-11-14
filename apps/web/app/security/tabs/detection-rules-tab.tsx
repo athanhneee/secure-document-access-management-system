@@ -1,6 +1,6 @@
 'use client';
 
-import { Play } from 'lucide-react';
+import { Play, Settings } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -17,9 +17,18 @@ import type { DetectionRuleItem } from '../types';
 interface DetectionRulesTabProps {
   detectionRules: DetectionRuleItem[];
   onRunDetection: () => void | Promise<void>;
+  onEditRule: (rule: DetectionRuleItem) => void;
 }
 
-export function DetectionRulesTab({ detectionRules, onRunDetection }: DetectionRulesTabProps) {
+/**
+ * Thuật toán: Quản Trị Bảng Tham Số Luật Phát Hiện Bất Thường SOC (`DetectionRulesTab`)
+ * Mục đích: Hiển thị 6 quy tắc phát hiện tự động kèm ngưỡng, cửa sổ thời gian, thời gian hạ nhiệt và nút mở `<dialog>` cấu hình trực tiếp.
+ */
+export function DetectionRulesTab({
+  detectionRules,
+  onRunDetection,
+  onEditRule,
+}: DetectionRulesTabProps) {
   return (
     <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
       <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3">
@@ -48,9 +57,11 @@ export function DetectionRulesTab({ detectionRules, onRunDetection }: DetectionR
                 <TableHead className="text-xs text-[#717171]">Mã quy tắc</TableHead>
                 <TableHead className="text-xs text-[#717171]">Tên quy tắc</TableHead>
                 <TableHead className="text-xs text-[#717171]">Mức nghiêm trọng</TableHead>
-                <TableHead className="text-xs text-[#717171]">Ngưỡng (Threshold)</TableHead>
-                <TableHead className="text-xs text-[#717171]">Cửa sổ (Phút)</TableHead>
+                <TableHead className="text-xs text-[#717171]">Ngưỡng</TableHead>
+                <TableHead className="text-xs text-[#717171]">Cửa sổ</TableHead>
+                <TableHead className="text-xs text-[#717171]">Hạ nhiệt</TableHead>
                 <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
+                <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -80,15 +91,27 @@ export function DetectionRulesTab({ detectionRules, onRunDetection }: DetectionR
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs font-bold text-[#222222]">
-                      {r.threshold} lần
+                      {r.threshold ?? r.thresholdCount ?? 5} lần
                     </TableCell>
                     <TableCell className="text-xs font-bold text-[#222222]">
                       {r.windowMinutes}m
+                    </TableCell>
+                    <TableCell className="text-xs font-bold text-[#717171]">
+                      {r.cooldownMinutes ?? 30}m
                     </TableCell>
                     <TableCell>
                       <Badge variant={enabled ? 'success' : 'neutral'}>
                         {enabled ? 'Kích hoạt' : 'Đã tắt'}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <InteractiveHoverButton
+                        size="sm"
+                        variant="secondary"
+                        text="Cấu hình"
+                        icon={<Settings size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        onClick={() => onEditRule(r)}
+                      />
                     </TableCell>
                   </TableRow>
                 );

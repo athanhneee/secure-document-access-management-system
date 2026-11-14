@@ -13,17 +13,23 @@ interface RolesTabProps {
   onOpenCreateRole: () => void;
   onOpenRolePermissions: (role: RoleRow) => void;
   onOpenEditRole: (role: RoleRow) => void;
-  onDisableRole: (role: RoleRow) => void;
+  onDisableRole: (role: RoleRow) => Promise<boolean>;
+  onClearError: () => void;
 }
 
+/**
+ * Thuật toán: Ma Trận Thẻ Vai Trò & Vô Hiệu Hóa Vai Trò RBAC Có Xác Nhận (`RolesTab`)
+ */
 export function RolesTab({
   roles,
   onOpenCreateRole,
   onOpenRolePermissions,
   onOpenEditRole,
   onDisableRole,
+  onClearError,
 }: RolesTabProps) {
   const [roleToDisable, setRoleToDisable] = useState<RoleRow | null>(null);
+  const [isDisabling, setIsDisabling] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -114,7 +120,10 @@ export function RolesTab({
                         size="sm"
                         text="Vô hiệu"
                         icon={<Ban size={16} strokeWidth={1.75} aria-hidden="true" />}
-                        onClick={() => setRoleToDisable(role)}
+                        onClick={() => {
+                          onClearError();
+                          setRoleToDisable(role);
+                        }}
                       />
                     )}
                   </>
@@ -128,16 +137,21 @@ export function RolesTab({
       <ConfirmDialog
         open={Boolean(roleToDisable)}
         onOpenChange={(open) => {
-          if (!open) setRoleToDisable(null);
+          if (!open && !isDisabling) setRoleToDisable(null);
         }}
         title="Xác nhận vô hiệu hóa vai trò RBAC"
         description={`Vai trò "${roleToDisable?.name ?? ''}" (${roleToDisable?.code ?? ''}) sẽ ngưng cấp quyền cho mọi nhân sự đang liên kết.`}
         confirmLabel="Xác nhận vô hiệu hóa"
         variant="danger"
-        onConfirm={() => {
-          if (roleToDisable) {
-            onDisableRole(roleToDisable);
-            setRoleToDisable(null);
+        isLoading={isDisabling}
+        onConfirm={async () => {
+          if (!roleToDisable) return;
+          setIsDisabling(true);
+          try {
+            const ok = await onDisableRole(roleToDisable);
+            if (ok) setRoleToDisable(null);
+          } finally {
+            setIsDisabling(false);
           }
         }}
       />

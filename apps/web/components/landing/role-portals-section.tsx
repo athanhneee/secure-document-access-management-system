@@ -1,3 +1,7 @@
+/**
+ * Thuật toán: Danh Mục Điều Hướng 6 Không Gian Vai Trò Tách Biệt Mobile/Desktop (`RolePortalsSection`)
+ * Mục đích: Hiển thị danh bạ chạm một chạm bo tròn viên thuốc trên màn hình `< 640px` và lưới thẻ chi tiết kèm nhãn phẳng `staff-001` trên màn hình lớn.
+ */
 import Link from 'next/link';
 import {
   FileText,

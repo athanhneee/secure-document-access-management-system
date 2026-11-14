@@ -23,7 +23,8 @@ interface PolicyPresetsBarProps {
   templateDialogOpen: boolean;
   onTemplateDialogChange: (open: boolean) => void;
   onSelectTemplate: (tpl: PolicyTemplate) => void;
-  onSaveRule?: ((rule: VisualPolicyRule) => void) | undefined;
+  onSaveRule?: ((rule: VisualPolicyRule) => void | Promise<void>) | undefined;
+  isSaving?: boolean | undefined;
   onCancel?: (() => void) | undefined;
 }
 
@@ -37,6 +38,7 @@ export function PolicyPresetsBar({
   onTemplateDialogChange,
   onSelectTemplate,
   onSaveRule,
+  isSaving = false,
   onCancel,
 }: PolicyPresetsBarProps) {
   return (
@@ -123,10 +125,11 @@ export function PolicyPresetsBar({
             <Button
               type="button"
               size="sm"
-              onClick={() => onSaveRule(rule)}
+              disabled={isSaving}
+              onClick={() => void onSaveRule(rule)}
               className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs min-h-11 sm:h-9 px-4 font-semibold"
             >
-              Lưu Chính Sách
+              {isSaving ? 'Đang lưu...' : 'Lưu Chính Sách'}
             </Button>
           )}
 

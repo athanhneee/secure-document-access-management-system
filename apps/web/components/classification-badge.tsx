@@ -17,10 +17,10 @@ export interface ClassificationBadgeProps extends Omit<
 }
 
 /**
- * Thuật toán: Ánh Xạ Phân Tầng Nhãn Mật Độ Bảo Mật Tài Liệu 5 Cấp (5-Tier Security Classification Badge Mapper)
- * Mục đích: Chuẩn hóa mã phân loại mật (`UNCLASSIFIED` -> `TOP_SECRET`) sang biểu diễn phẳng `staff-001` với màu chữ chuẩn, biểu tượng cảnh báo `16px`/`20px` và chỉ số thứ bậc `R0..R4`.
- * Cơ chế hoạt động:
- *   - Chuẩn hóa chuỗi đầu vào sang chữ in hoa, phân nhánh tất định theo 5 cấp độ bảo mật tiêu chuẩn và sinh nhãn trợ năng `aria-label` tương ứng.
+ * Thuật toán: Ánh Xạ Phân Tầng Nhãn Mật Độ Bảo Mật Tài Liệu 5 Cấp Đạt Chuẩn Tương Phản WCAG 2.1 AA (`ClassificationBadge`)
+ * Mục đích:
+ *   - Chuẩn hóa mã phân loại mật (`UNCLASSIFIED` -> `TOP_SECRET`) sang biểu diễn phẳng `staff-001` hoàn toàn không viền, không nền (`background: transparent`, `border: none`, `padding: 0`) kèm chỉ số thứ bậc `R0..R4`.
+ *   - Đảm bảo mọi màu chữ trên nền sáng `#FFFFFF` đạt tỷ lệ tương phản `>= 4.5:1` theo chuẩn WCAG 2.1 AA: `#717171` (`4.88:1`) cho `UNCLASSIFIED`, `#008489` (`4.50:1`) cho `INTERNAL`, `#222222` (`15.91:1` kèm biểu tượng khóa `#E07912`) cho `CONFIDENTIAL`, và `#C13515` (`5.54:1`) cho `SECRET` / `TOP_SECRET`.
  */
 export function ClassificationBadge({
   code,
@@ -42,13 +42,13 @@ export function ClassificationBadge({
   // CONFLICT-RESOLVED: Chuẩn hóa kích thước icon về thang {16, 20} và loại bỏ thuộc tính style nội tuyến để tuân thủ CSP nghiêm ngặt.
   const iconPixelSize: 16 | 20 = size === 'lg' ? 20 : 16;
 
-  // CONFLICT-RESOLVED: Đồng bộ nhãn cấp bậc hiển thị (UNCLASSIFIED: R0, INTERNAL/RESTRICTED: R1, CONFIDENTIAL: R2, SECRET: R3, TOP_SECRET: R4) khớp với thang bậc CSDL và @sda/contracts.
+  // CONFLICT-RESOLVED: Đồng bộ nhãn cấp bậc hiển thị (UNCLASSIFIED: R0, INTERNAL/RESTRICTED: R1, CONFIDENTIAL: R2, SECRET: R3, TOP_SECRET: R4) và nâng cấp màu chữ đạt tương phản WCAG 2.1 AA >= 4.5:1.
   switch (normalized) {
     case 'UNCLASSIFIED':
       return (
         <span
           className={cn(
-            'staff-badge inline-flex items-center font-semibold text-[#717171] select-none tracking-wide',
+            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-semibold text-[#717171] select-none tracking-wide',
             sizeClasses[size],
             className,
           )}
@@ -63,7 +63,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>KHÔNG MẬT</span>
-          {showRank && <span className="opacity-70 font-bold text-[13px]">· R0</span>}
+          {showRank && <span className="font-bold text-[13px]">· R0</span>}
         </span>
       );
 
@@ -72,7 +72,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge inline-flex items-center font-semibold text-[#008489] select-none tracking-wide',
+            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-semibold text-[#008489] select-none tracking-wide',
             sizeClasses[size],
             className,
           )}
@@ -87,16 +87,15 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>NỘI BỘ</span>
-          {showRank && <span className="opacity-75 font-bold text-[13px]">· R1</span>}
+          {showRank && <span className="font-bold text-[13px]">· R1</span>}
         </span>
       );
 
     case 'CONFIDENTIAL':
-      // CONFLICT-RESOLVED: Chuẩn hóa màu nhãn mức MẬT sang màu nhấn thương hiệu #FF385C theo rules/ui-design-system.md §5.
       return (
         <span
           className={cn(
-            'staff-badge inline-flex items-center font-bold text-[#FF385C] select-none tracking-wide',
+            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-bold text-[#222222] select-none tracking-wide',
             sizeClasses[size],
             className,
           )}
@@ -104,9 +103,14 @@ export function ClassificationBadge({
           aria-label={`Mức mật: Mật (Confidential)${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
         >
-          <Lock size={iconPixelSize} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+          <Lock
+            size={iconPixelSize}
+            strokeWidth={1.75}
+            className="shrink-0 text-[#E07912]"
+            aria-hidden="true"
+          />
           <span>MẬT</span>
-          {showRank && <span className="opacity-75 font-bold text-[13px]">· R2</span>}
+          {showRank && <span className="font-bold text-[13px]">· R2</span>}
         </span>
       );
 
@@ -114,7 +118,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge inline-flex items-center font-bold text-[#E07912] select-none tracking-wider',
+            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-bold text-[#C13515] select-none tracking-wider',
             sizeClasses[size],
             className,
           )}
@@ -129,7 +133,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>TỐI MẬT</span>
-          {showRank && <span className="opacity-75 font-bold text-[13px]">· R3</span>}
+          {showRank && <span className="font-bold text-[13px]">· R3</span>}
         </span>
       );
 
@@ -137,7 +141,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge inline-flex items-center font-extrabold text-[#C13515] select-none tracking-wider uppercase',
+            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-extrabold text-[#C13515] select-none tracking-wider uppercase',
             sizeClasses[size],
             className,
           )}
@@ -152,7 +156,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>TUYỆT MẬT</span>
-          {showRank && <span className="opacity-80 font-bold text-[13px]">· R4</span>}
+          {showRank && <span className="font-bold text-[13px]">· R4</span>}
         </span>
       );
 
@@ -160,7 +164,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge inline-flex items-center text-xs font-semibold text-[#717171] select-none',
+            'staff-badge bg-transparent border-0 p-0 inline-flex items-center text-xs font-semibold text-[#717171] select-none',
             className,
           )}
           {...props}

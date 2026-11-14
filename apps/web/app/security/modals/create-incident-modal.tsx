@@ -23,6 +23,10 @@ interface CreateIncidentModalProps {
   onError: (errorMessage: string) => void;
 }
 
+/**
+ * Thuật toán: Khởi Tạo Hồ Sơ Báo Cáo Sự Cố An Ninh Ở Trạng Thái DRAFT (`CreateIncidentModal`)
+ * Mục đích: Kiểm định tiêu đề và tóm tắt sự cố (`>= 10` ký tự), chờ phản hồi `POST /incidents` thành công trước khi đóng `<dialog>`.
+ */
 export function CreateIncidentModal({
   open,
   onOpenChange,

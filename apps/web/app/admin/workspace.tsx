@@ -36,16 +36,18 @@ import { WatermarkTab } from './tabs/watermark-tab';
 export function AdminWorkspace() {
   const [activeTab, setActiveTab] = useState('users');
   const [searchQuery, setSearchQuery] = useState('');
-  const modals = useAdminModalState();
   const data = useAdminData();
+  const clearError = () => data.setErrorMessage(null);
+  const modals = useAdminModalState(clearError);
 
   const { isAuthenticated, user, hasRole } = useAuth();
   const canManage =
     isAuthenticated && (hasRole('SYSTEM_ADMIN') || user?.permissions.includes('USER:MANAGE'));
 
   async function handleModalSuccess(msg: string) {
+    data.setErrorMessage(null);
     data.setMessage(msg);
-    await data.refresh();
+    await data.refresh({ silent: true });
   }
 
   return (
@@ -168,13 +170,19 @@ export function AdminWorkspace() {
                       departments={data.departments}
                       searchQuery={searchQuery}
                       onSearchQueryChange={setSearchQuery}
+                      onOpenEditUser={modals.openEditUser}
                       onOpenAssignRole={modals.openAssignRole}
-                      onChangeStatus={(u, action) => void data.changeUserStatus(u, action)}
+                      onChangeStatus={data.changeUserStatus}
+                      onClearError={clearError}
                     />
                   </TabsContent>
 
                   <TabsContent value="departments" className="space-y-4">
-                    <DepartmentsTab departments={data.departments} />
+                    <DepartmentsTab
+                      departments={data.departments}
+                      onOpenCreateDepartment={modals.openCreateDepartment}
+                      onOpenEditDepartment={modals.openEditDepartment}
+                    />
                   </TabsContent>
 
                   <TabsContent value="rbac" className="space-y-4">
@@ -183,7 +191,8 @@ export function AdminWorkspace() {
                       onOpenCreateRole={modals.openCreateRole}
                       onOpenRolePermissions={modals.openRolePermissions}
                       onOpenEditRole={modals.openEditRole}
-                      onDisableRole={(role) => void data.disableRole(role)}
+                      onDisableRole={data.disableRole}
+                      onClearError={clearError}
                     />
                   </TabsContent>
 
@@ -191,8 +200,9 @@ export function AdminWorkspace() {
                     <AbacTab
                       policies={data.policies}
                       attributes={data.attributes}
-                      onActivatePolicy={(id) => void data.activatePolicy(id)}
+                      onActivatePolicy={data.activatePolicy}
                       onSaveDraftPolicy={data.saveDraftPolicy}
+                      onClearError={clearError}
                     />
                   </TabsContent>
 
@@ -216,7 +226,10 @@ export function AdminWorkspace() {
                   </TabsContent>
 
                   <TabsContent value="health" className="space-y-4">
-                    <SystemHealthTab healthData={data.healthData} />
+                    <SystemHealthTab
+                      healthData={data.healthData}
+                      onCaptureSnapshot={data.captureHealthSnapshot}
+                    />
                   </TabsContent>
                 </Tabs>
 

@@ -1,6 +1,8 @@
 import type {
   AuditLogApiDto,
   AuditLogItem,
+  AuditLogsPaginatedResponse,
+  AuditorPaginationInfo,
   AuditTrailFilters,
   ChainVerificationReport,
   ExportFormat,
@@ -10,16 +12,21 @@ import type {
 } from './types';
 
 /**
- * Thuật toán: Truy vấn Có Lọc & Chuẩn hóa Lược đồ Nhật ký Kiểm toán (`buildAuditLogsQueryParams`)
- * Mục đích: Đồng bộ danh sách sự kiện kiểm toán theo bộ lọc đa chiều (`outcome`, `action`, khoảng ngày) và ánh xạ thống nhất giữa định dạng `camelCase` và `snake_case`.
+ * Thuật toán: Truy vấn Có Lọc, Phân Trang & Chuẩn hóa Lược đồ Pháp chứng Nhật ký Kiểm toán (`buildAuditLogsQueryParams`)
+ * Mục đích: Đồng bộ danh sách sự kiện kiểm toán theo bộ lọc đa chiều (`outcome`, `action`, khoảng ngày), tham số phân trang (`page`, `pageSize`) và ánh xạ đầy đủ siêu dữ liệu chuỗi băm (`chainPartition`, `chainSequence`, `previousHash`, `entryHash`, `reasonCode`, `details`).
  */
-export function buildAuditLogsQueryParams(filters: AuditTrailFilters): URLSearchParams {
+export function buildAuditLogsQueryParams(
+  filters: AuditTrailFilters,
+  page = 1,
+  pageSize = 20,
+): URLSearchParams {
   const queryParams = new URLSearchParams();
   if (filters.outcomeFilter !== 'ALL') queryParams.set('outcome', filters.outcomeFilter);
   if (filters.actionFilter.trim()) queryParams.set('action', filters.actionFilter.trim());
   if (filters.fromDate) queryParams.set('from', filters.fromDate);
   if (filters.toDate) queryParams.set('to', filters.toDate);
-  queryParams.set('pageSize', '50');
+  queryParams.set('page', String(Math.max(1, page)));
+  queryParams.set('pageSize', String(pageSize));
   return queryParams;
 }
 
@@ -27,24 +34,46 @@ export function normalizeAuditLogDtos(dtos: AuditLogApiDto[]): AuditLogItem[] {
   return dtos.map((l, i) => ({
     id: l.id || `log-${i}`,
     occurredAt: l.occurredAt || l.occurred_at || '',
+    actorUserId: l.actorUserId ?? l.actor_user_id ?? null,
     actorUsername: l.actorUsername || l.actor_username || 'SYSTEM',
     action: l.action || '—',
     objectType: l.objectType || l.object_type || '—',
-    objectId: l.objectId || l.object_id,
+    objectId: l.objectId ?? l.object_id ?? null,
+    documentId: l.documentId ?? l.document_id ?? null,
+    accessSessionId: l.accessSessionId ?? l.access_session_id ?? null,
     outcome: l.outcome || 'SUCCESS',
+    reasonCode: l.reasonCode ?? l.reason_code ?? null,
     ipAddress: l.ipAddress || l.ip_address || '—',
+    userAgent: l.userAgent ?? l.user_agent ?? null,
     correlationId: l.correlationId || l.correlation_id || '—',
+    chainPartition: l.chainPartition || l.chain_partition || 'GLOBAL',
     chainSequence: l.chainSequence ?? l.chain_sequence,
+    previousHash: l.previousHash ?? l.previous_hash ?? null,
     entryHash: l.entryHash || l.entry_hash || undefined,
+    details: l.details ?? null,
   }));
+}
+
+export function extractAuditorPagination(
+  res: AuditLogsPaginatedResponse,
+  fallbackPage = 1,
+  fallbackPageSize = 20,
+): AuditorPaginationInfo {
+  const raw = res.pagination ?? res.meta;
+  const count = Array.isArray(res.data) ? res.data.length : 0;
+  const total = typeof raw?.total === 'number' ? raw.total : count;
+  const pageSize =
+    typeof raw?.pageSize === 'number' && raw.pageSize > 0 ? raw.pageSize : fallbackPageSize;
+  const computedTotalPages = Math.max(1, Math.ceil(total / pageSize));
+  const totalPages =
+    typeof raw?.totalPages === 'number' && raw.totalPages > 0 ? raw.totalPages : computedTotalPages;
+  const page = typeof raw?.page === 'number' && raw.page > 0 ? raw.page : fallbackPage;
+  return { page, pageSize, total, totalPages };
 }
 
 /**
  * Thuật toán: Tổng hợp Xác minh Toàn vẹn Chuỗi Băm Đa phân vùng (`aggregatePartitionVerifications`)
  * Mục đích: Kiểm chứng không có bất kỳ bản ghi nhật ký nào bị sửa đổi, xóa bỏ hoặc chèn trái phép trên các phân vùng chuỗi kiểm toán thực tế.
- * Cơ chế hoạt động:
- *   - Trích xuất danh sách phân vùng thực từ phản hồi `/audit-logs/verify` (mặc định nhãn `GLOBAL` thay vì hằng số giả `GLOBAL_CHAIN`).
- *   - Khi `partitions.length === 0` và `tamperedCount === 0`, đánh giá `isChainValid: true` (`CHƯA CÓ BẢN GHI / HỢP LỆ`) thay vì phát cảnh báo giả mạo sai lệch.
  */
 export function aggregatePartitionVerifications(res: VerifyHashChainResponse): {
   report: ChainVerificationReport;
@@ -98,7 +127,6 @@ export function aggregatePartitionVerifications(res: VerifyHashChainResponse): {
 
 /**
  * Thuật toán: Xuất Báo cáo Bất đồng bộ Chống Formula Injection & Tải Luồng Nhị phân (`normalizeExportJob`)
- * Mục đích: Chuẩn hóa trạng thái tác vụ xuất (`CSV`, `JSON`, `PDF`, `EXCEL`) với TTL 24 giờ và tải tệp `Blob` qua Object URL tự thu hồi.
  */
 export function normalizeExportJob(
   newJob: Partial<ExportJobItem> & { id: string },

@@ -57,17 +57,18 @@ export function OwnerWorkspace() {
     setMessage: data.setMessage,
     setErrorMessage: data.setErrorMessage,
   });
+  const clearError = () => data.setErrorMessage(null);
   const lifecycle = useDocumentLifecycle({
-    documents: data.documents,
     setDocuments: data.setDocuments,
+    classificationLevels: data.classificationLevels,
+    businessCategories: data.businessCategories,
     refreshData: data.refreshData,
     setMessage: data.setMessage,
     setErrorMessage: data.setErrorMessage,
   });
-  const history = useDocumentHistory();
+  const history = useDocumentHistory(clearError);
   const grantsControl = useOwnerGrants({
     documents: data.documents,
-    grants: data.grants,
     setGrants: data.setGrants,
     usersLookup: data.usersLookup,
     rolesLookup: data.rolesLookup,
@@ -76,7 +77,6 @@ export function OwnerWorkspace() {
     setErrorMessage: data.setErrorMessage,
   });
   const requestsControl = useOwnerRequests({
-    requests: data.requests,
     setRequests: data.setRequests,
     refreshData: data.refreshData,
     setMessage: data.setMessage,
@@ -198,7 +198,8 @@ export function OwnerWorkspace() {
                 <RequestsTab
                   requests={data.requests}
                   onOpenApprove={requestsControl.openApproveModal}
-                  onReject={(req) => void requestsControl.handleRejectRequest(req)}
+                  onReject={requestsControl.handleRejectRequest}
+                  onClearError={clearError}
                 />
               </TabsContent>
               <TabsContent value="grants" className="space-y-4">
@@ -217,6 +218,7 @@ export function OwnerWorkspace() {
                   isLoadingAudit={data.isLoadingAudit}
                   onLoadPage={(page) => void data.loadAuditLogs(page)}
                   onInspectLog={(log) => {
+                    clearError();
                     data.setSelectedAuditLog(log);
                     data.setAuditDetailOpen(true);
                   }}

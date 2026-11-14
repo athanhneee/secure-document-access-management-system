@@ -16,6 +16,10 @@ export interface BadgeProps extends Omit<React.HTMLAttributes<HTMLSpanElement>, 
   showDot?: boolean;
 }
 
+/**
+ * Thuật toán: Biểu Diễn Nhãn Trạng Thái Phẳng Theo Mẫu `staff-001` & Đảm Bảo Tương Phản WCAG 2.1 AA (`Badge`)
+ * Mục đích: Hiển thị chấm tròn ngữ nghĩa `6px` kèm chữ in đậm không nền, không viền hộp capsule (`bg-transparent border-0 p-0`) với mọi biến thể màu chữ đều đạt độ tương phản `>= 4.5:1` trên nền trắng `#FFFFFF`.
+ */
 export function Badge({
   className,
   variant = 'default',
@@ -23,7 +27,7 @@ export function Badge({
   children,
   ...props
 }: BadgeProps) {
-  // CONFLICT-RESOLVED: Giữ biểu diễn phẳng staff-001 qua lớp CSS .staff-badge trong globals.css, loại bỏ hoàn toàn thuộc tính style nội tuyến để tương thích CSP nonce.
+  // CONFLICT-RESOLVED: Giữ biểu diễn phẳng staff-001 qua lớp CSS .staff-badge kết hợp bg-transparent border-0 p-0, loại bỏ hoàn toàn thuộc tính style nội tuyến để tương thích CSP nonce.
   const styles: Record<string, { text: string; dot: string }> = {
     default: { text: 'text-[#008489]', dot: 'bg-[#008489]' },
     info: { text: 'text-[#008489]', dot: 'bg-[#008489]' },
@@ -43,7 +47,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        'staff-badge inline-flex items-center gap-1.5 text-xs font-semibold select-none',
+        'staff-badge bg-transparent border-0 p-0 inline-flex items-center gap-1.5 text-xs font-semibold select-none',
         currentStyle.text,
         className,
       )}

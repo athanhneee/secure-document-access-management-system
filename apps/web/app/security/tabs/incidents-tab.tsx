@@ -1,6 +1,6 @@
 'use client';
 
-import { FileCheck } from 'lucide-react';
+import { FileCheck, FileSearch } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -17,12 +17,21 @@ import type { IncidentItem } from '../types';
 interface IncidentsTabProps {
   incidents: IncidentItem[];
   onOpenCreateIncident: () => void;
+  onSelectIncident: (incident: IncidentItem) => void;
 }
 
-export function IncidentsTab({ incidents, onOpenCreateIncident }: IncidentsTabProps) {
+/**
+ * Thuật toán: Theo Dõi Vòng Đời Hồ Sơ Sự Cố & Tiến Độ Khắc Phục (`IncidentsTab`)
+ * Mục đích: Tổng hợp tiến độ hoàn thành Corrective Actions và kích hoạt hộp thoại xử lý chi tiết cho từng hồ sơ sự cố SOC.
+ */
+export function IncidentsTab({
+  incidents,
+  onOpenCreateIncident,
+  onSelectIncident,
+}: IncidentsTabProps) {
   return (
     <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
-      <CardHeader className="flex flex-row items-center justify-between pb-3">
+      <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3">
         <div>
           <CardTitle className="text-base text-[#222222]">
             Báo cáo sự cố an ninh thông tin
@@ -48,12 +57,13 @@ export function IncidentsTab({ incidents, onOpenCreateIncident }: IncidentsTabPr
                 <TableHead className="text-xs text-[#717171]">Tóm tắt tác động</TableHead>
                 <TableHead className="text-xs text-[#717171]">Hành động khắc phục</TableHead>
                 <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
+                <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {incidents.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center py-8 text-[#717171] text-xs">
+                  <TableCell colSpan={5} className="text-center py-8 text-[#717171] text-xs">
                     Chưa có hồ sơ sự cố an ninh nào được tạo
                   </TableCell>
                 </TableRow>
@@ -64,7 +74,12 @@ export function IncidentsTab({ incidents, onOpenCreateIncident }: IncidentsTabPr
                     className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
                   >
                     <TableCell className="font-semibold text-xs text-[#222222]">
-                      {inc.title}
+                      <div>{inc.title}</div>
+                      {inc.incidentCode && (
+                        <div className="text-[13px] font-mono text-[#717171]">
+                          {inc.incidentCode}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs text-[#222222] max-w-sm truncate">
                       {inc.summary}
@@ -95,6 +110,15 @@ export function IncidentsTab({ incidents, onOpenCreateIncident }: IncidentsTabPr
                       >
                         {inc.status}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <InteractiveHoverButton
+                        size="sm"
+                        variant="secondary"
+                        text="Chi tiết / Xử lý"
+                        icon={<FileSearch size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        onClick={() => onSelectIncident(inc)}
+                      />
                     </TableCell>
                   </TableRow>
                 ))

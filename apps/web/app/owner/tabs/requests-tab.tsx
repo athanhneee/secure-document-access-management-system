@@ -19,11 +19,16 @@ import type { AccessRequestItem } from '../types';
 interface RequestsTabProps {
   requests: AccessRequestItem[];
   onOpenApprove: (req: AccessRequestItem) => void;
-  onReject: (req: AccessRequestItem) => void;
+  onReject: (req: AccessRequestItem) => Promise<boolean>;
+  onClearError: () => void;
 }
 
-export function RequestsTab({ requests, onOpenApprove, onReject }: RequestsTabProps) {
+/**
+ * Thuật toán: Hàng Đợi Xét Duyệt Yêu Cầu Cấp Quyền Chủ Sở Hữu (`RequestsTab`)
+ */
+export function RequestsTab({ requests, onOpenApprove, onReject, onClearError }: RequestsTabProps) {
   const [requestToReject, setRequestToReject] = useState<AccessRequestItem | null>(null);
+  const [isRejecting, setIsRejecting] = useState(false);
 
   return (
     <>
@@ -105,7 +110,10 @@ export function RequestsTab({ requests, onOpenApprove, onReject }: RequestsTabPr
                               variant="danger"
                               text="Từ chối"
                               icon={<X size={16} strokeWidth={2} aria-hidden="true" />}
-                              onClick={() => setRequestToReject(req)}
+                              onClick={() => {
+                                onClearError();
+                                setRequestToReject(req);
+                              }}
                             />
                           </div>
                         ) : (
@@ -126,16 +134,21 @@ export function RequestsTab({ requests, onOpenApprove, onReject }: RequestsTabPr
       <ConfirmDialog
         open={Boolean(requestToReject)}
         onOpenChange={(open) => {
-          if (!open) setRequestToReject(null);
+          if (!open && !isRejecting) setRequestToReject(null);
         }}
         title="Xác nhận từ chối yêu cầu truy cập"
         description={`Yêu cầu truy cập tài liệu "${requestToReject?.documentTitle ?? ''}" của ${requestToReject?.requestorName ?? ''} sẽ bị từ chối và ghi vào nhật ký kiểm toán.`}
         confirmLabel="Xác nhận từ chối"
         variant="danger"
-        onConfirm={() => {
-          if (requestToReject) {
-            onReject(requestToReject);
-            setRequestToReject(null);
+        isLoading={isRejecting}
+        onConfirm={async () => {
+          if (!requestToReject) return;
+          setIsRejecting(true);
+          try {
+            const ok = await onReject(requestToReject);
+            if (ok) setRequestToReject(null);
+          } finally {
+            setIsRejecting(false);
           }
         }}
       />

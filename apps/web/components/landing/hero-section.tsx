@@ -1,3 +1,7 @@
+/**
+ * Thuật toán: Khu Vực Giới Thiệu Đầu Trang & Lưới Chỉ Số Mật Mã Thích Ứng Di Động (`HeroSection`)
+ * Mục đích: Trình bày thông điệp cốt lõi Zero-Trust và 4 trụ cột bảo vệ tài liệu mật với bố cục 2 cột gọn nhẹ trên điện thoại `375px`.
+ */
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
 const HERO_METRICS = [

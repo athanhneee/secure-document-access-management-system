@@ -1,5 +1,9 @@
 'use client';
 
+/**
+ * Thuật toán: Không Gian Quản Lý Phiên Thiết Bị, Hiển Thị Trạng Thái MFA & Thu Hồi Lạc Quan Dưới 16ms (`SessionsPage`)
+ * Mục đích: Bọc toàn trang trong `DialogErrorProvider` để chuyển lỗi tầng Top-Layer vào `<dialog>`, hiển thị trạng thái `mfaVerified` phẳng `staff-001` cho từng thiết bị và thu hồi phiên từ xa tức thì có hoàn trả ảnh chụp khi lỗi mạng.
+ */
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
@@ -9,6 +13,7 @@ import { AppLayout } from '@/components/navigation/app-layout';
 import { AuthGuard } from '@/components/auth-guard';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { DialogErrorProvider } from '@/components/ui/dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import {
   ActiveSessionsList,
@@ -132,89 +137,93 @@ export default function SessionsPage() {
   }
 
   const otherSessionsCount = sessions.filter((s) => !s.isCurrent).length;
+  const currentSession = sessions.find((s) => s.isCurrent);
 
   return (
     <AuthGuard>
       <AppLayout>
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-[#222222]">
-                Quản lý phiên làm việc &amp; thiết bị
-              </h1>
-              <p className="text-xs text-[#717171] mt-1">
-                Theo dõi các phiên đăng nhập đang hoạt động và thu hồi quyền truy cập khi có nghi
-                ngờ rò rỉ
-              </p>
+        <DialogErrorProvider errorMessage={errorMessage} onDismiss={() => setErrorMessage(null)}>
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-[#222222]">
+                  Quản lý phiên làm việc &amp; thiết bị
+                </h1>
+                <p className="text-xs text-[#717171] mt-1">
+                  Theo dõi các phiên đăng nhập đang hoạt động và thu hồi quyền truy cập khi có nghi
+                  ngờ rò rỉ
+                </p>
+              </div>
+
+              <InteractiveHoverButton
+                variant="destructive"
+                onClick={() => setConfirmLogoutOthersOpen(true)}
+                disabled={isRevokingOthers}
+                isLoading={isRevokingOthers}
+                text={
+                  otherSessionsCount > 0
+                    ? `Đăng xuất tất cả thiết bị khác (${otherSessionsCount})`
+                    : 'Đăng xuất tất cả thiết bị khác'
+                }
+                className="w-full sm:w-auto"
+              />
             </div>
 
-            <InteractiveHoverButton
-              variant="destructive"
-              onClick={() => setConfirmLogoutOthersOpen(true)}
-              disabled={isRevokingOthers}
+            {successMessage && (
+              <Alert variant="success" className="rounded-[20px] text-xs">
+                <CheckCircle2
+                  size={16}
+                  strokeWidth={1.75}
+                  className="shrink-0 text-[#008A05]"
+                  aria-hidden="true"
+                />
+                <AlertDescription className="ml-2">{successMessage}</AlertDescription>
+              </Alert>
+            )}
+
+            {errorMessage && (
+              <Alert
+                variant="destructive"
+                className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
+              >
+                <AlertTriangle
+                  size={16}
+                  strokeWidth={1.75}
+                  className="shrink-0 text-[#C13515]"
+                  aria-hidden="true"
+                />
+                <AlertDescription className="ml-2">{errorMessage}</AlertDescription>
+              </Alert>
+            )}
+
+            <ActiveSessionsList
+              sessions={sessions}
+              isFetching={isFetching}
+              revokingId={revokingSessionId}
+              onRefresh={() => void loadActiveSessions()}
+              onRevokeSession={(session) => void handleRevokeSingleSession(session)}
+            />
+
+            <SessionSecurityOverview
+              fullName={user?.fullName}
+              username={user?.username}
+              mfaVerified={currentSession?.mfaVerified}
+              onLogoutCurrent={() => void logout()}
+            />
+
+            <ConfirmDialog
+              open={confirmLogoutOthersOpen}
+              onOpenChange={setConfirmLogoutOthersOpen}
+              title="Đăng xuất khỏi tất cả thiết bị khác"
+              description="Bạn có chắc chắn muốn thu hồi ngay lập tức toàn bộ các phiên đăng nhập đang mở trên những thiết bị khác không? Thiết bị hiện tại và cookie phiên này vẫn được giữ nguyên."
+              confirmText="Đăng xuất thiết bị khác"
+              cancelText="Giữ nguyên"
+              variant="danger"
               isLoading={isRevokingOthers}
-              text={
-                otherSessionsCount > 0
-                  ? `Đăng xuất tất cả thiết bị khác (${otherSessionsCount})`
-                  : 'Đăng xuất tất cả thiết bị khác'
-              }
-              className="w-full sm:w-auto"
+              onConfirm={handleLogoutOthers}
             />
           </div>
-
-          {successMessage && (
-            <Alert className="rounded-[20px] border border-[#008A05]/30 bg-[#008A05]/10 text-[#008A05] text-xs">
-              <CheckCircle2
-                size={16}
-                strokeWidth={1.75}
-                className="shrink-0 text-[#008A05]"
-                aria-hidden="true"
-              />
-              <AlertDescription className="ml-2">{successMessage}</AlertDescription>
-            </Alert>
-          )}
-
-          {errorMessage && (
-            <Alert
-              variant="destructive"
-              className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
-            >
-              <AlertTriangle
-                size={16}
-                strokeWidth={1.75}
-                className="shrink-0 text-[#C13515]"
-                aria-hidden="true"
-              />
-              <AlertDescription className="ml-2">{errorMessage}</AlertDescription>
-            </Alert>
-          )}
-
-          <ActiveSessionsList
-            sessions={sessions}
-            isFetching={isFetching}
-            revokingId={revokingSessionId}
-            onRefresh={() => void loadActiveSessions()}
-            onRevokeSession={(session) => void handleRevokeSingleSession(session)}
-          />
-
-          <SessionSecurityOverview
-            fullName={user?.fullName}
-            username={user?.username}
-            onLogoutCurrent={() => void logout()}
-          />
-
-          <ConfirmDialog
-            open={confirmLogoutOthersOpen}
-            onOpenChange={setConfirmLogoutOthersOpen}
-            title="Đăng xuất khỏi tất cả thiết bị khác"
-            description="Bạn có chắc chắn muốn thu hồi ngay lập tức toàn bộ các phiên đăng nhập đang mở trên những thiết bị khác không? Thiết bị hiện tại và cookie phiên này vẫn được giữ nguyên."
-            confirmText="Đăng xuất thiết bị khác"
-            cancelText="Giữ nguyên"
-            variant="danger"
-            isLoading={isRevokingOthers}
-            onConfirm={handleLogoutOthers}
-          />
-        </div>
+        </DialogErrorProvider>
       </AppLayout>
     </AuthGuard>
   );

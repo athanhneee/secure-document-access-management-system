@@ -10,7 +10,7 @@ export const DEFAULT_WATERMARK_TEMPLATE =
 interface UseWatermarkSettingsOptions {
   onRefresh: () => Promise<void>;
   onSuccess: (msg: string) => void;
-  onError: (msg: string) => void;
+  onError: (msg: string | null) => void;
 }
 
 /**
@@ -58,6 +58,7 @@ export function useWatermarkSettings({
       return;
     }
     setIsSaving(true);
+    onError(null);
     try {
       const activeOriginal = configs.find((c) => c.id === activeConfigId);
       const payload: Record<string, unknown> = {

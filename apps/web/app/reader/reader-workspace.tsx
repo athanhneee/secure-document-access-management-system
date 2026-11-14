@@ -170,7 +170,10 @@ export function ReaderWorkspace() {
                 <MyRequestsTab
                   myRequests={catalog.myRequests}
                   cancellingRequestId={catalog.cancellingRequestId}
-                  onCancelRequest={(id) => catalog.setPendingCancelRequestId(id)}
+                  onCancelRequest={(id) => {
+                    catalog.setErrorMessage(null);
+                    catalog.setPendingCancelRequestId(id);
+                  }}
                 />
               </TabsContent>
             </Tabs>

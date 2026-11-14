@@ -18,21 +18,29 @@ import { DialogErrorProvider } from '@/components/ui/dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuditorData } from './hooks/use-auditor-data';
+import { AuditorLogDetailModal } from './modals/auditor-log-detail-modal';
 import { ExportReportModal } from './modals/export-report-modal';
 import { AuditTrailTab } from './tabs/audit-trail-tab';
 import { ChainIntegrityTab } from './tabs/chain-integrity-tab';
 import { ExportQueueTab } from './tabs/export-queue-tab';
+import type { AuditLogItem } from './types';
 
 /**
  * Thuật toán: Không gian Kiểm toán Chỉ đọc & Xác minh Toàn vẹn Chuỗi Băm (`AuditorWorkspace`)
- * Mục đích: Đảm bảo nguyên tắc Phân tách Trách nhiệm (SoD), cho phép kiểm toán viên tra cứu vết hoạt động bất biến, xác minh chuỗi băm HMAC-SHA256 và xuất báo cáo tuân thủ.
+ * Mục đích: Đảm bảo nguyên tắc Phân tách Trách nhiệm (SoD), cho phép kiểm toán viên tra cứu vết hoạt động bất biến có phân trang, xem siêu dữ liệu pháp chứng, xác minh chuỗi băm HMAC-SHA256 và xuất báo cáo tuân thủ.
  */
 export function AuditorWorkspace() {
   const [activeTab, setActiveTab] = useState('logs');
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLogItem | null>(null);
+  const [auditDetailOpen, setAuditDetailOpen] = useState(false);
 
   const {
     logs,
+    page,
+    setPage,
+    totalPages,
+    totalLogs,
     exportJobs,
     verificationReport,
     isLoading,
@@ -53,6 +61,17 @@ export function AuditorWorkspace() {
     downloadExport,
     prependExportJob,
   } = useAuditorData();
+
+  function handleOpenExportModal() {
+    setErrorMessage(null);
+    setExportModalOpen(true);
+  }
+
+  function handleSelectAuditLog(log: AuditLogItem) {
+    setErrorMessage(null);
+    setSelectedAuditLog(log);
+    setAuditDetailOpen(true);
+  }
 
   return (
     <AuthGuard requiredRole="AUDITOR">
@@ -95,7 +114,7 @@ export function AuditorWorkspace() {
                   size="sm"
                   text="Xuất báo cáo kiểm toán"
                   icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
-                  onClick={() => setExportModalOpen(true)}
+                  onClick={handleOpenExportModal}
                 />
               </div>
             </div>
@@ -153,7 +172,7 @@ export function AuditorWorkspace() {
               <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3 h-auto min-h-11 rounded-[20px] p-1.5 sm:h-11 sm:rounded-full sm:p-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
                 <TabsTrigger value="logs" className="flex items-center gap-1.5 text-xs">
                   <FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Nhật ký kiểm toán ({logs.length})</span>
+                  <span>Nhật ký kiểm toán ({totalLogs})</span>
                 </TabsTrigger>
                 <TabsTrigger value="chain-verify" className="flex items-center gap-1.5 text-xs">
                   <Hash size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -168,14 +187,20 @@ export function AuditorWorkspace() {
               <TabsContent value="logs" className="space-y-4">
                 <AuditTrailTab
                   logs={logs}
+                  page={page}
+                  totalPages={totalPages}
+                  totalLogs={totalLogs}
+                  isLoading={isLoading}
                   outcomeFilter={outcomeFilter}
                   actionFilter={actionFilter}
                   fromDate={fromDate}
                   toDate={toDate}
+                  onPageChange={setPage}
                   onOutcomeFilterChange={setOutcomeFilter}
                   onActionFilterChange={setActionFilter}
                   onFromDateChange={setFromDate}
                   onToDateChange={setToDate}
+                  onSelectLog={handleSelectAuditLog}
                 />
               </TabsContent>
 
@@ -190,11 +215,20 @@ export function AuditorWorkspace() {
               <TabsContent value="export-queue" className="space-y-4">
                 <ExportQueueTab
                   exportJobs={exportJobs}
-                  onOpenExportModal={() => setExportModalOpen(true)}
+                  onOpenExportModal={handleOpenExportModal}
                   onDownloadExport={(job) => void downloadExport(job)}
                 />
               </TabsContent>
             </Tabs>
+
+            <AuditorLogDetailModal
+              open={auditDetailOpen}
+              onOpenChange={(open) => {
+                setAuditDetailOpen(open);
+                if (!open) setSelectedAuditLog(null);
+              }}
+              auditLog={selectedAuditLog}
+            />
 
             <ExportReportModal
               open={exportModalOpen}

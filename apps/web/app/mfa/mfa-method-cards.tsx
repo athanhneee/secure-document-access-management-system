@@ -1,5 +1,9 @@
 'use client';
 
+/**
+ * Thuật toán: Giao Diện Đa Phương Thức Thử Thách MFA (`MfaMethodCards`)
+ * Mục đích: Chuyển đổi liền mạch giữa xác thực phần cứng FIDO2/Passkey, mã ứng dụng TOTP 6 chữ số lọc số tức thời và mã khôi phục khẩn cấp dùng một lần.
+ */
 import type { FormEvent } from 'react';
 import Link from 'next/link';
 import { Key, ArrowLeft, AlertCircle, Fingerprint, ShieldPlus } from 'lucide-react';

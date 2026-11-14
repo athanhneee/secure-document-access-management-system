@@ -1,6 +1,10 @@
 'use client';
 // CONFLICT-RESOLVED: Khai báo ranh giới Client Component tường minh để các Server Component (HeroSection, RolePortalsSection) import được InteractiveHoverButton có dùng React Hooks khi chạy next build.
 
+/**
+ * Thuật toán: Nút Bấm Viên Thuốc Phản Hồi Xúc Giác Dưới 100ms & Khóa Nhấn Đúp Bất Đồng Bộ Tự Động (`InteractiveHoverButton`)
+ * Mục đích: Kết xuất liên kết `<Link>` hoặc `<button>` bo tròn `9999px` chuẩn hệ thống thiết kế, tự động phát hiện lời gọi trả về `Promise` trong `O(1)` để bật `aria-busy` và con quay `Loader2` ngay trong cùng chu kỳ sự kiện nhấp chuột.
+ */
 import * as React from 'react';
 import Link from 'next/link';
 import { ArrowRight, Loader2 } from 'lucide-react';

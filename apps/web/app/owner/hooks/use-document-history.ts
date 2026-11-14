@@ -8,7 +8,7 @@ import type { ClassificationHistoryItem, DocumentItem, DocumentVersionItem } fro
  * Thuật toán: Mở Tức Thì Hộp Thoại Lịch Sử Phiên Bản & Lịch Sử Phân Loại SCD Loại 2 (`useDocumentHistory`)
  * Mục đích: Mở hộp thoại ngay dưới `16ms` khi nhấp chuột, xóa dữ liệu cũ của tài liệu trước để tránh nháy sai lệch và nạp bất đồng bộ danh sách băm SHA-256 / biến động mức mật.
  */
-export function useDocumentHistory() {
+export function useDocumentHistory(onClearError?: () => void) {
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [docVersions, setDocVersions] = useState<DocumentVersionItem[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
@@ -20,6 +20,7 @@ export function useDocumentHistory() {
   const [docForClassHistory, setDocForClassHistory] = useState<DocumentItem | null>(null);
 
   async function handleOpenVersionHistory(doc: DocumentItem) {
+    onClearError?.();
     setDocForVersions(doc);
     setDocVersions([]);
     setIsLoadingVersions(true);
@@ -37,6 +38,7 @@ export function useDocumentHistory() {
   }
 
   async function handleOpenClassHistory(doc: DocumentItem) {
+    onClearError?.();
     setDocForClassHistory(doc);
     setDocClassHistory([]);
     setIsLoadingClassHistory(true);

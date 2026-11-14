@@ -1,10 +1,14 @@
 'use client';
 
+/**
+ * Thuật toán: Máy Trạng Thái Xác Thực Đa Yếu Tố & Chống Chuyển Hướng Chéo Vai Trò (`MfaPage`, `MfaContent`)
+ * Mục đích: Điều phối xác thực yếu tố thứ hai qua FIDO2 WebAuthn, TOTP 6 chữ số hoặc mã khôi phục dùng một lần, sau đó kiểm chứng quyền truy cập đường dẫn `?redirect=` khớp với vai trò thực tế của tài khoản.
+ */
 import { useState, Suspense, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ShieldAlert } from 'lucide-react';
 import { apiClient, ApiError, sanitizeRedirectPath } from '@/lib/api-client';
-import { useAuth, type AuthUser } from '@/lib/auth-context';
+import { resolveAuthorizedRedirectPath, useAuth, type AuthUser } from '@/lib/auth-context';
 import { executeWebAuthnAssertion, formatWebAuthnError } from './webauthn-binary';
 import { MfaEnrollmentCard } from './mfa-enrollment-card';
 import { MfaMethodCards } from './mfa-method-cards';
@@ -32,20 +36,10 @@ function MfaContent() {
 
   /**
    * Algorithm / Thuật toán: Định Tuyến Ưu Tiên Theo Phân Cấp Vai Trò RBAC (Priority-Ordered RBAC Post-Auth Routing)
-   * Mục đích: Đưa người dùng đến đúng phân hệ nghiệp vụ sau khi hoàn tất xác thực MFA mà vẫn ngăn chặn lỗ hổng Open Redirect.
+   * Mục đích: Đưa người dùng đến đúng phân hệ nghiệp vụ sau khi hoàn tất xác thực MFA mà vẫn ngăn chặn Open Redirect và bẫy `403` chéo vai trò.
    */
   function handlePostAuthRedirect(user: AuthUser | null) {
-    if (user && user.roles.length > 0) {
-      if (redirectTarget && redirectTarget !== '/') {
-        router.push(redirectTarget);
-      } else if (user.roles.includes('SYSTEM_ADMIN')) router.push('/admin');
-      else if (user.roles.includes('DOCUMENT_OWNER')) router.push('/owner');
-      else if (user.roles.includes('SECURITY_OFFICER')) router.push('/security');
-      else if (user.roles.includes('AUDITOR')) router.push('/auditor');
-      else router.push('/reader');
-    } else {
-      router.push(redirectTarget);
-    }
+    router.push(resolveAuthorizedRedirectPath(redirectTarget, user?.roles));
   }
 
   async function handleWebAuthnVerify() {
@@ -110,7 +104,7 @@ function MfaContent() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#FF385C] overflow-hidden">
+    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#E31C5F] overflow-hidden">
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
         <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full bg-[#E07912]/5 blur-3xl animate-float" />
         <div className="absolute -bottom-32 left-1/3 w-[500px] h-[400px] rounded-full bg-[#FF385C]/5 blur-3xl animate-float delay-200" />

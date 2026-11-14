@@ -119,7 +119,7 @@ export function DocumentsTab({
                     <TableCell>
                       <div className="text-xs text-[#222222]">{doc.departmentName || '—'}</div>
                       <div className="text-xs text-[#717171]">
-                        {doc.businessCategoryName || 'Nghiệp vụ chung'}
+                        {doc.businessCategoryName || '—'}
                       </div>
                     </TableCell>
                     <TableCell>

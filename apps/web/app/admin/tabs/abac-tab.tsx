@@ -25,15 +25,20 @@ import { AbacAttributesPanel } from './abac-attributes-panel';
 interface AbacTabProps {
   policies: AbacPolicyRow[];
   attributes: AttributeDefinitionRow[];
-  onActivatePolicy: (policyId: string) => void;
-  onSaveDraftPolicy: (savedRule: VisualPolicyRule) => void | Promise<void>;
+  onActivatePolicy: (policyId: string) => Promise<boolean>;
+  onSaveDraftPolicy: (savedRule: VisualPolicyRule) => Promise<boolean>;
+  onClearError: () => void;
 }
 
+/**
+ * Thuật toán: Điều Phối Danh Sách Chính Sách ABAC, Trình Dựng DNF & Bộ Mô Phỏng PDP (`AbacTab`)
+ */
 export function AbacTab({
   policies,
   attributes,
   onActivatePolicy,
   onSaveDraftPolicy,
+  onClearError,
 }: AbacTabProps) {
   const [abacSubTab, setAbacSubTab] = useState<'policies' | 'attributes'>('policies');
   const [builderOpen, setBuilderOpen] = useState(false);
@@ -41,6 +46,7 @@ export function AbacTab({
     VisualPolicyRule | undefined
   >(undefined);
   const [simulatorOpen, setSimulatorOpen] = useState(false);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
 
   return (
     <div className="space-y-4">
@@ -73,11 +79,15 @@ export function AbacTab({
         builderOpen ? (
           <VisualPolicyBuilder
             initialRule={selectedRuleForBuilder}
-            onSaveRule={(savedRule) => {
-              void onSaveDraftPolicy(savedRule);
+            onClearError={onClearError}
+            onSaveRule={async (savedRule) => {
+              const ok = await onSaveDraftPolicy(savedRule);
+              if (ok) setBuilderOpen(false);
+            }}
+            onCancel={() => {
+              onClearError();
               setBuilderOpen(false);
             }}
-            onCancel={() => setBuilderOpen(false)}
           />
         ) : (
           <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
@@ -96,7 +106,10 @@ export function AbacTab({
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setSimulatorOpen(true)}
+                  onClick={() => {
+                    onClearError();
+                    setSimulatorOpen(true);
+                  }}
                   className="rounded-full text-xs border-[#dddddd] hover:border-[#008A05] flex items-center gap-1.5"
                 >
                   <Play
@@ -111,6 +124,7 @@ export function AbacTab({
                   type="button"
                   size="sm"
                   onClick={() => {
+                    onClearError();
                     setSelectedRuleForBuilder(undefined);
                     setBuilderOpen(true);
                   }}
@@ -172,7 +186,16 @@ export function AbacTab({
                                 icon={
                                   <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
                                 }
-                                onClick={() => onActivatePolicy(p.id)}
+                                isLoading={activatingId === p.id}
+                                disabled={activatingId === p.id}
+                                onClick={async () => {
+                                  setActivatingId(p.id);
+                                  try {
+                                    await onActivatePolicy(p.id);
+                                  } finally {
+                                    setActivatingId(null);
+                                  }
+                                }}
                               />
                             )}
                             <Button
@@ -180,6 +203,7 @@ export function AbacTab({
                               variant="ghost"
                               size="sm"
                               onClick={() => {
+                                onClearError();
                                 setSelectedRuleForBuilder(resolveVisualRuleForPolicy(p));
                                 setBuilderOpen(true);
                               }}

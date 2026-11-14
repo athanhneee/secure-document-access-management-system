@@ -1,11 +1,15 @@
 'use client';
 
+/**
+ * Thuật toán: Điều Phối Đăng Nhập Bước Một & Chống Bẫy Điều Hướng Chéo Vai Trò (`LoginPage`, `LoginForm`)
+ * Mục đích: Xác thực định danh/mật khẩu qua cookie `HttpOnly`, chuyển tiếp thử thách MFA khi cần và đối chiếu tham số `?redirect=` với tập vai trò thực tế từ `/users/me` để người dùng luôn vào đúng cổng phân quyền thay vì rơi vào màn hình `403`.
+ */
 import { useState, Suspense, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ShieldCheck, AlertCircle, KeyRound } from 'lucide-react';
 import { apiClient, ApiError, sanitizeRedirectPath } from '@/lib/api-client';
-import { useAuth } from '@/lib/auth-context';
+import { resolveAuthorizedRedirectPath, useAuth } from '@/lib/auth-context';
 import {
   Card,
   CardHeader,
@@ -73,17 +77,7 @@ function LoginForm() {
       }
 
       const user = await refreshUser();
-      if (user && user.roles.length > 0) {
-        if (redirectTarget && redirectTarget !== '/') {
-          router.push(redirectTarget);
-        } else if (user.roles.includes('SYSTEM_ADMIN')) router.push('/admin');
-        else if (user.roles.includes('DOCUMENT_OWNER')) router.push('/owner');
-        else if (user.roles.includes('SECURITY_OFFICER')) router.push('/security');
-        else if (user.roles.includes('AUDITOR')) router.push('/auditor');
-        else router.push('/reader');
-      } else {
-        router.push(redirectTarget);
-      }
+      router.push(resolveAuthorizedRedirectPath(redirectTarget, user?.roles));
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(
@@ -98,7 +92,7 @@ function LoginForm() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#FF385C] overflow-hidden">
+    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#E31C5F] overflow-hidden">
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
         <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full bg-[#FF385C]/5 blur-3xl animate-float" />
         <div className="absolute -bottom-32 left-1/3 w-[500px] h-[400px] rounded-full bg-[#008489]/5 blur-3xl animate-float delay-200" />
@@ -118,7 +112,7 @@ function LoginForm() {
               aria-hidden="true"
             />
             <span className="text-2xl font-bold tracking-tight text-[#222222]">
-              Secure<span className="font-light text-[#FF385C]">Document</span>
+              Secure<span className="font-light text-[#E31C5F]">Document</span>
             </span>
           </Link>
           <p className="text-xs text-[#717171] max-w-xs leading-relaxed">

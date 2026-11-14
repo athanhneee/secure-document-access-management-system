@@ -1,5 +1,9 @@
 'use client';
 
+/**
+ * Thuật toán: Trình Hiển Thị Không Tràn Dòng & Xác Nhận Đã Lưu 10 Mã Khôi Phục Dùng Một Lần (`MfaRecoveryCodesCard`)
+ * Mục đích: Dàn lưới `grid-cols-1 sm:grid-cols-2` kèm `break-all` và font mono gọn gàng trên màn hình `375px` để chuỗi mã khôi phục 22 ký tự không bao giờ bị cắt ngang trước khi chuyển vào không gian đặc quyền.
+ */
 import { Check, Copy, ShieldCheck } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -12,10 +16,6 @@ export interface MfaRecoveryCodesCardProps {
   onConfirmSaved: () => void;
 }
 
-/**
- * Thuật toán: Trình Hiển Thị & Xác Nhận Đã Lưu 10 Mã Khôi Phục Dùng Một Lần (`MfaRecoveryCodesCard`)
- * Mục đích: Buộc người dùng sao chép/lưu trữ an toàn tập 10 mã khôi phục khẩn cấp một lần duy nhất trước khi điều hướng vào không gian làm việc đặc quyền.
- */
 export function MfaRecoveryCodesCard({
   recoveryCodes,
   copied,
@@ -35,11 +35,11 @@ export function MfaRecoveryCodesCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 font-mono text-xs font-semibold text-[#222222]">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 font-mono text-xs font-semibold text-[#222222]">
           {recoveryCodes.map((code) => (
             <div
               key={code}
-              className="rounded-[12px] bg-[#ffffff] border border-[#ebebeb] px-2.5 py-1.5 text-center"
+              className="min-w-0 break-all rounded-[12px] bg-[#ffffff] border border-[#ebebeb] px-3 py-2 text-center leading-snug tracking-tight select-all"
             >
               {code}
             </div>

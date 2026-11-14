@@ -1,56 +1,74 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  AlertOctagon,
-  AlertTriangle,
-  CheckCircle2,
-  FileCheck,
-  FileText,
-  Laptop,
-  Network,
-  QrCode,
-  RefreshCw,
-  Settings,
-} from 'lucide-react';
+import { AlertOctagon, FileText, Laptop, Network, QrCode, Settings } from 'lucide-react';
 import { AuthGuard } from '@/components/auth-guard';
 import { AppLayout } from '@/components/navigation/app-layout';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DialogErrorProvider } from '@/components/ui/dialog';
-import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { filterNetworkDlpAlerts } from './helpers';
 import { useSecurityData } from './hooks/use-security-data';
 import { AlertDetailModal } from './modals/alert-detail-modal';
 import { CreateIncidentModal } from './modals/create-incident-modal';
+import { EditDetectionRuleModal } from './modals/edit-detection-rule-modal';
+import { IncidentDetailModal } from './modals/incident-detail-modal';
+import { TerminateSessionModal } from './modals/terminate-session-modal';
+import { SecurityWorkspaceHeader } from './security-workspace-header';
 import { ActiveSessionsTab } from './tabs/active-sessions-tab';
 import { AlertsTab } from './tabs/alerts-tab';
 import { DetectionRulesTab } from './tabs/detection-rules-tab';
 import { IncidentsTab } from './tabs/incidents-tab';
 import { NetworkDlpTab } from './tabs/network-dlp-tab';
 import { WatermarkForensicsTab } from './tabs/watermark-forensics-tab';
-import type { SecurityAlertItem } from './types';
+import type { DetectionRuleItem, IncidentItem, SecurityAlertItem } from './types';
 
 /**
  * Thuật toán: Trung tâm Giám sát An ninh SOC, Truy vết Thủy vân & Điều phối Phản ứng Sự cố (`SecurityWorkspace`)
- * Mục đích: Xử lý cảnh báo bất thường, truy nguyên rò rỉ qua mã thủy vân, ngắt phiên đọc khẩn cấp và theo dõi Network DLP.
+ * Mục đích: Xử lý cảnh báo bất thường, truy nguyên rò rỉ qua mã thủy vân, ngắt phiên đọc khẩn cấp có ghi lý do kiểm toán, điều phối vòng đời sự cố và cấu hình luật phát hiện.
  */
 export function SecurityWorkspace() {
   const [activeTab, setActiveTab] = useState('alerts');
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [alertDetailOpen, setAlertDetailOpen] = useState(false);
   const [createIncidentOpen, setCreateIncidentOpen] = useState(false);
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
+  const [incidentDetailOpen, setIncidentDetailOpen] = useState(false);
+  const [selectedRule, setSelectedRule] = useState<DetectionRuleItem | null>(null);
+  const [editRuleOpen, setEditRuleOpen] = useState(false);
 
   const data = useSecurityData();
   const dlpAlerts = filterNetworkDlpAlerts(data.alerts);
   const selectedAlert = data.alerts.find((item) => item.id === selectedAlertId) ?? null;
+  const pendingTerminateSession =
+    data.documentSessions.find((s) => s.id === data.pendingTerminateSessionId) ?? null;
   const activeSessionCount = data.documentSessions.filter((s) => s.status === 'ACTIVE').length;
 
   function handleSelectAlert(alert: SecurityAlertItem) {
+    data.setErrorMessage(null);
     setSelectedAlertId(alert.id);
     setAlertDetailOpen(true);
+  }
+
+  function handleOpenCreateIncident() {
+    data.setErrorMessage(null);
+    setCreateIncidentOpen(true);
+  }
+
+  function handleSelectIncident(incident: IncidentItem) {
+    data.setErrorMessage(null);
+    setSelectedIncidentId(incident.id);
+    setIncidentDetailOpen(true);
+  }
+
+  function handleOpenEditRule(rule: DetectionRuleItem) {
+    data.setErrorMessage(null);
+    setSelectedRule(rule);
+    setEditRuleOpen(true);
+  }
+
+  function handleOpenTerminateSession(sessionId: string) {
+    data.setErrorMessage(null);
+    data.setPendingTerminateSessionId(sessionId);
   }
 
   async function handleModalSuccess(msg: string) {
@@ -66,81 +84,13 @@ export function SecurityWorkspace() {
           onDismiss={() => data.setErrorMessage(null)}
         >
           <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="destructive">Security Officer</Badge>
-                  <span className="text-xs text-[#717171]">Phân hệ An ninh Thông tin</span>
-                </div>
-                <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
-                  Giám sát An ninh &amp; Điều tra Sự cố
-                </h1>
-                <p className="text-xs text-[#717171]">
-                  Xử lý cảnh báo xâm phạm, điều tra provenance watermark, xử lý sự cố và luật phát
-                  hiện
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <InteractiveHoverButton
-                  variant="secondary"
-                  size="sm"
-                  text="Làm mới"
-                  icon={
-                    <RefreshCw
-                      size={16}
-                      strokeWidth={1.75}
-                      className={data.isLoading ? 'animate-spin' : ''}
-                      aria-hidden="true"
-                    />
-                  }
-                  onClick={() => void data.refreshData()}
-                  disabled={data.isLoading}
-                />
-                <InteractiveHoverButton
-                  variant="primary"
-                  size="sm"
-                  text="Lập báo cáo sự cố"
-                  icon={<FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
-                  onClick={() => setCreateIncidentOpen(true)}
-                />
-              </div>
-            </div>
-
-            {data.message && (
-              <Alert variant="success" className="text-xs">
-                <CheckCircle2
-                  size={16}
-                  strokeWidth={1.75}
-                  className="shrink-0 text-[#008A05]"
-                  aria-hidden="true"
-                />
-                <AlertDescription className="ml-2">{data.message}</AlertDescription>
-              </Alert>
-            )}
-
-            {data.errorMessage && (
-              <Alert variant="destructive" className="text-xs">
-                <AlertTriangle
-                  size={16}
-                  strokeWidth={1.75}
-                  className="shrink-0 text-[#C13515]"
-                  aria-hidden="true"
-                />
-                <div className="ml-2 flex flex-wrap items-center justify-between gap-2">
-                  <AlertDescription>{data.errorMessage}</AlertDescription>
-                  <InteractiveHoverButton
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    text="Thử lại"
-                    icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
-                    onClick={() => void data.refreshData()}
-                    disabled={data.isLoading}
-                  />
-                </div>
-              </Alert>
-            )}
+            <SecurityWorkspaceHeader
+              isLoading={data.isLoading}
+              message={data.message}
+              errorMessage={data.errorMessage}
+              onRefresh={() => void data.refreshData()}
+              onOpenCreateIncident={handleOpenCreateIncident}
+            />
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
               <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-6 h-auto min-h-11 rounded-[20px] p-1.5 md:h-11 md:rounded-full md:p-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
@@ -183,20 +133,22 @@ export function SecurityWorkspace() {
               <TabsContent value="incidents" className="space-y-4">
                 <IncidentsTab
                   incidents={data.incidents}
-                  onOpenCreateIncident={() => setCreateIncidentOpen(true)}
+                  onOpenCreateIncident={handleOpenCreateIncident}
+                  onSelectIncident={handleSelectIncident}
                 />
               </TabsContent>
               <TabsContent value="detection" className="space-y-4">
                 <DetectionRulesTab
                   detectionRules={data.detectionRules}
                   onRunDetection={data.runDetection}
+                  onEditRule={handleOpenEditRule}
                 />
               </TabsContent>
               <TabsContent value="sessions" className="space-y-4">
                 <ActiveSessionsTab
                   documentSessions={data.documentSessions}
                   terminatingSessionId={data.terminatingSessionId}
-                  onTerminateSession={(id) => data.setPendingTerminateSessionId(id)}
+                  onTerminateSession={handleOpenTerminateSession}
                 />
               </TabsContent>
               <TabsContent value="network-dlp" className="space-y-4">
@@ -229,17 +181,39 @@ export function SecurityWorkspace() {
               onError={data.setErrorMessage}
             />
 
-            <ConfirmDialog
+            <IncidentDetailModal
+              open={incidentDetailOpen}
+              onOpenChange={(open) => {
+                setIncidentDetailOpen(open);
+                if (!open) setSelectedIncidentId(null);
+              }}
+              incidentId={selectedIncidentId}
+              onClearError={() => data.setErrorMessage(null)}
+              onSuccess={handleModalSuccess}
+              onError={data.setErrorMessage}
+            />
+
+            <EditDetectionRuleModal
+              open={editRuleOpen}
+              onOpenChange={(open) => {
+                setEditRuleOpen(open);
+                if (!open) setSelectedRule(null);
+              }}
+              rule={selectedRule}
+              onClearError={() => data.setErrorMessage(null)}
+              onSuccess={handleModalSuccess}
+              onError={data.setErrorMessage}
+            />
+
+            <TerminateSessionModal
               open={data.pendingTerminateSessionId !== null}
               onOpenChange={(open) => {
                 if (!open) data.setPendingTerminateSessionId(null);
               }}
-              title="Cưỡng bức ngắt phiên truy cập tài liệu"
-              description="Bạn có chắc chắn muốn ngắt kết nối phiên truy cập tài liệu này ngay lập tức không?"
-              confirmText="Ngắt phiên ngay"
-              variant="danger"
-              isLoading={data.terminatingSessionId !== null}
-              onConfirm={() => void data.terminateSession()}
+              session={pendingTerminateSession}
+              isSubmitting={data.terminatingSessionId !== null}
+              onConfirm={(reason) => data.terminateSession(reason)}
+              onError={data.setErrorMessage}
             />
           </div>
         </DialogErrorProvider>

@@ -1,8 +1,12 @@
 'use client';
 
-import type { FormEvent } from 'react';
+/**
+ * Thuật toán: Biểu Mẫu Nhập Định Danh & Mật Khẩu Kèm Chuyển Đổi Hiển Thị Trợ Năng (`LoginFormFields`)
+ * Mục đích: Liên kết tường minh `<label htmlFor>` - `id`, báo lỗi nội dòng qua `aria-describedby` và hỗ trợ nút Hiện/Ẩn mật khẩu (`Eye`/`EyeOff`) đạt vùng chạm chuẩn `44x44px` trên thiết bị di động `375px`.
+ */
+import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
-import { Lock, User } from 'lucide-react';
+import { Eye, EyeOff, Lock, User } from 'lucide-react';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Input } from '@/components/ui/input';
 
@@ -30,6 +34,8 @@ export function LoginFormFields({
   onChangePassword,
   onSubmit,
 }: LoginFormFieldsProps) {
+  const [showPassword, setShowPassword] = useState(false);
+
   return (
     <form id="login-form" onSubmit={onSubmit} className="space-y-4" noValidate>
       <div className="space-y-1.5">
@@ -80,16 +86,29 @@ export function LoginFormFields({
           <Input
             id="password"
             name="password"
-            type="password"
+            type={showPassword ? 'text' : 'password'}
             autoComplete="current-password"
             disabled={isLoading}
             value={password}
             onChange={(e) => onChangePassword(e.target.value)}
             placeholder="••••••••••••"
-            className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+            className="pl-10 pr-11 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
             aria-invalid={Boolean(fieldErrors.password)}
             aria-describedby={fieldErrors.password ? 'password-error' : undefined}
           />
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => setShowPassword((prev) => !prev)}
+            aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:opacity-50 cursor-pointer"
+          >
+            {showPassword ? (
+              <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" />
+            ) : (
+              <Eye size={16} strokeWidth={1.75} aria-hidden="true" />
+            )}
+          </button>
         </div>
         {fieldErrors.password && (
           <p id="password-error" className="text-xs text-[#C13515] font-medium">

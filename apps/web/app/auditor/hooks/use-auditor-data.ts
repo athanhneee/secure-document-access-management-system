@@ -5,6 +5,7 @@ import { apiClient, apiDownload, ApiError } from '@/lib/api-client';
 import {
   aggregatePartitionVerifications,
   buildAuditLogsQueryParams,
+  extractAuditorPagination,
   normalizeAuditLogDtos,
   normalizeExportJob,
   triggerEphemeralBlobDownload,
@@ -19,6 +20,8 @@ import type {
 } from '../types';
 import { isAbortError, useExportJobsPolling } from './use-export-polling';
 
+const AUDIT_PAGE_SIZE = 20;
+
 function mergeExportJobHistory(
   incoming: ExportJobItem[],
   previous: ExportJobItem[],
@@ -30,11 +33,15 @@ function mergeExportJobHistory(
 }
 
 /**
- * Thuật toán: Quản lý Trạng thái Kiểm toán Fail-Closed, Chống Đua Mạng & Debounce 250ms (`useAuditorData`)
- * Mục đích: Tách riêng truy vấn danh sách xuất báo cáo `/reports/export` khỏi thao tác gõ bộ lọc `/audit-logs`, trì hoãn 250ms, hủy yêu cầu cũ qua `AbortController` và hiển thị minh bạch mọi lỗi API.
+ * Thuật toán: Quản lý Trạng thái Kiểm toán Fail-Closed, Phân Trang Máy Chủ & Debounce 250ms (`useAuditorData`)
+ * Mục đích: Đồng bộ phân trang máy chủ (`page`, `pageSize`) với bộ lọc đa chiều (tự động đưa `page` về `1` khi đổi bộ lọc), hủy yêu cầu cũ qua `AbortController` và hiển thị minh bạch mọi lỗi API.
  */
 export function useAuditorData() {
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalLogs, setTotalLogs] = useState(0);
+
   const [exportJobs, setExportJobs] = useState<ExportJobItem[]>([]);
   const [verificationReport, setVerificationReport] = useState<ChainVerificationReport | null>(
     null,
@@ -44,12 +51,32 @@ export function useAuditorData() {
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [outcomeFilter, setOutcomeFilter] = useState<string>('ALL');
-  const [actionFilter, setActionFilter] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [outcomeFilter, setOutcomeFilterState] = useState<string>('ALL');
+  const [actionFilter, setActionFilterState] = useState('');
+  const [fromDate, setFromDateState] = useState('');
+  const [toDate, setToDateState] = useState('');
   const [isVerifyingChain, setIsVerifyingChain] = useState(false);
-  const hasMountedFilterRef = useRef(false);
+  const prevActionFilterRef = useRef('');
+
+  const setOutcomeFilter = useCallback((value: string) => {
+    setOutcomeFilterState(value);
+    setPage(1);
+  }, []);
+
+  const setActionFilter = useCallback((value: string) => {
+    setActionFilterState(value);
+    setPage(1);
+  }, []);
+
+  const setFromDate = useCallback((value: string) => {
+    setFromDateState(value);
+    setPage(1);
+  }, []);
+
+  const setToDate = useCallback((value: string) => {
+    setToDateState(value);
+    setPage(1);
+  }, []);
 
   const fetchExportJobs = useCallback(async (signal?: AbortSignal) => {
     const exportsRes = await apiClient<
@@ -67,27 +94,31 @@ export function useAuditorData() {
 
   const fetchAuditLogs = useCallback(
     async (signal?: AbortSignal) => {
-      const queryParams = buildAuditLogsQueryParams({
-        outcomeFilter,
-        actionFilter,
-        fromDate,
-        toDate,
-      });
+      const queryParams = buildAuditLogsQueryParams(
+        { outcomeFilter, actionFilter, fromDate, toDate },
+        page,
+        AUDIT_PAGE_SIZE,
+      );
       const logsRes = await apiClient<AuditLogsPaginatedResponse>(
         `/audit-logs?${queryParams.toString()}`,
         signal ? { signal } : undefined,
       );
-      return normalizeAuditLogDtos(logsRes.data || []);
+      return {
+        items: normalizeAuditLogDtos(logsRes.data || []),
+        pagination: extractAuditorPagination(logsRes, page, AUDIT_PAGE_SIZE),
+      };
     },
-    [outcomeFilter, actionFilter, fromDate, toDate],
+    [outcomeFilter, actionFilter, fromDate, toDate, page],
   );
 
   const refreshData = useCallback(async () => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const [nextLogs, nextExports] = await Promise.all([fetchAuditLogs(), fetchExportJobs()]);
-      setLogs(nextLogs);
+      const [logsResult, nextExports] = await Promise.all([fetchAuditLogs(), fetchExportJobs()]);
+      setLogs(logsResult.items);
+      setTotalPages(logsResult.pagination.totalPages);
+      setTotalLogs(logsResult.pagination.total);
       setExportJobs((prev) => mergeExportJobHistory(nextExports, prev));
     } catch (err) {
       setErrorMessage(
@@ -101,19 +132,17 @@ export function useAuditorData() {
   useEffect(() => {
     let ignore = false;
     const controller = new AbortController();
-    const run = async () => {
+    void (async () => {
       try {
         const nextExports = await fetchExportJobs(controller.signal);
-        if (ignore) return;
-        setExportJobs((prev) => mergeExportJobHistory(nextExports, prev));
+        if (!ignore) setExportJobs((prev) => mergeExportJobHistory(nextExports, prev));
       } catch (err) {
         if (ignore || isAbortError(err, controller.signal)) return;
         setErrorMessage(
           err instanceof ApiError ? err.message : 'Không thể tải hàng đợi xuất báo cáo.',
         );
       }
-    };
-    void run();
+    })();
     return () => {
       ignore = true;
       controller.abort();
@@ -123,17 +152,20 @@ export function useAuditorData() {
   useEffect(() => {
     let ignore = false;
     const controller = new AbortController();
-    const delayMs = hasMountedFilterRef.current ? 250 : 0;
-    hasMountedFilterRef.current = true;
+    const actionChanged = prevActionFilterRef.current !== actionFilter;
+    prevActionFilterRef.current = actionFilter;
+    const delayMs = actionChanged ? 250 : 0;
 
     const timer = setTimeout(() => {
-      const run = async () => {
+      void (async () => {
         setIsLoading(true);
         setErrorMessage(null);
         try {
-          const nextLogs = await fetchAuditLogs(controller.signal);
+          const result = await fetchAuditLogs(controller.signal);
           if (ignore) return;
-          setLogs(nextLogs);
+          setLogs(result.items);
+          setTotalPages(result.pagination.totalPages);
+          setTotalLogs(result.pagination.total);
         } catch (err) {
           if (ignore || isAbortError(err, controller.signal)) return;
           setErrorMessage(
@@ -142,8 +174,7 @@ export function useAuditorData() {
         } finally {
           if (!ignore && !controller.signal.aborted) setIsLoading(false);
         }
-      };
-      void run();
+      })();
     }, delayMs);
 
     return () => {
@@ -151,7 +182,7 @@ export function useAuditorData() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [fetchAuditLogs]);
+  }, [fetchAuditLogs, actionFilter]);
 
   useExportJobsPolling(exportJobs, setExportJobs);
 
@@ -189,11 +220,7 @@ export function useAuditorData() {
       const blob = await apiDownload(`/reports/export/${job.id}/download`);
       triggerEphemeralBlobDownload(blob, job);
     } catch (err) {
-      setErrorMessage(
-        err instanceof ApiError
-          ? err.message || 'Không thể tải tệp báo cáo.'
-          : 'Đã xảy ra lỗi khi tải tệp báo cáo.',
-      );
+      setErrorMessage(err instanceof ApiError ? err.message : 'Đã xảy ra lỗi khi tải tệp báo cáo.');
     }
   }
 
@@ -204,6 +231,10 @@ export function useAuditorData() {
 
   return {
     logs,
+    page,
+    setPage,
+    totalPages,
+    totalLogs,
     exportJobs,
     verificationReport,
     isLoading,

@@ -45,6 +45,7 @@ export function useUploadWizard({
   const [isSubmittingDoc, setIsSubmittingDoc] = useState(false);
 
   function openUploadWizard() {
+    setErrorMessage(null);
     // CONFLICT-RESOLVED: Khắc phục điều kiện chết (!docDepartmentId / !docCategoryId / !docClassificationId khi state ban đầu là 1, 1, 3) để luôn khởi tạo đúng mặc định khi mở trình tải lên mới.
     if (!docFile && !docTitle.trim()) {
       const defaults = resolveUploadWizardDefaults({
@@ -125,7 +126,9 @@ export function useUploadWizard({
         console.warn('Could not automatically activate document, leaving as DRAFT:', actErr);
       }
 
-      const selectedLevel = classificationLevels.find((l) => l.id === docClassificationId);
+      const selectedLevel = classificationLevels.find(
+        (l) => String(l.id) === String(docClassificationId),
+      );
       setMessage(
         `Tài liệu "${docTitle.trim()}" (${docFile.name}) đã được tải lên và kích hoạt thành công với mức mật ${selectedLevel?.code ?? 'Mật'}.`,
       );

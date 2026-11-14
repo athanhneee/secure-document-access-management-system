@@ -26,23 +26,6 @@
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.06);
 }
 
-.hover-scale {
-  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.hover-scale:hover {
-  transform: scale(1.02);
-}
-.hover-scale:active {
-  transform: scale(0.98);
-}
-
-.active-press {
-  transition: transform 80ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.active-press:active {
-  transform: scale(0.97);
-}
-
 /* Interactive Hover Button Engine (Sub-100ms Instant Tactile Feedback & Smooth Motion) */
 .ihb-button {
   position: relative;
@@ -68,17 +51,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse-subtle,
-  .animate-float,
-  .animate-glow-pulse,
-  .animate-shimmer {
+  .animate-float {
     animation: none !important;
   }
 
   .hover-card:hover,
   .hover-lift:hover,
-  .hover-scale:hover,
-  .hover-scale:active,
-  .active-press:active,
   .ihb-button:active {
     transform: none !important;
   }

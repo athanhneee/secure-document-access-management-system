@@ -1,181 +1,152 @@
 'use client';
 
-import React from 'react';
-import Link from 'next/link';
+/**
+ * Thuật toán: Thanh Điều Hướng Song Chế Độ — `<aside>` Cố Định Trên Desktop & `<dialog>.showModal()` Trên Mobile (`AppSidebar`)
+ * Mục đích:
+ *   - Giữ thanh điều hướng `<aside>` hiển thị tức thì trên màn hình lớn (`lg:flex`) không tốn chi phí dựng lại.
+ *   - Khi mở trên màn hình nhỏ (`isOpen === true`), kích hoạt phần tử `<dialog>` Top-Layer chuẩn HTML5 qua `.showModal()`, giam tiêu điểm bàn phím `Tab` / `Shift+Tab`, xử lý phím `Escape` (`onCancel`) và nhấp vùng nền mờ, đồng thời hoàn trả tiêu điểm về nút mở khi đóng.
+ */
+import { useEffect, useId, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import {
-  Sliders,
-  FolderLock,
-  BookOpen,
-  AlertOctagon,
-  FileCheck,
-  Laptop,
-  Shield,
-  ExternalLink,
-  Lock,
-} from 'lucide-react';
-import { useAuth, type RoleType } from '@/lib/auth-context';
+import { useAuth } from '@/lib/auth-context';
+import { getVisibleFocusables } from '@/components/ui/dialog-focus';
+import { SidebarDirectory } from './sidebar-directory';
 
 interface AppSidebarProps {
   isOpen?: boolean | undefined;
   onClose?: (() => void) | undefined;
 }
 
-interface NavItem {
-  title: string;
-  href: string;
-  role: RoleType;
-  icon: React.ElementType;
-  description: string;
-}
-
-const NAV_ITEMS: NavItem[] = [
-  {
-    title: 'Quản trị hệ thống',
-    href: '/admin',
-    role: 'SYSTEM_ADMIN',
-    icon: Sliders,
-    description: 'Tài khoản, phòng ban, RBAC, ABAC & cấu hình dấu bản quyền',
-  },
-  {
-    title: 'Chủ sở hữu tài liệu',
-    href: '/owner',
-    role: 'DOCUMENT_OWNER',
-    icon: FolderLock,
-    description: 'Tải lên, phân loại mật, phê duyệt yêu cầu & thu hồi quyền',
-  },
-  {
-    title: 'Người đọc tài liệu',
-    href: '/reader',
-    role: 'DOCUMENT_READER',
-    icon: BookOpen,
-    description: 'Tìm kiếm, gửi yêu cầu, xem trước an toàn & tải về',
-  },
-  {
-    title: 'An ninh thông tin',
-    href: '/security',
-    role: 'SECURITY_OFFICER',
-    icon: AlertOctagon,
-    description: 'Cảnh báo an ninh, điều tra watermark, báo cáo sự cố & luật phát hiện',
-  },
-  {
-    title: 'Kiểm toán độc lập',
-    href: '/auditor',
-    role: 'AUDITOR',
-    icon: FileCheck,
-    description: 'Nhật ký kiểm toán, xác minh chuỗi băm HMAC & xuất báo cáo',
-  },
-];
-
 export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
   const pathname = usePathname();
   const { user } = useAuth();
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  const mobileHeadingId = useId();
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const dialogEl = dialogRef.current;
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = 'hidden';
+
+    if (dialogEl && !dialogEl.open && typeof dialogEl.showModal === 'function') {
+      try {
+        dialogEl.showModal();
+      } catch {
+        // Bỏ qua nếu hộp thoại đã ở trạng thái mở
+      }
+    }
+
+    if (dialogEl && !dialogEl.contains(document.activeElement)) {
+      const candidates = getVisibleFocusables(dialogEl);
+      const preferred =
+        candidates.find((el) => el.getAttribute('data-drawer-close') !== 'true') ??
+        candidates[0] ??
+        dialogEl;
+      preferred.focus();
+    }
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onCloseRef.current?.();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialogEl) return;
+
+      const focusables = getVisibleFocusables(dialogEl);
+      if (focusables.length === 0) {
+        e.preventDefault();
+        dialogEl.focus();
+        return;
+      }
+
+      const first = focusables[0]!;
+      const last = focusables[focusables.length - 1]!;
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !dialogEl.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !dialogEl.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    function handleBackdropClick(e: MouseEvent) {
+      if (!dialogEl) return;
+      const panelEl = dialogEl.querySelector('[data-drawer-panel="true"]');
+      if (panelEl && !panelEl.contains(e.target as Node)) {
+        onCloseRef.current?.();
+      }
+    }
+
+    dialogEl?.addEventListener('keydown', handleKeyDown);
+    dialogEl?.addEventListener('click', handleBackdropClick);
+
+    return () => {
+      dialogEl?.removeEventListener('keydown', handleKeyDown);
+      dialogEl?.removeEventListener('click', handleBackdropClick);
+      document.body.style.overflow = '';
+      if (dialogEl?.open && typeof dialogEl.close === 'function') {
+        try {
+          dialogEl.close();
+        } catch {
+          // Bỏ qua nếu hộp thoại đã đóng
+        }
+      }
+      const prev = previousFocusRef.current;
+      if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+        prev.focus();
+      }
+    };
+  }, [isOpen]);
 
   return (
     <>
-      {isOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-[#222222]/40 backdrop-blur-xs lg:hidden transition-opacity"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-      )}
-
       <aside
-        className={`fixed top-14 bottom-0 left-0 z-40 flex w-68 max-w-[calc(100vw-2rem)] flex-col border-r border-[#ebebeb] bg-[#ffffff] p-3.5 backdrop-blur-xl transition-transform duration-200 lg:static lg:translate-x-0 shadow-xs lg:shadow-none ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        className="hidden lg:flex w-68 shrink-0 flex-col border-r border-[#ebebeb] bg-[#ffffff] p-3.5"
         aria-label="Thanh điều hướng phân hệ"
       >
-        <div className="mb-3 px-2">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#717171]">
-            <Shield size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
-            <span>Phân hệ theo vai trò</span>
-          </div>
-          <p className="mt-0.5 text-xs text-[#717171] leading-normal">
-            Kiểm soát truy cập Zero Trust &amp; RBAC
-          </p>
-        </div>
-
-        <nav className="flex-1 space-y-1 overflow-y-auto pr-1" aria-label="Danh sách phân hệ">
-          {NAV_ITEMS.map((item) => {
-            const isActive = pathname?.startsWith(item.href);
-            const hasAccess = user?.roles.includes(item.role);
-            const Icon = item.icon;
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => onClose?.()}
-                className={`group flex items-start gap-2.5 rounded-[20px] px-3.5 py-2.5 text-xs transition-all ${
-                  isActive
-                    ? 'border border-[#E31C5F]/40 bg-[#FF385C]/10 text-[#E31C5F] shadow-2xs'
-                    : hasAccess
-                      ? 'border border-transparent text-[#717171] hover:border-[#ebebeb] hover:bg-[#f7f7f7] hover:text-[#222222]'
-                      : 'border border-transparent text-[#717171] opacity-80 hover:bg-[#f7f7f7]'
-                }`}
-                aria-current={isActive ? 'page' : undefined}
-              >
-                <Icon
-                  className={`mt-0.5 shrink-0 ${
-                    isActive
-                      ? 'text-[#E31C5F]'
-                      : hasAccess
-                        ? 'text-[#717171] group-hover:text-[#222222]'
-                        : 'text-[#717171]'
-                  }`}
-                  size={16}
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="font-semibold truncate">{item.title}</span>
-                    {!hasAccess && (
-                      <span className="flex shrink-0 items-center gap-1 text-[12px] text-[#717171]">
-                        <Lock size={16} strokeWidth={1.75} aria-hidden="true" />
-                        <span>Chưa gán</span>
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-0.5 text-xs text-[#717171] line-clamp-1 leading-normal">
-                    {item.description}
-                  </p>
-                </div>
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="mt-3 border-t border-[#ebebeb] pt-2.5 space-y-1">
-          <Link
-            href="/sessions"
-            onClick={() => onClose?.()}
-            className={`flex min-h-11 sm:min-h-9 items-center justify-between rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-              pathname === '/sessions'
-                ? 'bg-[#f7f7f7] text-[#222222] font-semibold'
-                : 'text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222]'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span>Quản lý phiên &amp; thiết bị</span>
-            </div>
-          </Link>
-
-          <Link
-            href="/"
-            onClick={() => onClose?.()}
-            className="flex min-h-11 sm:min-h-9 items-center justify-between rounded-full px-3 py-1.5 text-xs font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span>Cổng giới thiệu hệ thống</span>
-            </div>
-          </Link>
-        </div>
+        <SidebarDirectory pathname={pathname} userRoles={user?.roles} />
       </aside>
+
+      {isOpen && (
+        <dialog
+          ref={dialogRef}
+          tabIndex={-1}
+          aria-modal="true"
+          aria-labelledby={mobileHeadingId}
+          onCancel={(e) => {
+            e.preventDefault();
+            onClose?.();
+          }}
+          className="fixed inset-0 z-50 m-0 flex h-full w-full max-h-none max-w-none items-stretch justify-start border-none bg-[#222222]/40 p-0 outline-none backdrop-blur-xs lg:hidden"
+        >
+          <aside
+            data-drawer-panel="true"
+            className="flex h-full w-72 max-w-[calc(100vw-2.5rem)] flex-col border-r border-[#ebebeb] bg-[#ffffff] p-3.5 shadow-xl animate-modal-enter"
+            aria-label="Thanh điều hướng phân hệ di động"
+          >
+            <SidebarDirectory
+              pathname={pathname}
+              userRoles={user?.roles}
+              onNavigate={onClose}
+              headingId={mobileHeadingId}
+              onCloseButton={() => onClose?.()}
+            />
+          </aside>
+        </dialog>
+      )}
     </>
   );
 }

@@ -114,7 +114,17 @@ export function useAdminData() {
             status: 'OFFLINE',
             database: { status: 'OFFLINE' },
             cache: { status: 'OFFLINE' },
+            storage: { status: 'OFFLINE' },
             uptimeSeconds: dashboardData?.process?.uptimeSeconds ?? 0,
+            ...(dashboardData?.process
+              ? {
+                  memory: {
+                    heapUsedMb: dashboardData.process.heapUsedMb,
+                    heapTotalMb: dashboardData.process.heapTotalMb,
+                    rssMb: dashboardData.process.rssMb,
+                  },
+                }
+              : {}),
           });
         }
       }
@@ -147,6 +157,7 @@ export function useAdminData() {
     setRoles,
     policies,
     setPolicies,
+    healthData,
     setMessage,
     setErrorMessage,
     refresh,

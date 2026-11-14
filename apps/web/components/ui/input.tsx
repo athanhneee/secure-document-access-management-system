@@ -6,6 +6,10 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   helperText?: string;
 }
 
+/**
+ * Thuật toán: Trường Nhập Liệu Viên Thuốc Liên Kết Mô Tả Lỗi Trợ Năng WAI-ARIA (`Input`)
+ * Mục đích: Tự động tổng hợp chuỗi `aria-describedby` từ `error` và `helperText` theo `id` truyền vào, đồng thời giữ chiều cao `44px` (`h-11`) chuẩn vùng chạm di động.
+ */
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, type = 'text', error, helperText, id, ...props }, ref) => {
     const errorId = id && error ? `${id}-error` : undefined;

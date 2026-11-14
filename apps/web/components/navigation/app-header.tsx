@@ -19,14 +19,21 @@ import {
 } from 'lucide-react';
 import { useAuth, ROLE_LABELS, type RoleType } from '@/lib/auth-context';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { NotificationBellDialog } from './notification-bell-dialog';
 
 interface AppHeaderProps {
   onToggleSidebar?: (() => void) | undefined;
   isSidebarOpen?: boolean | undefined;
 }
 
+/**
+ * Thuật toán: Thanh Đầu Đề Điều Phối Góc Nhìn RBAC, Hộp Thư Chuông Nội Bộ & Quản Lý Phiên Thích Ứng `375px` (`AppHeader`)
+ * Mục đích:
+ *   - Cho phép chuyển đổi tức thì giữa các cổng vai trò được gán (`roleNavItems`), đóng menu thả xuống an toàn khi nhấp ra ngoài hoặc nhấn phím `Escape`.
+ *   - Tích hợp chuông thông báo nội bộ (`NotificationBellDialog`), lối tắt quản lý phiên thiết bị và thao tác đăng xuất với vùng chạm tối thiểu `44x44px` không tràn ngang trên màn hình `375px`.
+ */
 export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
-  const { user, activeRole, setActiveRole, logout, isAuthenticated } = useAuth();
+  const { user, activeRole, setActiveRole, logout, isAuthenticated, hasPermission } = useAuth();
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -68,13 +75,14 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
 
   return (
     <header className="sticky top-0 z-40 flex h-14 w-full items-center justify-between border-b border-[#ebebeb] bg-[#ffffff]/90 px-3 sm:px-6 backdrop-blur-md">
-      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+      <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
         {onToggleSidebar && (
           <button
             type="button"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] lg:hidden cursor-pointer transition-colors"
             onClick={onToggleSidebar}
             aria-label={isSidebarOpen ? 'Đóng bảng điều hướng' : 'Mở bảng điều hướng'}
+            aria-expanded={Boolean(isSidebarOpen)}
           >
             {isSidebarOpen ? (
               <X size={20} strokeWidth={2} aria-hidden="true" />
@@ -96,7 +104,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
         </Link>
 
         {isAuthenticated && user && (
-          <div className="relative ml-1 sm:ml-2" ref={menuRef}>
+          <div className="relative ml-0.5 sm:ml-2" ref={menuRef}>
             <button
               type="button"
               onClick={() => setRoleMenuOpen(!roleMenuOpen)}
@@ -105,7 +113,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
               aria-haspopup="true"
             >
               <span className="dot dot-success" aria-hidden="true" />
-              <span className="max-w-[84px] sm:max-w-none truncate">
+              <span className="max-w-[76px] sm:max-w-none truncate">
                 {activeRole ? ROLE_LABELS[activeRole] : 'Góc nhìn'}
               </span>
               <ChevronDown
@@ -166,12 +174,17 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
         )}
       </div>
 
-      <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+      <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
         {isAuthenticated && user ? (
           <>
+            <NotificationBellDialog
+              userId={user.id}
+              canViewNotifications={hasPermission('NOTIFICATION:VIEW')}
+            />
+
             <Link
               href="/sessions"
-              className={`flex min-h-11 sm:min-h-9 items-center justify-center gap-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] px-3 py-1 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors shadow-2xs ${
+              className={`flex h-11 w-11 md:h-auto md:w-auto md:min-h-9 items-center justify-center gap-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] md:px-3 md:py-1 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors shadow-2xs ${
                 pathname === '/sessions' ? 'border-[#E31C5F]/40 bg-[#FF385C]/10 text-[#E31C5F]' : ''
               }`}
               title="Quản lý phiên đăng nhập thiết bị"
@@ -181,7 +194,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
               <span className="hidden md:inline text-xs font-medium">Phiên làm việc</span>
             </Link>
 
-            <span className="staff-badge hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-[#008489] select-none">
+            <span className="staff-badge bg-transparent border-0 p-0 hidden lg:inline-flex items-center gap-1.5 text-xs font-semibold text-[#008489] select-none">
               <User size={16} strokeWidth={1.75} aria-hidden="true" />
               <span>{user.fullName || user.username}</span>
             </span>
@@ -193,6 +206,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
               icon={<LogOut size={16} strokeWidth={1.75} aria-hidden="true" />}
               onClick={() => void logout()}
               aria-label="Đăng xuất khỏi hệ thống"
+              className="min-w-0 px-3 sm:min-w-[5.5rem] sm:px-4"
             />
           </>
         ) : (

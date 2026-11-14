@@ -1,5 +1,11 @@
 'use client';
 
+/**
+ * Thuật toán: Hệ Thống Thẻ Chuyển Đổi WAI-ARIA `tablist` Phản Hồi Dưới 100ms & Điều Hướng Bàn Phím Quay Vòng (`Tabs`)
+ * Mục đích:
+ *   - Cấp phát định danh gốc `baseId` duy nhất qua `React.useId()` để liên kết hai chiều `aria-controls` và `aria-labelledby` giữa từng nút `role="tab"` và khung nội dung `role="tabpanel"`.
+ *   - Áp dụng mô hình Roving `tabIndex` (`0` cho thẻ đang chọn, `-1` cho thẻ còn lại) và điều hướng mũi tên ngang quay vòng modulo `O(K)`.
+ */
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 

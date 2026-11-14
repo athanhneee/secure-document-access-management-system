@@ -37,17 +37,26 @@ export interface IncidentActionItem {
   id: string;
   actionType: string;
   recommendation: string;
+  dueAt?: string | null | undefined;
   isCompleted?: boolean | undefined;
   completedAt?: string | null | undefined;
+  completionNote?: string | null | undefined;
+  createdAt?: string | undefined;
 }
 
 export interface IncidentItem {
   id: string;
+  incidentCode?: string | undefined;
+  alertId?: string | null | undefined;
   title: string;
   summary: string;
+  findings?: string | null | undefined;
+  impactAssessment?: string | null | undefined;
   status: 'DRAFT' | 'SUBMITTED' | 'IN_REVIEW' | 'CLOSED';
   severity?: string | undefined;
   createdAt: string;
+  submittedAt?: string | null | undefined;
+  closedAt?: string | null | undefined;
   actions?: IncidentActionItem[] | undefined;
 }
 
@@ -55,9 +64,12 @@ export interface DetectionRuleItem {
   code?: string | undefined;
   ruleCode?: string | undefined;
   name: string;
+  description?: string | undefined;
   severity: string;
   threshold: number;
+  thresholdCount?: number | undefined;
   windowMinutes: number;
+  cooldownMinutes?: number | undefined;
   isEnabled?: boolean | undefined;
 }
 
@@ -91,11 +103,17 @@ export interface AlertApiDto {
 
 export interface IncidentApiDto {
   id?: string;
+  incidentCode?: string;
+  alertId?: string | null;
   title?: string;
   summary?: string;
+  findings?: string | null;
+  impactAssessment?: string | null;
   status?: 'DRAFT' | 'SUBMITTED' | 'IN_REVIEW' | 'CLOSED';
   severity?: string;
   createdAt?: string;
+  submittedAt?: string | null;
+  closedAt?: string | null;
   actions?: IncidentActionItem[];
 }
 

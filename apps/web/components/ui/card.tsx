@@ -1,6 +1,10 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 
+/**
+ * Thuật toán: Các Thành Phần Khung Thẻ Bề Mặt Chuẩn Hóa Bo Góc `28px` (`Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`)
+ * Mục đích: Đồng bộ khoảng đệm thích ứng di động (`p-4 sm:p-5`) và hiệu ứng nâng nhẹ bề mặt có bảo vệ `prefers-reduced-motion`.
+ */
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div

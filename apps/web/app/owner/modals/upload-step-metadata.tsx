@@ -95,12 +95,12 @@ export function UploadStepMetadata({
           </label>
           <select
             id="doc-dept"
-            value={docDepartmentId}
+            value={String(docDepartmentId)}
             onChange={(e) => setDocDepartmentId(Number(e.target.value))}
             className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
           >
             {departments.map((dept) => (
-              <option key={dept.id} value={dept.id}>
+              <option key={dept.id} value={String(dept.id)}>
                 {dept.name} ({dept.code})
               </option>
             ))}
@@ -113,12 +113,12 @@ export function UploadStepMetadata({
           </label>
           <select
             id="doc-category"
-            value={docCategoryId}
+            value={String(docCategoryId)}
             onChange={(e) => setDocCategoryId(Number(e.target.value))}
             className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
           >
             {businessCategories.map((cat) => (
-              <option key={cat.id} value={cat.id}>
+              <option key={cat.id} value={String(cat.id)}>
                 {cat.name} ({cat.code})
               </option>
             ))}
@@ -144,22 +144,25 @@ export function UploadStepMetadata({
           Mức độ mật bắt buộc (Mandatory Classification) <span className="text-[#C13515]">*</span>
         </legend>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {classificationLevels.map((level) => (
-            <button
-              key={level.id}
-              type="button"
-              aria-label={`Chọn mức độ mật ${level.name} (${level.code})`}
-              aria-pressed={docClassificationId === level.id}
-              onClick={() => setDocClassificationId(level.id)}
-              className={`min-h-11 flex flex-col items-center justify-center py-2 px-3 rounded-full border text-center transition-all duration-200 cursor-pointer ${
-                docClassificationId === level.id
-                  ? 'border-[#FF385C] bg-[#FF385C]/10 ring-1 ring-[#FF385C]'
-                  : 'border-[#ebebeb] bg-[#ffffff] hover:bg-[#f7f7f7] hover:border-[#dddddd]'
-              }`}
-            >
-              <ClassificationBadge level={level.code} size="sm" />
-            </button>
-          ))}
+          {classificationLevels.map((level) => {
+            const isSelected = String(docClassificationId) === String(level.id);
+            return (
+              <button
+                key={level.id}
+                type="button"
+                aria-label={`Chọn mức độ mật ${level.name} (${level.code})`}
+                aria-pressed={isSelected}
+                onClick={() => setDocClassificationId(Number(level.id))}
+                className={`min-h-11 flex flex-col items-center justify-center py-2 px-3 rounded-full border text-center transition-all duration-200 cursor-pointer ${
+                  isSelected
+                    ? 'border-[#FF385C] bg-[#FF385C]/10 ring-1 ring-[#FF385C]'
+                    : 'border-[#ebebeb] bg-[#ffffff] hover:bg-[#f7f7f7] hover:border-[#dddddd]'
+                }`}
+              >
+                <ClassificationBadge level={level.code} size="sm" />
+              </button>
+            );
+          })}
         </div>
       </fieldset>
     </div>

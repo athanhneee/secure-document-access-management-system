@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { filterSecurityAlerts } from '../helpers';
 import type { SecurityAlertItem } from '../types';
 
 interface AlertsTabProps {
@@ -19,16 +21,67 @@ interface AlertsTabProps {
   onSelectAlert: (alert: SecurityAlertItem) => void;
 }
 
+/**
+ * Thuật toán: Lọc Đa Chiều Hàng Đợi Cảnh Báo SOC Theo Mức Độ Nghiêm Trọng & Trạng Thái (`AlertsTab`)
+ * Mục đích: Giúp cán bộ SOC khoanh vùng nhanh cảnh báo `CRITICAL`/`HIGH` hoặc cảnh báo đang mở (`OPEN`/`INVESTIGATING`) trên cả màn hình desktop và điện thoại `375px`.
+ */
 export function AlertsTab({ alerts, onSelectAlert }: AlertsTabProps) {
+  const [severityFilter, setSeverityFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+
+  const filteredAlerts = filterSecurityAlerts(alerts, severityFilter, statusFilter);
+
   return (
     <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
-      <CardHeader>
-        <CardTitle className="text-base text-[#222222]">
-          Hàng đợi cảnh báo bảo mật (Security Alerts)
-        </CardTitle>
-        <CardDescription className="text-xs text-[#717171]">
-          Phát hiện bất thường thời gian thực: tải ồ ạt, bị từ chối liên tục, ngoài giờ, IP lạ
-        </CardDescription>
+      <CardHeader className="pb-3">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div>
+            <CardTitle className="text-base text-[#222222]">
+              Hàng đợi cảnh báo bảo mật (Security Alerts)
+            </CardTitle>
+            <CardDescription className="text-xs text-[#717171]">
+              Phát hiện bất thường thời gian thực: tải ồ ạt, bị từ chối liên tục, ngoài giờ, IP lạ
+            </CardDescription>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full lg:w-auto min-w-0">
+            <div>
+              <label htmlFor="soc-alert-severity-filter" className="sr-only">
+                Lọc theo mức độ nghiêm trọng
+              </label>
+              <select
+                id="soc-alert-severity-filter"
+                value={severityFilter}
+                onChange={(e) => setSeverityFilter(e.target.value)}
+                className="min-h-11 sm:h-10 w-full rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+              >
+                <option value="ALL">Mọi mức độ nghiêm trọng</option>
+                <option value="CRITICAL">CRITICAL (Nghiêm trọng)</option>
+                <option value="HIGH">HIGH (Cao)</option>
+                <option value="MEDIUM">MEDIUM (Trung bình)</option>
+                <option value="LOW">LOW (Thấp)</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="soc-alert-status-filter" className="sr-only">
+                Lọc theo trạng thái xử lý
+              </label>
+              <select
+                id="soc-alert-status-filter"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="min-h-11 sm:h-10 w-full rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+              >
+                <option value="ALL">Mọi trạng thái xử lý</option>
+                <option value="OPEN">OPEN (Chờ xử lý)</option>
+                <option value="INVESTIGATING">INVESTIGATING (Đang điều tra)</option>
+                <option value="RESOLVED">RESOLVED (Đã xử lý)</option>
+                <option value="FALSE_POSITIVE">FALSE_POSITIVE (Báo động giả)</option>
+              </select>
+            </div>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
@@ -44,58 +97,66 @@ export function AlertsTab({ alerts, onSelectAlert }: AlertsTabProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {alerts.map((alert) => (
-                <TableRow
-                  key={alert.id}
-                  className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
-                >
-                  <TableCell>
-                    <Badge
-                      variant={
-                        alert.severity === 'CRITICAL'
-                          ? 'destructive'
-                          : alert.severity === 'HIGH'
-                            ? 'warning'
-                            : 'info'
-                      }
-                    >
-                      {alert.severity}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="font-semibold text-xs text-[#222222]">{alert.title}</div>
-                    <div className="text-xs font-bold text-[#717171]">{alert.ruleCode}</div>
-                  </TableCell>
-                  <TableCell className="text-xs text-[#222222]">
-                    {alert.detectedUserName || 'Chưa định danh'}
-                  </TableCell>
-                  <TableCell className="font-bold text-xs text-[#717171]">
-                    {alert.ipAddress}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        alert.status === 'OPEN'
-                          ? 'destructive'
-                          : alert.status === 'INVESTIGATING'
-                            ? 'warning'
-                            : 'success'
-                      }
-                    >
-                      {alert.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <InteractiveHoverButton
-                      size="sm"
-                      variant="secondary"
-                      text="Chi tiết"
-                      icon={<Search size={16} strokeWidth={1.75} aria-hidden="true" />}
-                      onClick={() => onSelectAlert(alert)}
-                    />
+              {filteredAlerts.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-8 text-center text-xs text-[#717171]">
+                    Không có cảnh báo bảo mật nào khớp với bộ lọc hiện tại
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                filteredAlerts.map((alert) => (
+                  <TableRow
+                    key={alert.id}
+                    className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
+                  >
+                    <TableCell>
+                      <Badge
+                        variant={
+                          alert.severity === 'CRITICAL'
+                            ? 'destructive'
+                            : alert.severity === 'HIGH'
+                              ? 'warning'
+                              : 'info'
+                        }
+                      >
+                        {alert.severity}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-semibold text-xs text-[#222222]">{alert.title}</div>
+                      <div className="text-xs font-bold text-[#717171]">{alert.ruleCode}</div>
+                    </TableCell>
+                    <TableCell className="text-xs text-[#222222]">
+                      {alert.detectedUserName || 'Chưa định danh'}
+                    </TableCell>
+                    <TableCell className="font-bold text-xs text-[#717171]">
+                      {alert.ipAddress}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          alert.status === 'OPEN'
+                            ? 'destructive'
+                            : alert.status === 'INVESTIGATING'
+                              ? 'warning'
+                              : 'success'
+                        }
+                      >
+                        {alert.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <InteractiveHoverButton
+                        size="sm"
+                        variant="secondary"
+                        text="Chi tiết"
+                        icon={<Search size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        onClick={() => onSelectAlert(alert)}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </div>

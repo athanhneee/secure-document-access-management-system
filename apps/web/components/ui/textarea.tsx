@@ -6,6 +6,10 @@ export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextArea
   helperText?: string;
 }
 
+/**
+ * Thuật toán: Vùng Nhập Văn Bản Đa Dòng Liên Kết Lỗi Trợ Năng WAI-ARIA (`Textarea`)
+ * Mục đích: Đồng bộ trạng thái `aria-invalid` và liên kết `aria-describedby` tự động theo `id` cho các trường ghi chú xử lý sự cố và lý do cấp quyền.
+ */
 export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, error, helperText, id, ...props }, ref) => {
     const errorId = id && error ? `${id}-error` : undefined;

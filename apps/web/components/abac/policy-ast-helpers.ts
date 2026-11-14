@@ -27,7 +27,7 @@ export function createConditionId(): string {
   return `cond-${conditionCounter}`;
 }
 
-export function defaultExpectedValue(
+function defaultExpectedValue(
   meta: AttributeMetadata | undefined,
   operator: PolicyOperator,
 ): ExpectedValue {

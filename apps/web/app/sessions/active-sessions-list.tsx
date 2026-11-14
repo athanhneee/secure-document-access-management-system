@@ -1,5 +1,9 @@
 'use client';
 
+/**
+ * Thuật toán: Phân Tích Chuỗi User-Agent & Biểu Diễn Phẳng Trạng Thái Xác Thực MFA Theo Phiên (`ActiveSessionsList`)
+ * Mục đích: Rút gọn chuỗi trình duyệt/hệ điều hành, hiển thị rõ nhãn `mfaVerified` phẳng theo mẫu `staff-001` trên nền trắng đạt chuẩn tương phản WCAG 2.1 AA (`>= 4.5:1`) và cho phép thu hồi chọn lọc từng phiên từ xa.
+ */
 import { Globe, Laptop, RefreshCw, Smartphone, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,6 +19,7 @@ export interface ActiveAuthSessionItem {
   lastSeenAt?: string | null | undefined;
   expiresAt?: string | null | undefined;
   isCurrent: boolean;
+  mfaVerified?: boolean | undefined;
 }
 
 interface ActiveSessionsListProps {
@@ -110,13 +115,14 @@ export function ActiveSessionsList({
           sessions.map((session) => {
             const { label, isMobile } = summarizeUserAgent(session.userAgent);
             const isRevokingThis = revokingId === session.id;
+            const isMfaVerified = Boolean(session.mfaVerified);
             return (
               <div
                 key={session.id}
-                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4 text-xs"
+                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[20px] border border-[#ebebeb] bg-[#ffffff] p-4 text-xs"
               >
                 <div className="space-y-1.5 min-w-0">
-                  <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
                     {isMobile ? (
                       <Smartphone
                         size={20}
@@ -135,6 +141,9 @@ export function ActiveSessionsList({
                     <span className="font-bold text-sm text-[#222222]">{label}</span>
                     <Badge variant={session.isCurrent ? 'success' : 'info'}>
                       {session.isCurrent ? 'Thiết bị này' : 'Phiên từ xa'}
+                    </Badge>
+                    <Badge variant={isMfaVerified ? 'success' : 'warning'}>
+                      {isMfaVerified ? 'Đã xác thực MFA' : 'Chưa xác thực MFA'}
                     </Badge>
                   </div>
 

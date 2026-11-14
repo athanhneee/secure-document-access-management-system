@@ -31,8 +31,9 @@ import { ObligationsPanel } from './obligations-panel';
 
 export interface VisualPolicyBuilderProps {
   initialRule?: VisualPolicyRule | undefined;
-  onSaveRule?: ((rule: VisualPolicyRule) => void) | undefined;
+  onSaveRule?: ((rule: VisualPolicyRule) => void | Promise<void>) | undefined;
   onCancel?: (() => void) | undefined;
+  onClearError?: (() => void) | undefined;
 }
 
 /**
@@ -46,12 +47,14 @@ export function VisualPolicyBuilder({
   initialRule = DEFAULT_INITIAL_RULE,
   onSaveRule,
   onCancel,
+  onClearError,
 }: VisualPolicyBuilderProps) {
   const [rule, setRule] = useState<VisualPolicyRule>(initialRule);
   const [viewMode, setViewMode] = useState<'visual' | 'json'>('visual');
   const [jsonText, setJsonText] = useState(() => serializePolicyAst(initialRule));
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [builderWarning, setBuilderWarning] = useState<string | null>(null);
+  const [isSavingRule, setIsSavingRule] = useState(false);
   const [searchPalette, setSearchPalette] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<
     'ALL' | 'SUBJECT' | 'RESOURCE' | 'ENVIRONMENT'
@@ -136,11 +139,29 @@ export function VisualPolicyBuilder({
         viewMode={viewMode}
         onSetViewMode={handleSetViewMode}
         onUpdateRule={updateRule}
-        onOpenSimulator={() => setSimulatorOpen(true)}
+        onOpenSimulator={() => {
+          onClearError?.();
+          setSimulatorOpen(true);
+        }}
         templateDialogOpen={templateDialogOpen}
-        onTemplateDialogChange={setTemplateDialogOpen}
+        onTemplateDialogChange={(nextOpen) => {
+          if (nextOpen) onClearError?.();
+          setTemplateDialogOpen(nextOpen);
+        }}
         onSelectTemplate={handleSelectTemplate}
-        onSaveRule={onSaveRule}
+        onSaveRule={
+          onSaveRule
+            ? async (nextRule) => {
+                setIsSavingRule(true);
+                try {
+                  await onSaveRule(nextRule);
+                } finally {
+                  setIsSavingRule(false);
+                }
+              }
+            : undefined
+        }
+        isSaving={isSavingRule}
         onCancel={onCancel}
       />
 

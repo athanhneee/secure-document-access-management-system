@@ -1,3 +1,7 @@
+/**
+ * Thuật toán: Bố Cục Trang Chủ Công Khai Tối Ưu Tải Tĩnh & Trợ Năng Bàn Phím (`HomePage`)
+ * Mục đích: Kết xuất Server Component không chặn mạng kèm liên kết `skip-to-content` và điều hướng phân hệ vai trò thích ứng màn hình di động `375px`.
+ */
 import { HomeHeader } from '@/components/navigation/home-header';
 import { HeroSection } from '@/components/landing/hero-section';
 import { RolePortalsSection } from '@/components/landing/role-portals-section';

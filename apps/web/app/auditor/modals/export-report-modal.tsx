@@ -23,6 +23,21 @@ interface ExportReportModalProps {
   onError: (errorMessage: string) => void;
 }
 
+const FORMAT_OPTIONS: Array<{
+  value: ExportFormat;
+  label: string;
+  Icon: typeof FileSpreadsheet;
+}> = [
+  { value: 'CSV', label: 'CSV', Icon: FileSpreadsheet },
+  { value: 'EXCEL', label: 'Excel (.xlsx)', Icon: FileSpreadsheet },
+  { value: 'JSON', label: 'JSON', Icon: FileJson },
+  { value: 'PDF', label: 'PDF', Icon: FileText },
+];
+
+/**
+ * Thuật toán: Khởi Tạo Tác Vụ Xuất Báo Cáo Kiểm Toán Bất Đồng Bộ (`ExportReportModal`)
+ * Mục đích: Gửi `POST /reports/export` theo định dạng được chọn (`CSV`, `EXCEL`, `JSON`, `PDF`), chờ phản hồi thành công mới đóng `<dialog>` và đưa tác vụ vào hàng đợi tải xuống.
+ */
 export function ExportReportModal({
   open,
   onOpenChange,
@@ -80,80 +95,26 @@ export function ExportReportModal({
         <form onSubmit={handleTriggerExport} className="space-y-4 py-2 text-xs">
           <fieldset className="space-y-1.5 border-0 p-0 m-0 min-w-0">
             <legend className="font-medium text-[#222222] block mb-1.5">Chọn định dạng tệp:</legend>
-            {/* CONFLICT-RESOLVED: Chuyển các nút chọn định dạng xuất báo cáo sang rounded-full chuẩn pill theo rules/ui-design-system.md §4 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <button
-                type="button"
-                aria-pressed={exportFormat === 'CSV'}
-                onClick={() => setExportFormat('CSV')}
-                className={`flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
-                  exportFormat === 'CSV'
-                    ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#E31C5F]'
-                    : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
-                }`}
-              >
-                <FileSpreadsheet
-                  size={20}
-                  strokeWidth={1.75}
-                  className="text-[#E31C5F] shrink-0"
-                  aria-hidden="true"
-                />
-                <span>CSV</span>
-              </button>
-              <button
-                type="button"
-                aria-pressed={exportFormat === 'EXCEL'}
-                onClick={() => setExportFormat('EXCEL')}
-                className={`flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
-                  exportFormat === 'EXCEL'
-                    ? 'border-[#008A05] bg-[#008A05]/15 text-[#008A05]'
-                    : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
-                }`}
-              >
-                <FileSpreadsheet
-                  size={20}
-                  strokeWidth={1.75}
-                  className="text-[#008A05] shrink-0"
-                  aria-hidden="true"
-                />
-                <span>Excel (.xlsx)</span>
-              </button>
-              <button
-                type="button"
-                aria-pressed={exportFormat === 'JSON'}
-                onClick={() => setExportFormat('JSON')}
-                className={`flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
-                  exportFormat === 'JSON'
-                    ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#E31C5F]'
-                    : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
-                }`}
-              >
-                <FileJson
-                  size={20}
-                  strokeWidth={1.75}
-                  className="text-[#E07912] shrink-0"
-                  aria-hidden="true"
-                />
-                <span>JSON</span>
-              </button>
-              <button
-                type="button"
-                aria-pressed={exportFormat === 'PDF'}
-                onClick={() => setExportFormat('PDF')}
-                className={`flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
-                  exportFormat === 'PDF'
-                    ? 'border-[#C13515] bg-[#C13515]/15 text-[#C13515]'
-                    : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
-                }`}
-              >
-                <FileText
-                  size={20}
-                  strokeWidth={1.75}
-                  className="text-[#C13515] shrink-0"
-                  aria-hidden="true"
-                />
-                <span>PDF</span>
-              </button>
+              {FORMAT_OPTIONS.map(({ value, label, Icon }) => {
+                const selected = exportFormat === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setExportFormat(value)}
+                    className={`flex min-h-11 items-center justify-center gap-2 px-4 py-2.5 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
+                      selected
+                        ? 'border-[#222222] bg-[#222222] text-[#ffffff]'
+                        : 'border-[#dddddd] bg-[#ffffff] text-[#222222] hover:border-[#222222]'
+                    }`}
+                  >
+                    <Icon size={20} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
             </div>
           </fieldset>
 

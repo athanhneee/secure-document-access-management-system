@@ -11,15 +11,6 @@
   }
 }
 
-@keyframes fade-out {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
 @keyframes fade-in-up {
   from {
     opacity: 0;
@@ -53,39 +44,6 @@
   }
 }
 
-@keyframes scale-out {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.94);
-  }
-}
-
-@keyframes slide-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(24px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes slide-in-left {
-  from {
-    opacity: 0;
-    transform: translateX(-24px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
 @keyframes pulse-subtle {
   0%,
   100% {
@@ -105,25 +63,6 @@
   }
   50% {
     transform: translateY(-8px);
-  }
-}
-
-@keyframes glow-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(255, 56, 92, 0.4);
-  }
-  70% {
-    box-shadow: 0 0 0 10px rgba(255, 56, 92, 0);
-  }
-}
-
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
   }
 }
 
@@ -165,29 +104,11 @@
 .animate-fade-in-down {
   animation: fade-in-down 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-.animate-scale-in {
-  animation: scale-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.animate-slide-in-right {
-  animation: slide-in-right 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.animate-slide-in-left {
-  animation: slide-in-left 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
 .animate-pulse-subtle {
   animation: pulse-subtle 2.5s ease-in-out infinite;
 }
 .animate-float {
   animation: float-subtle 4s ease-in-out infinite;
-}
-.animate-glow-pulse {
-  animation: glow-pulse 2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
-}
-
-.animate-shimmer {
-  background: linear-gradient(90deg, #f7f7f7 25%, #ebebeb 50%, #f7f7f7 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.8s infinite;
 }
 
 .page-enter {
@@ -201,18 +122,11 @@
   animation-fill-mode: forwards;
 }
 
-.fade-in-0,
 .fade-in {
   animation-name: fade-in;
 }
 .zoom-in-95 {
   animation-name: scale-in;
-}
-.slide-in-from-top-2 {
-  animation-name: fade-in-down;
-}
-.slide-in-from-bottom-2 {
-  animation-name: fade-in-up;
 }
 
 /* Animation Delays for Staggered Entrances */
@@ -233,10 +147,4 @@
 }
 .delay-300 {
   animation-delay: 300ms;
-}
-.delay-400 {
-  animation-delay: 400ms;
-}
-.delay-500 {
-  animation-delay: 500ms;
 }

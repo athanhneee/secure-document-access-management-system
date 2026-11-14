@@ -123,9 +123,14 @@ export function UploadStepPolicyReview({
             {docFile ? `${docFile.name} (${(docFile.size / 1024).toFixed(1)} KB)` : 'Chưa chọn tệp'}
           </span>
           <span className="text-[#717171]">Phòng ban:</span>
-          <span>{departments.find((d) => d.id === docDepartmentId)?.name || 'Chưa chọn'}</span>
+          <span>
+            {departments.find((d) => String(d.id) === String(docDepartmentId))?.name || 'Chưa chọn'}
+          </span>
           <span className="text-[#717171]">Danh mục:</span>
-          <span>{businessCategories.find((c) => c.id === docCategoryId)?.name || 'Chưa chọn'}</span>
+          <span>
+            {businessCategories.find((c) => String(c.id) === String(docCategoryId))?.name ||
+              'Chưa chọn'}
+          </span>
           <span className="text-[#717171]">Mức độ mật:</span>
           <ClassificationBadge level={currentSelectedLevel?.code ?? 'CONFIDENTIAL'} size="sm" />
           <span className="text-[#717171]">Chính sách tải:</span>

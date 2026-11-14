@@ -90,12 +90,12 @@ export function ReclassifyModal({
             </label>
             <select
               id="reclass-level"
-              value={reclassLevelId}
+              value={String(reclassLevelId)}
               onChange={(e) => onLevelChange(Number(e.target.value))}
               className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
               {classificationLevels.map((lvl) => (
-                <option key={lvl.id} value={lvl.id}>
+                <option key={lvl.id} value={String(lvl.id)}>
                   {lvl.name} ({lvl.code}) · Rank {lvl.rank}
                 </option>
               ))}
@@ -108,12 +108,12 @@ export function ReclassifyModal({
             </label>
             <select
               id="reclass-cat"
-              value={reclassCategoryId}
+              value={String(reclassCategoryId)}
               onChange={(e) => onCategoryChange(Number(e.target.value))}
               className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
               {businessCategories.map((c) => (
-                <option key={c.id} value={c.id}>
+                <option key={c.id} value={String(c.id)}>
                   {c.name} ({c.code})
                 </option>
               ))}

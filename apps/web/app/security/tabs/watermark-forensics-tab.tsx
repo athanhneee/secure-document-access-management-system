@@ -6,7 +6,7 @@ import { apiClient, ApiError } from '@/lib/api-client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
-import { mapWatermarkVerifyDto } from '../helpers';
+import { mapWatermarkVerifyDto, normalizeWatermarkTokenInput } from '../helpers';
 import type { WatermarkProvenance, WatermarkVerifyDto } from '../types';
 
 interface WatermarkForensicsTabProps {
@@ -21,25 +21,33 @@ export function WatermarkForensicsTab({
   onError,
 }: WatermarkForensicsTabProps) {
   const [wmInputToken, setWmInputToken] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [wmTraceResult, setWmTraceResult] = useState<WatermarkProvenance | null>(null);
   const [isTracingWm, setIsTracingWm] = useState(false);
 
   /**
-   * Thuật toán: Đối soát Chứng cứ Truy nguyên Thủy vân Mật mã Chế độ Fail-Closed (`handleTraceWatermark`)
-   * Mục đích: Xác định chính xác tài liệu gốc, người nhận, mã nhân viên, IP phiên đọc và thời điểm cấp phát từ mã thủy vân `WM-...` thu được trên bản sao rò rỉ.
-   * Cơ chế hoạt động: Mã hóa URI tham số `wmInputToken`, truy vấn điểm cuối `/watermarks/verify/:token`, kiểm chứng nghiêm ngặt `provenance.verified === true` và từ chối mọi phản hồi thiếu cờ xác thực.
+   * Thuật toán: Chuẩn Hóa Token Thủy Vân Phía Client & Đối Soát Chứng Cứ Fail-Closed (`handleTraceWatermark`)
+   * Mục đích: Tự động ghép tiền tố `WM-` khi chuyên viên SOC dán chuỗi hex `12..48` ký tự từ PDF thiếu `WM-`; từ chối sớm trên form nếu sai định dạng, sau đó truy vấn `/watermarks/verify/:token` và bắt buộc `provenance.verified === true`.
    */
   async function handleTraceWatermark(e: FormEvent) {
     e.preventDefault();
-    if (!wmInputToken.trim()) return;
-
-    setIsTracingWm(true);
     onClearError();
+
+    const normalized = normalizeWatermarkTokenInput(wmInputToken);
+    if (!normalized.valid) {
+      setValidationError(normalized.error);
+      setWmTraceResult(null);
+      return;
+    }
+
+    setValidationError(null);
+    setWmInputToken(normalized.token);
+    setIsTracingWm(true);
     setWmTraceResult(null);
 
     try {
       const res = await apiClient<WatermarkVerifyDto>(
-        `/watermarks/verify/${encodeURIComponent(wmInputToken.trim())}`,
+        `/watermarks/verify/${encodeURIComponent(normalized.token)}`,
       );
       const provenance = mapWatermarkVerifyDto(res);
       setWmTraceResult(provenance);
@@ -71,18 +79,27 @@ export function WatermarkForensicsTab({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 text-xs">
-          <form onSubmit={handleTraceWatermark} className="space-y-3">
+          <form onSubmit={handleTraceWatermark} className="space-y-3" noValidate>
             <div className="space-y-1">
               <label htmlFor="wm-token-input" className="font-medium text-[#222222]">
-                Mã Token Watermark (Dạng WM-...)
+                Mã Token Watermark (Mã ngắn 12-hex hoặc mã QR 48-hex)
               </label>
               <Input
                 id="wm-token-input"
                 value={wmInputToken}
-                onChange={(e) => setWmInputToken(e.target.value)}
-                placeholder="Ví dụ: WM-8f3a9b2c1e7d4410"
+                onChange={(e) => {
+                  setWmInputToken(e.target.value);
+                  if (validationError) setValidationError(null);
+                }}
+                placeholder="Ví dụ: WM-2e59958fa6c7 hoặc WM-<48-hex>"
+                aria-invalid={Boolean(validationError)}
                 className="min-h-11 sm:h-9 font-bold text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
               />
+              {validationError && (
+                <p role="alert" className="text-xs font-medium text-[#C13515] pt-0.5">
+                  {validationError}
+                </p>
+              )}
             </div>
 
             <InteractiveHoverButton
@@ -104,8 +121,8 @@ export function WatermarkForensicsTab({
               thể.
             </p>
             <p>
-              Token được tạo ngẫu nhiên bằng CSPRNG, tuyệt đối không suy đoán được và liên kết chặt
-              chẽ vào nhật ký kiểm toán HMAC-SHA256.
+              Hỗ trợ dán trực tiếp chuỗi hex 12–48 ký tự từ lớp thủy vân PDF (hệ thống tự động ghép
+              tiền tố <code>WM-</code> trước khi đối soát).
             </p>
           </div>
         </CardContent>
@@ -176,7 +193,6 @@ export function WatermarkForensicsTab({
             )
           ) : (
             <div className="flex flex-col items-center justify-center text-center p-8 text-[#717171] space-y-2">
-              {/* CONFLICT-RESOLVED: Giới hạn icon QrCode tối đa 24px chuẩn strokeWidth 1.75 thay cho 40px (rules/ui-design-system.md §2) */}
               <QrCode size={24} strokeWidth={1.75} className="text-[#717171]" aria-hidden="true" />
               <p>Nhập mã token ở bên trái và bấm đối soát để hiển thị thông tin chứng cứ</p>
             </div>

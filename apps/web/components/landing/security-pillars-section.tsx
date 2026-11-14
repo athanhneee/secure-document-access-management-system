@@ -1,3 +1,7 @@
+/**
+ * Thuật toán: Trình Bày 4 Trụ Cột Kiến Trúc An Ninh & Khung Tiêu Chuẩn Tuân Thủ (`SecurityPillarsSection`)
+ * Mục đích: Biểu diễn trực quan cơ chế AES-256-GCM, PEP/ABAC, chuỗi băm HMAC-SHA256 và Watermark pháp chứng đạt độ tương phản chữ WCAG 2.1 AA (`>= 4.5:1`).
+ */
 import { Lock, Hash, Fingerprint, CheckCircle2, Layers } from 'lucide-react';
 
 const securityPillars = [
@@ -59,8 +63,9 @@ export function SecurityPillarsSection() {
       >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="max-w-2xl mb-5 sm:mb-12">
-            <p className="text-xs sm:text-xs font-semibold uppercase tracking-wider text-[#008489]">
-              KIẾN TRÚC KỸ THUẬT
+            <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-[#222222]">
+              <span className="dot dot-info" aria-hidden="true" />
+              <span>KIẾN TRÚC KỸ THUẬT</span>
             </p>
             <h2 className="text-lg sm:text-2xl lg:text-3xl font-bold tracking-tight text-[#222222] mt-0.5 sm:mt-1">
               <span className="sm:hidden">Kiến trúc an ninh đa tầng</span>
@@ -141,8 +146,9 @@ export function SecurityPillarsSection() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="rounded-[20px] sm:rounded-[28px] border border-[#ebebeb] bg-[#f7f7f7] p-4 sm:p-6 lg:p-8 shadow-[0_4px_16px_rgba(0,0,0,0.03)] hover-card animate-fade-in-up delay-150">
             <div className="max-w-2xl">
-              <p className="text-xs sm:text-xs font-semibold uppercase tracking-wider text-[#008489]">
-                TIÊU CHUẨN TUÂN THỦ
+              <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-[#222222]">
+                <span className="dot dot-info" aria-hidden="true" />
+                <span>TIÊU CHUẨN TUÂN THỦ</span>
               </p>
               <h2 className="text-base sm:text-xl lg:text-2xl font-bold text-[#222222] mt-0.5 sm:mt-1">
                 Sẵn sàng kiểm định an toàn thông tin

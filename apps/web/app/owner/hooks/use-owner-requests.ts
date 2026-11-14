@@ -7,7 +7,6 @@ import { calculateRequestedDays, expandGrantPermissions } from '../helpers';
 import type { AccessRequestItem } from '../types';
 
 interface UseOwnerRequestsParams {
-  requests: AccessRequestItem[];
   setRequests: Dispatch<SetStateAction<AccessRequestItem[]>>;
   refreshData: (options?: { silent?: boolean }) => Promise<void>;
   setMessage: (msg: string | null) => void;
@@ -15,11 +14,10 @@ interface UseOwnerRequestsParams {
 }
 
 /**
- * Thuật toán: Phán Quyết Phê Duyệt / Từ Chối Lạc Quan Kèm Hoàn Tác Tự Động (`useOwnerRequests`)
- * Mục đích: Đóng hộp thoại và rút ngay yêu cầu đã xử lý khỏi hàng đợi `PENDING` trong `< 16ms`, bảo toàn quyền nền `DOWNLOAD => ['VIEW', 'DOWNLOAD']` và tự động hoàn trả bản ghi nếu máy chủ báo lỗi.
+ * Thuật toán: Phán Quyết Phê Duyệt / Từ Chối Xác Thực Máy Chủ Trước Khi Đóng Hộp Thoại (`useOwnerRequests`)
+ * Mục đích: Bắt buộc `await` phản hồi thành công từ `POST /access-requests/:id/decide` trước khi đóng `<dialog>`, rút yêu cầu khỏi hàng đợi `PENDING` và hiện thông báo thành công; giữ nguyên hộp thoại để hiển thị lỗi nếu máy chủ từ chối (`400`/`403`/`409`/`500`).
  */
 export function useOwnerRequests({
-  requests,
   setRequests,
   refreshData,
   setMessage,
@@ -32,6 +30,7 @@ export function useOwnerRequests({
   const [isApproving, setIsApproving] = useState(false);
 
   function openApproveModal(req: AccessRequestItem) {
+    setErrorMessage(null);
     setSelectedRequest(req);
     setGrantAction(req.requestedAction);
     setGrantValidDays(calculateRequestedDays(req.requestedFrom, req.requestedUntil));
@@ -41,21 +40,13 @@ export function useOwnerRequests({
   async function handleConfirmApprove() {
     if (!selectedRequest) return;
     const target = selectedRequest;
-    const previousRequests = requests;
     const actionSnapshot = grantAction;
     const daysSnapshot = grantValidDays;
 
     setIsApproving(true);
     setErrorMessage(null);
-    setApproveOpen(false);
-    setSelectedRequest(null);
-    setRequests((prev) => removeOptimisticById(prev, target.id));
-    setMessage(
-      `Đã phê duyệt yêu cầu và cấp quyền ${actionSnapshot} tài liệu cho ${target.requestorName} trong ${daysSnapshot} ngày.`,
-    );
 
     try {
-      // CONFLICT-RESOLVED: Khi phê duyệt mức DOWNLOAD, gửi đầy đủ ['VIEW', 'DOWNLOAD'] để người nhận vừa xem trực tuyến vừa tải bản sao.
       const grantedPermissions = expandGrantPermissions(actionSnapshot);
       await apiClient(`/access-requests/${target.id}/decide`, {
         method: 'POST',
@@ -65,10 +56,14 @@ export function useOwnerRequests({
           permissions: grantedPermissions,
         }),
       });
+      setApproveOpen(false);
+      setSelectedRequest(null);
+      setRequests((prev) => removeOptimisticById(prev, target.id));
+      setMessage(
+        `Đã phê duyệt yêu cầu và cấp quyền ${actionSnapshot} tài liệu cho ${target.requestorName} trong ${daysSnapshot} ngày.`,
+      );
       void refreshData({ silent: true });
     } catch (err) {
-      setRequests(previousRequests);
-      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể phê duyệt yêu cầu.'
@@ -79,12 +74,8 @@ export function useOwnerRequests({
     }
   }
 
-  async function handleRejectRequest(req: AccessRequestItem) {
-    const previousRequests = requests;
+  async function handleRejectRequest(req: AccessRequestItem): Promise<boolean> {
     setErrorMessage(null);
-    setRequests((prev) => removeOptimisticById(prev, req.id));
-    setMessage(`Đã từ chối yêu cầu truy cập của ${req.requestorName}.`);
-
     try {
       await apiClient(`/access-requests/${req.id}/decide`, {
         method: 'POST',
@@ -93,15 +84,17 @@ export function useOwnerRequests({
           decisionNote: 'Chủ sở hữu từ chối cấp quyền truy cập.',
         }),
       });
+      setRequests((prev) => removeOptimisticById(prev, req.id));
+      setMessage(`Đã từ chối yêu cầu truy cập của ${req.requestorName}.`);
       void refreshData({ silent: true });
+      return true;
     } catch (err) {
-      setRequests(previousRequests);
-      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể từ chối yêu cầu.'
           : 'Đã xảy ra lỗi khi từ chối yêu cầu.',
       );
+      return false;
     }
   }
 

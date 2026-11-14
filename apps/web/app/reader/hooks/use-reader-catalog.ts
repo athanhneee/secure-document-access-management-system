@@ -97,6 +97,7 @@ export function useReaderCatalog() {
   }, [refreshData]);
 
   function openRequestModal(doc: DiscoverableDoc) {
+    setErrorMessage(null);
     setTargetDoc(doc);
     setRequestedAction('VIEW');
     setJustification('');
@@ -157,20 +158,17 @@ export function useReaderCatalog() {
     if (!requestId) {
       return;
     }
-    const previousRequests = myRequests;
     setCancellingRequestId(requestId);
-    setPendingCancelRequestId(null);
     setErrorMessage(null);
-    setMyRequests((prev) => applyOptimisticStatusById(prev, requestId, 'CANCELLED'));
-    setMessage('Đã hủy yêu cầu cấp quyền thành công.');
 
     try {
       await apiClient(`/access-requests/${requestId}/cancel`, {
         method: 'POST',
       });
+      setPendingCancelRequestId(null);
+      setMyRequests((prev) => applyOptimisticStatusById(prev, requestId, 'CANCELLED'));
+      setMessage('Đã hủy yêu cầu cấp quyền thành công.');
     } catch (err) {
-      setMyRequests(previousRequests);
-      setMessage(null);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể hủy yêu cầu truy cập.'

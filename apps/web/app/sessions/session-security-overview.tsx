@@ -1,5 +1,9 @@
 'use client';
 
+/**
+ * Thuật toán: Tổng Quan Bảo Mật Phiên Hiện Tại & Chính Sách Zero-Trust (`SessionSecurityOverview`)
+ * Mục đích: Trình bày thông số bảo vệ Cookie `HttpOnly · SameSite=Strict`, cơ chế CSRF Double-Submit và trạng thái nâng cấp MFA `staff-001` của thiết bị hiện hành.
+ */
 import { Laptop, ShieldCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -15,16 +19,14 @@ import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button
 export interface SessionSecurityOverviewProps {
   fullName?: string | undefined;
   username?: string | undefined;
+  mfaVerified?: boolean | undefined;
   onLogoutCurrent: () => void;
 }
 
-/**
- * Thuật toán: Tổng Quan Bảo Mật Phiên Hiện Tại & Chính Sách Zero-Trust (`SessionSecurityOverview`)
- * Mục đích: Trình bày thông số bảo vệ Cookie `HttpOnly · SameSite=Strict`, cơ chế CSRF Double-Submit và quy tắc thu hồi tức thì.
- */
 export function SessionSecurityOverview({
   fullName,
   username,
+  mfaVerified,
   onLogoutCurrent,
 }: SessionSecurityOverviewProps) {
   return (
@@ -52,12 +54,18 @@ export function SessionSecurityOverview({
           </div>
         </CardHeader>
         <CardContent className="space-y-3 text-xs text-[#222222]">
-          <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4 space-y-2.5">
+          <div className="rounded-[20px] border border-[#ebebeb] bg-[#ffffff] p-4 space-y-2.5">
             <div className="flex flex-wrap justify-between items-center gap-2">
               <span className="text-[#717171]">Người dùng:</span>
               <span className="font-semibold text-[#222222]">
                 {fullName} ({username})
               </span>
+            </div>
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <span className="text-[#717171]">Xác thực đa yếu tố:</span>
+              <Badge variant={mfaVerified ? 'success' : 'warning'}>
+                {mfaVerified ? 'Đã xác thực MFA' : 'Chưa xác thực MFA'}
+              </Badge>
             </div>
             <div className="flex flex-wrap justify-between items-center gap-2">
               <span className="text-[#717171]">Bảo mật Cookie:</span>

@@ -11,7 +11,6 @@ import {
 
 export {
   buildSimulationPreset,
-  simulatorCidrMatch,
   type SimulationEnvironment,
   type SimulationPresetName,
   type SimulationResource,
@@ -143,7 +142,7 @@ function isSetMemberNormalized(candidate: unknown, expectedSet: unknown[]): bool
   });
 }
 
-export function evaluateCondition(cond: VisualCondition, actual: unknown): boolean {
+function evaluateCondition(cond: VisualCondition, actual: unknown): boolean {
   if (cond.operator === 'EXISTS') return actual !== undefined && actual !== null && actual !== '';
   if (actual === undefined || actual === null) return false;
 

@@ -1,6 +1,10 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 
+/**
+ * Thuật toán: Bảng Dữ Liệu Doanh Nghiệp Cuộn Ngang Mượt Trên Màn Hình Nhỏ (`Table`, `TableHeader`, `TableBody`, `TableRow`, `TableHead`, `TableCell`)
+ * Mục đích: Bọc phần tử `<table>` trong khung `overflow-x-auto` bo góc `28px` để giữ nguyên bố cục dữ liệu trên thiết bị `375px` mà không gây vỡ trang.
+ */
 export function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) {
   return (
     <div className="relative w-full overflow-x-auto rounded-[28px] border border-[#ebebeb] bg-[#ffffff] shadow-xs">
@@ -23,21 +27,6 @@ export function TableHeader({
 
 export function TableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
   return <tbody className={cn('[&_tr:last-child]:border-0', className)} {...props} />;
-}
-
-export function TableFooter({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return (
-    <tfoot
-      className={cn(
-        'border-t border-[#ebebeb] bg-[#f7f7f7] font-medium [&>tr]:last:border-b-0',
-        className,
-      )}
-      {...props}
-    />
-  );
 }
 
 export function TableRow({ className, ...props }: React.HTMLAttributes<HTMLTableRowElement>) {

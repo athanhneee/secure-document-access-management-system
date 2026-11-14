@@ -9,6 +9,7 @@ export interface UserRow {
   username: string;
   fullName: string;
   email: string;
+  employeeCode?: string | null | undefined;
   status: string;
   departmentId: string | null;
   version: number;
@@ -87,7 +88,7 @@ export interface AbacPolicyRow {
   policy_rule_conditions?: PolicyRuleConditionDto[] | undefined;
 }
 
-export interface AttributeOptionApiDto {
+interface AttributeOptionApiDto {
   id: string | number;
   code?: string;
   value_code?: string;
@@ -96,7 +97,7 @@ export interface AttributeOptionApiDto {
   numeric_rank?: number | null;
 }
 
-export interface AttributeOptionRow {
+interface AttributeOptionRow {
   id: string;
   code: string;
   name: string;
@@ -140,8 +141,16 @@ export type HealthStatusLabel = 'ONLINE' | 'DEGRADED' | 'OFFLINE';
 export interface SystemHealthData {
   status: HealthStatusLabel;
   database: { status: HealthStatusLabel; latencyMs?: number | undefined };
-  cache: { status: HealthStatusLabel };
+  cache: { status: HealthStatusLabel; latencyMs?: number | undefined };
+  storage: { status: HealthStatusLabel; latencyMs?: number | undefined };
   uptimeSeconds: number;
+  memory?:
+    | {
+        heapUsedMb?: number | undefined;
+        heapTotalMb?: number | undefined;
+        rssMb?: number | undefined;
+      }
+    | undefined;
 }
 
 export interface HealthReadyResponse {
@@ -157,6 +166,14 @@ export interface HealthReadyResponse {
 export interface HealthDashboardResponse {
   process?: {
     uptimeSeconds?: number;
+    heapUsedMb?: number;
+    heapTotalMb?: number;
+    rssMb?: number;
+  };
+  operational?: {
+    activeSessionsCount?: number;
+    openAlertsCount?: number;
+    pendingExportsCount?: number;
   };
   dependencies?: {
     isReady?: boolean;

@@ -108,11 +108,6 @@ body {
   background: #b0b0b0;
 }
 
-/* Data-Dense Enterprise Table Helpers */
-.tabular-nums {
-  font-variant-numeric: tabular-nums;
-}
-
 /* Mobile Responsiveness & Touch Optimization */
 @media screen and (max-width: 767px) {
   input:not([type]),

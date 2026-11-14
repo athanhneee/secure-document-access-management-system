@@ -44,7 +44,7 @@ const FONT_SIZE_CLASS_MAP: Record<number, string> = {
  * Thuật toán: Lượng Tử Hóa Tĩnh Độ Đậm / Cỡ Chữ & Nội Suy Biến Mẫu Thủy Ấn (`WatermarkPreviewCard`)
  * Mục đích: Tương thích tuyệt đối CSP không `style` nội tuyến và thay thế động các biến `{username}`, `{employeeCode}`, `{documentCode}`, `{timestamp}`, `{shortToken}` từ `templateText`.
  */
-export function resolveWatermarkPreviewClasses(opacity: number, fontSize: number) {
+function resolveWatermarkPreviewClasses(opacity: number, fontSize: number) {
   const quantizedOpacity = Math.min(80, Math.max(10, Math.round(opacity / 5) * 5));
   const clampedFontSize = Math.min(24, Math.max(10, Math.round(fontSize)));
   return {
@@ -53,7 +53,7 @@ export function resolveWatermarkPreviewClasses(opacity: number, fontSize: number
   };
 }
 
-export function renderWatermarkTemplateLines(
+function renderWatermarkTemplateLines(
   rawTemplate: string,
   currentUsername?: string | null,
 ): string[] {
@@ -62,7 +62,7 @@ export function renderWatermarkTemplateLines(
     employeeCode: 'EMP-882190',
     documentCode: 'DOC-TOPSECRET-001',
     timestamp: '2026-09-23 12:45:00 UTC',
-    shortToken: 'WM-8f3a9b2c1e7d4410',
+    shortToken: 'WM-2e59958fa6c7',
   };
   const source = rawTemplate.trim() || DEFAULT_WATERMARK_TEMPLATE;
   const substituted = source.replace(

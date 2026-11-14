@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Ban, Key, Lock, Search, Unlock } from 'lucide-react';
+import { Ban, Key, Lock, Pencil, Search, Unlock } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -23,24 +23,43 @@ interface UsersTabProps {
   departments: DepartmentRow[];
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
+  onOpenEditUser: (user: UserRow) => void;
   onOpenAssignRole: (user: UserRow) => void;
-  onChangeStatus: (user: UserRow, action: UserStatusAction) => void;
+  onChangeStatus: (user: UserRow, action: UserStatusAction) => Promise<boolean>;
+  onClearError: () => void;
 }
 
+/**
+ * Thuật toán: Bảng Quản Lý Danh Tính & Vòng Đời Trạng Thái Tài Khoản Nhân Sự (`UsersTab`)
+ * Mục đích: Kết hợp lọc tức thời đa trường, chỉnh sửa hồ sơ OCC, gán vai trò RBAC, khóa/mở khóa và khôi phục tài khoản `DISABLED` (ngoại trừ tài khoản `.demo` khóa mật khẩu).
+ */
 export function UsersTab({
   users,
   departments,
   searchQuery,
   onSearchQueryChange,
+  onOpenEditUser,
   onOpenAssignRole,
   onChangeStatus,
+  onClearError,
 }: UsersTabProps) {
   const [pendingAction, setPendingAction] = useState<{
     user: UserRow;
     action: 'lock' | 'disable';
   } | null>(null);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [unlockingUserId, setUnlockingUserId] = useState<string | null>(null);
 
   const filteredUsers = filterUsersByQuery(users, searchQuery);
+
+  async function handleDirectUnlock(user: UserRow) {
+    setUnlockingUserId(user.id);
+    try {
+      await onChangeStatus(user, 'unlock');
+    } finally {
+      setUnlockingUserId(null);
+    }
+  }
 
   return (
     <>
@@ -51,7 +70,8 @@ export function UsersTab({
               Danh sách tài khoản người dùng
             </CardTitle>
             <CardDescription className="text-xs text-[#717171]">
-              Quản lý danh tính nhân sự, trạng thái khóa, phòng ban và gán vai trò RBAC
+              Quản lý danh tính nhân sự, cập nhật hồ sơ, trạng thái khóa, phòng ban và gán vai trò
+              RBAC
             </CardDescription>
           </div>
           <div className="relative w-full sm:w-64">
@@ -62,6 +82,7 @@ export function UsersTab({
               aria-hidden="true"
             />
             <Input
+              id="admin-users-search"
               type="text"
               aria-label="Tìm kiếm tài khoản người dùng"
               placeholder="Tìm theo tên, username..."
@@ -91,73 +112,107 @@ export function UsersTab({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredUsers.map((u) => (
-                    <TableRow
-                      key={u.id}
-                      className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
-                    >
-                      <TableCell>
-                        <div className="font-semibold text-xs text-[#222222]">{u.fullName}</div>
-                        <div className="text-xs text-[#717171]">@{u.username}</div>
-                      </TableCell>
-                      <TableCell className="text-xs text-[#717171]">{u.email}</TableCell>
-                      <TableCell className="text-xs text-[#222222]">
-                        {departments.find((d) => d.id === u.departmentId)?.name || 'Chưa gán'}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            u.status === 'ACTIVE'
-                              ? 'success'
-                              : u.status === 'LOCKED'
-                                ? 'warning'
-                                : 'destructive'
-                          }
-                          className="text-[13px]"
-                        >
-                          {u.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <InteractiveHoverButton
-                            variant="secondary"
-                            size="sm"
-                            text="Gán vai trò"
-                            icon={<Key size={16} strokeWidth={1.75} aria-hidden="true" />}
-                            onClick={() => onOpenAssignRole(u)}
-                          />
-                          {u.status === 'ACTIVE' && (
+                  filteredUsers.map((u) => {
+                    const deptName =
+                      departments.find((d) => String(d.id) === String(u.departmentId))?.name ||
+                      'Chưa gán';
+                    const canReactivateDisabled = u.status === 'DISABLED';
+
+                    return (
+                      <TableRow
+                        key={u.id}
+                        className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
+                      >
+                        <TableCell>
+                          <div className="font-semibold text-xs text-[#222222]">{u.fullName}</div>
+                          <div className="text-xs text-[#717171]">
+                            @{u.username}
+                            {u.employeeCode ? ` · ${u.employeeCode}` : ''}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs text-[#717171]">{u.email}</TableCell>
+                        <TableCell className="text-xs text-[#222222]">{deptName}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              u.status === 'ACTIVE'
+                                ? 'success'
+                                : u.status === 'LOCKED'
+                                  ? 'warning'
+                                  : 'destructive'
+                            }
+                            className="text-[13px]"
+                          >
+                            {u.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
                             <InteractiveHoverButton
                               variant="ghost"
                               size="sm"
-                              text="Khóa"
-                              icon={<Lock size={16} strokeWidth={1.75} aria-hidden="true" />}
-                              onClick={() => setPendingAction({ user: u, action: 'lock' })}
+                              text="Sửa"
+                              icon={<Pencil size={16} strokeWidth={1.75} aria-hidden="true" />}
+                              onClick={() => onOpenEditUser(u)}
                             />
-                          )}
-                          {u.status === 'LOCKED' && (
                             <InteractiveHoverButton
                               variant="secondary"
                               size="sm"
-                              text="Mở khóa"
-                              icon={<Unlock size={16} strokeWidth={1.75} aria-hidden="true" />}
-                              onClick={() => onChangeStatus(u, 'unlock')}
+                              text="Gán vai trò"
+                              icon={<Key size={16} strokeWidth={1.75} aria-hidden="true" />}
+                              onClick={() => onOpenAssignRole(u)}
                             />
-                          )}
-                          {u.status !== 'DISABLED' && (
-                            <InteractiveHoverButton
-                              variant="danger"
-                              size="sm"
-                              text="Vô hiệu"
-                              icon={<Ban size={16} strokeWidth={1.75} aria-hidden="true" />}
-                              onClick={() => setPendingAction({ user: u, action: 'disable' })}
-                            />
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                            {u.status === 'ACTIVE' && (
+                              <InteractiveHoverButton
+                                variant="ghost"
+                                size="sm"
+                                text="Khóa"
+                                icon={<Lock size={16} strokeWidth={1.75} aria-hidden="true" />}
+                                onClick={() => {
+                                  onClearError();
+                                  setPendingAction({ user: u, action: 'lock' });
+                                }}
+                              />
+                            )}
+                            {u.status === 'LOCKED' && (
+                              <InteractiveHoverButton
+                                variant="secondary"
+                                size="sm"
+                                text="Mở khóa"
+                                icon={<Unlock size={16} strokeWidth={1.75} aria-hidden="true" />}
+                                isLoading={unlockingUserId === u.id}
+                                disabled={unlockingUserId === u.id}
+                                onClick={() => void handleDirectUnlock(u)}
+                              />
+                            )}
+                            {canReactivateDisabled && (
+                              <InteractiveHoverButton
+                                variant="secondary"
+                                size="sm"
+                                text="Kích hoạt"
+                                icon={<Unlock size={16} strokeWidth={1.75} aria-hidden="true" />}
+                                isLoading={unlockingUserId === u.id}
+                                disabled={unlockingUserId === u.id}
+                                onClick={() => void handleDirectUnlock(u)}
+                              />
+                            )}
+                            {u.status !== 'DISABLED' && (
+                              <InteractiveHoverButton
+                                variant="danger"
+                                size="sm"
+                                text="Vô hiệu"
+                                icon={<Ban size={16} strokeWidth={1.75} aria-hidden="true" />}
+                                onClick={() => {
+                                  onClearError();
+                                  setPendingAction({ user: u, action: 'disable' });
+                                }}
+                              />
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -168,7 +223,7 @@ export function UsersTab({
       <ConfirmDialog
         open={Boolean(pendingAction)}
         onOpenChange={(open) => {
-          if (!open) setPendingAction(null);
+          if (!open && !isUpdatingStatus) setPendingAction(null);
         }}
         title={
           pendingAction?.action === 'disable'
@@ -177,17 +232,22 @@ export function UsersTab({
         }
         description={
           pendingAction?.action === 'disable'
-            ? `Tài khoản @${pendingAction.user.username} (${pendingAction.user.fullName}) sẽ bị vô hiệu hóa vĩnh viễn và thu hồi mọi phiên hoạt động.`
+            ? `Tài khoản @${pendingAction.user.username} (${pendingAction.user.fullName}) sẽ bị vô hiệu hóa và thu hồi mọi phiên hoạt động.`
             : `Tài khoản @${pendingAction?.user.username ?? ''} (${pendingAction?.user.fullName ?? ''}) sẽ bị khóa đăng nhập tạm thời.`
         }
         confirmLabel={
           pendingAction?.action === 'disable' ? 'Xác nhận vô hiệu hóa' : 'Xác nhận khóa'
         }
         variant={pendingAction?.action === 'disable' ? 'danger' : 'primary'}
-        onConfirm={() => {
-          if (pendingAction) {
-            onChangeStatus(pendingAction.user, pendingAction.action);
-            setPendingAction(null);
+        isLoading={isUpdatingStatus}
+        onConfirm={async () => {
+          if (!pendingAction) return;
+          setIsUpdatingStatus(true);
+          try {
+            const ok = await onChangeStatus(pendingAction.user, pendingAction.action);
+            if (ok) setPendingAction(null);
+          } finally {
+            setIsUpdatingStatus(false);
           }
         }}
       />

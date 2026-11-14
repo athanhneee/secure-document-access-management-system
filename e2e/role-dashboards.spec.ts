@@ -15,7 +15,8 @@ test.describe('Authentication Pages Smoke Tests', () => {
     await page.goto('/login');
     await expect(page.getByRole('heading', { name: 'Đăng nhập tài khoản' })).toBeVisible();
     await expect(page.getByLabel(/Tên đăng nhập hoặc Email/i)).toBeVisible();
-    await expect(page.getByLabel(/Mật khẩu/i)).toBeVisible();
+    await expect(page.getByLabel(/^Mật khẩu/i)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Hiện mật khẩu' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Đăng nhập hệ thống' })).toBeVisible();
 
     const textContent = await page.locator('body').innerText();

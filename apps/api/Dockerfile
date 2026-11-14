@@ -83,7 +83,7 @@ USER 10001:10001
 EXPOSE 3001
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/api/v1/health/live || exit 1
+  CMD wget --no-verbose --tries=1 --spider "http://127.0.0.1:${PORT:-3001}/api/v1/health/live" || exit 1
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["node", "apps/api/dist/main.js"]

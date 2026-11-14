@@ -1,12 +1,16 @@
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
+const localDevEnv = path.join(repositoryRoot, '.local', 'dev.env');
+const rootEnv = path.join(repositoryRoot, '.env');
+const resolvedEnvFile = fs.existsSync(localDevEnv) ? localDevEnv : rootEnv;
+
 export const composeBase = [
   'compose',
-  '--env-file',
-  path.join(repositoryRoot, '.local', 'dev.env'),
+  ...(fs.existsSync(resolvedEnvFile) ? ['--env-file', resolvedEnvFile] : []),
   '--file',
   path.join(repositoryRoot, 'infra', 'compose.yaml'),
   '--project-name',
@@ -14,11 +18,33 @@ export const composeBase = [
 ];
 
 /**
+ * Thuật toán: Kiểm Tra Trạng Thái Sẵn Sàng Của Dịch Vụ Docker Compose Cục Bộ (`isLocalComposeServiceRunning`)
+ * Trả về `true` chỉ khi Docker daemon đang bật và container dịch vụ mục tiêu đang ở trạng thái `running`;
+ * trả `false` an toàn trên môi trường Cloud (Railway + Cloudflare R2) hoặc máy Windows không bật Docker.
+ */
+export function isLocalComposeServiceRunning(serviceName) {
+  try {
+    const probe = spawnSync(
+      'docker',
+      [...composeBase, 'ps', '--status', 'running', '-q', serviceName],
+      {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        stdio: 'pipe',
+        env: process.env,
+        timeout: 4_000,
+        shell: false,
+      },
+    );
+    if (probe.error || probe.status !== 0) return false;
+    return typeof probe.stdout === 'string' && probe.stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Thuật toán: Thực thi Lệnh Docker Compose Không Qua Shell (Shell-Free Subprocess Execution)
- * Mục đích: Gọi trực tiếp nhị phân `docker compose` kèm cấu hình môi trường cục bộ và bắt lỗi thoát khác 0.
- * Cơ chế hoạt động:
- *   - Chạy `spawnSync('docker', [...composeBase, ...args], { shell: false })` nhằm ngăn chặn lỗi Command Injection qua ký tự meta-shell.
- *   - Hợp nhất luồng `stderr` và `stdout` để ném ngoại lệ giàu ngữ cảnh khi mã thoát `status !== 0`.
  */
 export function dockerCompose(args, options = {}) {
   const result = spawnSync('docker', [...composeBase, ...args], {
@@ -43,10 +69,6 @@ export function dockerCompose(args, options = {}) {
 
 /**
  * Thuật toán: Thăm dò Sẵn sàng Có Giới hạn Thời gian (Bounded-Deadline Readiness Polling)
- * Mục đích: Lặp kiểm tra điều kiện bất đồng bộ `predicate()` cho tới khi thỏa mãn hoặc chạm ngưỡng `timeoutMs`.
- * Cơ chế hoạt động:
- *   - Tính mốc hạn chót `deadline = Date.now() + timeoutMs` và lặp kiểm tra mỗi chu kỳ nghỉ cố định `250ms`.
- *   - Lưu giữ ngoại lệ gần nhất (`lastError`) và gắn vào trường `Error.cause` nếu hết hạn để phục vụ chẩn đoán lỗi hạ tầng.
  */
 export async function waitFor(predicate, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;

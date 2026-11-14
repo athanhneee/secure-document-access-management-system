@@ -12,10 +12,13 @@ import { test } from 'node:test';
 import { AppConfigService } from '../dist/config/config.service.js';
 import { ResetMailerService } from '../dist/modules/auth/reset-mailer.service.js';
 import { convertWithLocalLibreOffice } from '../dist/modules/documents/local-libreoffice.helper.js';
+import { extractOfficeFallbackText } from '../dist/modules/documents/office-ooxml-extractor.helper.js';
+import { OfficeConverterService } from '../dist/modules/documents/office-converter.service.js';
 import {
   isWindowsDefenderCliAvailable,
   scanBufferWithWindowsDefender,
 } from '../dist/modules/documents/windows-defender-scanner.helper.js';
+import { createZipBuffer } from './helpers/zip-builder.mjs';
 
 test('ResetMailerService — spools RFC-5322 .eml in development loopback offline mode and fails closed in production', async () => {
   const tempSink = await fsp.mkdtemp(path.join(os.tmpdir(), 'sda-api-mailsink-'));
@@ -91,4 +94,43 @@ test('WindowsDefenderScannerHelper & LocalLibreOfficeHelper — respect test/dis
     if (prevDisable === undefined) delete process.env['SDA_DISABLE_HOST_DEFENDER'];
     else process.env['SDA_DISABLE_HOST_DEFENDER'] = prevDisable;
   }
+});
+
+test('OfficeOoxmlExtractorHelper & OfficeConverterService — preserve DOCX tables and XLSX worksheet grids in PDF fallback', async () => {
+  const docxWithTable = createZipBuffer([
+    { name: '[Content_Types].xml', content: '<Types></Types>' },
+    {
+      name: 'word/document.xml',
+      content:
+        '<w:document><w:body><w:p><w:r><w:t>Executive Summary</w:t></w:r></w:p>' +
+        '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Department</w:t></w:r></w:p></w:tc>' +
+        '<w:tc><w:p><w:r><w:t>Clearance</w:t></w:r></w:p></w:tc></w:tr>' +
+        '<w:tr><w:tc><w:p><w:r><w:t>SOC</w:t></w:r></w:p></w:tc>' +
+        '<w:tc><w:p><w:r><w:t>TOP_SECRET</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>',
+    },
+  ]);
+  const docxText = await extractOfficeFallbackText(docxWithTable, 'summary.docx');
+  assert.match(docxText, /\| Department \| Clearance \|/u);
+  assert.match(docxText, /\| SOC \| TOP_SECRET \|/u);
+
+  const xlsxWorkbook = createZipBuffer([
+    { name: '[Content_Types].xml', content: '<Types></Types>' },
+    {
+      name: 'xl/sharedStrings.xml',
+      content: '<sst><si><t>Metric</t></si><si><t>Score</t></si></sst>',
+    },
+    {
+      name: 'xl/worksheets/sheet1.xml',
+      content:
+        '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>' +
+        '<row r="2"><c r="A2" t="inlineStr"><is><t>Audit</t></is></c><c r="B2"><v>100</v></c></row></sheetData></worksheet>',
+    },
+  ]);
+  const xlsxText = await extractOfficeFallbackText(xlsxWorkbook, 'metrics.xlsx');
+  assert.match(xlsxText, /\| Metric \| Score \|/u);
+  assert.match(xlsxText, /\| Audit \| 100 \|/u);
+
+  const converter = new OfficeConverterService();
+  const pdf = await converter.convertOfficeToPdf(xlsxWorkbook, 'metrics.xlsx');
+  assert.equal(pdf.subarray(0, 4).toString('ascii'), '%PDF');
 });

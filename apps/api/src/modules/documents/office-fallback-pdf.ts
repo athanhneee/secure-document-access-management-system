@@ -1,7 +1,8 @@
 /**
  * @module OfficeFallbackPdf
  * Thuật toán: Kết xuất tài liệu Office sang PDF qua máy khách HTTP Gotenberg có cắt ngưỡng thời gian (`AbortController`)
- * và kiểm tra chữ ký ma thuật `%PDF`, kết hợp bộ dựng PDF A4 phân trang văn bản thuần WinAnsi an toàn bằng `pdf-lib`.
+ * và kiểm tra chữ ký ma thuật `%PDF`, kết hợp bộ dựng PDF A4 phân trang tự động ngắt dòng (word-wrap không cắt cụt)
+ * và vẽ khung lưới bảng biểu (`| ... |`) bằng `pdf-lib`.
  */
 import type { Logger } from '@nestjs/common';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
@@ -67,9 +68,40 @@ export async function convertWithGotenberg(
   }
 }
 
+interface WrappedDisplayLine {
+  text: string;
+  isTableRow: boolean;
+}
+
+function wrapContentLines(content: string, maxChars: number = 90): WrappedDisplayLine[] {
+  const output: WrappedDisplayLine[] = [];
+  for (const rawLine of content.split('\n')) {
+    const safe = toWinAnsiSafeText(rawLine.trim());
+    if (!safe) continue;
+    const isTableRow = safe.startsWith('| ') && safe.endsWith(' |');
+    if (safe.length <= maxChars) {
+      output.push({ text: safe, isTableRow });
+      continue;
+    }
+    const words = safe.split(/\s+/u);
+    let current = '';
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (candidate.length <= maxChars) {
+        current = candidate;
+      } else {
+        if (current) output.push({ text: current, isTableRow });
+        current = word.length > maxChars ? word.slice(0, maxChars) : word;
+      }
+    }
+    if (current) output.push({ text: current, isTableRow });
+  }
+  return output;
+}
+
 /**
- * Thuật toán: Phân trang văn bản thuần đã khử mã độc lên khổ giấy A4 (`595.28 x 841.89` pt, tối đa `42` dòng/trang,
- * trần `maxPages` trang) kèm gấp dấu tiếng Việt sang bảng mã WinAnsi an toàn cho phông chuẩn `Helvetica`.
+ * Thuật toán: Phân trang văn bản và bảng biểu đã khử mã độc lên khổ giấy A4 (`595.28 x 841.89` pt, tối đa `40` dòng/trang,
+ * trần `maxPages` trang) kèm tự động xuống dòng (word-wrap) và tô khung dòng bảng biểu.
  */
 export async function renderSanitizedTextToPdf(
   title: string,
@@ -81,8 +113,8 @@ export async function renderSanitizedTextToPdf(
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const safeTitle = toWinAnsiSafeText(title);
 
-  const lines = content.split('\n');
-  const linesPerPage = 42;
+  const lines = wrapContentLines(content, 90);
+  const linesPerPage = 40;
   let pageCount = 0;
   let lineIdx = 0;
 
@@ -99,7 +131,7 @@ export async function renderSanitizedTextToPdf(
         font: boldFont,
         color: rgb(0.1, 0.1, 0.1),
       });
-      page.drawText('Sanitized Office Preview (Macros/Scripts Blocked)', {
+      page.drawText('Sanitized Structured Office Preview (Macros/Scripts Blocked)', {
         x: 40,
         y: height - 58,
         size: 9,
@@ -108,20 +140,29 @@ export async function renderSanitizedTextToPdf(
       });
     }
 
-    let yPos = pageCount === 1 ? height - 85 : height - 45;
+    let yPos = pageCount === 1 ? height - 86 : height - 46;
     const endLine = Math.min(lineIdx + linesPerPage, lines.length);
 
     for (let i = lineIdx; i < endLine; i++) {
-      const rawLine = lines[i] ?? '';
-      const truncated = toWinAnsiSafeText(
-        rawLine.length > 95 ? `${rawLine.substring(0, 92)}...` : rawLine,
-      );
-      page.drawText(truncated, {
+      const entry = lines[i];
+      if (!entry) continue;
+      if (entry.isTableRow) {
+        page.drawRectangle({
+          x: 36,
+          y: yPos - 4,
+          width: width - 72,
+          height: 16,
+          color: i % 2 === 0 ? rgb(0.96, 0.97, 0.98) : rgb(1, 1, 1),
+          borderColor: rgb(0.84, 0.86, 0.89),
+          borderWidth: 0.5,
+        });
+      }
+      page.drawText(entry.text, {
         x: 40,
         y: yPos,
-        size: 10,
+        size: 9.5,
         font,
-        color: rgb(0.15, 0.15, 0.15),
+        color: rgb(0.14, 0.14, 0.14),
       });
       yPos -= 17;
     }

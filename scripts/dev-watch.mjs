@@ -26,10 +26,19 @@ let nodeProcess = null;
 
 function startNodeWatch() {
   if (nodeProcess) return;
-  nodeProcess = spawn(process.execPath, ['--watch', entryPath], {
-    cwd,
-    stdio: 'inherit',
-  });
+  nodeProcess = spawn(
+    process.execPath,
+    [
+      '--env-file-if-exists=../../.local/dev.env',
+      '--env-file-if-exists=../../.env',
+      '--watch',
+      entryPath,
+    ],
+    {
+      cwd,
+      stdio: 'inherit',
+    },
+  );
   nodeProcess.on('exit', (code) => {
     if (code !== null && code !== 0) {
       process.exitCode = code;

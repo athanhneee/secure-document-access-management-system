@@ -196,9 +196,13 @@ export class AntivirusScannerService {
         }
       };
 
-      socket.setTimeout(10_000);
+      const isDevLoopback =
+        (process.env['NODE_ENV'] ?? this.configuredEnv).trim().toLowerCase() === 'development' &&
+        (this.host === '127.0.0.1' || this.host === 'localhost');
+      socket.setTimeout(isDevLoopback ? 600 : 10_000);
 
       socket.connect(this.port, this.host, () => {
+        socket.setTimeout(10_000);
         void (async () => {
           try {
             await writeSocketWithBackpressure(socket, Buffer.from('zINSTREAM\0', 'ascii'));

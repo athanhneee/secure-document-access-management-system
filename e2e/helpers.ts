@@ -9,6 +9,15 @@ export type RoleName =
   'SYSTEM_ADMIN' | 'DOCUMENT_OWNER' | 'DOCUMENT_READER' | 'SECURITY_OFFICER' | 'AUDITOR';
 
 export async function mockAuthenticatedRoleSession(page: Page, role: RoleName): Promise<void> {
+  await page.context().addCookies([
+    {
+      name: 'sda_csrf',
+      value: 'e2e-csrf-token-0000000000000000000000000000000000000000000',
+      domain: '127.0.0.1',
+      path: '/',
+    },
+  ]);
+
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const pathname = url.pathname;

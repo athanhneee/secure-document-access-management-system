@@ -64,7 +64,7 @@ USER node
 EXPOSE 3000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/ || exit 1
+  CMD wget --no-verbose --tries=1 --spider "http://127.0.0.1:${PORT:-3000}/" || exit 1
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["node", "apps/web/server.js"]

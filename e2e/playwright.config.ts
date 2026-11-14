@@ -54,7 +54,8 @@ export default defineConfig({
       },
     },
     {
-      command: 'node --env-file-if-exists=.local/dev.env apps/api/dist/main.js',
+      command:
+        'node --env-file-if-exists=.env --env-file-if-exists=.local/dev.env apps/api/dist/main.js',
       cwd: repositoryRoot,
       url: `${apiUrl}/api/v1/health/live`,
       timeout: 60_000,
@@ -65,6 +66,9 @@ export default defineConfig({
         API_PORT: String(apiPort),
         HOST: '127.0.0.1',
         API_HOST: '127.0.0.1',
+        CORS_ALLOWED_ORIGINS: `${webUrl},http://localhost:${webPort}`,
+        WEBAUTHN_ORIGINS: `${webUrl},http://localhost:${webPort}`,
+        PASSWORD_RESET_BASE_URL: `${webUrl}/reset-password`,
       },
     },
   ],

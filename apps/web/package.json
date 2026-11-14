@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "next build && node scripts/prepare-standalone.mjs",
-    "dev": "next dev --hostname 127.0.0.1",
-    "start": "node .next/standalone/apps/web/server.js",
+    "dev": "node scripts/run-web.mjs dev",
+    "start": "node scripts/run-web.mjs start",
     "lint": "oxlint app components lib proxy.ts next.config.ts scripts",
     "typecheck": "next typegen && tsc --noEmit"
   },

@@ -10,7 +10,8 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
-const environmentPath = path.join(repositoryRoot, '.local', 'dev.env');
+const localDevEnvPath = path.join(repositoryRoot, '.local', 'dev.env');
+const rootEnvPath = path.join(repositoryRoot, '.env');
 
 /**
  * Thuật toán: Bộ Phân Tích Từ Vựng Tệp Cấu Hình Khóa-Giá Trị (First-Delimiter Dotenv Lexer)
@@ -47,19 +48,19 @@ function parseEnvironment(source) {
  */
 async function runInfraTests() {
   let rawEnvContent = null;
-  try {
-    rawEnvContent = await readFile(environmentPath, 'utf8');
-  } catch (error) {
-    // CONFLICT-RESOLVED: Tách biệt lỗi thiếu tệp ENOENT với lỗi phân tích cú pháp để không nuốt lỗi cấu hình hỏng trên CI ([MED-14]).
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      if (process.env['CI'] !== 'true') {
-        throw new Error('Missing .local/dev.env. Run pnpm infra:up before infrastructure tests.', {
-          cause: error,
-        });
+  for (const candidatePath of [localDevEnvPath, rootEnvPath]) {
+    try {
+      rawEnvContent = await readFile(candidatePath, 'utf8');
+      break;
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        continue;
       }
-    } else {
       throw error;
     }
+  }
+  if (rawEnvContent === null && process.env['CI'] !== 'true') {
+    throw new Error('Missing .local/dev.env or .env. Configure environment before infra tests.');
   }
 
   const localEnvironment = rawEnvContent !== null ? parseEnvironment(rawEnvContent) : {};

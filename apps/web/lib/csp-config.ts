@@ -46,6 +46,11 @@ export function buildConnectSrcDirective(): string {
   if (process.env.NODE_ENV !== 'production') {
     allowedConnectOrigins.add('http://127.0.0.1:3001');
     allowedConnectOrigins.add('http://localhost:3001');
+    try {
+      allowedConnectOrigins.add(new URL(resolveInternalApiOrigin()).origin);
+    } catch {
+      // Bỏ qua nếu INTERNAL_API_ORIGIN không hợp lệ
+    }
   }
 
   return `connect-src ${[...allowedConnectOrigins].join(' ')}`;

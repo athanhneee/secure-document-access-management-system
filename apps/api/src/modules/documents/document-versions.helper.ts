@@ -1,7 +1,6 @@
 /**
  * Module: Document Version Pointer & Version History Helper
- * Algorithm: Enforces cross-document foreign-key integrity and `CLEAN` scan-status invariants
- *   when switching `current_version_id`, and lists versions ordered descending after read-access checks.
+ * Thuật toán: Chuyển Con Trỏ Phiên Bản Hiện Hành Có Kiểm Định Khóa Ngoại Cùng Tài Liệu & Trạng Thái Quét `CLEAN`.
  */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
@@ -46,7 +45,7 @@ export async function executeSetCurrentVersion(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal, 'VERSION');
+  await assertDocumentMutationPermission(authorization, doc, principal, 'VERSION', { database });
 
   let version;
   if (input.versionId) {

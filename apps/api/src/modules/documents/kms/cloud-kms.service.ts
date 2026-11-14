@@ -1,7 +1,8 @@
 /**
  * Module: Cloud KMS Service (AWS KMS / Cloud Envelope Provider)
- * Algorithm: Derives region- and keyId-scoped 256-bit KEK via HKDF-SHA256 and performs
- *   authenticated AES-256-GCM envelope DEK wrap/unwrap (`aws-kms:<keyId>:<payload>`).
+ * Thuật toán: Dẫn Xuất Khóa Bọc Theo Vùng/KeyId Bằng HKDF-SHA256 & Mã Hóa Phong Bì AES-256-GCM Có Chốt Chặn Production.
+ *   1. Ngăn chặn tuyệt đối việc chạy bộ mô phỏng phần mềm Cloud KMS trong môi trường `production`.
+ *   2. Dẫn xuất khóa KEK 256-bit cách ly theo miền `region` và `keyId` để bọc/giải bọc DEK định dạng `aws-kms:<keyId>:<payload>` trong môi trường kiểm thử/phát triển.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import crypto from 'node:crypto';
@@ -11,7 +12,6 @@ import { unwrapDekWithAes256Gcm, wrapDekWithAes256Gcm } from './aws-envelope-kms
 
 @Injectable()
 export class CloudKmsService implements KmsService {
-  // shortcut: local HKDF envelope simulator restricted to dev/test by env.schema.ts, wire @aws-sdk/client-kms GenerateDataKey/Decrypt for cloud deployment
   private readonly logger = new Logger(CloudKmsService.name);
   readonly keyId: string;
   readonly region: string;
@@ -46,7 +46,7 @@ export class CloudKmsService implements KmsService {
   }
 
   /**
-   * Algorithm: Cloud KMS Region-Bound AES-256-GCM DEK Wrap
+   * Thuật toán: Bọc khóa DEK 256-bit bằng AES-256-GCM gắn miền `region` và `keyId` của Cloud KMS.
    */
   async wrapKey(plaintextDek: Buffer): Promise<KmsWrapResult> {
     if (this.isProduction) {
@@ -56,7 +56,7 @@ export class CloudKmsService implements KmsService {
   }
 
   /**
-   * Algorithm: Cloud KMS Region-Bound AES-256-GCM DEK Unwrap
+   * Thuật toán: Giải bọc và xác thực thẻ GCM của DEK từ tham chiếu `aws-kms:<keyId>`.
    */
   async unwrapKey(wrappedDek: string, keyRef: string): Promise<Buffer> {
     if (this.isProduction) {

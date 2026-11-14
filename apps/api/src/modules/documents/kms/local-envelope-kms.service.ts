@@ -1,7 +1,6 @@
 /**
  * Module: Local Software Envelope KMS Service
- * Algorithm: Derives a domain-separated 256-bit KEK via HKDF-SHA256 (RFC 5869) from the master key
- *   and wraps/unwraps 256-bit DEKs with AES-256-GCM (`local-kms:v1:<payload>`).
+ * Thuật toán: Dẫn Xuất Khóa Bọc KEK 256-bit Tách Miền Qua HKDF-SHA256 (RFC 5869) & Bọc Phong Bì DEK Bằng AES-256-GCM.
  */
 import { Injectable } from '@nestjs/common';
 import crypto from 'node:crypto';

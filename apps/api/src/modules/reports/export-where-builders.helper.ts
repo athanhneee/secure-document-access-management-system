@@ -1,7 +1,6 @@
 /**
  * Module: Scoped Prisma Export `where` Clause Builders
- * Algorithm: Translates normalized export filters and department subtree scopes (`effectiveDepartmentIds`)
- *   into type-safe Prisma `where` inputs for `AuditLog`, `SecurityAlert`, `IncidentReport`, and `SystemHealthSnapshot`.
+ * Thuật toán: Biên Dịch Bộ Lọc Phạm Vi Cây Phòng Ban (`effectiveDepartmentIds`) Sang Điều Kiện Truy Vấn Prisma An Toàn Kiểu.
  */
 import type { Prisma } from '@sda/database';
 import type { NormalizedExportFilters } from './export-filter-scope.helper.js';

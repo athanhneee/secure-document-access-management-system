@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { ConflictException } from '@nestjs/common';
 import {
   AppErrorCode,
   CompleteIncidentActionSchema,
@@ -159,7 +160,10 @@ test('Access Grant & Session State Machines — real AccessGrantsService & Acces
       findUnique: async () => sessionRow,
       findMany: async () => (sessionRow.status === 'ACTIVE' ? [sessionRow] : []),
       update: async ({ data }) => Object.assign(sessionRow, data),
-      updateMany: async ({ data }) => {
+      updateMany: async ({ where, data }) => {
+        if (where?.status && sessionRow.status !== where.status) {
+          return { count: 0 };
+        }
         Object.assign(sessionRow, data);
         return { count: 1 };
       },
@@ -193,13 +197,10 @@ test('Access Grant & Session State Machines — real AccessGrantsService & Acces
   );
 
   const sessionsService = new AccessSessionsService(mockDb, { writeLog: async () => {} });
-  const idempotentTerminated = await sessionsService.terminateSession(
-    sessionId,
-    'Already closed',
-    ownerPrincipal,
-    ctx,
+  await assert.rejects(
+    () => sessionsService.terminateSession(sessionId, 'Already closed', ownerPrincipal, ctx),
+    (err) => err instanceof ConflictException,
   );
-  assert.equal(idempotentTerminated.status, 'TERMINATED');
 });
 
 test('Security Alert & Incident Schemas — enforce required resolution and completion notes', () => {

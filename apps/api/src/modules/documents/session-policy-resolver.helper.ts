@@ -1,13 +1,9 @@
 /**
- * Module: Fail-Closed Session Policy Resolver & Multi-Replica Obligation Re-Hydrator
- * Algorithm / Thuật toán: Khôi Phục & Cưỡng Chế Nghĩa Vụ Phiên ABAC Theo Cơ Chế Đóng An Toàn (Fail-Closed Session Obligation Re-Hydration)
- * Mục đích: Đảm bảo các nghĩa vụ `FORBID_DOWNLOAD` và `MAX_SESSION_MINUTES` luôn được thực thi nghiêm ngặt ngay cả khi API khởi động lại,
- *   bộ nhớ đệm FIFO trục xuất mục cũ, hoặc yêu cầu rơi sang container/replica khác.
- * Cơ chế hoạt động:
- *   1. Kiểm tra bảng băm `sessionPolicies` trong bộ nhớ tiến trình; nếu trúng cache thì dùng ngay để kiểm tra hạn phiên và quyền tải xuống.
- *   2. Khi trượt cache (cache miss): khôi phục bản chụp chính sách lúc cấp phiên từ `audit_logs` (`ACCESS_PERMITTED`) kết hợp tái thẩm định
- *      động cơ ABAC thời gian thực neo theo mốc `session.started_at`, lấy giao chặt nhất của các ràng buộc.
- *   3. Nếu không thể xác minh chính sách phiên từ cả hai nguồn (Fail-Closed), lập tức từ chối bằng `ForbiddenException` thay vì bỏ qua kiểm tra.
+ * Module: Fail-Closed Distributed Session Policy Resolver & Multi-Replica Obligation Re-Hydrator
+ * Thuật toán: Thẩm Định Trạng Thái Phiên CSDL Thời Gian Thực & Khôi Phục Nghĩa Vụ ABAC Đa Bản Sao (`resolveAndEnforceSessionPolicy`).
+ *   1. Xác nhận trực tiếp trong CSDL rằng `AccessSession.status === 'ACTIVE'` để phiên bị chấm dứt/thu hồi bị từ chối tức thì trên mọi bản sao API.
+ *   2. Ràng buộc địa chỉ `ipAddress` và `userAgent` (khi có) giữa phiên gốc và yêu cầu hiện hành nhằm ngăn đánh cắp phiên.
+ *   3. Đọc chính sách phiên từ `DistributedStateService`; khi trượt cache thì khôi phục từ `audit_logs` (`ACCESS_PERMITTED`) kết hợp tái đánh giá ABAC PDP và ghi lại với TTL hữu hạn (`<= 60` phút).
  */
 import { ForbiddenException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
@@ -15,16 +11,24 @@ import { AppErrorCode } from '@sda/contracts';
 import type { AbacService } from '../abac/abac.service.js';
 import type { AppConfigService } from '../../config/config.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
+import { normalizeDeliveryClientIp } from './delivery-ticket.helper.js';
 import {
   buildPepSubjectAttributes,
+  computeBoundedSessionPolicyTtlMs,
   resolvePepTrustedNetwork,
   type ActiveSessionPolicy,
 } from './pep-context-builder.js';
+import { SESSION_POLICY_NAMESPACE } from './pep-obligations.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 export interface SessionRecordForPolicyCheck {
   id: string;
+  status?: string | null | undefined;
+  user_id?: bigint | undefined;
+  ip_address?: string | null | undefined;
+  user_agent?: string | null | undefined;
   started_at?: Date | string | null;
   document_versions?: {
     document_id: string;
@@ -47,7 +51,7 @@ export interface ResolveSessionPolicyParams {
   principal: AuthPrincipal;
   context: RequestContext;
   now: Date;
-  sessionPolicies: Map<string, ActiveSessionPolicy>;
+  stateStore?: DistributedStateService | undefined;
   database: PrismaClient;
   abac?: AbacService | undefined;
   config?: AppConfigService | undefined;
@@ -57,16 +61,12 @@ function parsePersistedSessionPolicy(
   details: unknown,
   startedAtMs: number | null,
 ): ActiveSessionPolicy | null {
-  if (!details || typeof details !== 'object' || Array.isArray(details)) {
-    return null;
-  }
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
   const record = details as Record<string, unknown>;
   const rawAction = record['grantedAction'] ?? record['action'];
   const grantedAction: 'VIEW' | 'DOWNLOAD' | null =
     rawAction === 'DOWNLOAD' ? 'DOWNLOAD' : rawAction === 'VIEW' ? 'VIEW' : null;
-  if (!grantedAction) {
-    return null;
-  }
+  if (!grantedAction) return null;
 
   const obligationsCsv = typeof record['obligations'] === 'string' ? record['obligations'] : '';
   const obligationTokens = obligationsCsv
@@ -75,49 +75,70 @@ function parsePersistedSessionPolicy(
     .filter(Boolean);
   const forbidDownload =
     record['forbidDownload'] === true || obligationTokens.includes('FORBID_DOWNLOAD');
+  const maxSessionMinutes =
+    typeof record['maxSessionMinutes'] === 'number' &&
+    Number.isFinite(record['maxSessionMinutes']) &&
+    record['maxSessionMinutes'] > 0
+      ? record['maxSessionMinutes']
+      : null;
 
   let expiresAtMs: number | null = null;
   if (typeof record['expiresAtMs'] === 'number' && Number.isFinite(record['expiresAtMs'])) {
     expiresAtMs = record['expiresAtMs'];
-  } else if (
-    typeof record['maxSessionMinutes'] === 'number' &&
-    Number.isFinite(record['maxSessionMinutes']) &&
-    startedAtMs !== null
-  ) {
-    expiresAtMs = startedAtMs + record['maxSessionMinutes'] * 60_000;
+  } else if (maxSessionMinutes !== null && startedAtMs !== null) {
+    expiresAtMs = startedAtMs + maxSessionMinutes * 60_000;
   }
 
-  return {
-    grantedAction,
-    forbidDownload,
-    expiresAtMs,
-  };
+  return { grantedAction, forbidDownload, expiresAtMs, maxSessionMinutes };
 }
 
 /**
- * Algorithm / Thuật toán: Thẩm Định & Cưỡng Chế Chính Sách Phiên Không Trạng Thái Dự Phòng (Fail-Closed Session Policy Enforcement)
+ * Thuật toán: Thẩm Định Trạng Thái `ACTIVE` Trong CSDL, Ràng Buộc IP/UA & Cưỡng Chế Nghĩa Vụ Phiên Fail-Closed
  */
 export async function resolveAndEnforceSessionPolicy(
   params: ResolveSessionPolicyParams,
 ): Promise<ActiveSessionPolicy> {
-  const { session, requiredAction, principal, context, now, sessionPolicies, database, abac } =
-    params;
+  const { session, requiredAction, principal, context, now, database, abac } = params;
+  const stateStore = params.stateStore ?? new DistributedStateService(params.config);
 
-  let policy = sessionPolicies.get(session.id);
+  let liveDbIp: string | null | undefined = session.ip_address;
+  let liveDbUa: string | null | undefined = session.user_agent;
+
+  if (typeof database?.accessSession?.findUnique === 'function') {
+    const dbSession = await database.accessSession.findUnique({ where: { id: session.id } });
+    if (!dbSession || dbSession.status !== 'ACTIVE') {
+      await stateStore.deleteKey(SESSION_POLICY_NAMESPACE, session.id);
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.SESSION_TERMINATED,
+        message: 'Access session is no longer active.',
+      });
+    }
+    if (dbSession.user_id !== undefined && dbSession.user_id !== principal.userId) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.SESSION_USER_MISMATCH,
+        message: 'Session does not belong to the calling user.',
+      });
+    }
+    liveDbIp = (dbSession as { ip_address?: string | null }).ip_address ?? liveDbIp;
+    liveDbUa = (dbSession as { user_agent?: string | null }).user_agent ?? liveDbUa;
+  } else if (session.status !== undefined && session.status !== 'ACTIVE') {
+    await stateStore.deleteKey(SESSION_POLICY_NAMESPACE, session.id);
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.SESSION_TERMINATED,
+      message: 'Access session is no longer active.',
+    });
+  }
+
+  let policy = await stateStore.getJson<ActiveSessionPolicy>(SESSION_POLICY_NAMESPACE, session.id);
 
   if (!policy) {
-    const startedAtMs = session.started_at ? new Date(session.started_at).getTime() : null;
-    const validStartedAtMs =
-      startedAtMs !== null && Number.isFinite(startedAtMs) ? startedAtMs : null;
+    const rawStartMs = session.started_at ? new Date(session.started_at).getTime() : null;
+    const validStartedAtMs = rawStartMs !== null && Number.isFinite(rawStartMs) ? rawStartMs : null;
 
     let persistedPolicy: ActiveSessionPolicy | null = null;
     if (typeof database?.auditLog?.findFirst === 'function') {
       const auditEntry = await database.auditLog.findFirst({
-        where: {
-          access_session_id: session.id,
-          action: 'ACCESS_PERMITTED',
-          outcome: 'SUCCESS',
-        },
+        where: { access_session_id: session.id, action: 'ACCESS_PERMITTED', outcome: 'SUCCESS' },
         orderBy: { occurred_at: 'desc' },
       });
       if (auditEntry) {
@@ -136,19 +157,16 @@ export async function resolveAndEnforceSessionPolicy(
     ) {
       const subjectAttributes = await buildPepSubjectAttributes(database, principal.userId, now);
       const currentClass = doc.classification_history?.[0];
-      const documentRank = currentClass?.classification_levels?.rank ?? 0;
-      const categoryCode = currentClass?.business_categories?.code ?? null;
       const evalAction = persistedPolicy ? persistedPolicy.grantedAction : requiredAction;
-
       const abacResult = await abac.evaluate({
         resourceType: 'DOCUMENT',
         action: evalAction,
         subject: subjectAttributes,
         resource: {
-          classificationRank: documentRank,
+          classificationRank: currentClass?.classification_levels?.rank ?? 0,
           departmentId: doc.department_id?.toString() ?? null,
           ownerId: doc.owner_id.toString(),
-          category: categoryCode,
+          category: currentClass?.business_categories?.code ?? null,
           status: doc.status,
         },
         environment: {
@@ -176,20 +194,19 @@ export async function resolveAndEnforceSessionPolicy(
         });
       }
 
-      const forbidDownload = obligations.some((o) => o.type === 'FORBID_DOWNLOAD');
       const maxMinutesList = obligations
         .filter(
           (o): o is Extract<(typeof obligations)[number], { type: 'MAX_SESSION_MINUTES' }> =>
-            o.type === 'MAX_SESSION_MINUTES' && typeof o.minutes === 'number',
+            o.type === 'MAX_SESSION_MINUTES' && typeof o.minutes === 'number' && o.minutes > 0,
         )
         .map((o) => o.minutes);
       const minMinutes = maxMinutesList.length > 0 ? Math.min(...maxMinutesList) : null;
       const anchorMs = validStartedAtMs ?? now.getTime();
-
       livePolicy = {
         grantedAction: evalAction,
-        forbidDownload,
+        forbidDownload: obligations.some((o) => o.type === 'FORBID_DOWNLOAD'),
         expiresAtMs: minMinutes !== null ? anchorMs + minMinutes * 60_000 : null,
+        maxSessionMinutes: minMinutes,
       };
     }
 
@@ -203,22 +220,45 @@ export async function resolveAndEnforceSessionPolicy(
     const expiryCandidates = [persistedPolicy?.expiresAtMs, livePolicy?.expiresAtMs].filter(
       (value): value is number => typeof value === 'number' && Number.isFinite(value),
     );
+    const minuteCandidates = [
+      persistedPolicy?.maxSessionMinutes,
+      livePolicy?.maxSessionMinutes,
+    ].filter((value): value is number => typeof value === 'number' && value > 0);
+    const resolvedMaxMinutes = minuteCandidates.length > 0 ? Math.min(...minuteCandidates) : null;
 
     policy = {
       grantedAction:
         persistedPolicy?.grantedAction ?? livePolicy?.grantedAction ?? ('VIEW' as const),
       forbidDownload: Boolean(persistedPolicy?.forbidDownload || livePolicy?.forbidDownload),
       expiresAtMs: expiryCandidates.length > 0 ? Math.min(...expiryCandidates) : null,
+      maxSessionMinutes: resolvedMaxMinutes,
+      ipAddress: normalizeDeliveryClientIp(liveDbIp),
+      userAgent: liveDbUa?.trim() || null,
     };
 
-    if (sessionPolicies.size >= 10_000) {
-      const oldestKey = sessionPolicies.keys().next().value;
-      if (oldestKey) sessionPolicies.delete(oldestKey);
-    }
-    sessionPolicies.set(session.id, policy);
+    const cacheTtlMs = computeBoundedSessionPolicyTtlMs(resolvedMaxMinutes);
+    await stateStore.putEphemeral(SESSION_POLICY_NAMESPACE, session.id, policy, cacheTtlMs);
+  }
+
+  const boundIp = normalizeDeliveryClientIp(liveDbIp ?? policy.ipAddress);
+  const callerIp = normalizeDeliveryClientIp(context?.ip);
+  if (boundIp && callerIp && boundIp !== callerIp) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message: 'Client IP does not match bound access session.',
+    });
+  }
+  const boundUa = (liveDbUa ?? policy.userAgent)?.trim() || null;
+  const callerUa = context?.userAgent?.trim() || null;
+  if (boundUa && callerUa && boundUa !== callerUa) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message: 'Client User-Agent does not match bound access session.',
+    });
   }
 
   if (policy.expiresAtMs !== null && now.getTime() > policy.expiresAtMs) {
+    await stateStore.deleteKey(SESSION_POLICY_NAMESPACE, session.id);
     throw new ForbiddenException({
       errorCode: AppErrorCode.SESSION_EXPIRED,
       message: 'Access session exceeded maximum policy duration.',

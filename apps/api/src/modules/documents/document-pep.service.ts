@@ -1,8 +1,9 @@
 /**
  * Module: Document Policy Enforcement Point (PEP) Service
- * Algorithm: Multi-layer zero-trust enforcement pipeline (SoD role guard -> ACTIVE document & CLEAN version ->
- *   explicit/resolved grant + Bell-LaPadula clearance -> ABAC PDP & obligation gate -> context-bound `AccessSession`),
- *   plus fail-closed multi-replica session obligation verification.
+ * Thuật toán: Đường Ống Thẩm Định Thực Thi Chính Sách Đa Tầng Zero-Trust (`DocumentPepService`).
+ *   1. Kiểm tra phân tách nhiệm vụ bất biến (SoD) ngăn tài khoản quản trị kỹ thuật và kiểm toán viên truy cập nội dung tài liệu.
+ *   2. Xác minh tài liệu trạng thái `ACTIVE`, phiên bản hiện hành `CLEAN`, quyền cấp phát và trần độ mật Bell-LaPadula.
+ *   3. Đánh giá ABAC PDP, cưỡng chế nghĩa vụ (`REQUIRE_MFA`, `FORBID_DOWNLOAD`, `REQUIRE_WATERMARK`, `MAX_SESSION_MINUTES`) và lưu trạng thái phiên phân tán qua `DistributedStateService`.
  */
 import {
   BadRequestException,
@@ -17,6 +18,7 @@ import { AppErrorCode } from '@sda/contracts';
 import { AbacService } from '../abac/abac.service.js';
 import { AppConfigService } from '../../config/config.service.js';
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 import { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { verifyAndResolveEffectiveGrant } from './pep-clearance.helper.js';
@@ -30,6 +32,7 @@ import {
 import {
   evaluatePepPolicyAndObligations,
   finalizePermittedAccessSession,
+  SESSION_POLICY_NAMESPACE,
 } from './pep-obligations.helper.js';
 import {
   resolveAndEnforceSessionPolicy,
@@ -48,8 +51,7 @@ type PrismaClient = ReturnType<typeof getDatabaseClient>;
 export class DocumentPepService {
   private readonly logger = new Logger(DocumentPepService.name);
   private readonly database: PrismaClient;
-  // shortcut: 10,000 cached session policies (~2 MB) with fail-closed DB/audit rehydration on miss, move to Redis hash for shared L1 cache
-  private readonly sessionPolicies = new Map<string, ActiveSessionPolicy>();
+  private readonly stateStore: DistributedStateService;
 
   constructor(
     private readonly abac: AbacService,
@@ -57,21 +59,34 @@ export class DocumentPepService {
     private readonly audit: DocumentDeliveryAuditService,
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly config?: AppConfigService,
+    @Optional() stateStore?: DistributedStateService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
     } catch {
       this.database = (databaseClient ?? null) as unknown as PrismaClient;
     }
-  }
-
-  getSessionPolicy(sessionId: string): ActiveSessionPolicy | undefined {
-    return this.sessionPolicies.get(sessionId);
+    this.stateStore =
+      stateStore ??
+      new DistributedStateService(config instanceof AppConfigService ? config : undefined);
   }
 
   /**
-   * Algorithm: Fail-Closed Active Session Obligation Enforcement
-   * Validates in-memory or re-hydrated ABAC session duration (`MAX_SESSION_MINUTES`) and `FORBID_DOWNLOAD` obligations.
+   * Thuật toán: Truy vấn bản chụp chính sách phiên từ kho phân tán `DistributedStateService`.
+   */
+  async getSessionPolicy(sessionId: string): Promise<ActiveSessionPolicy | null> {
+    return await this.stateStore.getJson<ActiveSessionPolicy>(SESSION_POLICY_NAMESPACE, sessionId);
+  }
+
+  /**
+   * Thuật toán: Xóa tức thì bộ đệm chính sách phiên trên kho phân tán khi phiên bị thu hồi hoặc chấm dứt.
+   */
+  async invalidateSessionPolicy(sessionId: string): Promise<void> {
+    await this.stateStore.deleteKey(SESSION_POLICY_NAMESPACE, sessionId);
+  }
+
+  /**
+   * Thuật toán: Cưỡng Chế Nghĩa Vụ Phiên Hoạt Động Theo Cơ Chế Fail-Closed Xuyên Bản Sao (`enforceSessionPolicy`)
    */
   async enforceSessionPolicy(
     session: SessionRecordForPolicyCheck,
@@ -86,7 +101,7 @@ export class DocumentPepService {
       principal,
       context,
       now,
-      sessionPolicies: this.sessionPolicies,
+      stateStore: this.stateStore,
       database: this.database,
       abac: this.abac,
       config: this.config,
@@ -94,7 +109,7 @@ export class DocumentPepService {
   }
 
   /**
-   * Algorithm: Multi-Layer Zero-Trust PEP Enforcement Pipeline
+   * Thuật toán: Đường Ống Thẩm Định Mở Phiên Truy Cập Tài Liệu Đa Tầng (`enforceAccess`)
    */
   async enforceAccess(
     documentId: string,
@@ -205,7 +220,7 @@ export class DocumentPepService {
     const sessionId = await finalizePermittedAccessSession({
       database: this.database,
       audit: this.audit,
-      sessionPolicies: this.sessionPolicies,
+      stateStore: this.stateStore,
       documentId,
       effectiveGrantId,
       documentVersionId: currentVersion.id,

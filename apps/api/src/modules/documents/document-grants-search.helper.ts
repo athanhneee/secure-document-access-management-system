@@ -1,7 +1,6 @@
 /**
  * Module: Granted Documents Listing SQL Query Helper
- * Algorithm: Queries `USER` and `ROLE` `access_grants` with Bell-LaPadula clearance rank cap (`LIMIT pageSize + 1`)
- *   and batch-loads `access_grant_permissions` in a single hash-joined lookup.
+ * Thuật toán: Truy Vấn Danh Sách Quyền Cấp Phát (`USER` & `ROLE`) Kèm Trần Độ Mật Bell-LaPadula & Ghép Bảng Băm Quyền Hạn.
  */
 import { type getDatabaseClient, Prisma } from '@sda/database';
 import type { MyGrantedDocumentsInput } from '@sda/contracts';
@@ -88,7 +87,10 @@ export async function executeGrantedDocumentsQuery(params: {
   );
 
   const grantIds = rows.slice(0, input.pageSize).map((r) => r.grant_id);
-  const permissionsByGrant = new Map<string, string[]>();
+  const permissionsByGrant: Record<string, string[]> = Object.create(null) as Record<
+    string,
+    string[]
+  >;
   if (grantIds.length > 0) {
     const perms = await database.$queryRaw<Array<{ access_grant_id: string; permission: string }>>(
       Prisma.sql`
@@ -98,9 +100,9 @@ export async function executeGrantedDocumentsQuery(params: {
       `,
     );
     for (const p of perms) {
-      const existing = permissionsByGrant.get(p.access_grant_id) ?? [];
+      const existing = permissionsByGrant[p.access_grant_id] ?? [];
       existing.push(p.permission);
-      permissionsByGrant.set(p.access_grant_id, existing);
+      permissionsByGrant[p.access_grant_id] = existing;
     }
   }
 
@@ -108,7 +110,7 @@ export async function executeGrantedDocumentsQuery(params: {
   const hasMore = rows.length > input.pageSize;
   const data: GrantedDocumentItem[] = rows.slice(0, input.pageSize).map((row) => ({
     grantId: row.grant_id,
-    permissions: permissionsByGrant.get(row.grant_id) ?? [],
+    permissions: permissionsByGrant[row.grant_id] ?? [],
     grantStatus: row.grant_status,
     validFrom: row.valid_from.toISOString(),
     validUntil: row.valid_until.toISOString(),

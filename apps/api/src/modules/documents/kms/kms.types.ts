@@ -1,7 +1,8 @@
 /**
  * Module: Multi-Provider Envelope KMS Contracts & Combined Key Reference Parser
- * Algorithm: Defines the abstract `KmsService` envelope interface (`wrapKey`, `unwrapKey`, `unwrapCombinedRef`)
- *   and right-most delimiter parsing for `<provider>:<key-id>:<wrapped-dek>` references.
+ * Thuật toán: Giao Diện Trừu Tượng Bọc/Giải Bọc Khóa Phong Bì (`KmsService`) & Tách Chuỗi Tham Chiếu Khóa Từ Phải Sang Trái.
+ *   1. Định nghĩa hợp đồng `wrapKey`, `unwrapKey` (hỗ trợ tùy chọn ngữ cảnh xác thực `aad`) và `unwrapCombinedRef`.
+ *   2. Tách chuỗi `<provider>:<key-id>:<wrapped-dek>` tại dấu `:` cuối cùng để bảo toàn nguyên vẹn dấu `:` bên trong `keyRef` (ví dụ `vault:rotated-kek:v2`).
  */
 
 export interface KmsWrapResult {
@@ -13,14 +14,13 @@ export interface KmsWrapResult {
 export type KmsProviderType = 'local' | 'hsm-pkcs11' | 'vault' | 'aws-kms';
 
 export abstract class KmsService {
-  abstract wrapKey(plaintextDek: Buffer): Promise<KmsWrapResult>;
-  abstract unwrapKey(wrappedDek: string, keyRef: string): Promise<Buffer>;
-  abstract unwrapCombinedRef(combinedRef: string): Promise<Buffer>;
+  abstract wrapKey(plaintextDek: Buffer, aad?: Buffer | string): Promise<KmsWrapResult>;
+  abstract unwrapKey(wrappedDek: string, keyRef: string, aad?: Buffer | string): Promise<Buffer>;
+  abstract unwrapCombinedRef(combinedRef: string, aad?: Buffer | string): Promise<Buffer>;
 }
 
 /**
- * Algorithm: Right-Most Delimiter Combined Key Reference Splitter
- * Splits `<provider-prefix>:<key-id>:<base64url-payload>` at the final `:` while preserving colons inside `keyRef`.
+ * Thuật toán: Tách tham chiếu khóa kết hợp tại ký tự phân cách `:` bên phải ngoài cùng (`lastIndexOf(':')`).
  */
 export function splitCombinedKeyRef(combinedRef: string): { keyRef: string; wrappedDek: string } {
   const colonIndex = combinedRef.lastIndexOf(':');

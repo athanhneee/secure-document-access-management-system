@@ -10,9 +10,13 @@ import {
   SYSTEM_ROLE_PERMISSION_MATRIX,
   systemRoleAllows,
 } from '../dist/modules/rbac/permission-matrix.js';
+import {
+  executeAssignUserRole,
+  PRIVILEGED_ROLE_MFA_REVOKE_REASON,
+} from '../dist/modules/rbac/rbac-assignments.helper.js';
 import { REQUIRED_PERMISSION_METADATA } from '../dist/modules/rbac/require-permission.js';
 
-test('authorization cache expires at role valid_to and invalidates immediately', () => {
+test('authorization cache expires at role valid_to and invalidates immediately', async () => {
   const cache = new AuthorizationCache();
   const grant = {
     permissionId: 1n,
@@ -24,14 +28,104 @@ test('authorization cache expires at role valid_to and invalidates immediately',
     scopeDepartmentId: 3n,
     validTo: new Date(2_000),
   };
-  cache.set(9n, [grant], 30_000, 1_000);
-  assert.equal(cache.get(9n, 1_999)?.length, 1);
-  assert.equal(cache.get(9n, 2_000), undefined, 'expired role must not survive cache TTL');
-  cache.set(9n, [{ ...grant, validTo: null }], 30_000, 3_000);
+  await cache.set(9n, [grant], 30_000, 1_000);
+  assert.equal((await cache.get(9n, 1_999))?.length, 1);
+  assert.equal(await cache.get(9n, 2_000), undefined, 'expired role must not survive cache TTL');
+  await cache.set(9n, [{ ...grant, validTo: null }], 30_000, 3_000);
   const generation = cache.currentGeneration();
-  cache.invalidateUser(9n);
-  assert.equal(cache.get(9n, 3_001), undefined);
+  await cache.invalidateUser(9n);
+  assert.equal(await cache.get(9n, 3_001), undefined);
   assert.equal(cache.currentGeneration(), generation + 1);
+});
+
+/**
+ * Thuật toán kiểm thử [CRITICAL 1.1]: Gán vai trò đặc quyền (`SECURITY_OFFICER` / quyền SOC)
+ * thu hồi tức thì mọi `auth_sessions` có `mfa_verified_at === null` và vô hiệu bộ đệm phân quyền.
+ */
+test('assigning privileged role immediately revokes unverified-MFA sessions of target user', async () => {
+  let sessionRevokeArgs = null;
+  let refreshRevokeArgs = null;
+  let invalidatedUserId = null;
+
+  const mockTx = {
+    user: {
+      findUnique: async () => ({ id: 50n, status: 'ACTIVE', department_id: 10n }),
+    },
+    role: {
+      findFirst: async () => ({
+        id: 3n,
+        code: 'SECURITY_OFFICER',
+        is_active: true,
+        role_permissions: [
+          {
+            permission_id: 99n,
+            permissions: {
+              id: 99n,
+              code: 'SECURITY_ALERT_VIEW',
+              resource: 'SECURITY_ALERT',
+              action: 'VIEW',
+            },
+          },
+        ],
+      }),
+    },
+    userRole: {
+      findMany: async () => [],
+      create: async ({ data }) => ({ id: 501n, ...data }),
+    },
+    authSession: {
+      updateMany: async (args) => {
+        sessionRevokeArgs = args;
+        return { count: 2 };
+      },
+    },
+    refreshToken: {
+      updateMany: async (args) => {
+        refreshRevokeArgs = args;
+        return { count: 2 };
+      },
+    },
+  };
+  const mockDb = {
+    $transaction: async (fn) => fn(mockTx),
+  };
+  const mockAuthorization = {
+    assertPermission: async () => undefined,
+    assertCanDelegate: async () => undefined,
+    departmentWithinScope: async () => true,
+    invalidateUser: async (uid) => {
+      invalidatedUserId = uid;
+    },
+  };
+  const mockAudit = { record: async () => undefined };
+
+  const res = await executeAssignUserRole(
+    mockAuthorization,
+    mockAudit,
+    { userId: 1n, sessionId: 's-admin', username: 'admin', roles: ['SYSTEM_ADMIN'], mfa: true },
+    50n,
+    {
+      roleId: 3n,
+      scopeDepartmentId: null,
+      validFrom: new Date('2026-10-01T00:00:00Z'),
+      validTo: null,
+    },
+    { ip: '10.0.0.5', correlationId: 'corr-assign-1' },
+    mockDb,
+  );
+
+  assert.equal(res.id, '501');
+  assert.ok(sessionRevokeArgs, 'authSession.updateMany must be invoked');
+  assert.deepEqual(sessionRevokeArgs.where, {
+    user_id: { in: [50n] },
+    status: 'ACTIVE',
+    mfa_verified_at: null,
+  });
+  assert.equal(sessionRevokeArgs.data.status, 'REVOKED');
+  assert.equal(sessionRevokeArgs.data.revocation_reason, PRIVILEGED_ROLE_MFA_REVOKE_REASON);
+  assert.ok(refreshRevokeArgs, 'refreshToken.updateMany must be invoked');
+  assert.equal(refreshRevokeArgs.data.revocation_reason, PRIVILEGED_ROLE_MFA_REVOKE_REASON);
+  assert.equal(invalidatedUserId, 50n);
 });
 
 test('five-role matrix preserves least privilege and admin has no document content view', () => {

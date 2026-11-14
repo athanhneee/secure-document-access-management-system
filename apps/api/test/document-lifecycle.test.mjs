@@ -126,6 +126,16 @@ test('Document Lifecycle: activateDocument auto-provisions active access grant f
   const versionId = 999n;
   const { accessGrants, service } = createDocumentsTestService({
     users: [[10n, { id: 10n, username: 'owner10', status: 'ACTIVE' }]],
+    userAttributeAssignments: [
+      [
+        1n,
+        {
+          user_id: 10n,
+          attribute_code: 'CLEARANCE_LEVEL',
+          numeric_rank: 2,
+        },
+      ],
+    ],
     documents: [
       [
         docId,

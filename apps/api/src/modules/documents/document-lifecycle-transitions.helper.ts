@@ -1,7 +1,6 @@
 /**
  * Module: Document Lifecycle State Machine Transitions (`DRAFT` -> `ACTIVE` -> `ARCHIVED`)
- * Algorithm: Enforces 5-invariant activation gate with automatic owner-grant provisioning, and executes
- *   atomic archival freeze suspending active grants and terminating all open sessions across versions.
+ * Thuật toán: Chuyển Trạng Thái Vòng Đời 5 Bất Biến Kèm Cấp Phát Quyền Chủ Sở Hữu & Phong Tỏa Lưu Trữ Nguyên Tử.
  */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -61,7 +60,7 @@ export async function executeActivateDocument(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal, 'ACTIVATE');
+  await assertDocumentMutationPermission(authorization, doc, principal, 'ACTIVATE', { database });
 
   if (!doc.owner_id || !doc.users || doc.users.status !== 'ACTIVE') {
     throw new BadRequestException({
@@ -216,7 +215,7 @@ export async function executeArchiveDocument(params: {
     return;
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal, 'ARCHIVE');
+  await assertDocumentMutationPermission(authorization, doc, principal, 'ARCHIVE', { database });
 
   const now = new Date();
   let suspendedGrantsCount = 0;

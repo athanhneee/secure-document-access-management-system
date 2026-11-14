@@ -1,7 +1,6 @@
 /**
  * Module: SCD Type 2 Document Classification & History Helper
- * Algorithm: Acquires `SELECT ... FOR UPDATE` row lock, closes active classification (`effective_to = now`),
- *   inserts new SCD2 row, delegates cascading revocation on rank elevation, and preserves grants on downgrade.
+ * Thuật toán: Khóa Dòng `SELECT ... FOR UPDATE`, Lịch Sử Phân Loại SCD Type 2 & Thu Hồi Dây Chuyền Khi Tăng Bậc Độ Mật.
  */
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
@@ -52,7 +51,7 @@ export async function executeReclassifyDocument(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal, 'CLASSIFY');
+  await assertDocumentMutationPermission(authorization, doc, principal, 'CLASSIFY', { database });
 
   const targetLevel = await database.classificationLevel.findUnique({
     where: { id: input.classificationLevelId },

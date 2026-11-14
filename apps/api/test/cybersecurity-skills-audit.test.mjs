@@ -78,16 +78,16 @@ test('AuthService.beginMfaEnrollment blocks unverified pre-MFA session when acti
   assert.equal(auditRecorded.outcome, 'DENIED');
 });
 
-test('WebAuthnService.verifyChallengeToken rejects replayed challenge tokens', () => {
+test('WebAuthnService.verifyChallengeToken rejects replayed challenge tokens', async () => {
   const config = createTestConfig();
   const mfa = new MfaService(config);
   const webauthn = new WebAuthnService(mfa, config);
 
   const token = webauthn.createChallengeToken('random-challenge-abc-123', 99n);
-  const extracted = webauthn.verifyChallengeToken(token, 99n);
+  const extracted = await webauthn.verifyChallengeToken(token, 99n);
   assert.equal(extracted, 'random-challenge-abc-123');
 
-  assert.throws(
+  await assert.rejects(
     () => webauthn.verifyChallengeToken(token, 99n),
     (err) => err instanceof BadRequestException && /already been used/i.test(err.message),
   );

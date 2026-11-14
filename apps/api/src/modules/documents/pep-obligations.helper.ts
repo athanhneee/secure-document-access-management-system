@@ -1,8 +1,9 @@
 /**
- * Module: PEP ABAC PDP Evaluation, Obligation Gate & Session Finalization Helper
- * Algorithm: Evaluates ABAC policy decision over `(subject, resource, environment)`, enforces
- *   `REQUIRE_MFA`, `FORBID_DOWNLOAD`, `REQUIRE_WATERMARK`, and `MAX_SESSION_MINUTES` obligations,
- *   and persists context-bound `AccessSession` with bounded-FIFO (10,000) policy cache + audit snapshot.
+ * Module: PEP ABAC PDP Evaluation, Obligation Gate & Distributed Session Finalization Helper
+ * Thuật toán: Thẩm Định Quyết Định ABAC PDP, Cưỡng Chế Nghĩa Vụ & Lưu Bản Chụp Chính Sách Phiên Phân Tán (`DistributedStateService`).
+ *   1. Đánh giá chính sách ABAC trên bộ ba `(subject, resource, environment)` và thực thi `REQUIRE_MFA`, `FORBID_DOWNLOAD`, `REQUIRE_WATERMARK`, `MAX_SESSION_MINUTES`.
+ *   2. Khởi tạo dòng `AccessSession` trạng thái `ACTIVE` gắn chặt `ip_address` và `user_agent` của người gọi.
+ *   3. Lưu bản chụp chính sách phiên vào `DistributedStateService` với TTL bắt buộc có chặn trên `Math.min(maxSessionMinutes ?? 30, 60) * 60_000` (tối đa 60 phút, mặc định 30 phút).
  */
 import { ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -11,24 +12,30 @@ import { AppErrorCode } from '@sda/contracts';
 import type { AbacService } from '../abac/abac.service.js';
 import type { AppConfigService } from '../../config/config.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import type { DistributedStateService } from '../concurrency/distributed-state.service.js';
 import type { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
+import { normalizeDeliveryClientIp } from './delivery-ticket.helper.js';
 import {
   buildPepSubjectAttributes,
+  computeBoundedSessionPolicyTtlMs,
   resolvePepTrustedNetwork,
   type ActiveSessionPolicy,
 } from './pep-context-builder.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
+export const SESSION_POLICY_NAMESPACE = 'session-policy';
+
 export interface PepPolicyObligationOutcome {
   forbidDownloadObligation: boolean;
   watermarkRequired: boolean;
+  maxSessionMinutes: number | null;
   expiresAtMs: number | null;
   obligationTypes: string[];
 }
 
 /**
- * Algorithm: ABAC PDP Decision & Mandatory Obligation Gate
+ * Thuật toán: Thẩm Định Quyết Định ABAC PDP & Cổng Nghĩa Vụ Bắt Buộc (`evaluatePepPolicyAndObligations`)
  */
 export async function evaluatePepPolicyAndObligations(params: {
   database: PrismaClient;
@@ -123,31 +130,32 @@ export async function evaluatePepPolicyAndObligations(params: {
 
   const watermarkRequired =
     classRequireWatermark || obligations.some((o) => o.type === 'REQUIRE_WATERMARK');
-  const maxSessionObligation = obligations.find(
-    (o): o is Extract<(typeof obligations)[number], { type: 'MAX_SESSION_MINUTES' }> =>
-      o.type === 'MAX_SESSION_MINUTES',
-  );
+  const maxMinutesValues = obligations
+    .filter(
+      (o): o is Extract<(typeof obligations)[number], { type: 'MAX_SESSION_MINUTES' }> =>
+        o.type === 'MAX_SESSION_MINUTES' && typeof o.minutes === 'number' && o.minutes > 0,
+    )
+    .map((o) => o.minutes);
+  const maxSessionMinutes = maxMinutesValues.length > 0 ? Math.min(...maxMinutesValues) : null;
   const expiresAtMs =
-    maxSessionObligation && typeof maxSessionObligation.minutes === 'number'
-      ? now.getTime() + maxSessionObligation.minutes * 60_000
-      : null;
+    maxSessionMinutes !== null ? now.getTime() + maxSessionMinutes * 60_000 : null;
 
   return {
     forbidDownloadObligation,
     watermarkRequired,
+    maxSessionMinutes,
     expiresAtMs,
     obligationTypes: obligations.map((o) => o.type),
   };
 }
 
 /**
- * Algorithm: Context-Bound AccessSession Creation & Bounded-FIFO (10,000) Policy Snapshot Persistence
- * Inserts `ACTIVE` session row, caches obligation policy in FIFO map, and writes `ACCESS_PERMITTED` audit snapshot.
+ * Thuật toán: Khởi Tạo `AccessSession` Gắn Ngữ Cảnh & Ghi Đệm Chính Sách Phiên Có TTL Hữu Hạn (`finalizePermittedAccessSession`)
  */
 export async function finalizePermittedAccessSession(params: {
   database: PrismaClient;
   audit: DocumentDeliveryAuditService;
-  sessionPolicies: Map<string, ActiveSessionPolicy>;
+  stateStore: DistributedStateService;
   documentId: string;
   effectiveGrantId: string;
   documentVersionId: bigint;
@@ -162,7 +170,7 @@ export async function finalizePermittedAccessSession(params: {
   const {
     database,
     audit,
-    sessionPolicies,
+    stateStore,
     documentId,
     effectiveGrantId,
     documentVersionId,
@@ -176,6 +184,9 @@ export async function finalizePermittedAccessSession(params: {
   } = params;
 
   const sessionId = randomUUID();
+  const normalizedIp = normalizeDeliveryClientIp(context.ip);
+  const normalizedUa = context.userAgent?.trim() || null;
+
   await database.accessSession.create({
     data: {
       id: sessionId,
@@ -183,7 +194,7 @@ export async function finalizePermittedAccessSession(params: {
       document_version_id: documentVersionId,
       user_id: principal.userId,
       ip_address: context.ip,
-      user_agent: context.userAgent ?? null,
+      user_agent: normalizedUa,
       device_fingerprint: deviceFingerprint ?? null,
       status: 'ACTIVE',
       started_at: now,
@@ -191,15 +202,16 @@ export async function finalizePermittedAccessSession(params: {
     },
   });
 
-  if (sessionPolicies.size >= 10_000) {
-    const oldestKey = sessionPolicies.keys().next().value;
-    if (oldestKey) sessionPolicies.delete(oldestKey);
-  }
-  sessionPolicies.set(sessionId, {
+  const policyRecord: ActiveSessionPolicy = {
     grantedAction: action,
     forbidDownload: policyOutcome.forbidDownloadObligation,
     expiresAtMs: policyOutcome.expiresAtMs,
-  });
+    maxSessionMinutes: policyOutcome.maxSessionMinutes,
+    ipAddress: normalizedIp,
+    userAgent: normalizedUa,
+  };
+  const ttlMs = computeBoundedSessionPolicyTtlMs(policyOutcome.maxSessionMinutes);
+  await stateStore.putEphemeral(SESSION_POLICY_NAMESPACE, sessionId, policyRecord, ttlMs);
 
   await audit.record(
     {
@@ -214,6 +226,7 @@ export async function finalizePermittedAccessSession(params: {
         versionNo,
         watermarkRequired: policyOutcome.watermarkRequired,
         forbidDownload: policyOutcome.forbidDownloadObligation,
+        maxSessionMinutes: policyOutcome.maxSessionMinutes,
         expiresAtMs: policyOutcome.expiresAtMs,
         obligations: policyOutcome.obligationTypes.join(','),
       },

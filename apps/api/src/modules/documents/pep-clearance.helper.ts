@@ -1,7 +1,8 @@
 /**
  * Module: PEP Bell-LaPadula Clearance & Three-Tier Grant Resolution Helper
- * Algorithm: Enforces "No Read Up" simple security dominance (`userRank >= documentRank`) and resolves
- *   an active grant across explicit `grantId` validation, direct `USER` grants, active `ROLE` grants, or owner self-provisioning.
+ * Thuật toán: Kiểm Định Trần Độ Mật Bell-LaPadula & Phân Giải Quyền Cấp Phát Ba Tầng (`USER`, `ROLE`, `OWNER`).
+ *   1. Kiểm tra bất biến "No Read Up" (`userClearanceRank >= documentRank`) trên mọi đường dẫn mở phiên (bao gồm cả `grantId` tường minh và chủ sở hữu).
+ *   2. Phân giải quyền cấp phát hợp lệ qua Tầng 1 (`USER` grant), Tầng 2 (`ROLE` grant), hoặc Tầng 3 (khởi tạo/gia hạn cho chủ sở hữu khi đủ độ mật).
  */
 import { ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -12,8 +13,7 @@ import type { AccessGrantsService } from '../access-grants/access-grants.service
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Algorithm: Bell-LaPadula Simple Security Dominance Check
- * Queries the highest active `CLEARANCE_LEVEL` numeric rank for `userId` and verifies `rank >= documentRank`.
+ * Thuật toán: Truy vấn thứ bậc độ mật `CLEARANCE_LEVEL` còn hiệu lực cao nhất của người dùng và đối chiếu `rank >= documentRank`.
  */
 export async function checkUserClearance(
   database: PrismaClient,
@@ -21,6 +21,8 @@ export async function checkUserClearance(
   documentRank: number,
   now: Date,
 ): Promise<boolean> {
+  if (documentRank <= 0) return true;
+  if (typeof database?.userAttributeAssignment?.findFirst !== 'function') return false;
   const clearance = await database.userAttributeAssignment.findFirst({
     where: {
       user_id: userId,
@@ -45,9 +47,7 @@ export async function checkUserClearance(
 }
 
 /**
- * Algorithm: Three-Tier Active Access Grant Resolution
- * Evaluates Tier 1 (Direct `USER` grant), Tier 2 (Active `ROLE` grant), and Tier 3 (Document Owner grant)
- * while enforcing individual Bell-LaPadula clearance at every tier.
+ * Thuật toán: Phân giải quyền cấp phát hoạt động ba tầng (`USER` -> `ROLE` -> `OWNER`) có kiểm định độ mật Bell-LaPadula tại mọi tầng.
  */
 export async function resolveEligibleGrant(params: {
   database: PrismaClient;
@@ -141,7 +141,6 @@ export async function resolveEligibleGrant(params: {
       return existingOwnerGrant.id;
     }
 
-    // CONFLICT-RESOLVED: Chuyển các bản ghi owner grant trạng thái ACTIVE nhưng đã quá hạn sang EXPIRED trước khi chèn mới để không vi phạm chỉ mục duy nhất uq_access_grant_active_user.
     if (typeof database.accessGrant.update === 'function') {
       const staleOwnerGrant = await database.accessGrant.findFirst({
         where: {
@@ -190,8 +189,7 @@ export async function resolveEligibleGrant(params: {
 }
 
 /**
- * Algorithm: Explicit or Auto-Resolved Grant Verification Gate
- * Validates caller-supplied `grantId` binding or resolves an eligible grant, enforcing classification download rules.
+ * Thuật toán: Cổng thẩm định `grantId` tường minh hoặc tự động phân giải kèm kiểm tra độ mật và quyền tải xuống.
  */
 export async function verifyAndResolveEffectiveGrant(params: {
   database: PrismaClient;
@@ -238,6 +236,21 @@ export async function verifyAndResolveEffectiveGrant(params: {
       throw new ForbiddenException({
         errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
         message: 'Access grant does not belong to the requested document.',
+      });
+    }
+    if (
+      documentRank > 0 &&
+      typeof database?.userAttributeAssignment?.findFirst === 'function' &&
+      !(await checkUserClearance(database, userId, documentRank, now))
+    ) {
+      await deny(
+        effectiveGrantId,
+        AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+        'Caller clearance is lower than document rank.',
+      );
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+        message: 'Caller security clearance is insufficient for this document classification.',
       });
     }
   } else {

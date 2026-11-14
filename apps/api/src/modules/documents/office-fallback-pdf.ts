@@ -1,7 +1,6 @@
 /**
  * Module: Gotenberg LibreOffice Client & Sanitized Fallback PDF Renderer
- * Algorithm: Converts Office binaries via headless LibreOffice HTTP multipart form with `%PDF` header verification,
- *   or paginates WinAnsi-folded plain text across bounded A4 portrait pages using `pdf-lib`.
+ * Thuật toán: Chuyển Đổi Tài Liệu Office Qua Gotenberg Có Kiểm Tra `%PDF` Hoặc Phân Trang Văn Bản Thuần A4 An Toàn Bằng `pdf-lib`.
  */
 import type { Logger } from '@nestjs/common';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';

@@ -1,7 +1,6 @@
 /**
  * Module: Document Ownership Handover Helper
- * Algorithm: Enforces Separation of Duties (SoD) and Bell-LaPadula clearance (`userRank >= documentRank`)
- *   on target owners while revoking prior owner grants/sessions and invalidating RBAC caches.
+ * Thuật toán: Chuyển Giao Quyền Sở Hữu Tài Liệu Kiểm Định SoD & Độ Mật Bell-LaPadula Kèm Thu Hồi Quyền/Phiên Chủ Cũ.
  */
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
@@ -45,7 +44,9 @@ export async function executeTransferDocumentOwner(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal, 'TRANSFER_OWNER');
+  await assertDocumentMutationPermission(authorization, doc, principal, 'TRANSFER_OWNER', {
+    database,
+  });
 
   const targetUser = await database.user.findUnique({ where: { id: input.newOwnerId } });
   if (!targetUser || targetUser.status !== 'ACTIVE') {

@@ -1,22 +1,28 @@
 /**
- * Module: Export Artifact Serialization, Path-Traversal Verification & Job DTO Mapper
- * Algorithm: Serializes tabular datasets into JSON/PDF/XLSX/formula-safe CSV, enforces canonical directory
- *   containment + symlink rejection when reading disk artifacts, and projects TTL-aware `ExportJobDetail` DTOs.
+ * Module: Export Artifact Serialization, Encrypted Disk Persistence, Path-Traversal Verification & Job DTO Mapper
+ * Thuật toán: Tuần Tự Hóa Báo Cáo Đa Định Dạng, Lưu Trữ Mã Hóa `AES-256-GCM` Trên Đĩa & Đọc Kiểm Chứng Chống Symlink/Path-Traversal (`ExportArtifactHelper`).
+ *   1. Kết xuất bảng dữ liệu sang JSON / PDF / XLSX / CSV khử công thức độc hại.
+ *   2. Ghi trực tiếp tệp `.dat` mã hóa `AES-256-GCM` (`0o600`) vào thư mục chia sẻ `.local/exports` mà không giữ bản sao `Map` trong RAM.
+ *   3. Khi tải xuống, xác minh đường dẫn chuẩn hóa nằm trong `exportDir`, đọc qua file descriptor `O_NOFOLLOW`, giải mã `AES-256-GCM` và đối chiếu băm `SHA-256`.
  */
-import { BadRequestException, ForbiddenException, type Logger } from '@nestjs/common';
+import { ForbiddenException, type Logger } from '@nestjs/common';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { AppErrorCode, type ExportFormat, type ExportType } from '@sda/contracts';
-import type { AuthPrincipal } from '../auth/auth.types.js';
-import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { generateCsv } from './csv-formula-sanitizer.js';
 import {
   decryptAndVerifyExportArtifactBuffer,
   encryptExportArtifactBuffer,
   readContainedExportArtifactBuffer,
 } from './export-disk-cipher.helper.js';
-import { resolveExportAuthorizationScope } from './export-filter-scope.helper.js';
 import { generateExcelTable, generatePdfTable, type ExportColumn } from './export-formatter.js';
+
+export {
+  assertCrossUserExportScope,
+  assertExportJobAccess,
+  assertExportJobReadyForDownload,
+  resolveWorkspaceExportDir,
+} from './export-access-policy.helper.js';
 
 export interface ExportJobDetail {
   id: string;
@@ -43,7 +49,7 @@ export interface ExportDatasetPayload {
 }
 
 /**
- * Algorithm: Multi-Format Report Serialization (JSON / PDF / XLSX / Formula-Safe CSV)
+ * Thuật toán: Kết xuất tập dữ liệu báo cáo sang bộ đệm nhị phân theo định dạng yêu cầu (JSON / PDF / XLSX / CSV khử công thức).
  */
 export async function renderExportBuffer(
   format: ExportFormat,
@@ -78,173 +84,52 @@ export async function renderExportBuffer(
 /**
  * Thuật toán: Phân giải phần mở rộng tệp và kiểu MIME chuẩn theo định dạng xuất báo cáo.
  */
-export function resolveExportDownloadMeta(format: string): { ext: string; mimeType: string } {
+export function resolveExportDownloadMeta(
+  format: string,
+  storedMimeType?: string | null,
+): { ext: string; mimeType: string } {
   const upper = format.toUpperCase();
   if (upper === 'EXCEL') {
+    if (storedMimeType?.includes('ms-excel')) {
+      return { ext: 'xls', mimeType: storedMimeType };
+    }
     return {
       ext: 'xlsx',
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     };
   }
   if (upper === 'PDF') return { ext: 'pdf', mimeType: 'application/pdf' };
-  if (upper === 'JSON') return { ext: 'json', mimeType: 'application/json' };
-  return { ext: 'csv', mimeType: 'text/csv; charset=utf-8' };
+  if (upper === 'JSON') return { ext: 'json', mimeType: storedMimeType ?? 'application/json' };
+  return { ext: 'csv', mimeType: storedMimeType ?? 'text/csv; charset=utf-8' };
 }
 
 /**
- * Algorithm / Thuật toán: Kiểm tra quyền sở hữu tác vụ xuất báo cáo hoặc vai trò giám sát tương ứng theo miền dữ liệu.
+ * Thuật toán: Ghi bền vững tệp báo cáo đã mã hóa `AES-256-GCM` xuống thư mục chia sẻ `.local/exports` với quyền hạn chế `0o600`.
  */
-export function assertExportJobAccess(
-  job: { requester_user_id: bigint; export_type: string },
-  actor: AuthPrincipal,
-): void {
-  if (job.requester_user_id === actor.userId) return;
-  const roles = actor.roles ?? [];
-  if (roles.includes('SYSTEM_ADMIN')) return;
-  if (job.export_type === 'AUDIT_LOGS' && roles.includes('AUDITOR')) return;
-  if (
-    (job.export_type === 'SECURITY_ALERTS' ||
-      job.export_type === 'INCIDENT_REPORTS' ||
-      job.export_type === 'SYSTEM_REPORT') &&
-    roles.includes('SECURITY_OFFICER')
-  ) {
-    return;
-  }
-
-  throw new ForbiddenException({
-    errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
-    message: 'You are not authorized to access or download this export job.',
-  });
-}
-
-/**
- * Thuật toán: Ràng buộc phạm vi phòng ban khi quản trị viên/kiểm toán viên tra cứu hoặc tải tác vụ xuất của người dùng khác (HIGH-13).
- */
-export async function assertCrossUserExportScope(
-  database: {
-    user?: {
-      findUnique: (args: {
-        where: { id: bigint };
-        select: { department_id: true };
-      }) => Promise<{ department_id: bigint | null } | null>;
-    };
-  },
-  authorization: AuthorizationService | undefined,
-  job: { requester_user_id: bigint; export_type: string; filter_params?: unknown },
-  actor: AuthPrincipal,
-): Promise<void> {
-  if (job.requester_user_id === actor.userId) return;
-  // CONFLICT-RESOLVED: Bắt buộc kiểm tra phạm vi phòng ban cho cả getExportJob và downloadExportJob khi truy cập chéo người dùng (HIGH-13)
-  const allowedDepartmentIds = await resolveExportAuthorizationScope(
-    authorization,
-    actor,
-    job.export_type as ExportType,
-  );
-  if (allowedDepartmentIds === null) return;
-
-  const filterParams =
-    job.filter_params && typeof job.filter_params === 'object' && !Array.isArray(job.filter_params)
-      ? (job.filter_params as Record<string, unknown>)
-      : null;
-  const rawFilterDept = filterParams?.['departmentId'];
-  // CONFLICT-RESOLVED: Chặn kiểm toán viên phạm vi phòng ban tải chéo tác vụ xuất đa phòng ban khi `filterParams.departmentId` để trống hoặc không hợp lệ (HIGH-07).
-  if (
-    rawFilterDept === undefined ||
-    rawFilterDept === null ||
-    rawFilterDept === '' ||
-    !/^\d+$/.test(String(rawFilterDept)) ||
-    !allowedDepartmentIds.includes(BigInt(String(rawFilterDept)))
-  ) {
-    throw new ForbiddenException({
-      errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
-      message: 'Export job filter scope must explicitly target an authorized department.',
-    });
-  }
-
-  const requester = await database.user?.findUnique({
-    where: { id: job.requester_user_id },
-    select: { department_id: true },
-  });
-  if (
-    !requester ||
-    requester.department_id === null ||
-    !allowedDepartmentIds.includes(requester.department_id)
-  ) {
-    throw new ForbiddenException({
-      errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
-      message: 'Export job belongs to a department outside your authorized scope.',
-    });
-  }
-}
-
-/**
- * Algorithm: Export Job TTL & Lifecycle Readiness Gate
- */
-export function assertExportJobReadyForDownload(job: {
-  expires_at: Date;
-  status: string;
-  error_message: string | null;
-}): void {
-  if (job.expires_at < new Date() || job.status === 'EXPIRED') {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.EXPORT_JOB_EXPIRED,
-      message: 'This export job has expired. Please initiate a new export request.',
-    });
-  }
-  if (job.status === 'PENDING' || job.status === 'PROCESSING') {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.EXPORT_JOB_PENDING,
-      message: 'Export job is still processing. Please try again shortly.',
-    });
-  }
-  if (job.status === 'FAILED') {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.INTERNAL_SERVER_ERROR,
-      message: `Export job failed: ${job.error_message ?? 'Unknown error'}`,
-    });
-  }
-}
-
-/**
- * Algorithm: Bounded-FIFO (50-Entry) In-Memory & Disk Artifact Persistence
- */
-export function persistBoundedExportArtifact(
+export function persistExportArtifact(
   exportDir: string,
-  memoryStorage: Map<string, Buffer>,
   jobId: string,
   contentBuffer: Buffer,
-): string | null {
-  if (memoryStorage.size >= 50) {
-    const oldestKey = memoryStorage.keys().next().value;
-    if (oldestKey !== undefined) memoryStorage.delete(oldestKey);
+): string {
+  if (!fs.existsSync(exportDir)) {
+    fs.mkdirSync(exportDir, { recursive: true, mode: 0o700 });
   }
-  memoryStorage.set(jobId, contentBuffer);
-
-  try {
-    const filePath = path.join(exportDir, `${jobId}.dat`);
-    // CONFLICT-RESOLVED: Mã hóa AES-256-GCM và giới hạn quyền tệp 0o600 cho tệp xuất `.dat` trên đĩa (HIGH-07).
-    fs.writeFileSync(filePath, encryptExportArtifactBuffer(jobId, contentBuffer), { mode: 0o600 });
-    return filePath;
-  } catch {
-    return null;
-  }
+  const filePath = path.join(exportDir, `${jobId}.dat`);
+  // CONFLICT-RESOLVED: Mã hóa AES-256-GCM và giới hạn quyền tệp 0o600 cho tệp xuất `.dat` trên đĩa (HIGH-07).
+  fs.writeFileSync(filePath, encryptExportArtifactBuffer(jobId, contentBuffer), { mode: 0o600 });
+  return filePath;
 }
 
 /**
- * Algorithm: Canonical Path-Traversal, Symlink-Hardened & SHA-256 Verified Artifact Reader
+ * Thuật toán: Đọc tệp báo cáo từ đĩa kèm kiểm tra bao đóng đường dẫn chuẩn hóa, chống symlink (`O_NOFOLLOW`), giải mã `AES-256-GCM` và xác minh `SHA-256`.
  */
 export function readVerifiedExportArtifact(
   exportDir: string,
-  memoryStorage: Map<string, Buffer>,
   id: string,
   filePath: string | null,
   logger: Logger,
   expectedSha256Hash?: string | null,
 ): Buffer | null {
-  const cached = memoryStorage.get(id);
-  if (cached) {
-    return decryptAndVerifyExportArtifactBuffer(id, cached, expectedSha256Hash);
-  }
   if (!filePath) return null;
 
   const resolvedBase = path.resolve(exportDir);

@@ -1,11 +1,14 @@
 /**
  * Module: Quarantine Staging, Antivirus Scanning & Infected Evidence Helper
- * Algorithm: Stages spooled uploads into the private quarantine bucket, executes ClamAV scanning,
- *   and isolates infected samples in non-discoverable `DRAFT` (`discoverable = false`) forensic records.
+ * Thuật toán: Cô Lập Phân Vùng Cách Ly Bằng Luồng Đọc (`fs.createReadStream`) & Quét Mã Độc Không Giữ Đa Bản Sao Trong RAM.
+ *   1. Truyền trực tiếp luồng đọc `fs.createReadStream(spoolFilePath)` lên bucket cách ly (`quarantine`) kèm `totalBytes`
+ *      thay vì nạp nguyên tệp 50MB vào `Buffer` nhiều lần.
+ *   2. Mở luồng đọc độc lập thứ hai truyền thẳng sang `AntivirusScannerService.scan` với cửa sổ trượt 68-byte EICAR và `zINSTREAM` backpressure.
+ *   3. Nếu phát hiện mã độc (`INFECTED`), giữ lại đối tượng cách ly làm bằng chứng pháp y trong bản ghi `DRAFT` ẩn (`discoverable = false`).
  */
 import { BadRequestException, ServiceUnavailableException, type Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import fsp from 'node:fs/promises';
+import fs from 'node:fs';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AntivirusScannerService } from './antivirus-scanner.service.js';
@@ -21,8 +24,7 @@ import type {
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Algorithm: Quarantine Bucket Staging & ClamAV Malware Gate
- * Uploads spooled file to quarantine, scans with ClamAV, and retains infected objects for forensic inspection.
+ * Thuật toán: Đẩy tệp tạm vào kho cách ly qua luồng đọc và quét ClamAV không nạp đồng thời nhiều bản sao 50MB vào RAM.
  */
 export async function stageAndScanQuarantineUpload(params: {
   database: PrismaClient;
@@ -56,30 +58,39 @@ export async function stageAndScanQuarantineUpload(params: {
   } = params;
 
   const quarantineKey = `quarantine/${targetDocId}/${randomUUID()}${validatedInfo.extension}`;
+  const quarantineStream = fs.createReadStream(spoolFilePath);
+  quarantineStream.on('error', () => {});
   try {
-    const spoolBuffer = await fsp.readFile(spoolFilePath);
     await storage.putObject(
       storage.quarantineBucket,
       quarantineKey,
-      spoolBuffer,
+      quarantineStream,
       validatedInfo.mimeType,
+      undefined,
+      totalBytes,
     );
     session.storageKeysToDelete.push({ bucket: storage.quarantineBucket, key: quarantineKey });
     try {
       const { MetricsService } = await import('../system-health/metrics.service.js');
-      MetricsService.getInstance().recordDocumentUpload(
-        spoolBuffer.length,
-        validatedInfo.extension,
-      );
+      MetricsService.getInstance().recordDocumentUpload(totalBytes, validatedInfo.extension);
     } catch {
       // Optional metrics fallback
     }
   } catch (err: unknown) {
     await compensation.compensate(session);
     throw err;
+  } finally {
+    quarantineStream.destroy();
   }
 
-  const scanResult = await antivirus.scan(await fsp.readFile(spoolFilePath));
+  const scanStream = fs.createReadStream(spoolFilePath);
+  scanStream.on('error', () => {});
+  let scanResult: Awaited<ReturnType<AntivirusScannerService['scan']>>;
+  try {
+    scanResult = await antivirus.scan(scanStream);
+  } finally {
+    scanStream.destroy();
+  }
   await audit.record(
     {
       action: 'DOCUMENT_SCAN_RESULT',
@@ -97,7 +108,6 @@ export async function stageAndScanQuarantineUpload(params: {
   );
 
   if (scanResult.status === 'FAILED') {
-    // CONFLICT-RESOLVED: Khi ClamAV gặp sự cố kỹ thuật (FAILED), xóa đối tượng cách ly và ném 503 SERVICE_UNAVAILABLE thay vì gán nhãn sai thành INFECTED/MALWARE_DETECTED.
     await compensation.compensate(session);
     await audit.record(
       {
@@ -156,8 +166,7 @@ export async function stageAndScanQuarantineUpload(params: {
 }
 
 /**
- * Algorithm: Isolated Quarantine Evidence Persistence
- * Records an `INFECTED` document version in non-discoverable `DRAFT` state (`discoverable = false`).
+ * Thuật toán: Lưu vết bằng chứng pháp y phiên bản tệp nhiễm mã độc ở trạng thái `DRAFT` ẩn (`discoverable = false`).
  */
 export async function recordQuarantinedInfectedVersion(params: {
   database: PrismaClient;

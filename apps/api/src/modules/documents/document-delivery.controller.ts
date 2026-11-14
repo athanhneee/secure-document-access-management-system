@@ -1,7 +1,8 @@
 /**
  * Module: Controlled Document Session, Watermarked Preview & Ticketed Download HTTP Controller
- * Algorithm: Enforces RBAC permission metadata, CSRF verification on ticket/session minting,
- *   and `Cache-Control: no-store` streaming binary replies via `DocumentDeliveryService`.
+ * Thuật toán: Bộ Điều Khiển HTTP Phân Phối Tài Liệu Có Kiểm Soát (`DocumentDeliveryController`).
+ *   1. Kiểm định quyền RBAC (`DOCUMENT:VIEW` / `DOCUMENT:DOWNLOAD`) và bảo vệ chống CSRF khi mở phiên hoặc xin cấp vé tải.
+ *   2. Trả luồng nhị phân với tiêu đề chống lưu đệm nghiêm ngặt (`Cache-Control: no-store`) và `Referrer-Policy: no-referrer` trên đường dẫn vé một lần.
  */
 import {
   BadRequestException,
@@ -42,6 +43,9 @@ export class DocumentDeliveryController {
     private readonly csrf: CsrfService,
   ) {}
 
+  /**
+   * Thuật toán: Mở phiên truy cập tài liệu có kiểm soát sau khi xác thực CSRF và quyền `DOCUMENT:VIEW`.
+   */
   @Post(':id/sessions')
   @HttpCode(HttpStatus.CREATED)
   @RequirePermission('DOCUMENT', 'VIEW')
@@ -59,6 +63,9 @@ export class DocumentDeliveryController {
     );
   }
 
+  /**
+   * Thuật toán: Trả bản xem trước PDF đầy đủ gắn thủy vân theo phiên hoạt động.
+   */
   @Get(':id/preview')
   @RequirePermission('DOCUMENT', 'VIEW')
   async previewDocument(
@@ -77,6 +84,9 @@ export class DocumentDeliveryController {
     sendInlinePreviewReply(reply, result);
   }
 
+  /**
+   * Thuật toán: Trả bản xem trước từng trang PDF lẻ của phiên (sử dụng bộ đệm dẫn xuất mã hóa từ trang thứ 2 trở đi).
+   */
   @Get(':id/preview/page/:pageNumber')
   @RequirePermission('DOCUMENT', 'VIEW')
   async previewDocumentPage(
@@ -96,6 +106,9 @@ export class DocumentDeliveryController {
     sendInlinePreviewReply(reply, result);
   }
 
+  /**
+   * Thuật toán: Tải xuống trực tiếp tài liệu dẫn xuất theo phiên `DOWNLOAD` hợp lệ.
+   */
   @Get(':id/download')
   @RequirePermission('DOCUMENT', 'DOWNLOAD')
   async downloadDocument(
@@ -113,6 +126,9 @@ export class DocumentDeliveryController {
     sendAttachmentDownloadReply(reply, result);
   }
 
+  /**
+   * Thuật toán: Cấp phát vé tải dùng một lần ngắn hạn cho trình duyệt sau khi kiểm định CSRF và phiên `DOWNLOAD`.
+   */
   @Post(':id/download-ticket')
   @HttpCode(HttpStatus.CREATED)
   @RequirePermission('DOCUMENT', 'DOWNLOAD')
@@ -133,6 +149,9 @@ export class DocumentDeliveryController {
     );
   }
 
+  /**
+   * Thuật toán: Đổi vé tải dùng một lần (`/download-with-ticket/:ticket`) kèm tái xác minh CSDL thời gian thực và tiêu đề chống rò rỉ Referrer.
+   */
   @PublicEndpoint()
   @Get('download-with-ticket/:ticket')
   async downloadWithTicket(
@@ -140,6 +159,8 @@ export class DocumentDeliveryController {
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
   ): Promise<void> {
+    reply.header('Referrer-Policy', 'no-referrer');
+    reply.header('X-Content-Type-Options', 'nosniff');
     const result = await this.deliveryService.redeemDownloadTicket(
       parseDownloadTicketParam(params),
       reqCtx(req),

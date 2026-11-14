@@ -1,7 +1,6 @@
 /**
  * Module: AES-256-GCM Authenticated Envelope Key Wrap Primitives
- * Algorithm: Wraps and unwraps 256-bit Data Encryption Keys (DEKs) using NIST SP 800-38D AES-256-GCM
- *   with fresh 96-bit CSPRNG IVs and 128-bit authentication tags (`[IV (12B) || Tag (16B) || Ciphertext (32B)]`).
+ * Thuật toán: Bọc Và Giải Bọc Khóa DEK 256-bit Xác Thực Bằng AES-256-GCM Với IV Ngẫu Nhiên 96-bit Và Thẻ GCM 128-bit.
  */
 import crypto from 'node:crypto';
 import type { KmsWrapResult } from './kms.types.js';

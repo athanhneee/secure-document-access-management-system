@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { test } from 'node:test';
 import { AppErrorCode } from '@sda/contracts';
 import { sanitizeCsvCell, sanitizeCsvRow } from '../dist/modules/reports/csv-formula-sanitizer.js';
+import { persistExportArtifact } from '../dist/modules/reports/export-artifact.helper.js';
 import { ExportJobService } from '../dist/modules/reports/export-job.service.js';
 import { NotificationsService } from '../dist/modules/notifications/notifications.service.js';
 import { HealthService } from '../dist/modules/system-health/health.service.js';
@@ -43,45 +45,55 @@ test('ExportJobService — validates TTL and restricts download to requester or 
   const { expiredJobId, validJobId, mockDb } = createExportJobFixtures(requesterId);
 
   const exportService = new ExportJobService(mockDb);
-  exportService['memoryStorage'].set(validJobId, Buffer.from('mock pdf content'));
-
-  await assert.rejects(
-    async () => {
-      await exportService.downloadExportJob(expiredJobId, {
-        userId: requesterId,
-        username: 'user1',
-        roles: ['USER'],
-      });
-    },
-    (err) => {
-      const resp = typeof err.getResponse === 'function' ? err.getResponse() : err.response;
-      assert.equal(resp?.errorCode, AppErrorCode.EXPORT_JOB_EXPIRED);
-      return true;
-    },
+  const artifactPath = persistExportArtifact(
+    exportService['exportDir'],
+    validJobId,
+    Buffer.from('mock pdf content'),
   );
+  const validJobRecord = await mockDb.asyncExportJob.findUnique({ where: { id: validJobId } });
+  validJobRecord.file_path = artifactPath;
 
-  await assert.rejects(
-    async () => {
-      await exportService.downloadExportJob(validJobId, {
-        userId: otherUserId,
-        username: 'user2',
-        roles: ['USER'],
-      });
-    },
-    (err) => {
-      const resp = typeof err.getResponse === 'function' ? err.getResponse() : err.response;
-      assert.equal(resp?.errorCode, AppErrorCode.EXPORT_UNAUTHORIZED);
-      return true;
-    },
-  );
+  try {
+    await assert.rejects(
+      async () => {
+        await exportService.downloadExportJob(expiredJobId, {
+          userId: requesterId,
+          username: 'user1',
+          roles: ['USER'],
+        });
+      },
+      (err) => {
+        const resp = typeof err.getResponse === 'function' ? err.getResponse() : err.response;
+        assert.equal(resp?.errorCode, AppErrorCode.EXPORT_JOB_EXPIRED);
+        return true;
+      },
+    );
 
-  const downloadInfo = await exportService.downloadExportJob(validJobId, {
-    userId: requesterId,
-    username: 'user1',
-    roles: ['USER'],
-  });
-  assert.equal(downloadInfo.mimeType, 'application/pdf');
-  assert.ok(downloadInfo.buffer.length > 0);
+    await assert.rejects(
+      async () => {
+        await exportService.downloadExportJob(validJobId, {
+          userId: otherUserId,
+          username: 'user2',
+          roles: ['USER'],
+        });
+      },
+      (err) => {
+        const resp = typeof err.getResponse === 'function' ? err.getResponse() : err.response;
+        assert.equal(resp?.errorCode, AppErrorCode.EXPORT_UNAUTHORIZED);
+        return true;
+      },
+    );
+
+    const downloadInfo = await exportService.downloadExportJob(validJobId, {
+      userId: requesterId,
+      username: 'user1',
+      roles: ['USER'],
+    });
+    assert.equal(downloadInfo.mimeType, 'application/pdf');
+    assert.ok(downloadInfo.buffer.length > 0);
+  } finally {
+    fs.rmSync(artifactPath, { force: true });
+  }
 });
 
 test('NotificationsService — deduplicates outbox entries with identical deduplication key', async () => {

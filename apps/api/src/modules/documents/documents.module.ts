@@ -23,6 +23,7 @@ import {
 import { DocumentEncryptionService } from './document-encryption.service.js';
 import { DocumentAuditService } from './document-audit.service.js';
 import { OrphanCompensationService } from './orphan-compensation.service.js';
+import { TempFileJanitorService } from './temp-file-janitor.service.js';
 import { DocumentsService } from './documents.service.js';
 import { DocumentSearchService } from './document-search.service.js';
 import { DocumentPepService } from './document-pep.service.js';
@@ -56,6 +57,7 @@ import { DocumentDeliveryAuditService } from './document-delivery-audit.service.
     DocumentEncryptionService,
     DocumentAuditService,
     OrphanCompensationService,
+    TempFileJanitorService,
     DocumentIngestionService,
     DocumentsService,
     DocumentSearchService,
@@ -78,6 +80,7 @@ import { DocumentDeliveryAuditService } from './document-delivery-audit.service.
     DocumentEncryptionService,
     DocumentAuditService,
     OrphanCompensationService,
+    TempFileJanitorService,
     DocumentsService,
     DocumentSearchService,
     DocumentPepService,

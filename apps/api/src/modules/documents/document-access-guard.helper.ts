@@ -1,7 +1,10 @@
 /**
  * Module: Document Scoped Mutation & Anti-Enumeration Read Access Guards
- * Algorithm: Enforces Separation of Duties (SoD), department-scoped business RBAC (`CLASSIFY`/`MANAGE`/`ARCHIVE`),
- *   and Bell-LaPadula clearance dominance (`userRank >= documentRank`) with 404 masking on unauthorized reads.
+ * Thuật toán: Kiểm Soát Phân Tách Nhiệm Vụ (SoD), Quyền RBAC Theo Phòng Ban & Thống Trị Độ Mật Bell-LaPadula.
+ *   1. Chặn tuyệt đối các vai trò đặc quyền (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`) truy cập hoặc sở hữu tài liệu nghiệp vụ.
+ *   2. Cưỡng chế bất biến "No Read/Write Above Clearance" (`actorClearanceRank >= documentRank`) cho CẢ chủ sở hữu tài liệu (`owner_id`)
+ *      lẫn quản trị viên nghiệp vụ phòng ban để ngăn vượt rào khi chủ sở hữu bị hạ bậc độ mật sau khi tài liệu được nâng lên `SECRET`/`TOP_SECRET`.
+ *   3. Che giấu sự tồn tại của tài liệu bằng mã lỗi `404 DOCUMENT_NOT_FOUND` đối với người dùng thường không đủ thẩm quyền đọc.
  */
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
@@ -13,17 +16,15 @@ import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Algorithm / Thuật toán: Kiểm tra Phân tách nhiệm vụ (SoD) bất biến cho các vai trò đặc quyền (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`).
- * Chặn tuyệt đối không cho phép chồng vai trò nghiệp vụ (`DOCUMENT_OWNER`/`DOCUMENT_READER`) để vượt rào truy cập nội dung tài liệu.
+ * Thuật toán: Kiểm tra Phân tách nhiệm vụ (SoD) bất biến cho các vai trò đặc quyền (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`).
  */
 export function isPureTechnicalOrAuditRole(principal?: AuthPrincipal): boolean {
-  // CONFLICT-RESOLVED: Removed `!hasBusinessRole` bypass and included `SECURITY_OFFICER` via `PRIVILEGED_SEPARATION_ROLES`.
   const roles = principal?.roles ?? [];
   return roles.some((role) => PRIVILEGED_SEPARATION_ROLES.has(role));
 }
 
 /**
- * Algorithm / Thuật toán: Truy vấn thứ bậc độ mật `CLEARANCE_LEVEL` còn hiệu lực kèm lọc `is_active: true` trên cả định nghĩa và tùy chọn thuộc tính.
+ * Thuật toán: Truy vấn thứ bậc độ mật `CLEARANCE_LEVEL` còn hiệu lực kèm lọc `is_active: true` trên cả định nghĩa và tùy chọn thuộc tính.
  */
 export async function getUserClearanceRank(
   database: PrismaClient,
@@ -57,24 +58,76 @@ export async function getUserClearanceRank(
   return clearance?.attribute_options?.numeric_rank ?? 0;
 }
 
+/**
+ * Thuật toán: Cưỡng chế bất biến thống trị độ mật Bell-LaPadula (`actorClearanceRank >= documentRank`) cho chủ sở hữu và quản trị viên.
+ */
+export async function assertActorClearanceDominatesDocument(
+  database: PrismaClient | undefined,
+  userId: bigint,
+  documentRank: number,
+  now = new Date(),
+): Promise<void> {
+  if (
+    documentRank <= 0 ||
+    !database ||
+    typeof database?.userAttributeAssignment?.findFirst !== 'function'
+  ) {
+    return;
+  }
+  const actorRank = await getUserClearanceRank(database, userId, now);
+  if (actorRank < documentRank) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+      message: `Insufficient security clearance (${actorRank}) for document at classification rank ${documentRank}.`,
+    });
+  }
+}
+
+async function resolveActiveDocumentClassificationRank(
+  database: PrismaClient | undefined,
+  doc: {
+    id: string;
+    classification_history?: Array<{ classification_levels?: { rank?: number } | null }>;
+  },
+): Promise<number> {
+  const inlineRank = doc.classification_history?.[0]?.classification_levels?.rank;
+  if (typeof inlineRank === 'number') {
+    return inlineRank;
+  }
+  if (
+    !Array.isArray(doc.classification_history) &&
+    typeof database?.documentClassificationHistory?.findFirst === 'function'
+  ) {
+    const active = await database.documentClassificationHistory.findFirst({
+      where: { document_id: doc.id, effective_to: null },
+      include: { classification_levels: true },
+    });
+    return active?.classification_levels?.rank ?? 0;
+  }
+  return 0;
+}
+
 export type DocumentMutationOperation =
   'METADATA' | 'ACTIVATE' | 'VERSION' | 'CLASSIFY' | 'ARCHIVE' | 'TRANSFER_OWNER';
 
 /**
- * Thuật toán: Kiểm định thẩm quyền thay đổi tài liệu phân tách theo từng nghiệp vụ cụ thể (Operation-Specific Scoped RBAC).
- * Cơ chế hoạt động:
- *   - Chủ sở hữu tài liệu (`document.owner_id === principal.userId`) được phép thực thi các thao tác vòng đời trên tài liệu của mình.
- *   - Quản trị viên nghiệp vụ theo phòng ban chỉ được phép thực thi đúng hành động tương ứng:
- *     + `METADATA` / `ACTIVATE` / `CLASSIFY`: yêu cầu `DOCUMENT:MANAGE` hoặc `DOCUMENT:CLASSIFY` trong `document.department_id`.
- *     + `VERSION`: yêu cầu `DOCUMENT:MANAGE` hoặc `DOCUMENT_VERSION:CREATE` trong `document.department_id`.
- *     + `ARCHIVE`: yêu cầu `DOCUMENT:MANAGE` hoặc `DOCUMENT:ARCHIVE` trong `document.department_id`.
- *     + `TRANSFER_OWNER`: chỉ cho phép chủ sở hữu hoặc `DOCUMENT:MANAGE` (tuyệt đối chặn `ARCHIVE`/`CLASSIFY` tự ý chuyển quyền sở hữu).
+ * Thuật toán: Kiểm định thẩm quyền thay đổi tài liệu kết hợp RBAC phạm vi phòng ban và kiểm tra độ mật Bell-LaPadula của chủ sở hữu/quản trị viên.
  */
 export async function assertDocumentMutationPermission(
   authorization: AuthorizationService,
-  document: { id: string; owner_id: bigint; department_id: bigint },
+  document: {
+    id: string;
+    owner_id: bigint;
+    department_id: bigint;
+    classification_history?: Array<{ classification_levels?: { rank?: number } | null }>;
+  },
   principal: AuthPrincipal,
   operation: DocumentMutationOperation = 'METADATA',
+  options?: {
+    database?: PrismaClient | undefined;
+    documentRank?: number | undefined;
+    now?: Date | undefined;
+  },
 ): Promise<void> {
   if (isPureTechnicalOrAuditRole(principal)) {
     throw new ForbiddenException({
@@ -84,64 +137,58 @@ export async function assertDocumentMutationPermission(
     });
   }
 
-  if (document.owner_id === principal.userId) {
-    return;
-  }
-
-  // CONFLICT-RESOLVED: Tách bạch kiểm tra quyền RBAC theo từng thao tác thay vì gộp chung DOCUMENT:ARCHIVE/CLASSIFY/MANAGE cho mọi đột biến.
-  const scope = { targetDepartmentId: document.department_id };
-  const hasManage = await authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', scope);
-  if (hasManage) {
-    return;
-  }
-
-  let hasSpecificPermission = false;
-  switch (operation) {
-    case 'METADATA':
-    case 'ACTIVATE':
-    case 'CLASSIFY':
-      hasSpecificPermission = await authorization.hasPermission(
+  let authorizedByOwnershipOrRole = document.owner_id === principal.userId;
+  if (!authorizedByOwnershipOrRole) {
+    const scope = { targetDepartmentId: document.department_id };
+    const hasManage = await authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', scope);
+    if (hasManage) {
+      authorizedByOwnershipOrRole = true;
+    } else if (operation === 'METADATA' || operation === 'ACTIVATE' || operation === 'CLASSIFY') {
+      authorizedByOwnershipOrRole = await authorization.hasPermission(
         principal,
         'DOCUMENT',
         'CLASSIFY',
         scope,
       );
-      break;
-    case 'VERSION':
-      hasSpecificPermission = await authorization.hasPermission(
+    } else if (operation === 'VERSION') {
+      authorizedByOwnershipOrRole = await authorization.hasPermission(
         principal,
         'DOCUMENT_VERSION',
         'CREATE',
         scope,
       );
-      break;
-    case 'ARCHIVE':
-      hasSpecificPermission = await authorization.hasPermission(
+    } else if (operation === 'ARCHIVE') {
+      authorizedByOwnershipOrRole = await authorization.hasPermission(
         principal,
         'DOCUMENT',
         'ARCHIVE',
         scope,
       );
-      break;
-    case 'TRANSFER_OWNER':
-      hasSpecificPermission = false;
-      break;
+    }
   }
 
-  if (hasSpecificPermission) {
-    return;
+  if (!authorizedByOwnershipOrRole) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
+      message:
+        'Only the document owner or an authorized business administrator for this department may modify this document.',
+    });
   }
 
-  throw new ForbiddenException({
-    errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
-    message:
-      'Only the document owner or an authorized business administrator for this department may modify this document.',
-  });
+  const effectiveRank =
+    typeof options?.documentRank === 'number'
+      ? options.documentRank
+      : await resolveActiveDocumentClassificationRank(options?.database, document);
+  await assertActorClearanceDominatesDocument(
+    options?.database,
+    principal.userId,
+    effectiveRank,
+    options?.now,
+  );
 }
 
 /**
- * Algorithm: Anti-Enumeration Document Metadata Read Guard
- * Verifies SoD, owner/department admin rights, or Bell-LaPadula clearance + active grant/`DISCOVER`; masks denials as 404.
+ * Thuật toán: Cổng kiểm định quyền đọc siêu dữ liệu chống dò quét (Anti-Enumeration) và cưỡng chế độ mật cho cả chủ sở hữu.
  */
 export async function assertDocumentReadAccess(
   database: PrismaClient,
@@ -152,16 +199,13 @@ export async function assertDocumentReadAccess(
     department_id: bigint;
     status: string;
     discoverable: boolean;
-    classification_history?: Array<{
-      classification_levels?: { rank?: number } | null;
-    }>;
+    classification_history?: Array<{ classification_levels?: { rank?: number } | null }>;
   },
   principal?: AuthPrincipal,
   allowDiscoverable = false,
   options?: { internalTrustedRead?: boolean },
 ): Promise<void> {
   if (!principal) {
-    // CONFLICT-RESOLVED: Chặn Fail-Open khi thiếu `principal` ở các lời gọi đọc tài liệu từ bên ngoài; chỉ cho phép cờ nội bộ sau khi đã kiểm quyền đột biến (HIGH-08).
     if (options?.internalTrustedRead) return;
     throw new ForbiddenException({
       errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
@@ -176,29 +220,26 @@ export async function assertDocumentReadAccess(
     });
   }
 
+  const now = new Date();
+  const documentRank = await resolveActiveDocumentClassificationRank(database, doc);
+
   if (doc.owner_id === principal.userId) {
+    await assertActorClearanceDominatesDocument(database, principal.userId, documentRank, now);
     return;
   }
 
+  const scope = { targetDepartmentId: doc.department_id };
   const [hasClassify, hasManage, hasArchive] = await Promise.all([
-    authorization.hasPermission(principal, 'DOCUMENT', 'CLASSIFY', {
-      targetDepartmentId: doc.department_id,
-    }),
-    authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', {
-      targetDepartmentId: doc.department_id,
-    }),
-    authorization.hasPermission(principal, 'DOCUMENT', 'ARCHIVE', {
-      targetDepartmentId: doc.department_id,
-    }),
+    authorization.hasPermission(principal, 'DOCUMENT', 'CLASSIFY', scope),
+    authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', scope),
+    authorization.hasPermission(principal, 'DOCUMENT', 'ARCHIVE', scope),
   ]);
   if (hasClassify || hasManage || hasArchive) {
+    await assertActorClearanceDominatesDocument(database, principal.userId, documentRank, now);
     return;
   }
 
-  const now = new Date();
-  const documentRank = doc.classification_history?.[0]?.classification_levels?.rank ?? 0;
   const userRank = await getUserClearanceRank(database, principal.userId, now);
-
   if (userRank >= documentRank && typeof database?.accessGrant?.findFirst === 'function') {
     const directGrant = await database.accessGrant.findFirst({
       where: {
@@ -245,10 +286,7 @@ export async function assertDocumentReadAccess(
     doc.status === 'ACTIVE' &&
     userRank >= documentRank
   ) {
-    const hasDiscover = await authorization.hasPermission(principal, 'DOCUMENT', 'DISCOVER', {
-      targetDepartmentId: doc.department_id,
-    });
-    if (hasDiscover) return;
+    if (await authorization.hasPermission(principal, 'DOCUMENT', 'DISCOVER', scope)) return;
   }
 
   throw new NotFoundException({

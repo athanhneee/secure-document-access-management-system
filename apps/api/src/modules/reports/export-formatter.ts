@@ -3,6 +3,7 @@
  */
 import ExcelJS from 'exceljs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { sanitizeCsvCell } from './csv-formula-sanitizer.js';
 
 export interface ExportColumn {
   key: string;
@@ -177,7 +178,7 @@ export async function generateExcelTable(
   const worksheet = workbook.addWorksheet(sheetName.slice(0, 30));
 
   worksheet.columns = columns.map((col) => ({
-    header: col.header,
+    header: sanitizeCsvCell(col.header),
     key: col.key,
     width: col.width ?? Math.max(col.header.length + 6, 16),
   }));
@@ -193,16 +194,11 @@ export async function generateExcelTable(
   headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
   headerRow.height = 26;
 
-  // Add Data Rows with alternating colors and formula injection sanitization
+  // Add Data Rows with alternating colors and shared OWASP CWE-1236 formula injection sanitization
   rows.forEach((row, idx) => {
     const sanitizedRow: Record<string, string> = {};
     for (const col of columns) {
-      let val = row[col.key] ?? '';
-      // Formula Injection Sanitization
-      if (/^[=+\-@\t\r]/u.test(val)) {
-        val = `'${val}`;
-      }
-      sanitizedRow[col.key] = val;
+      sanitizedRow[col.key] = sanitizeCsvCell(row[col.key] ?? '');
     }
 
     const addedRow = worksheet.addRow(sanitizedRow);

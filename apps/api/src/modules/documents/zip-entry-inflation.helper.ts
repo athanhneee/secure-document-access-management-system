@@ -6,7 +6,7 @@
 import { BadRequestException } from '@nestjs/common';
 import yauzl, { type Entry, type ZipFile } from 'yauzl';
 import { AppErrorCode } from '@sda/contracts';
-import { createXmlStreamingSecurityScanner } from './zip-xml-security.helper.js';
+import { createXmlStreamingSecurityScanner } from './zip-xml-stream-scanner.helper.js';
 
 /**
  * Thuật toán: Khởi tạo con trỏ PKZIP lười (`lazyEntries: true`) kèm chuẩn hóa lỗi mở tệp sang `400 INVALID_FILE_TYPE`.

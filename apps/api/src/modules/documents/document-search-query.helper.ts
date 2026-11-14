@@ -186,7 +186,7 @@ export function buildSearchWhereClause(params: {
   const effectiveClearanceRank = userClearanceRank ?? 0;
   const clearanceSql = Prisma.sql` AND (cl."rank" IS NULL OR cl."rank" <= ${effectiveClearanceRank})`;
 
-  const visibility: Prisma.Sql[] = [Prisma.sql`d."owner_id" = ${userId}`];
+  const visibility: Prisma.Sql[] = [Prisma.sql`(d."owner_id" = ${userId}${clearanceSql})`];
   if (hasGlobalDiscover) {
     visibility.push(Prisma.sql`(d."discoverable" = true AND d."status" = 'ACTIVE'${clearanceSql})`);
   } else if (discoverableDeptIds && discoverableDeptIds.length > 0) {

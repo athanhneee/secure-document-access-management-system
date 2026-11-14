@@ -1,7 +1,6 @@
 /**
  * Module: Safe Sandboxed Office-to-PDF Converter Service
- * Algorithm: Pre-conversion OOXML security inspection followed by `Promise.race` deadline enforcement
- *   over headless Gotenberg conversion with deterministic internal A4 PDF fallback.
+ * Thuật toán: Quét An Ninh Gói OOXML Trước Chuyển Đổi Kết Hợp Chạy Đua Hạn Giờ (`Promise.race`) Qua Gotenberg Kèm Bộ Dựng PDF Dự Phòng.
  */
 import { GatewayTimeoutException, Injectable, Logger, Optional } from '@nestjs/common';
 import { AppErrorCode } from '@sda/contracts';

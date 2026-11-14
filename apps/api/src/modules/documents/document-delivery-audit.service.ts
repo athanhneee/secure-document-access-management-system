@@ -1,12 +1,17 @@
 /**
  * Module: Dịch vụ Nhật ký Kiểm toán Phân phối & Phiên Truy cập Tài liệu (Delivery & Session Audit Service)
- * Thuật toán: Ghi nối tiếp chuỗi băm HMAC phân vùng `ACCESS_SESSION` cho các sự kiện PEP, thủy vân và xem/tải tệp.
+ * Thuật toán: Ghi Nối Tiếp Chuỗi Băm HMAC Phân Vùng `ACCESS_SESSION` Kèm Thử Lại Giao Dịch Tuần Tự (`40001` / `P2034` Backoff).
+ *   1. Khi có `transactionClient` ngoại vi, ghi trực tiếp trong phạm vi giao dịch của người gọi để bảo toàn tính nguyên tử.
+ *   2. Khi tự mở giao dịch độc lập, bọc trong `runSerializableAuditTransaction` để tự động thử lại khi xảy ra tranh chấp khóa hoặc lỗi tuần tự hóa.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
 import { appendChainedAuditLog, resolveActiveAuditKey } from '../audit/audit-chain-helper.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import { runSerializableAuditTransaction } from './document-audit.service.js';
+
+type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 export type DeliveryAuditAction =
   | 'ACCESS_PERMITTED'
@@ -31,31 +36,30 @@ export interface DeliveryAuditEvent {
 export class DocumentDeliveryAuditService {
   private readonly hmacKey: string;
   private readonly keyVersion: number;
-  private readonly database = getDatabaseClient();
+  private readonly database: PrismaClient;
 
-  constructor(config: AppConfigService) {
-    // CONFLICT-RESOLVED: Sử dụng khóa xoay vòng đang kích hoạt kèm hmac_key_version đồng bộ với AuditWriterService.
+  constructor(config: AppConfigService, @Optional() databaseClient?: PrismaClient) {
     const active = resolveActiveAuditKey(config);
     this.hmacKey = active.hmacKey;
     this.keyVersion = active.keyVersion;
+    try {
+      this.database = databaseClient ?? getDatabaseClient();
+    } catch {
+      this.database = (databaseClient ?? null) as unknown as PrismaClient;
+    }
   }
 
   /**
-   * Record an access delivery audit event in the ACCESS_SESSION partition with HMAC chain integrity.
-   *
-   * Thuật toán: Ghi Kiểm Toán Chuỗi Băm HMAC Cho Phiên Phân Phối Tài Liệu (Session-Partition Chained Audit)
-   * Mục đích: Liên kết bất biến từng hành vi xem trước, sinh thủy vân, tải xuống hoặc từ chối truy cập với `sessionId` và `documentId`.
-   * Cơ chế hoạt động:
-   *   - Tái sử dụng `transactionClient` ngoại vi nếu có hoặc mở giao dịch mới để gọi `appendChainedAuditLog` vào phân vùng `ACCESS_SESSION`.
+   * Thuật toán: Ghi nối tiếp sự kiện kiểm toán vào phân vùng `ACCESS_SESSION` có thử lại `40001`/`P2034` khi chạy giao dịch độc lập.
    */
   async record(
     event: DeliveryAuditEvent,
     principal: AuthPrincipal,
     context: RequestContext,
-    transactionClient?: Parameters<Parameters<typeof this.database.$transaction>[0]>[0],
+    transactionClient?: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0],
   ): Promise<void> {
     const execute = async (
-      tx: Parameters<Parameters<typeof this.database.$transaction>[0]>[0],
+      tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0],
     ): Promise<void> => {
       await appendChainedAuditLog(tx, {
         partition: 'ACCESS_SESSION',
@@ -78,7 +82,7 @@ export class DocumentDeliveryAuditService {
     if (transactionClient) {
       await execute(transactionClient);
     } else {
-      await this.database.$transaction(execute);
+      await runSerializableAuditTransaction(this.database, execute);
     }
   }
 }

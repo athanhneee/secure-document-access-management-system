@@ -1,7 +1,6 @@
 /**
  * Module: Document Ingestion Transactional Version Persistence Helper
- * Algorithm: Serializes version numbering via distributed Redlock + PostgreSQL `SELECT ... FOR UPDATE`,
- *   atomically creating `DRAFT` documents, `CLEAN` versions, `current_version_id` pointers, and initial classifications.
+ * Thuật toán: Cấp Phát Số Phiên Bản Tuần Tự Qua Khóa Kép (`Redlock` + `SELECT ... FOR UPDATE`) & Kiểm Định Độ Mật Chủ Sở Hữu.
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -172,6 +171,25 @@ export async function persistCleanIngestedVersion(params: {
         });
         finalVersionNo = 1;
       } else {
+        if (
+          typeof database?.documentClassificationHistory?.findFirst === 'function' &&
+          typeof database?.userAttributeAssignment?.findFirst === 'function'
+        ) {
+          const currentClass = await database.documentClassificationHistory.findFirst({
+            where: { document_id: targetDocId, effective_to: null },
+            include: { classification_levels: true },
+          });
+          const existingRank = currentClass?.classification_levels?.rank ?? 0;
+          if (existingRank > 0) {
+            const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
+            if (rank < existingRank) {
+              throw new ForbiddenException({
+                errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+                message: `Insufficient clearance level (${rank}) to upload version to document at rank ${existingRank}.`,
+              });
+            }
+          }
+        }
         const currentMaxVersion = existingDoc.versions.reduce(
           (max, v) => (v.version_no > max ? v.version_no : max),
           0,

@@ -1,7 +1,6 @@
 /**
  * Module: Zip Bomb & Office OpenXML Structural Guard Service
- * Algorithm: Lazy PKZIP central-directory traversal combined with stream inflation byte counting
- *   to defeat spoofed 32-bit ZIP headers, enforce entry/depth/ratio caps, and block OOXML macros/XXE/SSRF.
+ * Thuật toán: Duyệt Lười Mục Lục Trung Tâm PKZIP Kết Hợp Đếm Byte Giải Nén Luồng Thực Tế Chống Zip Bomb, Macro, XXE Và SSRF.
  */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { Entry } from 'yauzl';

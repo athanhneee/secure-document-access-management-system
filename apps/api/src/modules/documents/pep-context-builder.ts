@@ -39,6 +39,25 @@ export interface ActiveSessionPolicy {
   grantedAction: 'VIEW' | 'DOWNLOAD';
   forbidDownload: boolean;
   expiresAtMs: number | null;
+  maxSessionMinutes?: number | null | undefined;
+  ipAddress?: string | null | undefined;
+  userAgent?: string | null | undefined;
+}
+
+/**
+ * Thuật toán: Tính thời gian sống bắt buộc có chặn trên cho bộ đệm chính sách phiên (`Math.min(maxSessionMinutes ?? 30, 60) * 60_000`).
+ * Đảm bảo khóa phiên trong `DistributedStateService` không bao giờ tồn tại vô thời hạn ngay cả khi chính sách ABAC không khai báo `MAX_SESSION_MINUTES`.
+ */
+export function computeBoundedSessionPolicyTtlMs(
+  maxSessionMinutes?: number | null | undefined,
+): number {
+  const effectiveMinutes =
+    typeof maxSessionMinutes === 'number' &&
+    Number.isFinite(maxSessionMinutes) &&
+    maxSessionMinutes > 0
+      ? maxSessionMinutes
+      : 30;
+  return Math.min(effectiveMinutes, 60) * 60_000;
 }
 
 /**

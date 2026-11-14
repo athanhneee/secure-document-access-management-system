@@ -203,6 +203,17 @@ test('Document Lifecycle: transferOwner rejects transfer when new owner clearanc
     ],
     userAttributeAssignments: [
       [
+        0n,
+        {
+          id: 0n,
+          user_id: 1n,
+          attribute_definitions: { code: 'CLEARANCE_LEVEL' },
+          attribute_options: { numeric_rank: 4 },
+          valid_from: new Date(2020, 1, 1),
+          valid_to: null,
+        },
+      ],
+      [
         1n,
         {
           id: 1n,

@@ -1,14 +1,15 @@
 /**
  * Module: Document Draft Creation & Metadata Mutation Helper
- * Algorithm: Validates SoD, department/classification/category existence, and ISO retention dates
- *   before creating `DRAFT` documents or incrementing optimistic concurrency version on metadata updates.
+ * Thuật toán: Khởi Tạo Dự Thảo Tài Liệu Giao Dịch Nguyên Tử & Cập Nhật Siêu Dữ Liệu Có Cưỡng Chế Độ Mật.
+ *   1. Kiểm tra phân tách nhiệm vụ (SoD), quyền phòng ban đích, hiệu lực phân loại/danh mục và trần độ mật Bell-LaPadula.
+ *   2. Khởi tạo bản ghi `DRAFT` kèm lịch sử phân loại SCD Type 2 ban đầu trong một giao dịch nguyên tử.
+ *   3. Khi cập nhật siêu dữ liệu, xác minh tài liệu chưa lưu trữ, thẩm quyền sở hữu/RBAC và độ mật người gọi (`assertDocumentMutationPermission`).
  */
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient } from '@sda/database';
 import {
   AppErrorCode,
-  isValidIsoCalendarDate,
   type CreateDocumentDraftInput,
   type UpdateDocumentMetadataInput,
 } from '@sda/contracts';
@@ -20,68 +21,16 @@ import {
   getUserClearanceRank,
   isPureTechnicalOrAuditRole,
 } from './document-access-guard.helper.js';
+import {
+  assertActiveDepartment,
+  assertDepartmentWriteScope,
+  parseIsoRetentionDate,
+} from './document-draft-validation.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
-async function assertActiveDepartment(database: PrismaClient, departmentId: bigint): Promise<void> {
-  const dept = await database.department.findUnique({ where: { id: departmentId } });
-  if (!dept || !dept.is_active) {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.VALIDATION_FAILED,
-      message: 'Target department does not exist or is inactive.',
-    });
-  }
-}
-
 /**
- * Thuật toán: Kiểm định thẩm quyền phòng ban đích khi khởi tạo dự thảo hoặc di chuyển phòng ban tài liệu (HIGH-05).
- */
-async function assertDepartmentWriteScope(
-  authorization: AuthorizationService | undefined,
-  principal: AuthPrincipal,
-  targetDepartmentId: bigint,
-  allowUploadAction: boolean,
-): Promise<void> {
-  if (!authorization || typeof authorization.hasPermission !== 'function') return;
-  const scope = { targetDepartmentId };
-  const [canManage, canClassify, canUpload] = await Promise.all([
-    authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', scope),
-    authorization.hasPermission(principal, 'DOCUMENT', 'CLASSIFY', scope),
-    allowUploadAction
-      ? authorization.hasPermission(principal, 'DOCUMENT', 'UPLOAD', scope)
-      : Promise.resolve(false),
-  ]);
-  if (!canManage && !canClassify && !canUpload) {
-    throw new ForbiddenException({
-      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
-      message: 'Caller is not authorized to create or place documents in the target department.',
-    });
-  }
-}
-
-/**
- * Thuật toán: Phân tích ngày hạn lưu trữ ISO `YYYY-MM-DD` có kiểm định ngày lịch Gregorian thực.
- */
-function parseIsoRetentionDate(isoDate: string): Date {
-  if (!isValidIsoCalendarDate(isoDate)) {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.RETENTION_DATE_INVALID,
-      message: 'Invalid retention date format or impossible calendar date.',
-    });
-  }
-  const retDate = new Date(`${isoDate}T00:00:00.000Z`);
-  if (Number.isNaN(retDate.getTime())) {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.RETENTION_DATE_INVALID,
-      message: 'Invalid retention date format.',
-    });
-  }
-  return retDate;
-}
-
-/**
- * Algorithm: Transactional Document Draft & Initial Classification Creation
- * Validates master-data references and atomically inserts the `DRAFT` document plus optional initial SCD2 classification.
+ * Thuật toán: Khởi tạo dự thảo tài liệu (`DRAFT`) và lịch sử phân loại SCD Type 2 ban đầu trong giao dịch nguyên tử.
  */
 export async function executeCreateDocumentDraft(params: {
   database: PrismaClient;
@@ -119,7 +68,6 @@ export async function executeCreateDocumentDraft(params: {
   }
 
   await assertActiveDepartment(database, input.departmentId);
-  // CONFLICT-RESOLVED: Chặn BOLA liên phòng ban và kiểm tra độ mật Bell-LaPadula ngay khi khởi tạo bản nháp tài liệu (HIGH-05).
   await assertDepartmentWriteScope(authorization, principal, input.departmentId, true);
 
   if (input.classificationLevelId) {
@@ -209,8 +157,7 @@ export async function executeCreateDocumentDraft(params: {
 }
 
 /**
- * Algorithm: Optimistic-Versioned Document Metadata Mutation
- * Verifies non-archived status and scoped mutation rights before applying partial metadata updates.
+ * Thuật toán: Cập nhật siêu dữ liệu tài liệu có kiểm soát phiên bản lạc quan và cưỡng chế độ mật của chủ sở hữu/quản trị viên.
  */
 export async function executeUpdateDocumentMetadata(params: {
   database: PrismaClient;
@@ -237,7 +184,7 @@ export async function executeUpdateDocumentMetadata(params: {
     });
   }
 
-  await assertDocumentMutationPermission(authorization, doc, principal, 'METADATA');
+  await assertDocumentMutationPermission(authorization, doc, principal, 'METADATA', { database });
 
   const updateData: {
     title?: string;
@@ -263,7 +210,6 @@ export async function executeUpdateDocumentMetadata(params: {
   if (input.departmentId !== undefined) {
     await assertActiveDepartment(database, input.departmentId);
     if (input.departmentId !== doc.department_id) {
-      // CONFLICT-RESOLVED: Chặn chuyển phòng ban tài liệu sang đơn vị ngoài thẩm quyền quản lý/phân loại của người gọi (HIGH-05).
       await assertDepartmentWriteScope(authorization, principal, input.departmentId, false);
     }
     updateData.department_id = input.departmentId;

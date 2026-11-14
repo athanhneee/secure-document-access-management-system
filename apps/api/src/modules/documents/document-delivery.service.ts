@@ -1,12 +1,15 @@
 /**
- * Module: Controlled Document Delivery, Watermarked Preview & Single-Use Ticket Service
- * Algorithm: Orchestrates PEP session establishment, real-time zero-trust preview rendering,
- *   watermarked derivative downloads, and short-lived single-use CSPRNG download tickets.
+ * Module: Controlled Document Delivery, Watermarked Preview & Distributed Single-Use Ticket Service
+ * Thuật toán: Điều Phối Phân Phối Tài Liệu Có Kiểm Soát (`DocumentDeliveryService`).
+ *   1. Mở phiên truy cập qua cổng PEP Zero-Trust (`createSession`).
+ *   2. Phục vụ xem trước PDF nhúng thủy vân có bộ đệm phiên mã hóa trên `STORAGE_BUCKET_DERIVATIVES` (`getPreviewPdf`).
+ *   3. Phát hành và đổi vé tải dùng một lần nguyên tử qua `DistributedStateService` kèm tái xác minh CSDL thời gian thực (`createDownloadTicket` / `redeemDownloadTicket`).
  */
 import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import type { CreateAccessSessionInput } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 import { ObjectStorageService } from './object-storage.service.js';
 import { DocumentEncryptionService } from './document-encryption.service.js';
 import { DocumentPepService, type PepEvaluationResult } from './document-pep.service.js';
@@ -18,8 +21,8 @@ import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import {
   consumeSingleUseDownloadTicket,
   issueShortLivedDownloadTicket,
+  reverifyRedeemedTicketState,
   type DeliveryFileResult,
-  type DownloadTicketEntry,
 } from './delivery-ticket.helper.js';
 import { executeWatermarkedPreview } from './delivery-preview.helper.js';
 import { executeControlledDownload } from './delivery-download.helper.js';
@@ -32,8 +35,7 @@ type PrismaClient = ReturnType<typeof getDatabaseClient>;
 export class DocumentDeliveryService {
   private readonly database: PrismaClient;
   private readonly ticketTtlSeconds: number;
-  // shortcut: 10,000 short-lived 60s single-use tickets (~3 MB) per replica, move to Redis GETDEL for multi-replica sticky-free redemption
-  private readonly downloadTickets = new Map<string, DownloadTicketEntry>();
+  private readonly stateStore: DistributedStateService;
 
   constructor(
     private readonly pep: DocumentPepService,
@@ -43,19 +45,25 @@ export class DocumentDeliveryService {
     private readonly watermarkEngine: WatermarkEngineService,
     private readonly grantsService: AccessGrantsService,
     private readonly audit: DocumentDeliveryAuditService,
-    config: AppConfigService,
+    private readonly config: AppConfigService,
     @Optional() databaseClient?: PrismaClient,
+    @Optional() stateStore?: DistributedStateService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
     } catch {
       this.database = (databaseClient ?? null) as unknown as PrismaClient;
     }
-    this.ticketTtlSeconds = config.get('DOWNLOAD_TICKET_TTL_SECONDS') ?? 60;
+    const rawTtl =
+      typeof config?.get === 'function' ? config.get('DOWNLOAD_TICKET_TTL_SECONDS') : undefined;
+    this.ticketTtlSeconds = typeof rawTtl === 'number' && Number.isFinite(rawTtl) ? rawTtl : 60;
+    this.stateStore =
+      stateStore ??
+      new DistributedStateService(config instanceof AppConfigService ? config : undefined);
   }
 
   /**
-   * Algorithm: Controlled Access Session Creation via PEP
+   * Thuật toán: Thiết lập phiên truy cập tài liệu có kiểm soát thông qua cổng thực thi chính sách PEP.
    */
   async createSession(
     documentId: string,
@@ -71,7 +79,7 @@ export class DocumentDeliveryService {
   }
 
   /**
-   * Algorithm: Session-Bound Watermarked PDF Preview Delivery
+   * Thuật toán: Phục vụ xem trước PDF gắn thủy vân truy vết và tối ưu chuyển trang qua bộ đệm dẫn xuất mã hóa.
    */
   async getPreviewPdf(
     documentId: string,
@@ -89,6 +97,8 @@ export class DocumentDeliveryService {
       watermarkEngine: this.watermarkEngine,
       grantsService: this.grantsService,
       audit: this.audit,
+      stateStore: this.stateStore,
+      config: this.config,
       documentId,
       sessionId,
       pageNumber,
@@ -98,7 +108,7 @@ export class DocumentDeliveryService {
   }
 
   /**
-   * Algorithm: Controlled Derivative Document Download
+   * Thuật toán: Thực thi tải xuống bản dẫn xuất tài liệu đã kiểm định quyền `DOWNLOAD` và đóng thủy vân bắt buộc.
    */
   async downloadDocument(
     documentId: string,
@@ -123,7 +133,7 @@ export class DocumentDeliveryService {
   }
 
   /**
-   * Algorithm: Short-Lived Single-Use Download Ticket Issuance
+   * Thuật toán: Phát hành vé tải dùng một lần ngắn hạn (`DT-<64hex>`) lưu phân tán trên `DistributedStateService`.
    */
   async createDownloadTicket(
     documentId: string,
@@ -135,7 +145,7 @@ export class DocumentDeliveryService {
       database: this.database,
       pep: this.pep,
       grantsService: this.grantsService,
-      downloadTickets: this.downloadTickets,
+      stateStore: this.stateStore,
       ticketTtlSeconds: this.ticketTtlSeconds,
       documentId,
       sessionId,
@@ -145,10 +155,17 @@ export class DocumentDeliveryService {
   }
 
   /**
-   * Algorithm: Atomic Single-Use Download Ticket Redemption
+   * Thuật toán: Tiêu thụ nguyên tử một lần vé tải và tái xác minh trực tiếp CSDL (`AccessSession`, `AccessGrant`, `User`, IP) trước khi truyền tệp.
    */
   async redeemDownloadTicket(ticket: string, context: RequestContext): Promise<DeliveryFileResult> {
-    const entry = consumeSingleUseDownloadTicket(this.downloadTickets, ticket);
+    const entry = await consumeSingleUseDownloadTicket(this.stateStore, ticket);
+    await reverifyRedeemedTicketState({
+      database: this.database,
+      grantsService: this.grantsService,
+      entry,
+      context,
+      now: new Date(),
+    });
     return await this.downloadDocument(entry.documentId, entry.sessionId, entry.principal, context);
   }
 }

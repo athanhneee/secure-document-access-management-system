@@ -62,13 +62,15 @@ export class DocumentsService {
   }
 
   /**
-   * Algorithm: Scoped Document Mutation Authorization Gate
+   * Thuật toán: Cổng kiểm định thẩm quyền đột biến tài liệu phạm vi phòng ban kèm độ mật Bell-LaPadula.
    */
   async assertDocumentMutationPermission(
     document: { id: string; owner_id: bigint; department_id: bigint },
     principal: AuthPrincipal,
   ): Promise<void> {
-    await checkMutationPermission(this.authorization, document, principal);
+    await checkMutationPermission(this.authorization, document, principal, 'METADATA', {
+      database: this.database,
+    });
   }
 
   async createDocumentDraft(

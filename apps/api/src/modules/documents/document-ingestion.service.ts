@@ -1,8 +1,9 @@
 /**
  * Module: Zero-Trust Streaming Document Ingestion Pipeline Service
- * Algorithm: Saga-compensated multi-stage ingestion pipeline (precondition check -> backpressure temp spooling &
- *   SHA-256 -> magic bytes & ZipBomb/OOXML check -> quarantine ClamAV scan -> AES-256-GCM envelope encryption ->
- *   Redlock + `SELECT FOR UPDATE` version persistence -> orphan cleanup).
+ * Thuật toán: Đường Ống Tiếp Nhận Tài Liệu Bù Trừ Saga Tiết Kiệm Bộ Nhớ & Dọn Dẹp Tệp Tạm Bắt Buộc Trong `finally`.
+ *   1. Kiểm định điều kiện tiên quyết (SoD, thẩm quyền phòng ban, trần độ mật Bell-LaPadula) trước khi ghi đệm luồng tải lên ra thư mục tạm `sda-ing-*`.
+ *   2. Quét cấu trúc ZIP/OOXML, đẩy lên kho cách ly và quét ClamAV trực tiếp qua `fs.createReadStream` để không giữ đồng thời 3 bản sao 50MB trong RAM.
+ *   3. Xóa ngay tệp tạm bản rõ sau khi đọc vào bộ mã hóa phong bì AES-256-GCM, và đảm bảo thu dọn thư mục `sda-ing-*` trong khối `finally` trên mọi nhánh.
  */
 import { Injectable, Logger, Optional, PayloadTooLargeException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -60,180 +61,188 @@ export class DocumentIngestionService {
   }
 
   /**
-   * Algorithm: Saga-Compensated Zero-Trust Document Ingestion Pipeline
+   * Thuật toán: Đường ống tiếp nhận tài liệu đa chặng có bù trừ Saga và dọn tệp tạm `sda-ing-*` bắt buộc trong `finally`.
    */
   async ingestDocument(input: IngestDocumentInput): Promise<IngestDocumentOutput> {
     await validateIngestionPreconditions(input, this.database, this.authorization);
 
     const session = this.compensation.createSession();
-    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sda-upload-'));
+    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sda-ing-'));
     session.tempFilesToDelete.push(tempDir);
-
-    const targetDocId = input.documentId ?? randomUUID();
-    let validatedInfo: ValidatedFileInfo;
-    try {
-      validatedInfo = this.fileValidation.preValidate(input.rawFilename, input.declaredMime);
-    } catch (err) {
-      await this.compensation.compensate(session);
-      throw err;
-    }
-
     const spoolFilePath = path.join(tempDir, `spool-${randomUUID()}.tmp`);
     session.tempFilesToDelete.push(spoolFilePath);
 
-    await this.audit.record(
-      {
-        action: 'DOCUMENT_UPLOAD_STARTED',
-        outcome: 'SUCCESS',
-        actorUserId: input.principal.userId,
-        actorUsername: input.principal.username,
-        documentId: targetDocId,
-        details: {
-          originalFilename: validatedInfo.sanitizedFilename,
-          mimeType: validatedInfo.mimeType,
-        },
-      },
-      input.context,
-    );
+    try {
+      const targetDocId = input.documentId ?? randomUUID();
+      let validatedInfo: ValidatedFileInfo;
+      try {
+        validatedInfo = this.fileValidation.preValidate(input.rawFilename, input.declaredMime);
+      } catch (err) {
+        await this.compensation.compensate(session);
+        throw err;
+      }
 
-    const failUpload = async (reasonCode: string): Promise<void> => {
-      await this.compensation.compensate(session);
       await this.audit.record(
         {
-          action: 'DOCUMENT_UPLOAD_FAILED',
-          outcome: 'FAILED',
+          action: 'DOCUMENT_UPLOAD_STARTED',
+          outcome: 'SUCCESS',
           actorUserId: input.principal.userId,
           actorUsername: input.principal.username,
           documentId: targetDocId,
-          reasonCode,
+          details: {
+            originalFilename: validatedInfo.sanitizedFilename,
+            mimeType: validatedInfo.mimeType,
+          },
         },
         input.context,
       );
-    };
 
-    let spoolResult: { totalBytes: number; sha256Hash: string; headerBuffer: Buffer };
-    try {
-      spoolResult = await spoolUploadStreamToTempFile(
-        input.fileStream,
-        spoolFilePath,
-        this.maxFileSize,
-      );
-    } catch (err: unknown) {
-      await failUpload(
-        err instanceof PayloadTooLargeException
-          ? AppErrorCode.FILE_SIZE_EXCEEDED
-          : 'STREAM_ABORTED',
-      );
-      throw err;
-    }
+      const failUpload = async (reasonCode: string): Promise<void> => {
+        await this.compensation.compensate(session);
+        await this.audit.record(
+          {
+            action: 'DOCUMENT_UPLOAD_FAILED',
+            outcome: 'FAILED',
+            actorUserId: input.principal.userId,
+            actorUsername: input.principal.username,
+            documentId: targetDocId,
+            reasonCode,
+          },
+          input.context,
+        );
+      };
 
-    try {
-      this.fileValidation.validateMagicBytes(spoolResult.headerBuffer, validatedInfo.extension);
-    } catch (err: unknown) {
-      await failUpload(AppErrorCode.INVALID_FILE_TYPE);
-      throw err;
-    }
-
-    if (validatedInfo.isOfficeFormat) {
+      let spoolResult: { totalBytes: number; sha256Hash: string; headerBuffer: Buffer };
       try {
-        await this.zipBombGuard.inspectOfficeZip(spoolFilePath, validatedInfo.extension);
+        spoolResult = await spoolUploadStreamToTempFile(
+          input.fileStream,
+          spoolFilePath,
+          this.maxFileSize,
+        );
       } catch (err: unknown) {
-        await failUpload(AppErrorCode.VALIDATION_FAILED);
+        await failUpload(
+          err instanceof PayloadTooLargeException
+            ? AppErrorCode.FILE_SIZE_EXCEEDED
+            : 'STREAM_ABORTED',
+        );
         throw err;
       }
-    }
 
-    await stageAndScanQuarantineUpload({
-      database: this.database,
-      logger: this.logger,
-      storage: this.storage,
-      antivirus: this.antivirus,
-      audit: this.audit,
-      compensation: this.compensation,
-      session,
-      input,
-      targetDocId,
-      spoolFilePath,
-      validatedInfo,
-      totalBytes: spoolResult.totalBytes,
-      sha256Hash: spoolResult.sha256Hash,
-    });
+      try {
+        this.fileValidation.validateMagicBytes(spoolResult.headerBuffer, validatedInfo.extension);
+      } catch (err: unknown) {
+        await failUpload(AppErrorCode.INVALID_FILE_TYPE);
+        throw err;
+      }
 
-    let encryptedResult: { encryptedBuffer: Buffer; dekReference: string };
-    const documentStorageKey = `documents/${targetDocId}/${randomUUID()}.enc`;
-    try {
-      encryptedResult = await this.encryption.encryptBuffer(
-        await fsp.readFile(spoolFilePath),
-        targetDocId,
-      );
-      await this.storage.putObject(
-        this.storage.documentsBucket,
-        documentStorageKey,
-        encryptedResult.encryptedBuffer,
-        'application/octet-stream',
-      );
-      session.storageKeysToDelete.push({
-        bucket: this.storage.documentsBucket,
-        key: documentStorageKey,
-      });
-    } catch (err: unknown) {
-      await this.compensation.compensate(session);
-      throw err;
-    }
+      if (validatedInfo.isOfficeFormat) {
+        try {
+          await this.zipBombGuard.inspectOfficeZip(spoolFilePath, validatedInfo.extension);
+        } catch (err: unknown) {
+          await failUpload(AppErrorCode.VALIDATION_FAILED);
+          throw err;
+        }
+      }
 
-    let finalVersionNo = 1;
-    try {
-      finalVersionNo = await persistCleanIngestedVersion({
+      await stageAndScanQuarantineUpload({
         database: this.database,
-        redlock: this.redlock,
-        authorization: this.authorization,
+        logger: this.logger,
+        storage: this.storage,
+        antivirus: this.antivirus,
+        audit: this.audit,
+        compensation: this.compensation,
+        session,
         input,
         targetDocId,
+        spoolFilePath,
         validatedInfo,
-        documentStorageKey,
         totalBytes: spoolResult.totalBytes,
         sha256Hash: spoolResult.sha256Hash,
-        dekReference: encryptedResult.dekReference,
       });
-    } catch (err: unknown) {
-      await failUpload('DATABASE_TRANSACTION_FAILED');
-      throw err;
-    }
 
-    session.storageKeysToDelete = session.storageKeysToDelete.filter(
-      (item) => item.key !== documentStorageKey,
-    );
-    await this.compensation.compensate(session);
+      let dekReference = '';
+      const documentStorageKey = `documents/${targetDocId}/${randomUUID()}.enc`;
+      try {
+        const plaintextBuffer = await fsp.readFile(spoolFilePath);
+        await fsp.unlink(spoolFilePath).catch(() => {});
+        const encryptedResult = await this.encryption.encryptBuffer(plaintextBuffer, targetDocId);
+        plaintextBuffer.fill(0);
+        dekReference = encryptedResult.dekReference;
 
-    await this.audit.record(
-      {
-        action: 'DOCUMENT_UPLOAD_COMPLETED',
-        outcome: 'SUCCESS',
-        actorUserId: input.principal.userId,
-        actorUsername: input.principal.username,
+        await this.storage.putObject(
+          this.storage.documentsBucket,
+          documentStorageKey,
+          encryptedResult.encryptedBuffer,
+          'application/octet-stream',
+          undefined,
+          encryptedResult.encryptedBuffer.byteLength,
+        );
+        session.storageKeysToDelete.push({
+          bucket: this.storage.documentsBucket,
+          key: documentStorageKey,
+        });
+      } catch (err: unknown) {
+        await this.compensation.compensate(session);
+        throw err;
+      }
+
+      let finalVersionNo = 1;
+      try {
+        finalVersionNo = await persistCleanIngestedVersion({
+          database: this.database,
+          redlock: this.redlock,
+          authorization: this.authorization,
+          input,
+          targetDocId,
+          validatedInfo,
+          documentStorageKey,
+          totalBytes: spoolResult.totalBytes,
+          sha256Hash: spoolResult.sha256Hash,
+          dekReference,
+        });
+      } catch (err: unknown) {
+        await failUpload('DATABASE_TRANSACTION_FAILED');
+        throw err;
+      }
+
+      session.storageKeysToDelete = session.storageKeysToDelete.filter(
+        (item) => item.key !== documentStorageKey,
+      );
+      await this.compensation.compensate(session);
+
+      await this.audit.record(
+        {
+          action: 'DOCUMENT_UPLOAD_COMPLETED',
+          outcome: 'SUCCESS',
+          actorUserId: input.principal.userId,
+          actorUsername: input.principal.username,
+          documentId: targetDocId,
+          versionNo: finalVersionNo,
+          details: {
+            versionNo: finalVersionNo,
+            originalFilename: validatedInfo.sanitizedFilename,
+            mimeType: validatedInfo.mimeType,
+            fileSizeBytes: spoolResult.totalBytes,
+            sha256Hash: spoolResult.sha256Hash,
+            scanStatus: 'CLEAN',
+          },
+        },
+        input.context,
+      );
+
+      return {
         documentId: targetDocId,
         versionNo: finalVersionNo,
-        details: {
-          versionNo: finalVersionNo,
-          originalFilename: validatedInfo.sanitizedFilename,
-          mimeType: validatedInfo.mimeType,
-          fileSizeBytes: spoolResult.totalBytes,
-          sha256Hash: spoolResult.sha256Hash,
-          scanStatus: 'CLEAN',
-        },
-      },
-      input.context,
-    );
-
-    return {
-      documentId: targetDocId,
-      versionNo: finalVersionNo,
-      originalFilename: validatedInfo.sanitizedFilename,
-      mimeType: validatedInfo.mimeType,
-      fileSizeBytes: spoolResult.totalBytes,
-      sha256Hash: spoolResult.sha256Hash,
-      scanStatus: 'CLEAN',
-      status: 'DRAFT',
-    };
+        originalFilename: validatedInfo.sanitizedFilename,
+        mimeType: validatedInfo.mimeType,
+        fileSizeBytes: spoolResult.totalBytes,
+        sha256Hash: spoolResult.sha256Hash,
+        scanStatus: 'CLEAN',
+        status: 'DRAFT',
+      };
+    } finally {
+      await fsp.unlink(spoolFilePath).catch(() => {});
+      await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }

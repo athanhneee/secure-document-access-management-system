@@ -1,7 +1,6 @@
 /**
  * Module: Document Ingestion Preconditions & Backpressure Stream Spooler
- * Algorithm: Enforces SoD role exclusions, UUID/`documentCode` syntax, existing document ownership/RBAC checks,
- *   and single-pass backpressure-controlled temp-file spooling (`0o600`) with incremental SHA-256 + 512-byte magic header capture.
+ * Thuật toán: Kiểm Định Tiên Quyết SoD/Độ Mật Trước Tải Lên & Ghi Đệm Luồng Một Lượt Có Điều Tiết Ngược Kèm Băm SHA-256.
  */
 import { BadRequestException, ForbiddenException, PayloadTooLargeException } from '@nestjs/common';
 import crypto from 'node:crypto';
@@ -115,6 +114,26 @@ export async function validateIngestionPreconditions(
             message:
               'Only the document owner or authorized department administrator can upload a new version.',
           });
+        }
+      }
+      if (
+        typeof database?.documentClassificationHistory?.findFirst === 'function' &&
+        typeof database?.userAttributeAssignment?.findFirst === 'function'
+      ) {
+        const currentClass = await database.documentClassificationHistory.findFirst({
+          where: { document_id: targetDoc.id, effective_to: null },
+          include: { classification_levels: true },
+        });
+        const existingRank = currentClass?.classification_levels?.rank ?? 0;
+        if (existingRank > 0) {
+          const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
+          if (rank < existingRank) {
+            input.fileStream.destroy();
+            throw new ForbiddenException({
+              errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+              message: `Insufficient clearance level (${rank}) to upload version to document at rank ${existingRank}.`,
+            });
+          }
         }
       }
     }

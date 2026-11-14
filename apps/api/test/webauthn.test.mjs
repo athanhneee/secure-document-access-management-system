@@ -11,20 +11,20 @@ test('WebAuthn — generates signed challenge token and verifies integrity', asy
   const token = webauthn.createChallengeToken(challenge, userId);
   assert.ok(token.includes('.'), 'Token must contain payload and signature separated by dot');
 
-  const extracted = webauthn.verifyChallengeToken(token, userId);
+  const extracted = await webauthn.verifyChallengeToken(token, userId);
   assert.equal(extracted, challenge, 'Extracted challenge must match original');
 
   const [, signature] = token.split('.');
   const tamperedPayload = Buffer.from(
     JSON.stringify({ challenge: 'hacked', userId: '42', timestamp: Date.now() }),
   ).toString('base64url');
-  assert.throws(
+  await assert.rejects(
     () => webauthn.verifyChallengeToken(`${tamperedPayload}.${signature}`, userId),
     /signature verification failed/,
     'Tampered payload must be rejected by HMAC signature verification',
   );
 
-  assert.throws(
+  await assert.rejects(
     () => webauthn.verifyChallengeToken(token, 999n),
     /bound to a different user/,
     'Token bound to user 42 must be rejected when claimed by user 999',
@@ -43,7 +43,7 @@ test('WebAuthn — generates registration options conforming to W3C WebAuthn Lev
   assert.ok(options.pubKeyCredParams.length > 0, 'Must support multiple COSE algorithms');
   assert.ok(challengeToken, 'Must generate associated signed challenge token');
 
-  const verifiedChallenge = webauthn.verifyChallengeToken(challengeToken, 101n);
+  const verifiedChallenge = await webauthn.verifyChallengeToken(challengeToken, 101n);
   assert.equal(verifiedChallenge, options.challenge);
 });
 
@@ -73,7 +73,7 @@ test('WebAuthn — generates authentication options with allowCredentials for en
   assert.equal(options.allowCredentials?.[0]?.id, 'yubikey-cred-id-abc123');
   assert.deepEqual(options.allowCredentials?.[0]?.transports, ['usb', 'nfc']);
 
-  const verified = webauthn.verifyChallengeToken(challengeToken, 101n);
+  const verified = await webauthn.verifyChallengeToken(challengeToken, 101n);
   assert.equal(verified, options.challenge);
 });
 

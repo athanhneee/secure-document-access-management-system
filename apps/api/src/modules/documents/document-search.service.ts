@@ -1,7 +1,6 @@
 /**
  * Module: Authorization-Aware Hybrid Document Search Service
- * Algorithm: Executes parameterized SQL FTS + trigram search and granted-document listing with
- *   Bell-LaPadula clearance enforcement, `LIMIT pageSize + 1` pagination, and SHA-256 query-hash auditing.
+ * Thuật toán: Tìm Kiếm Toàn Văn Kết Hợp Trigram PostgreSQL Có Trần Độ Mật Bell-LaPadula & Phân Trang `LIMIT pageSize + 1`.
  */
 import { createHash } from 'node:crypto';
 import { ForbiddenException, Injectable } from '@nestjs/common';

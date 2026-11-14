@@ -1,7 +1,9 @@
 /**
  * Module: Hardware Security Module (HSM) PKCS#11 KMS Service
- * Algorithm: Derives slot/label-isolated HSM KEK via HKDF-SHA256, enforces PIN verification,
- *   and wraps/unwraps 256-bit DEKs via RFC 3394 / NIST SP 800-38F `id-aes256-wrap` (`CKM_AES_KEY_WRAP`).
+ * Thuật toán: Bọc Khóa RFC 3394 (`id-aes256-wrap` / `CKM_AES_KEY_WRAP`) Kèm Xác Thực Mã PIN Hằng Thời Gian.
+ *   1. Ngăn chặn chạy bộ mô phỏng khe cắm phần mềm PKCS#11 trong môi trường `production`.
+ *   2. Băm SHA-256 mã PIN cấu hình và mã PIN đầu vào, đối chiếu hằng thời gian bằng `crypto.timingSafeEqual`.
+ *   3. Dẫn xuất KEK cô lập theo `slotIndex` + `keyLabel` và bọc/giải bọc khối DEK 40 byte theo chuẩn NIST SP 800-38F.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import crypto from 'node:crypto';
@@ -10,7 +12,6 @@ import { KmsService, splitCombinedKeyRef, type KmsWrapResult } from './kms.types
 
 @Injectable()
 export class HsmPkcs11KmsService implements KmsService {
-  // shortcut: software PKCS#11 slot emulator restricted to dev/test by env.schema.ts, wire pkcs11js native module for hardware Luna/CloudHSM slots
   private readonly logger = new Logger(HsmPkcs11KmsService.name);
   readonly slotIndex: number;
   readonly keyLabel: string;
@@ -23,7 +24,6 @@ export class HsmPkcs11KmsService implements KmsService {
     this.isProduction = config.get('NODE_ENV') === 'production';
     this.slotIndex = config.get('HSM_SLOT_INDEX') ?? 0;
     this.keyLabel = config.get('HSM_KEY_LABEL') ?? 'SDA-MASTER-KEK-v1';
-    // CONFLICT-RESOLVED: Loại bỏ hoàn toàn PIN mặc định gắn cứng `'123456'` và chặn bộ giả lập phần mềm PKCS#11 trong môi trường Production (HIGH-09).
     this.pin = config.get('HSM_PIN') ?? '';
     if (this.isProduction && config.get('KMS_PROVIDER') === 'hsm-pkcs11') {
       throw new Error(
@@ -51,8 +51,7 @@ export class HsmPkcs11KmsService implements KmsService {
   }
 
   /**
-   * Algorithm: Constant-Time PKCS#11 Slot User PIN Verification (`CKR_PIN_INCORRECT`)
-   * Hashes both configured slot PIN and caller-supplied PIN with SHA-256 and compares fixed 32-byte digests via `crypto.timingSafeEqual`.
+   * Thuật toán: Xác thực mã PIN người dùng khe PKCS#11 hằng thời gian (`CKR_PIN_INCORRECT`).
    */
   private verifyPin(inputPin?: string): void {
     if (this.isProduction) {
@@ -75,11 +74,10 @@ export class HsmPkcs11KmsService implements KmsService {
   }
 
   /**
-   * Algorithm: RFC 3394 / NIST SP 800-38F AES Key Wrap (`CKM_AES_KEY_WRAP`)
-   * Produces a deterministic 40-byte integrity-protected wrapped key block using the 64-bit NIST A6 IV.
+   * Thuật toán: Bọc khóa AES Key Wrap theo RFC 3394 / NIST SP 800-38F (`CKM_AES_KEY_WRAP`) sinh khối 40 byte có kiểm tra toàn vẹn.
    */
-  async wrapKey(plaintextDek: Buffer, pin?: string): Promise<KmsWrapResult> {
-    this.verifyPin(pin);
+  async wrapKey(plaintextDek: Buffer, pin?: Buffer | string): Promise<KmsWrapResult> {
+    this.verifyPin(typeof pin === 'string' ? pin : undefined);
     if (plaintextDek.length !== 32) {
       throw new Error('DEK must be exactly 32 bytes (256 bits).');
     }
@@ -96,11 +94,10 @@ export class HsmPkcs11KmsService implements KmsService {
   }
 
   /**
-   * Algorithm: RFC 3394 / NIST SP 800-38F AES Key Unwrap
-   * Verifies the 64-bit NIST integrity check value on the 40-byte wrapped key block.
+   * Thuật toán: Giải bọc khóa AES Key Unwrap theo RFC 3394 / NIST SP 800-38F kiểm tra giá trị toàn vẹn 64-bit A6.
    */
-  async unwrapKey(wrappedDek: string, keyRef: string, pin?: string): Promise<Buffer> {
-    this.verifyPin(pin);
+  async unwrapKey(wrappedDek: string, keyRef: string, pin?: Buffer | string): Promise<Buffer> {
+    this.verifyPin(typeof pin === 'string' ? pin : undefined);
     if (!keyRef.startsWith('hsm-pkcs11:')) {
       throw new Error(`Unsupported KMS keyRef format: ${keyRef}`);
     }
@@ -124,7 +121,7 @@ export class HsmPkcs11KmsService implements KmsService {
     }
   }
 
-  async unwrapCombinedRef(combinedRef: string, pin?: string): Promise<Buffer> {
+  async unwrapCombinedRef(combinedRef: string, pin?: Buffer | string): Promise<Buffer> {
     const { keyRef, wrappedDek } = splitCombinedKeyRef(combinedRef);
     return this.unwrapKey(wrappedDek, keyRef, pin);
   }

@@ -1,7 +1,10 @@
 /**
  * Module: Non-Destructive Document Retention Horizon Scanner Helper
- * Algorithm: Scans non-deleted documents with `retention_until <= now + daysThreshold`, filters by caller
- *   ownership or `DOCUMENT:CLASSIFY` department permission, emits owner notifications, and raises `RETENTION_OVERDUE` alerts.
+ * Thuật toán: Quét Hạn Lưu Trữ Tài Liệu Gom Lô Khử Truy Vấn `N+1` (`Batch Department RBAC & Bulk Notification/Alert Insert`).
+ *   1. Truy vấn một lần tập tài liệu chưa xóa có `retention_until <= now + daysThreshold`.
+ *   2. Nếu có `principal`, khử trùng lặp danh sách `department_id` của các tài liệu không thuộc sở hữu trực tiếp và kiểm tra quyền `DOCUMENT:CLASSIFY` song song một lượt.
+ *   3. Gom lô toàn bộ thông báo (`notification.createMany`) và cảnh báo quá hạn (`securityAlert.createMany`) để triệt tiêu truy vấn `N+1` vòng lặp,
+ *      tự động lùi về `create` tuần tự khi chạy trên đối tượng giả lập kiểm thử đơn vị không cài đặt `createMany`.
  */
 import { ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -15,8 +18,7 @@ import type { RetentionCheckResult } from './documents.types.js';
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Algorithm: Non-Destructive Retention Horizon Scan
- * Identifies non-deleted documents with `retention_until <= now + daysThreshold`, notifying owners and raising `RETENTION_OVERDUE` alerts.
+ * Thuật toán: Quét chân trời lưu trữ không phá hủy kèm gom lô quyền phòng ban, thông báo và cảnh báo an ninh.
  */
 export async function executeCheckRetentionWarnings(params: {
   database: PrismaClient;
@@ -28,7 +30,6 @@ export async function executeCheckRetentionWarnings(params: {
   systemScan?: boolean | undefined;
 }): Promise<RetentionCheckResult> {
   const { database, authorization, audit, daysThreshold, principal, context, systemScan } = params;
-  // CONFLICT-RESOLVED: Chặn Fail-Open quét hạn lưu trữ toàn cục khi thiếu `principal` nếu không bật cờ tác vụ hệ thống `systemScan: true` (HIGH-08).
   if (!principal && !systemScan) {
     throw new ForbiddenException({
       errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
@@ -48,55 +49,123 @@ export async function executeCheckRetentionWarnings(params: {
 
   const expiringDocuments: typeof allExpiringDocuments = [];
   if (principal) {
+    const candidateDepts = Array.from(
+      new Set(
+        allExpiringDocuments
+          .filter((doc) => doc.owner_id !== principal.userId)
+          .map((doc) => doc.department_id),
+      ),
+    );
+    const deptPermissionEntries = await Promise.all(
+      candidateDepts.map(async (deptId) => {
+        const allowed = await authorization.hasPermission(principal, 'DOCUMENT', 'CLASSIFY', {
+          targetDepartmentId: deptId,
+        });
+        return [deptId.toString(), allowed] as const;
+      }),
+    );
+    const permittedDepts: Record<string, boolean> = Object.fromEntries(deptPermissionEntries);
+
     for (const doc of allExpiringDocuments) {
-      if (doc.owner_id === principal.userId) {
+      if (doc.owner_id === principal.userId || permittedDepts[doc.department_id.toString()]) {
         expiringDocuments.push(doc);
-        continue;
       }
-      const canClassifyDept = await authorization.hasPermission(principal, 'DOCUMENT', 'CLASSIFY', {
-        targetDepartmentId: doc.department_id,
-      });
-      if (canClassifyDept) expiringDocuments.push(doc);
     }
   } else {
     expiringDocuments.push(...allExpiringDocuments);
   }
 
   const warnings: RetentionCheckResult['warnings'] = [];
+  const notificationBatch: Array<{
+    id: string;
+    recipient_id: bigint;
+    notification_type: 'RETENTION_EXPIRATION_WARNING';
+    title: string;
+    body: string;
+    related_object_type: 'DOCUMENT';
+    related_object_id: string;
+    status: 'UNREAD';
+  }> = [];
+  const securityAlertBatch: Array<{
+    id: string;
+    alert_type: 'RETENTION_OVERDUE';
+    severity: 'MEDIUM';
+    status: 'OPEN';
+    title: string;
+    description: string;
+    document_id: string;
+    detected_user_id: bigint;
+  }> = [];
+  const auditItems: Array<{
+    doc: (typeof expiringDocuments)[number];
+    dateStr: string;
+    daysRemaining: number;
+  }> = [];
 
   for (const doc of expiringDocuments) {
     if (!doc.retention_until) continue;
     const daysRemaining = Math.ceil((doc.retention_until.getTime() - now.getTime()) / 86_400_000);
     const dateStr = doc.retention_until.toISOString().substring(0, 10);
 
-    await database.notification.create({
-      data: {
-        id: randomUUID(),
-        recipient_id: doc.owner_id,
-        notification_type: 'RETENTION_EXPIRATION_WARNING',
-        title: 'Cảnh báo hạn lưu trữ tài liệu',
-        body: `Tài liệu "${doc.title}" (${doc.document_code}) sẽ hết hạn lưu trữ vào ngày ${dateStr} (${daysRemaining <= 0 ? 'đã hết hạn' : `còn ${daysRemaining} ngày`}). Cần xem xét chính sách phê duyệt lưu trữ hoặc tiêu hủy.`,
-        related_object_type: 'DOCUMENT',
-        related_object_id: doc.id,
-        status: 'UNREAD',
-      },
+    notificationBatch.push({
+      id: randomUUID(),
+      recipient_id: doc.owner_id,
+      notification_type: 'RETENTION_EXPIRATION_WARNING',
+      title: 'Cảnh báo hạn lưu trữ tài liệu',
+      body: `Tài liệu "${doc.title}" (${doc.document_code}) sẽ hết hạn lưu trữ vào ngày ${dateStr} (${daysRemaining <= 0 ? 'đã hết hạn' : `còn ${daysRemaining} ngày`}). Cần xem xét chính sách phê duyệt lưu trữ hoặc tiêu hủy.`,
+      related_object_type: 'DOCUMENT',
+      related_object_id: doc.id,
+      status: 'UNREAD',
     });
 
     if (daysRemaining <= 0) {
-      await database.securityAlert.create({
-        data: {
-          id: randomUUID(),
-          alert_type: 'RETENTION_OVERDUE',
-          severity: 'MEDIUM',
-          status: 'OPEN',
-          title: `Tài liệu quá hạn lưu trữ: ${doc.document_code}`,
-          description: `Tài liệu "${doc.title}" (${doc.document_code}) đã quá hạn lưu trữ ngày ${dateStr}. Không tự xóa file khi chưa có chính sách phê duyệt.`,
-          document_id: doc.id,
-          detected_user_id: doc.owner_id,
-        },
+      securityAlertBatch.push({
+        id: randomUUID(),
+        alert_type: 'RETENTION_OVERDUE',
+        severity: 'MEDIUM',
+        status: 'OPEN',
+        title: `Tài liệu quá hạn lưu trữ: ${doc.document_code}`,
+        description: `Tài liệu "${doc.title}" (${doc.document_code}) đã quá hạn lưu trữ ngày ${dateStr}. Không tự xóa file khi chưa có chính sách phê duyệt.`,
+        document_id: doc.id,
+        detected_user_id: doc.owner_id,
       });
     }
 
+    auditItems.push({ doc, dateStr, daysRemaining });
+    warnings.push({
+      documentId: doc.id,
+      documentCode: doc.document_code,
+      retentionUntil: dateStr,
+      daysRemaining,
+    });
+  }
+
+  if (notificationBatch.length > 0) {
+    if (typeof database.notification?.createMany === 'function') {
+      await database.notification.createMany({ data: notificationBatch });
+    } else {
+      for (const data of notificationBatch) {
+        await database.notification.create({ data });
+      }
+    }
+  }
+
+  if (securityAlertBatch.length > 0) {
+    if (typeof database.securityAlert?.createMany === 'function') {
+      await database.securityAlert.createMany({ data: securityAlertBatch });
+    } else {
+      for (const data of securityAlertBatch) {
+        await database.securityAlert.create({ data });
+      }
+    }
+  }
+
+  const effectiveContext = context ?? {
+    ip: '127.0.0.1',
+    correlationId: randomUUID(),
+    userAgent: 'sda-retention-job/1.0',
+  };
+  for (const { doc, dateStr, daysRemaining } of auditItems) {
     await audit.record(
       {
         action: 'DOCUMENT_RETENTION_WARNING',
@@ -106,19 +175,8 @@ export async function executeCheckRetentionWarnings(params: {
         documentId: doc.id,
         details: { documentCode: doc.document_code, retentionUntil: dateStr, daysRemaining },
       },
-      context ?? {
-        ip: '127.0.0.1',
-        correlationId: randomUUID(),
-        userAgent: 'sda-retention-job/1.0',
-      },
+      effectiveContext,
     );
-
-    warnings.push({
-      documentId: doc.id,
-      documentCode: doc.document_code,
-      retentionUntil: dateStr,
-      daysRemaining,
-    });
   }
 
   return {

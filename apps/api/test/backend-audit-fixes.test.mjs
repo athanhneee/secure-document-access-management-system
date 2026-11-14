@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import { ClassificationsService } from '../dist/modules/classifications/classifications.service.js';
 import { AccessSessionsService } from '../dist/modules/access-sessions/access-sessions.service.js';
@@ -159,13 +159,17 @@ test('AccessSessionsService — listSessions retrieves active sessions with docu
   assert.equal(result.data[0].status, 'ACTIVE');
 });
 
-test('AccessSessionsService — terminateSession terminates active session and updates record', async () => {
+test('AccessSessionsService — terminateSession enforces department scope and atomic CAS conflict on repeat', async () => {
   const sessionId = randomUUID();
   let sessionRecord = {
     id: sessionId,
     status: 'ACTIVE',
     ended_at: null,
     terminated_reason: null,
+    document_versions: {
+      document_id: randomUUID(),
+      document: { department_id: 20n },
+    },
   };
 
   const mockDb = {
@@ -174,29 +178,58 @@ test('AccessSessionsService — terminateSession terminates active session and u
         if (where.id === sessionId) return sessionRecord;
         return null;
       },
-      update: async ({ data }) => {
+      updateMany: async ({ where, data }) => {
+        if (where.id !== sessionId || sessionRecord.status !== where.status) {
+          return { count: 0 };
+        }
         sessionRecord = { ...sessionRecord, ...data };
-        return sessionRecord;
+        return { count: 1 };
       },
     },
+    $transaction: async (fn) => fn(mockDb),
   };
 
-  const service = new AccessSessionsService(mockDb);
+  const scopedAuthz = {
+    visibleDepartmentIds: async (actor) => (actor?.departmentId === 99n ? [99n] : [20n]),
+  };
+  const service = new AccessSessionsService(mockDb, undefined, scopedAuthz);
 
   await assert.rejects(
     () => service.terminateSession(randomUUID(), 'Test reason'),
     (err) => err instanceof NotFoundException,
   );
 
-  const result = await service.terminateSession(sessionId, 'Security concern');
+  await assert.rejects(
+    () =>
+      service.terminateSession(sessionId, 'Cross-dept attempt', {
+        userId: 5n,
+        sessionId: 's-5',
+        username: 'scoped.officer',
+        departmentId: 99n,
+        roles: ['SECURITY_OFFICER'],
+        mfa: true,
+      }),
+    (err) => err instanceof ForbiddenException,
+  );
+
+  const result = await service.terminateSession(sessionId, 'Security concern', {
+    userId: 6n,
+    sessionId: 's-6',
+    username: 'dept20.officer',
+    departmentId: 20n,
+    roles: ['SECURITY_OFFICER'],
+    mfa: true,
+  });
   assert.equal(result.id, sessionId);
   assert.equal(result.status, 'TERMINATED');
   assert.equal(sessionRecord.status, 'TERMINATED');
   assert.equal(sessionRecord.terminated_reason, 'Security concern');
   assert.ok(sessionRecord.ended_at instanceof Date);
 
-  const idempotentResult = await service.terminateSession(sessionId, 'Repeat');
-  assert.equal(idempotentResult.status, 'TERMINATED');
+  await assert.rejects(
+    () => service.terminateSession(sessionId, 'Repeat'),
+    (err) => err instanceof ConflictException,
+  );
 });
 
 test('AuditService — exportAuditLogs sanitizes CSV formula injection prefixes (=, +, -, @, \\t, \\r)', async () => {

@@ -1,7 +1,6 @@
 /**
  * Module: Documents Catalog, Search & Lifecycle HTTP Controller
- * Algorithm: Enforces Zod input schemas, CSRF token verification on state-mutating routes,
- *   and RBAC permission metadata across document discovery, metadata, version, and classification APIs.
+ * Thuật toán: Kiểm Định Lược Đồ Đầu Vào Zod, Bảo Vệ Chống Giả Mạo Yêu Cầu CSRF & Phân Quyền RBAC Cho Vòng Đời Tài Liệu.
  */
 import {
   Body,

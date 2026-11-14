@@ -1,7 +1,6 @@
 /**
  * Module: Bounded Compliance Export Dataset Query & Tabular Row Builder
- * Algorithm: Dispatches bounded queries (`take: 1000` / `50`) by `exportType` (`AUDIT_LOGS`,
- *   `SECURITY_ALERTS`, `INCIDENT_REPORTS`, `SYSTEM_REPORT`) and normalizes records into string-keyed rows.
+ * Thuật toán: Truy Vấn Tập Dữ Liệu Xuất Tuân Thủ Có Giới Hạn Bản Ghi & Chuẩn Hóa Dòng Bảng Theo Từng Loại Báo Cáo.
  */
 import type { getDatabaseClient } from '@sda/database';
 import type { ExportType } from '@sda/contracts';

@@ -1,7 +1,6 @@
 /**
  * Module: Controlled Derivative Document Download Pipeline Helper
- * Algorithm: Enforces session + runtime `DOWNLOAD` grant + classification `allow_download`, decrypts to an
- *   ephemeral file cleaned in `finally`, and produces a watermarked PDF derivative whenever `requireWatermark` holds.
+ * Thuật toán: Đường Ống Tải Xuống Bản Phái Sinh Có Thủy Vân Bắt Buộc & Dọn Dẹp Tệp Tạm Trong `finally`.
  */
 import { ForbiddenException } from '@nestjs/common';
 import crypto from 'node:crypto';

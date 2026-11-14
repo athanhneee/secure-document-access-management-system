@@ -1,7 +1,6 @@
 /**
  * Module: Document Lifecycle Domain DTOs & Detail Projection Helper
- * Algorithm: Projects relational Prisma `Document` entities (owner, department, current version,
- *   active SCD Type 2 classification) into normalized API DTOs after anti-enumeration read verification.
+ * Thuật toán: Ánh Xạ Thực Thể Quan Hệ Tài Liệu (Chủ Sở Hữu, Phòng Ban, Phiên Bản Hiện Hành, Phân Loại SCD2) Sau Cổng Chống Dò Quét.
  */
 import { NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';

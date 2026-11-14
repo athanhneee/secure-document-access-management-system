@@ -11,6 +11,7 @@ import {
   extractOfficeFallbackText,
   inspectOfficeArchiveSecurity,
 } from './office-archive-inspector.js';
+import { convertWithLocalLibreOffice } from './local-libreoffice.helper.js';
 import { convertWithGotenberg, renderSanitizedTextToPdf } from './office-fallback-pdf.js';
 
 export interface OfficeConversionOptions {
@@ -87,6 +88,16 @@ export class OfficeConverterService {
     if (gotenbergPdf) {
       this.logger.log(`Rendered ${filename} to PDF using Gotenberg/LibreOffice headless engine.`);
       return gotenbergPdf;
+    }
+
+    const localLibreOfficePdf = await convertWithLocalLibreOffice(
+      officeBuffer,
+      filename,
+      timeoutMs,
+    );
+    if (localLibreOfficePdf) {
+      this.logger.log(`Rendered ${filename} to PDF using host LibreOffice headless binary.`);
+      return localLibreOfficePdf;
     }
 
     this.logger.log(`Rendering ${filename} via built-in safe text-to-PDF fallback engine.`);

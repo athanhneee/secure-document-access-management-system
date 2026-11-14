@@ -12,6 +12,7 @@ import { once } from 'node:events';
 import net from 'node:net';
 import { Readable } from 'node:stream';
 import { AppConfigService } from '../../config/config.service.js';
+import { scanBufferWithWindowsDefender } from './windows-defender-scanner.helper.js';
 
 export interface AntivirusScanResult {
   status: 'CLEAN' | 'INFECTED' | 'FAILED';
@@ -126,6 +127,7 @@ export class AntivirusScannerService {
           };
         }
 
+        const fallbackChunks: Buffer[] = Buffer.isBuffer(source) ? [source] : [];
         if (!Buffer.isBuffer(source) && !source.destroyed && source.readable) {
           for await (const rawChunk of source) {
             const buf = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
@@ -136,6 +138,18 @@ export class AntivirusScannerService {
                 durationMs: Date.now() - startTime,
               };
             }
+            fallbackChunks.push(buf);
+          }
+        }
+
+        if (activeEnv === 'development' && fallbackChunks.length > 0) {
+          const defender = await scanBufferWithWindowsDefender(Buffer.concat(fallbackChunks));
+          if (defender.executed && defender.status === 'INFECTED') {
+            return {
+              status: 'INFECTED' as const,
+              virusName: defender.virusName ?? 'Win32.Defender.DetectedThreat',
+              durationMs: Date.now() - startTime,
+            };
           }
         }
 

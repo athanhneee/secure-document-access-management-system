@@ -1,10 +1,14 @@
 import { type getDatabaseClient } from '@sda/database';
+import { randomUUID } from 'node:crypto';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { createTransport, type Transporter } from 'nodemailer';
 
 /**
  * Thuật toán / Tổng quan module:
  * Bộ vận chuyển thư điện tử thực tế qua giao thức SMTP (`nodemailer`) cho hàng đợi `notification_outbox`,
- * kết hợp làm sạch ký tự điều khiển CRLF chống tấn công tiêm header SMTP và tra cứu địa chỉ người nhận an toàn.
+ * kết hợp làm sạch ký tự điều khiển CRLF chống tấn công tiêm header SMTP, tra cứu địa chỉ người nhận an toàn,
+ * cắt thời hạn cứng `5_000ms` và lưu thư dự phòng `.local/mail-sink/*.eml` (`0o600`) khi chạy `development` trên máy chủ không bật Mailpit.
  */
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -16,6 +20,13 @@ export interface OutboxEmailMessage {
   payload: unknown;
 }
 
+const SMTP_TIMEOUT_MS = 5_000;
+const LOOPBACK_SMTP_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+export const DEFAULT_WORKER_MAIL_SINK_DIR = path.resolve(
+  import.meta.dirname,
+  '../../../.local/mail-sink',
+);
+
 let cachedTransporterKey: string | null = null;
 let cachedTransporter: Transporter | null = null;
 
@@ -25,6 +36,29 @@ let cachedTransporter: Transporter | null = null;
  */
 export function sanitizeSmtpHeader(value: string): string {
   return value.replace(/[\r\n]+/gu, ' ').trim();
+}
+
+function isLoopbackDevMailSinkAllowed(smtpHost: string): boolean {
+  const activeEnv = (process.env['NODE_ENV'] ?? 'development').trim().toLowerCase();
+  if (activeEnv !== 'development') return false;
+  if (
+    process.env['NODE_TEST_CONTEXT'] &&
+    process.env['SDA_ENABLE_DEV_FALLBACK_IN_TEST'] !== 'true'
+  ) {
+    return false;
+  }
+  return LOOPBACK_SMTP_HOSTS.has(smtpHost.trim().toLowerCase());
+}
+
+function isSmtpSocketFailure(err: unknown): boolean {
+  const code = (err as { code?: string })?.code ?? '';
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    code === 'ECONNREFUSED' ||
+    code === 'ESOCKET' ||
+    code === 'ETIMEDOUT' ||
+    /ECONNREFUSED|ETIMEDOUT|connect/iu.test(msg)
+  );
 }
 
 /**
@@ -76,6 +110,9 @@ function getSmtpTransporter(smtpHost: string): { transporter: Transporter; fromA
       port,
       secure,
       ...(smtpUser.length > 0 ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
+      connectionTimeout: SMTP_TIMEOUT_MS,
+      greetingTimeout: SMTP_TIMEOUT_MS,
+      socketTimeout: SMTP_TIMEOUT_MS,
     });
     cachedTransporterKey = cacheKey;
   }
@@ -84,7 +121,8 @@ function getSmtpTransporter(smtpHost: string): { transporter: Transporter; fromA
 }
 
 /**
- * Thuật toán: Chuyển phát thông báo Outbox qua máy chủ SMTP thực tế có làm sạch tiêu đề (Sanitized SMTP Outbox Delivery).
+ * Thuật toán: Chuyển phát thông báo Outbox qua máy chủ SMTP thực tế có làm sạch tiêu đề;
+ * khi máy chủ phát triển cục bộ không bật Mailpit ở `127.0.0.1` thì ghi tệp `.eml` (`0o600`) vào `.local/mail-sink` thay vì dồn `DEAD_LETTER`.
  */
 export async function deliverOutboxEmailViaSmtp(
   database: Pick<PrismaClient, 'user'>,
@@ -97,11 +135,35 @@ export async function deliverOutboxEmailViaSmtp(
 
   const recipientEmail = await resolveRecipientEmail(database, item.recipient_id, item.payload);
   const { transporter, fromAddress } = getSmtpTransporter(smtpHost);
+  const cleanSubject = sanitizeSmtpHeader(item.title);
 
-  await transporter.sendMail({
-    from: fromAddress,
-    to: recipientEmail,
-    subject: sanitizeSmtpHeader(item.title),
-    text: item.body,
-  });
+  try {
+    await transporter.sendMail({
+      from: fromAddress,
+      to: recipientEmail,
+      subject: cleanSubject,
+      text: item.body,
+    });
+  } catch (err: unknown) {
+    if (!isLoopbackDevMailSinkAllowed(smtpHost) || !isSmtpSocketFailure(err)) {
+      throw err;
+    }
+    const sinkDir = path.resolve(
+      process.env['SDA_DEV_MAIL_SINK_DIR']?.trim() || DEFAULT_WORKER_MAIL_SINK_DIR,
+    );
+    await fsp.mkdir(sinkDir, { recursive: true, mode: 0o700 });
+    const emlPath = path.join(sinkDir, `${Date.now()}-outbox-${randomUUID()}.eml`);
+    const emlContent = [
+      `Date: ${new Date().toUTCString()}`,
+      `From: ${fromAddress}`,
+      `To: ${recipientEmail}`,
+      `Subject: ${cleanSubject}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      item.body,
+      '',
+    ].join('\r\n');
+    await fsp.writeFile(emlPath, emlContent, { encoding: 'utf8', mode: 0o600 });
+  }
 }

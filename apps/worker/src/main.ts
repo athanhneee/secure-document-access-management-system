@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseEnv } from 'node:util';
 import { waitForShutdown } from './lifecycle.js';
 import { startGrantExpiryJob } from './grant-expiry-job.js';
 import { startDerivativeCleanupJob } from './derivative-cleanup-job.js';
@@ -21,32 +22,56 @@ import { startWorkerHealthServer } from './worker-health-server.js';
  *   và các dịch vụ nền độc lập cùng lắng nghe `shutdown.signal`.
  */
 
-// Thuật toán: Tìm kiếm và nạp biến môi trường dự phòng theo chuỗi ứng viên phân cấp thư mục (Hierarchical Env Fallback Resolution)
-if (!process.env['DATABASE_URL']) {
-  const candidateGroups = [
-    [
-      path.resolve(process.cwd(), '.env'),
-      path.resolve(process.cwd(), '../../.env'),
-      path.resolve(import.meta.dirname, '../../../.env'),
-    ],
-    [
-      path.resolve(process.cwd(), '.local/dev.env'),
-      path.resolve(process.cwd(), '../../.local/dev.env'),
-      path.resolve(import.meta.dirname, '../../../.local/dev.env'),
-    ],
-  ];
-  for (const group of candidateGroups) {
-    for (const candidate of group) {
-      if (fs.existsSync(candidate)) {
-        try {
-          process.loadEnvFile(candidate);
-          break;
-        } catch {
-          // Continue checking next candidate
+/**
+ * Thuật toán: Nạp bổ sung biến môi trường phân cấp không ghi đè khóa sẵn có (`Non-Destructive Hierarchical Env Hydration`).
+ * Quét tệp `.env` và `.local/dev.env` đầu tiên tìm thấy ngay cả khi `DATABASE_URL` đã tồn tại trong `process.env`,
+ * chỉ gán các khóa chưa định nghĩa (`!(key in process.env)`).
+ */
+// CONFLICT-RESOLVED: Luôn quét tệp `.env` đầu tiên tìm thấy và nạp từng khóa còn thiếu thay vì bỏ qua toàn bộ khi `DATABASE_URL` đã có sẵn.
+const candidateGroups = [
+  [
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(process.cwd(), '../../.env'),
+    path.resolve(import.meta.dirname, '../../../.env'),
+  ],
+  [
+    path.resolve(process.cwd(), '.local/dev.env'),
+    path.resolve(process.cwd(), '../../.local/dev.env'),
+    path.resolve(import.meta.dirname, '../../../.local/dev.env'),
+  ],
+];
+for (const group of candidateGroups) {
+  for (const candidate of group) {
+    if (fs.existsSync(candidate)) {
+      try {
+        const parsed = parseEnv(fs.readFileSync(candidate, 'utf8'));
+        for (const [key, val] of Object.entries(parsed)) {
+          if (!(key in process.env) && val !== undefined) {
+            process.env[key] = val;
+          }
         }
+        break;
+      } catch {
+        // Continue checking next candidate
       }
     }
   }
+}
+
+/**
+ * Thuật toán: Thẩm định số nguyên dương hữu hạn cho tham số chu kỳ lập lịch (`*_INTERVAL_MS` / TTL), quay lui an toàn nếu cấu hình sai.
+ */
+function resolvePositiveNumberEnv(envKey: string, fallbackValue: number): number {
+  const raw = process.env[envKey]?.trim();
+  if (!raw) return fallbackValue;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(
+      `[Worker Config] Invalid non-positive or non-finite ${envKey}="${raw}"; falling back to ${fallbackValue}.`,
+    );
+    return fallbackValue;
+  }
+  return Math.floor(parsed);
 }
 
 const shutdown = new AbortController();
@@ -54,7 +79,7 @@ const requestShutdown = (): void => shutdown.abort();
 process.once('SIGINT', requestShutdown);
 process.once('SIGTERM', requestShutdown);
 
-const GRANT_EXPIRY_INTERVAL_MS = Number(process.env['GRANT_EXPIRY_INTERVAL_MS'] ?? '60000');
+const GRANT_EXPIRY_INTERVAL_MS = resolvePositiveNumberEnv('GRANT_EXPIRY_INTERVAL_MS', 60_000);
 const configuredAuditHmacKey =
   process.env['AUDIT_INTEGRITY_KEY'] ??
   process.env['DOCUMENT_AUDIT_HMAC_KEY'] ??
@@ -78,19 +103,25 @@ const GRANT_AUDIT_HMAC_KEY =
   configuredAuditHmacKey ?? 'local-only-audit-integrity-hmac-key-0000000000000000';
 const AUDIT_KEY_ROTATION_JSON = process.env['AUDIT_KEY_ROTATION_JSON'];
 
-const DERIVATIVE_CLEANUP_INTERVAL_MS = Number(
-  process.env['DERIVATIVE_CLEANUP_INTERVAL_MS'] ?? '300000',
+const DERIVATIVE_CLEANUP_INTERVAL_MS = resolvePositiveNumberEnv(
+  'DERIVATIVE_CLEANUP_INTERVAL_MS',
+  300_000,
 );
-const DERIVATIVE_TTL_MINUTES = Number(process.env['DERIVATIVE_TTL_MINUTES'] ?? '60');
-const AUDIT_VERIFY_INTERVAL_MS = Number(process.env['AUDIT_VERIFY_INTERVAL_MS'] ?? '300000');
-const SECURITY_DETECTION_INTERVAL_MS = Number(
-  process.env['SECURITY_DETECTION_INTERVAL_MS'] ?? '60000',
+const DERIVATIVE_TTL_MINUTES = resolvePositiveNumberEnv('DERIVATIVE_TTL_MINUTES', 60);
+const AUDIT_VERIFY_INTERVAL_MS = resolvePositiveNumberEnv('AUDIT_VERIFY_INTERVAL_MS', 300_000);
+const SECURITY_DETECTION_INTERVAL_MS = resolvePositiveNumberEnv(
+  'SECURITY_DETECTION_INTERVAL_MS',
+  60_000,
 );
-const NOTIFICATION_OUTBOX_INTERVAL_MS = Number(
-  process.env['NOTIFICATION_OUTBOX_INTERVAL_MS'] ?? '15000',
+const NOTIFICATION_OUTBOX_INTERVAL_MS = resolvePositiveNumberEnv(
+  'NOTIFICATION_OUTBOX_INTERVAL_MS',
+  15_000,
 );
-const EXPORT_PROCESSOR_INTERVAL_MS = Number(process.env['EXPORT_PROCESSOR_INTERVAL_MS'] ?? '5000');
-const EXPORT_CLEANUP_INTERVAL_MS = Number(process.env['EXPORT_CLEANUP_INTERVAL_MS'] ?? '300000');
+const EXPORT_PROCESSOR_INTERVAL_MS = resolvePositiveNumberEnv(
+  'EXPORT_PROCESSOR_INTERVAL_MS',
+  5_000,
+);
+const EXPORT_CLEANUP_INTERVAL_MS = resolvePositiveNumberEnv('EXPORT_CLEANUP_INTERVAL_MS', 300_000);
 
 // Thuật toán: Khởi chạy điều phối song song máy chủ Health/Metrics và 8 tác vụ nền gắn kết chung tín hiệu hủy tập trung
 startWorkerHealthServer(undefined, shutdown.signal);

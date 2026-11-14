@@ -163,9 +163,11 @@ storage/
 !readme.md
 !**/README.md
 !**/readme.md
-# CONFLICT-RESOLVED: Mở khóa theo dõi Git cho rules/ui-design-system.md và design-system/MASTER.md để test/unit/ui-design-wcag.test.mjs không sập ENOENT trên bản clone sạch / GitHub Actions CI.
+# CONFLICT-RESOLVED: Mở khóa theo dõi Git cho rules/ui-design-system.md, design-system/MASTER.md và AGENTS.md để tuân thủ chuẩn dự án và vượt qua kiểm thử CI trên bản clone sạch.
 !rules/ui-design-system.md
 !design-system/MASTER.md
+!AGENTS.md
+!**/AGENTS.md
 
 # =========================================================================
 # 7. Prisma generated client; migrations and schema MUST be tracked
@@ -208,8 +210,6 @@ desktop.ini
 .roo/
 .cline/
 .aider*
-AGENTS.md
-**/AGENTS.md
 CLAUDE.md
 **/CLAUDE.md
 

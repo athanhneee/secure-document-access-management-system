@@ -1,8 +1,11 @@
 import { z } from 'zod';
 import { IsoDateOrDateTimeSchema, PositiveBigIntSchema } from './validation-primitives.js';
 
-export const AuditOutcomeSchema = z.enum(['SUCCESS', 'DENIED', 'FAILED']);
-export type AuditOutcome = z.infer<typeof AuditOutcomeSchema>;
+/**
+ * Module: Audit Trail, Anchors, Async Exports & Notifications DTO Schemas (`@sda/contracts`)
+ * Thuật toán: Xác thực nghiêm ngặt bộ lọc truy vấn kiểm toán, khoảng số thứ tự chuỗi `BIGINT` 64-bit và tham số tác vụ xuất báo cáo bất đồng bộ.
+ */
+const AuditOutcomeSchema = z.enum(['SUCCESS', 'DENIED', 'FAILED']);
 
 // CONFLICT-RESOLVED: Chuẩn hóa actorUserId/fromSequence/toSequence theo giới hạn BIGINT 64-bit và kiểm tra ngày lịch thực cho from/to.
 export const QueryAuditLogsSchema = z
@@ -45,8 +48,6 @@ export const CreateAuditAnchorSchema = z
   })
   .strict();
 
-export type CreateAuditAnchorInput = z.infer<typeof CreateAuditAnchorSchema>;
-
 export const VerifyAuditChainSchema = z
   .object({
     chainPartition: z.string().max(80).optional(),
@@ -57,10 +58,10 @@ export const VerifyAuditChainSchema = z
 
 export type VerifyAuditChainInput = z.infer<typeof VerifyAuditChainSchema>;
 
-export const ExportFormatSchema = z.enum(['CSV', 'EXCEL', 'PDF', 'JSON']);
+const ExportFormatSchema = z.enum(['CSV', 'EXCEL', 'PDF', 'JSON']);
 export type ExportFormat = z.infer<typeof ExportFormatSchema>;
 
-export const ExportTypeSchema = z.enum([
+const ExportTypeSchema = z.enum([
   'AUDIT_LOGS',
   'SECURITY_ALERTS',
   'INCIDENT_REPORTS',

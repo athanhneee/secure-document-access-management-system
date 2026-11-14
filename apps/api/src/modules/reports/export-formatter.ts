@@ -12,12 +12,7 @@ export interface ExportColumn {
 }
 
 /**
- * Thuật toán: Chuyển tự Unicode NFD sang bảng mã ASCII in được tương thích WinAnsi (Unicode-to-WinAnsi Transliteration)
- * Mục đích: Ngăn lỗi mã hóa phông chữ chuẩn `Helvetica` của `pdf-lib` khi tiêu đề hoặc dữ liệu báo cáo chứa dấu tiếng Việt/ký tự đặc biệt.
- * Cơ chế hoạt động:
- *   - Phân rã tổ hợp dấu bằng chuẩn hóa Unicode `NFD`, tước bỏ dải dấu phụ kết hợp `[\u0300-\u036f]`, chuyển `đ/Đ` thành `d/D`, thay ký tự ngoài miền in ASCII `[\x20-\x7E]` bằng khoảng trắng và gom gọn khoảng trắng thừa.
- *
- * Transliterates Vietnamese / Unicode text to ASCII-compatible string for WinAnsi standard PDF fonts.
+ * Thuật toán: Chuyển tự Unicode NFD sang bảng mã ASCII in được tương thích WinAnsi (Unicode-to-WinAnsi Transliteration).
  */
 export function sanitizeForPdf(text: string): string {
   if (!text) return '';
@@ -31,14 +26,40 @@ export function sanitizeForPdf(text: string): string {
 }
 
 /**
- * Thuật toán: Dàn trang bảng biểu PDF khổ ngang A4 đa trang (Multi-Page A4 Landscape Tabular Layout Engine)
- * Mục đích: Kết xuất tập dữ liệu kiểm toán/sự cố thành tệp PDF có tiêu đề, thanh cột, dòng xen kẽ màu (Zebra Striping), đánh số trang và chân trang bảo mật.
+ * Thuật toán: Ngắt dòng văn bản ô bảng PDF theo bề rộng phông chữ thực tế (`measureWidth`), bảo toàn 100% ký tự dài (SHA-256, UUID) không cắt mất dữ liệu.
+ */
+function wrapPdfCellText(
+  rawText: string,
+  measureWidth: (candidate: string) => number,
+  maxWidth: number,
+): string[] {
+  const cleaned = sanitizeForPdf(rawText);
+  if (!cleaned) return [''];
+  if (measureWidth(cleaned) <= maxWidth) return [cleaned];
+
+  const lines: string[] = [];
+  let current = '';
+  for (const ch of cleaned) {
+    const candidate = current + ch;
+    if (current.length > 0 && measureWidth(candidate) > maxWidth) {
+      lines.push(current.trimEnd());
+      current = ch === ' ' ? '' : ch;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.length > 0 || lines.length === 0) {
+    lines.push(current.trimEnd());
+  }
+  return lines;
+}
+
+/**
+ * Thuật toán: Dàn trang bảng biểu PDF khổ ngang A4 đa trang tự động co giãn chiều cao dòng (Dynamic Row-Height Multi-Page A4 Landscape Engine)
+ * Mục đích: Kết xuất toàn bộ tập dữ liệu tuân thủ thành tệp PDF nhiều trang A4 không giới hạn 55 dòng và không cắt cụt chuỗi dài.
  * Cơ chế hoạt động:
- *   - Thiết lập khổ giấy A4 ngang (`841.89 x 595.28 pt`, lề `36 pt`), chia đều độ rộng cột `colWidth = usableWidth / max(1, columns.length)`.
- *   - Tính sức chứa dòng mỗi trang `rowsPerPage = max(1, floor((usableHeight - 65) / rowHeight))` và tổng số trang `ceil(rows.length / rowsPerPage)`.
- *   - Với từng trang: vẽ tiêu đề, metadata trang, thanh header nền tối, lát cắt dữ liệu `rows.slice(pageIdx * rowsPerPage, (pageIdx + 1) * rowsPerPage)` có cắt ngắn chuỗi dài (`> 24` ký tự) và đóng dấu chân trang bảo mật.
- *
- * Generates a structured multi-page PDF tabular document.
+ *   - Pha 1 (Đo lường & Tách trang): Tính mảng dòng con `wrapPdfCellText` cho từng ô theo `colWidth - 8`, suy ra chiều cao động của từng bản ghi và phân bổ vào các trang A4 ngang (`841.89 x 595.28 pt`).
+ *   - Pha 2 (Dựng trang): Vẽ tiêu đề, metadata `Page k of N`, thanh cột nền tối, các dòng Zebra Striping đa dòng và chân trang bảo mật.
  */
 export async function generatePdfTable(
   title: string,
@@ -49,25 +70,80 @@ export async function generatePdfTable(
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  // A4 Landscape: 841.89 x 595.28 points
   const pageWidth = 841.89;
   const pageHeight = 595.28;
   const margin = 36;
   const usableWidth = pageWidth - margin * 2;
-  const usableHeight = pageHeight - margin * 2;
-
+  const bodyFontSize = 7;
+  const lineHeight = 9.5;
   const colWidth = usableWidth / Math.max(1, columns.length);
-  const rowHeight = 16;
-  const rowsPerPage = Math.max(1, Math.floor((usableHeight - 65) / rowHeight));
-  const totalPages = Math.max(1, Math.ceil(rows.length / rowsPerPage));
+  const maxCellWidth = Math.max(18, colWidth - 8);
+  const maxHeaderWidth = Math.max(18, colWidth - 8);
+
+  const wrappedHeaders = columns.map((col) =>
+    wrapPdfCellText(col.header, (s) => fontBold.widthOfTextAtSize(s, 7.5), maxHeaderWidth).slice(
+      0,
+      2,
+    ),
+  );
+  const headerLineCount = Math.max(1, ...wrappedHeaders.map((h) => h.length));
+  const headerBarHeight = Math.max(18, headerLineCount * 9.5 + 6);
+  const maxPageBodyHeight = pageHeight - margin * 2 - 34 - headerBarHeight - 16;
+  const maxLinesPerSingleSlice = Math.max(1, Math.floor((maxPageBodyHeight - 6) / lineHeight));
+
+  interface LaidOutRow {
+    cells: string[][];
+    height: number;
+    recordIndex: number;
+  }
+
+  const laidOutRows: LaidOutRow[] = [];
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    if (!row) continue;
+    const wrappedCells = columns.map((col) =>
+      wrapPdfCellText(
+        row[col.key] ?? '',
+        (s) => font.widthOfTextAtSize(s, bodyFontSize),
+        maxCellWidth,
+      ),
+    );
+    const totalCellLines = Math.max(1, ...wrappedCells.map((c) => c.length));
+    // CONFLICT-RESOLVED: Thay thế cơ chế cắt cứng `val.slice(0, 22) + '...'` bằng ngắt dòng tự động đa dòng/đa trang để không làm mất dữ liệu kiểm toán.
+    for (let offset = 0; offset < totalCellLines; offset += maxLinesPerSingleSlice) {
+      const slicedCells = wrappedCells.map((c) => c.slice(offset, offset + maxLinesPerSingleSlice));
+      const sliceLines = Math.max(1, ...slicedCells.map((c) => c.length));
+      laidOutRows.push({
+        cells: slicedCells,
+        height: Math.max(16, sliceLines * lineHeight + 6),
+        recordIndex: idx,
+      });
+    }
+  }
+
+  const pages: LaidOutRow[][] = [];
+  let currentPageRows: LaidOutRow[] = [];
+  let usedBodyHeight = 0;
+  for (const item of laidOutRows) {
+    if (currentPageRows.length > 0 && usedBodyHeight + item.height > maxPageBodyHeight) {
+      pages.push(currentPageRows);
+      currentPageRows = [];
+      usedBodyHeight = 0;
+    }
+    currentPageRows.push(item);
+    usedBodyHeight += item.height;
+  }
+  if (currentPageRows.length > 0 || pages.length === 0) {
+    pages.push(currentPageRows);
+  }
 
   const cleanTitle = sanitizeForPdf(title);
+  const generatedIso = new Date().toISOString();
 
-  for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+  for (let pageIdx = 0; pageIdx < pages.length; pageIdx++) {
     const page = pdfDoc.addPage([pageWidth, pageHeight]);
     let y = pageHeight - margin;
 
-    // Header Title
     page.drawText(cleanTitle, {
       x: margin,
       y: y - 14,
@@ -76,9 +152,9 @@ export async function generatePdfTable(
       color: rgb(0.08, 0.14, 0.28),
     });
 
-    const pageMeta = `Page ${pageIdx + 1} of ${totalPages} | Total Records: ${rows.length} | Generated: ${new Date().toISOString()}`;
+    const pageMeta = `Page ${pageIdx + 1} of ${pages.length} | Total Records: ${rows.length} | Generated: ${generatedIso}`;
     page.drawText(pageMeta, {
-      x: pageWidth - margin - 320,
+      x: pageWidth - margin - 330,
       y: y - 14,
       size: 8,
       font,
@@ -87,61 +163,56 @@ export async function generatePdfTable(
 
     y -= 30;
 
-    // Table Header Bar
     page.drawRectangle({
       x: margin,
-      y: y - 14,
+      y: y - headerBarHeight + 4,
       width: usableWidth,
-      height: 18,
+      height: headerBarHeight,
       color: rgb(0.12, 0.18, 0.3),
     });
 
-    columns.forEach((col, colIdx) => {
-      const headerText = sanitizeForPdf(col.header).slice(0, 18);
-      page.drawText(headerText, {
-        x: margin + colIdx * colWidth + 4,
-        y: y - 10,
-        size: 7.5,
-        font: fontBold,
-        color: rgb(1, 1, 1),
+    wrappedHeaders.forEach((hLines, colIdx) => {
+      hLines.forEach((hLine, lineIdx) => {
+        page.drawText(hLine, {
+          x: margin + colIdx * colWidth + 4,
+          y: y - 8 - lineIdx * 9.5,
+          size: 7.5,
+          font: fontBold,
+          color: rgb(1, 1, 1),
+        });
       });
     });
 
-    y -= 18;
+    y -= headerBarHeight;
 
-    // Table Rows
-    const pageRows = rows.slice(pageIdx * rowsPerPage, (pageIdx + 1) * rowsPerPage);
-    for (let rIdx = 0; rIdx < pageRows.length; rIdx++) {
-      const row = pageRows[rIdx];
-      if (!row) continue;
-      const isEven = rIdx % 2 === 0;
-
-      if (isEven) {
+    const pageItems = pages[pageIdx] ?? [];
+    for (const item of pageItems) {
+      if (item.recordIndex % 2 === 0) {
         page.drawRectangle({
           x: margin,
-          y: y - rowHeight + 3,
+          y: y - item.height + 3,
           width: usableWidth,
-          height: rowHeight,
+          height: item.height,
           color: rgb(0.96, 0.97, 0.98),
         });
       }
 
-      columns.forEach((col, colIdx) => {
-        let val = sanitizeForPdf(row[col.key] ?? '');
-        if (val.length > 24) val = val.slice(0, 22) + '...';
-        page.drawText(val, {
-          x: margin + colIdx * colWidth + 4,
-          y: y - rowHeight + 6,
-          size: 7,
-          font,
-          color: rgb(0.15, 0.15, 0.15),
+      item.cells.forEach((cellLines, colIdx) => {
+        cellLines.forEach((lineText, lineIdx) => {
+          if (!lineText) return;
+          page.drawText(lineText, {
+            x: margin + colIdx * colWidth + 4,
+            y: y - 8 - lineIdx * lineHeight,
+            size: bodyFontSize,
+            font,
+            color: rgb(0.15, 0.15, 0.15),
+          });
         });
       });
 
-      y -= rowHeight;
+      y -= item.height;
     }
 
-    // Confidentiality Footer
     page.drawText('CONFIDENTIAL - SECURE DOCUMENT ACCESS AUDIT REPORT - TAMPER EVIDENT', {
       x: margin,
       y: margin - 15,
@@ -156,13 +227,7 @@ export async function generatePdfTable(
 }
 
 /**
- * Thuật toán: Kết xuất bảng tính Excel XLSX có định dạng & khử công thức độc hại (Formula-Safe Styled XLSX Workbook Generator)
- * Mục đích: Tạo tệp `.xlsx` chuyên nghiệp phục vụ lưu trữ/phân tích kiểm toán trong khi ngăn chặn tấn công chèn công thức bảng tính (CWE-1236).
- * Cơ chế hoạt động:
- *   - Khởi tạo `ExcelJS.Workbook`, giới hạn tên trang tính tối đa 30 ký tự (chuẩn OOXML Worksheet Name Limit) và tính độ rộng cột tự động `max(header.length + 6, 16)`.
- *   - Trước khi chèn từng ô dữ liệu, kiểm tra biểu thức chính quy `/^[=+\-@\t\r]/u` và ghép tiền tố `'` nếu phát hiện ký tự khởi đầu công thức; tô màu nền xen kẽ cho các dòng lẻ.
- *
- * Generates an Excel XLSX workbook using ExcelJS.
+ * Thuật toán: Kết xuất bảng tính Excel XLSX có định dạng & khử công thức độc hại OWASP CWE-1236 (`ExcelJS`).
  */
 export async function generateExcelTable(
   sheetName: string,

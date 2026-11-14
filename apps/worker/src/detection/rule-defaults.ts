@@ -1,3 +1,8 @@
+/**
+ * Thuật toán / Tổng quan module:
+ * Chuẩn hóa ánh xạ cấu hình luật phát hiện bất thường SOC cho `@sda/worker`, ưu tiên đọc cấu hình động từ bảng
+ * `detection_rule_configs` và tự động dự phòng sang tập luật gốc bất biến từ `@sda/contracts`.
+ */
 import { cloneDefaultSecurityDetectionRules, type SecurityDetectionRuleSpec } from '@sda/contracts';
 import { getDatabaseClient, type severity_level } from '@sda/database';
 
@@ -14,6 +19,9 @@ export interface DetectionRuleConfig {
   parameters: Record<string, unknown>;
 }
 
+/**
+ * Thuật toán: Sao chép sâu tham số đặc tả luật chuẩn sang đối tượng cấu hình runtime độc lập để tránh đột biến trạng thái chia sẻ.
+ */
 function mapCanonicalRule(spec: SecurityDetectionRuleSpec): DetectionRuleConfig {
   return {
     ruleCode: spec.ruleCode,
@@ -27,11 +35,8 @@ function mapCanonicalRule(spec: SecurityDetectionRuleSpec): DetectionRuleConfig 
   };
 }
 
-export const DEFAULT_DETECTION_RULES: DetectionRuleConfig[] =
-  cloneDefaultSecurityDetectionRules().map(mapCanonicalRule);
-
 /**
- * Algorithm / Thuật toán: Nạp cấu hình luật phát hiện có dự phòng an toàn (Database-First Configuration with Canonical Fallback)
+ * Thuật toán: Nạp cấu hình luật phát hiện có dự phòng an toàn (Database-First Configuration with Canonical Fallback)
  * Mục đích: Đọc danh sách luật từ bảng `detection_rule_configs` và ánh xạ sang mô hình bộ nhớ; nếu bảng rỗng hoặc gặp lỗi truy vấn,
  * tự động quay lui về bản sao phòng vệ từ `@sda/contracts` (`cloneDefaultSecurityDetectionRules`) đồng bộ 100% với API.
  */

@@ -7,8 +7,6 @@
  */
 export type IcapMethod = 'OPTIONS' | 'RESPMOD' | 'REQMOD';
 
-export type IcapStatusCode = 200 | 204 | 400 | 403 | 404 | 405 | 500;
-
 export type DlpSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export type DlpViolationType =

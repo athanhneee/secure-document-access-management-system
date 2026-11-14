@@ -61,7 +61,7 @@ export const PositiveBigIntSchema = z
     z.bigint().positive().max(MAX_PG_BIGINT, 'Identifier exceeds PostgreSQL 64-bit BIGINT range'),
   );
 
-export const StrictIsoCalendarDateSchema = z
+const StrictIsoCalendarDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/u, 'Date must be in YYYY-MM-DD format')
   .refine(isValidIsoCalendarDate, 'Invalid calendar date');

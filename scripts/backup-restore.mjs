@@ -53,7 +53,7 @@ async function createMigratedPglite() {
   return db;
 }
 
-export async function main() {
+async function main() {
   console.log('='.repeat(78));
   console.log('SDA DISASTER RECOVERY & BACKUP/RESTORE DRILL');
   console.log('='.repeat(78));

@@ -2,7 +2,11 @@ import { createCipheriv, createHash, hkdfSync, randomBytes, randomUUID } from 'n
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { getDatabaseClient } from '@sda/database';
-import { formatExportPayload } from './export-formatter.helper.js';
+import { formatExportPayload } from './exports/export-formatter.js';
+import {
+  resolveWorkerExportS3Config,
+  uploadExportCiphertextToS3,
+} from './exports/export-s3-storage.js';
 import { parseFilterParams, queryExportDataset } from './export-query.helper.js';
 import { recordWorkerJobRun, setExportQueueDepth } from './worker-metrics.js';
 
@@ -11,7 +15,8 @@ import { recordWorkerJobRun, setExportQueueDepth } from './worker-metrics.js';
  * Bộ xử lý hàng đợi kết xuất báo cáo bất đồng bộ (`ExportProcessorJob`) trên bảng `async_export_jobs`:
  * - Chiếm giữ nguyên tử công việc `PENDING` sang `PROCESSING` bằng `FOR UPDATE SKIP LOCKED` (hoặc điều kiện `updateMany`).
  * - Mã hóa `AES-256-GCM` tại chỗ (`SDEA\x01`, AAD = `jobId`, HKDF-SHA256 từ `EXPORT_ENCRYPTION_KEY`/`AUDIT_INTEGRITY_KEY`),
- *   ghi nguyên tử qua tệp tạm trung gian + `rename` vào `EXPORT_STORAGE_DIR`, tính `sha256_hash` bản rõ và hoàn tất `COMPLETED`.
+ *   lưu đồng thời lên `STORAGE_BUCKET_DERIVATIVES` (`exports/<jobId>.dat` trên Cloudflare R2/S3 khi cấu hình có mặt)
+ *   và ghi nguyên tử vào `EXPORT_STORAGE_DIR`, tính `sha256_hash` bản rõ và hoàn tất `COMPLETED`.
  */
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -120,7 +125,10 @@ export async function processPendingExportJobs(options?: {
       (process.env['EXPORT_STORAGE_DIR']?.trim() || DEFAULT_EXPORT_STORAGE_DIR),
   );
 
-  await fsp.mkdir(resolvedBaseDir, { recursive: true });
+  const s3Enabled = resolveWorkerExportS3Config() !== null;
+  await fsp.mkdir(resolvedBaseDir, { recursive: true }).catch((err) => {
+    if (!s3Enabled) throw err;
+  });
   const claimedJobs = await claimPendingExportJobs(database, batchSize);
   if (typeof database.asyncExportJob?.count === 'function') {
     const remaining = await database.asyncExportJob.count({ where: { status: 'PENDING' } });
@@ -149,16 +157,25 @@ export async function processPendingExportJobs(options?: {
       }
 
       const encryptedEnvelope = encryptExportArtifactBuffer(job.id, artifact.buffer);
-      const tempPath = `${finalPath}.${randomUUID()}.tmp`;
-      await fsp.writeFile(tempPath, encryptedEnvelope, { mode: 0o600 });
-      await fsp.rename(tempPath, finalPath);
+      // CONFLICT-RESOLVED: Lưu đồng thời bản mã `.dat` (`AES-256-GCM`) lên Cloudflare R2/S3 (`exports/<jobId>.dat`) và đĩa cục bộ để hỗ trợ đa container mà vẫn giữ tương thích 100% kiểm thử `.local/exports`.
+      const s3Uri = s3Enabled ? await uploadExportCiphertextToS3(safeId, encryptedEnvelope) : null;
+
+      let persistedPath = finalPath;
+      try {
+        const tempPath = `${finalPath}.${randomUUID()}.tmp`;
+        await fsp.writeFile(tempPath, encryptedEnvelope, { mode: 0o600 });
+        await fsp.rename(tempPath, finalPath);
+      } catch (fsErr) {
+        if (!s3Uri) throw fsErr;
+        persistedPath = s3Uri;
+      }
 
       const sha256Hash = createHash('sha256').update(artifact.buffer).digest('hex');
       await database.asyncExportJob.update({
         where: { id: job.id },
         data: {
           status: 'COMPLETED',
-          file_path: finalPath,
+          file_path: persistedPath,
           file_size_bytes: BigInt(artifact.buffer.byteLength),
           sha256_hash: sha256Hash,
           mime_type: artifact.mimeType,

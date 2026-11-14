@@ -171,9 +171,9 @@ test('[MEDIUM-03] Scripts use parameterized SQL, compose hides Redis CLI secret,
   const repoRoot = path.resolve(import.meta.dirname, '../../..');
 
   for (const relPath of [
-    'scripts/helpers/backup-restore-fixtures.mjs',
-    'scripts/lib/load-test-scenarios.mjs',
-    'scripts/lib/profile-schema-seed.mjs',
+    'scripts/backup-restore.mjs',
+    'scripts/load-test.mjs',
+    'scripts/profile-queries.mjs',
   ]) {
     const content = fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
     assert.doesNotMatch(

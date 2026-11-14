@@ -28,7 +28,7 @@ import {
   assertExportJobAccess,
   assertExportJobReadyForDownload,
   mapExportJobToDetail,
-  readVerifiedExportArtifact,
+  readVerifiedExportArtifactAsync,
   resolveExportDownloadMeta,
   resolveWorkspaceExportDir,
   type ExportJobDetail,
@@ -202,7 +202,7 @@ export class ExportJobService {
   ): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
     const job = await this.loadAuthorizedJob(id, actor);
     assertExportJobReadyForDownload(job);
-    const buffer = readVerifiedExportArtifact(
+    const buffer = await readVerifiedExportArtifactAsync(
       this.exportDir,
       id,
       job.file_path,

@@ -59,7 +59,7 @@ const PACKAGE_JSON_PATHS = [
  *   - Tách biểu thức ngoài ngoặc theo toán tử ưu tiên thấp `OR` trước (thỏa mãn nếu `some` nhánh con hợp lệ),
  *     sau đó tách theo toán tử `AND` (thỏa mãn chỉ khi `every` nhánh con hợp lệ — chặn chặt kiểu `'GPL-3.0-only AND MIT'`).
  */
-export function isPermissiveSpdxExpression(rawLicense) {
+function isPermissiveSpdxExpression(rawLicense) {
   if (typeof rawLicense !== 'string') return false;
   let expr = rawLicense.trim();
   if (!expr || expr === 'UNKNOWN' || expr === 'UNLICENSED') return false;

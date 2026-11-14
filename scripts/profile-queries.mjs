@@ -41,7 +41,7 @@ function walkExplainPlanNode(node, collected = []) {
 /**
  * Thuật toán: Thực thi `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` và phân loại chiến lược quét B-Tree Index vs Seq Scan.
  */
-export async function profileQuery(db, title, query, params) {
+async function profileQuery(db, title, query, params) {
   console.log('-'.repeat(78));
   console.log(`QUERY: ${title}`);
   console.log('-'.repeat(78));
@@ -128,6 +128,8 @@ async function buildOffline13MigrationProfileDb() {
 
   const sampleDocId = '00000000-0000-4000-8000-000000000010';
   const grantId = '00000000-0000-4000-8000-000000000020';
+  const sessionId = '00000000-0000-4000-8000-000000000030';
+  // CONFLICT-RESOLVED: Tham số hóa toàn bộ câu lệnh INSERT fixture kiểm chứng chỉ mục bằng placeholder vị trí ($1..$4) thay vì nối chuỗi SQL ([MEDIUM-03]).
   await db.exec(`
     INSERT INTO departments (id, code, name) OVERRIDING SYSTEM VALUE VALUES (1, 'RND', 'Research & Security');
     INSERT INTO classification_levels (id, code, name, rank) OVERRIDING SYSTEM VALUE VALUES (1, 'CONFIDENTIAL', 'Confidential', 3);
@@ -140,17 +142,32 @@ async function buildOffline13MigrationProfileDb() {
       VALUES (1, 1, 'CONFIDENTIAL', 'Confidential', 3);
     INSERT INTO user_attribute_assignments (id, user_id, attribute_definition_id, option_id, valid_from, assigned_by) OVERRIDING SYSTEM VALUE
       VALUES (1, 1, 1, 1, NOW() - INTERVAL '1 day', 1);
-    INSERT INTO documents (id, document_code, title, owner_id, department_id, status, discoverable)
-      VALUES ('${sampleDocId}', 'DOC-PROF-01', 'Indexed Security Spec', 1, 1, 'ACTIVE', TRUE);
-    INSERT INTO document_versions (id, document_id, version_no, original_filename, storage_key, mime_type, file_size_bytes, sha256_hash, encryption_key_ref, uploaded_by) OVERRIDING SYSTEM VALUE
-      VALUES (1, '${sampleDocId}', 1, 'spec.pdf', 'docs/spec.pdf', 'application/pdf', 4096, '${'a'.repeat(64)}', 'kek-v1', 1);
-    INSERT INTO document_classification_history (id, document_id, classification_level_id, business_category_id, classified_by) OVERRIDING SYSTEM VALUE
-      VALUES (1, '${sampleDocId}', 1, 1, 1);
-    INSERT INTO access_grants (id, document_id, principal_type, principal_user_id, source, status, valid_from, valid_until, granted_by)
-      VALUES ('${grantId}', '${sampleDocId}', 'USER', 1, 'DIRECT', 'ACTIVE', NOW() - INTERVAL '1 hour', NOW() + INTERVAL '1 day', 1);
-    INSERT INTO access_sessions (id, access_grant_id, document_version_id, user_id, ip_address, status)
-      VALUES ('00000000-0000-4000-8000-000000000030', '${grantId}', 1, 1, '127.0.0.1', 'ACTIVE');
   `);
+  await db.query(
+    `INSERT INTO documents (id, document_code, title, owner_id, department_id, status, discoverable)
+     VALUES ($1, 'DOC-PROF-01', 'Indexed Security Spec', 1, 1, 'ACTIVE', TRUE)`,
+    [sampleDocId],
+  );
+  await db.query(
+    `INSERT INTO document_versions (id, document_id, version_no, original_filename, storage_key, mime_type, file_size_bytes, sha256_hash, encryption_key_ref, uploaded_by) OVERRIDING SYSTEM VALUE
+     VALUES (1, $1, 1, 'spec.pdf', 'docs/spec.pdf', 'application/pdf', 4096, $2, 'kek-v1', 1)`,
+    [sampleDocId, 'a'.repeat(64)],
+  );
+  await db.query(
+    `INSERT INTO document_classification_history (id, document_id, classification_level_id, business_category_id, classified_by) OVERRIDING SYSTEM VALUE
+     VALUES (1, $1, 1, 1, 1)`,
+    [sampleDocId],
+  );
+  await db.query(
+    `INSERT INTO access_grants (id, document_id, principal_type, principal_user_id, source, status, valid_from, valid_until, granted_by)
+     VALUES ($1, $2, 'USER', 1, 'DIRECT', 'ACTIVE', NOW() - INTERVAL '1 hour', NOW() + INTERVAL '1 day', 1)`,
+    [grantId, sampleDocId],
+  );
+  await db.query(
+    `INSERT INTO access_sessions (id, access_grant_id, document_version_id, user_id, ip_address, status)
+     VALUES ($1, $2, 1, 1, '127.0.0.1', 'ACTIVE')`,
+    [sessionId, grantId],
+  );
   let prevHash = null;
   for (let seq = 1; seq <= 20; seq++) {
     const entryHash = crypto.randomBytes(32).toString('hex');
@@ -171,7 +188,7 @@ async function buildOffline13MigrationProfileDb() {
   };
 }
 
-export async function main() {
+async function main() {
   console.log('='.repeat(78));
   console.log('SDA QUERY PROFILER & EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)');
   console.log('='.repeat(78));

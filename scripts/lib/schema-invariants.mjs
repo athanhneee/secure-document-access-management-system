@@ -1,10 +1,17 @@
+/**
+ * Module: Kiểm Định Chủ Động Các Bất Biến Phòng Thủ Theo Chiều Sâu Tầng Cơ Sở Dữ Liệu (`DatabaseInvariants`)
+ * Thuật toán: Thăm Dò Phản Chứng Trigger, Ràng Buộc & Cấp Độ Mật Bell-LaPadula Trên Dữ Liệu Giả Lập Cô Lập (`Defense-in-Depth Invariant Probing`).
+ *   1. Kiểm chứng tính bất biến chỉ ghi nối thêm (`Append-Only`) chống `UPDATE`/`DELETE`/`TRUNCATE` và tính liên tục `previous_hash` trên `audit_logs` & `audit_anchors`.
+ *   2. Kiểm chứng hoàn tác giao dịch nguyên tử khi vi phạm `CHECK constraint` (`SQLSTATE 23514`).
+ *   3. Kiểm chứng trigger đệ quy CTE chặn chu trình cây phòng ban và tự động làm mới `updated_at`.
+ *   4. Kiểm chứng ràng buộc họ khóa `refresh_tokens` khớp `auth_sessions` và hỗ trợ `WEBAUTHN`.
+ *   5. Kiểm chứng quyền sở hữu `current_version_id` và chỉ mục duy nhất bán phần SCD Type 2 của phân loại mật hiện hành.
+ *   6. Kiểm chứng bất biến Bell-LaPadula (`clearance >= classification`), Phân Tách Trách Nhiệm (`SYSTEM_ADMIN` bị chặn nhận grant) và tự động tăng đơn điệu `version` ABAC.
+ */
 import assert from 'node:assert/strict';
 
 /**
- * Algorithm: Defense-in-Depth Database Invariant Probing.
- * Exercises triggers, partial unique indexes, recursive CTE hierarchy checks,
- * Bell-LaPadula clearance rank comparisons, HMAC audit chain continuity, and
- * monotonic ABAC sequence bumps against synthetic in-memory fixtures.
+ * Thuật toán: Thực thi tuần tự 6 nhóm ca kiểm thử phản chứng trực tiếp trên engine PostgreSQL/PGlite để xác nhận toàn bộ trigger và ràng buộc CSDL hoạt động đúng.
  */
 export async function verifyDatabaseInvariants(database) {
   const checks = [];

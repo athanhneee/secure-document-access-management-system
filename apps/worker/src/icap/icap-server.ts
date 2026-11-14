@@ -12,8 +12,50 @@ import type { IcapServerConfig, DlpScanResult, IcapRequest } from './icap.types.
 export { persistNetworkDlpSecurityAlert, type IcapServerMetrics };
 
 /**
+ * Thuật toán: Phân giải đồng nhất địa chỉ lắng nghe ICAP từ tham số hoặc biến môi trường (`ICAP_BIND_HOST` / `ICAP_SERVER_HOST`).
+ */
+export function resolveIcapBindHost(
+  explicitHost?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const candidates = [explicitHost, env['ICAP_BIND_HOST'], env['ICAP_SERVER_HOST']];
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (trimmed) return trimmed;
+  }
+  return '0.0.0.0';
+}
+
+/**
+ * Thuật toán: Phân giải đồng nhất cổng lắng nghe ICAP từ tham số (`0` cho cổng động kiểm thử) hoặc biến môi trường (`ICAP_PORT` / `ICAP_SERVER_PORT`).
+ */
+export function resolveIcapListenPort(
+  explicitPort?: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  if (
+    explicitPort !== undefined &&
+    Number.isInteger(explicitPort) &&
+    explicitPort >= 0 &&
+    explicitPort <= 65_535
+  ) {
+    return explicitPort;
+  }
+  for (const raw of [env['ICAP_PORT'], env['ICAP_SERVER_PORT']]) {
+    const trimmed = raw?.trim();
+    if (!trimmed) continue;
+    const parsed = Number(trimmed);
+    if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65_535) {
+      return parsed;
+    }
+  }
+  return 1344;
+}
+
+/**
  * Thuật toán Máy Chủ Mạng RFC 3507 ICAP DLP:
- * - Lắng nghe trên `ICAP_BIND_HOST ?? '0.0.0.0'` và giới hạn đồng thời tối đa `16` luồng giải nén qua `InspectionSemaphore`.
+ * - Lắng nghe trên `ICAP_BIND_HOST` / `ICAP_SERVER_HOST` (`'0.0.0.0'`) và cổng `ICAP_PORT` / `ICAP_SERVER_PORT` (`1344`),
+ *   giới hạn đồng thời tối đa `16` luồng giải nén qua `InspectionSemaphore`.
  * - Ủy quyền xử lý khung TCP phân mảnh, `Preview: 0` và pipelining keep-alive cho `attachIcapConnectionHandler`.
  */
 export class IcapServer {
@@ -37,15 +79,11 @@ export class IcapServer {
     ((violation: DlpScanResult, request: IcapRequest) => Promise<void> | void) | undefined;
 
   constructor(config?: IcapServerConfig) {
-    const resolvedHost =
-      config?.host ??
-      process.env['ICAP_BIND_HOST']?.trim() ??
-      process.env['ICAP_SERVER_HOST']?.trim() ??
-      '0.0.0.0';
+    // CONFLICT-RESOLVED: Hỗ trợ đồng nhất cả `ICAP_PORT`/`ICAP_SERVER_PORT` và `ICAP_BIND_HOST`/`ICAP_SERVER_HOST` ngay trong constructor `IcapServer`.
     this.config = {
       enabled: config?.enabled ?? true,
-      port: config?.port ?? 1344,
-      host: resolvedHost,
+      port: resolveIcapListenPort(config?.port),
+      host: resolveIcapBindHost(config?.host),
       serviceName: config?.serviceName ?? 'sda-dlp',
       maxConnections: config?.maxConnections ?? 100,
       maxConcurrentInspections: config?.maxConcurrentInspections ?? 16,

@@ -3,17 +3,16 @@
  * Thuật toán: Kiểm thử hồi quy 4 nhóm khắc phục trọng yếu:
  *   1. `VaultTransitKmsService` trích xuất tên khóa đã xoay vòng từ `keyRef` và `DocumentEncryptionService` xóa trắng DEK (`fill(0)`) khi phát sinh ngoại lệ.
  *   2. `ObjectStorageService` truyền luồng không ghép mảnh, `AntivirusScannerService` khớp EICAR gối đầu 68B kèm TCP backpressure, `TempFileJanitorService` dọn rác quá 15 phút.
- *   3. `ExportJobService` giữ trạng thái `PENDING` kèm `__allowedDepartmentIds` cho worker, khử công thức Excel qua `sanitizeCsvCell`, thử lại giao dịch `P2034` và gom lô `createMany` hạn lưu trữ.
+ *   3. `ExportJobService` đồng bộ hàng đợi worker + tải dự phòng đa container trên Cloudflare R2/S3, khử công thức Excel, thử lại `P2034` và gom lô `createMany`.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import crypto, { randomUUID } from 'node:crypto';
+import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import ExcelJS from 'exceljs';
 import {
   VaultTransitKmsService,
   parseVaultKeyNameFromRef,
@@ -25,11 +24,11 @@ import {
   createChunkedEicarMatcher,
 } from '../dist/modules/documents/antivirus-scanner.service.js';
 import { TempFileJanitorService } from '../dist/modules/documents/temp-file-janitor.service.js';
-import { runSerializableAuditTransaction } from '../dist/modules/documents/document-audit.service.js';
-import { executeCheckRetentionWarnings } from '../dist/modules/documents/document-retention.helper.js';
-import { ExportJobService } from '../dist/modules/reports/export-job.service.js';
-import { generateExcelTable } from '../dist/modules/reports/export-formatter.js';
 import { createMockConfig } from './helpers/document-ingestion-mocks.mjs';
+import {
+  assertExportQueueAndMultiContainerR2,
+  assertSerializableRetryAndBatchedRetention,
+} from './helpers/export-s3-retention.helper.mjs';
 
 test('[HIGH 1.4] VaultTransitKmsService parses rotated keyRef names & DocumentEncryptionService zeroes DEK on error', async () => {
   assert.equal(parseVaultKeyNameFromRef('vault-kms:rotated-kek:v2', 'default-kek'), 'rotated-kek');
@@ -159,152 +158,7 @@ test('[CRITICAL 1.5.1] Streaming ObjectStorage, 68B-overlap EICAR ClamAV backpre
   }
 });
 
-test('[HIGH 1.3 & 2.1] Export worker queue contract, Excel formula sanitization, P2034 retry & batched retention', async () => {
-  const jobs = Object.create(null);
-  const mockDb = {
-    asyncExportJob: {
-      create: async ({ data }) => {
-        jobs[data.id] = {
-          ...data,
-          file_path: null,
-          file_size_bytes: null,
-          sha256_hash: null,
-          mime_type: null,
-          row_count: 0,
-          error_message: null,
-          created_at: new Date(),
-          completed_at: null,
-        };
-        return jobs[data.id];
-      },
-      findUnique: async ({ where }) => jobs[where.id] ?? null,
-      update: async ({ where, data }) => {
-        Object.assign(jobs[where.id], data);
-        return jobs[where.id];
-      },
-    },
-    auditLog: {
-      findMany: async () => [
-        {
-          id: 1n,
-          occurred_at: new Date(),
-          actor_username: '  =1+1',
-          action: 'LOGIN',
-          object_type: 'USER',
-          object_id: '1',
-          outcome: 'SUCCESS',
-          ip_address: '127.0.0.1',
-          chain_partition: 'AUDIT',
-          chain_sequence: 1n,
-          entry_hash: 'h1',
-        },
-      ],
-    },
-  };
-
-  const prevMode = process.env['EXPORT_EXECUTION_MODE'];
-  const tmpExportDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sda-exp-test-'));
-  process.env['EXPORT_STORAGE_DIR'] = tmpExportDir;
-  process.env['EXPORT_EXECUTION_MODE'] = 'worker';
-  try {
-    const mockAuthz = {
-      hasPermission: async () => true,
-      visibleDepartmentIds: async () => [10n, 20n],
-    };
-    const actor = {
-      userId: 9n,
-      sessionId: 's-9',
-      username: 'auditor',
-      roles: ['AUDITOR'],
-      mfa: true,
-    };
-    const exportSvc = new ExportJobService(mockDb, { writeLog: async () => {} }, mockAuthz);
-    const created = await exportSvc.createExportJob(
-      { exportType: 'AUDIT_LOGS', format: 'EXCEL', filterParams: {} },
-      actor,
-      randomUUID(),
-    );
-    assert.equal(created.status, 'PENDING');
-    assert.deepEqual(jobs[created.id].filter_params.__allowedDepartmentIds, ['10', '20']);
-
-    await exportSvc.processPendingJobById(created.id);
-    assert.equal(jobs[created.id].status, 'COMPLETED');
-    const downloaded = await exportSvc.downloadExportJob(created.id, actor);
-    assert.ok(downloaded.buffer.length > 0);
-
-    const excelBuf = await generateExcelTable(
-      'Test',
-      [{ key: 'FormulaCol', header: 'FormulaCol' }],
-      [{ FormulaCol: '  =1+1' }, { FormulaCol: '|cmd' }],
-    );
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(excelBuf);
-    const ws = wb.worksheets[0];
-    assert.equal(ws.getRow(2).getCell(1).value, "'  =1+1");
-    assert.equal(ws.getRow(3).getCell(1).value, "'|cmd");
-  } finally {
-    if (prevMode === undefined) delete process.env['EXPORT_EXECUTION_MODE'];
-    else process.env['EXPORT_EXECUTION_MODE'] = prevMode;
-    delete process.env['EXPORT_STORAGE_DIR'];
-    await fsp.rm(tmpExportDir, { recursive: true, force: true });
-  }
-
-  let txAttempts = 0;
-  await runSerializableAuditTransaction(
-    {
-      $transaction: async (fn) => {
-        txAttempts += 1;
-        if (txAttempts < 3) {
-          const err = new Error('could not serialize access');
-          err.code = 'P2034';
-          throw err;
-        }
-        await fn({});
-      },
-    },
-    async () => {},
-  );
-  assert.equal(txAttempts, 3);
-
-  let permCalls = 0;
-  let createManyCount = 0;
-  const expiredAt = new Date(Date.now() - 86_400_000);
-  await executeCheckRetentionWarnings({
-    database: {
-      document: {
-        findMany: async () => [
-          {
-            id: randomUUID(),
-            document_code: 'D1',
-            title: 'T1',
-            owner_id: 2n,
-            department_id: 50n,
-            retention_until: expiredAt,
-          },
-          {
-            id: randomUUID(),
-            document_code: 'D2',
-            title: 'T2',
-            owner_id: 3n,
-            department_id: 50n,
-            retention_until: expiredAt,
-          },
-        ],
-      },
-      notification: { createMany: async ({ data }) => (createManyCount += data.length) },
-      securityAlert: { createMany: async () => {} },
-    },
-    authorization: { hasPermission: async () => ((permCalls += 1), true) },
-    audit: { record: async () => {} },
-    daysThreshold: 30,
-    principal: {
-      userId: 99n,
-      sessionId: 's-99',
-      username: 'mgr',
-      roles: ['DOCUMENT_OWNER'],
-      mfa: true,
-    },
-  });
-  assert.equal(permCalls, 1, 'Duplicate department RBAC checks must be deduplicated');
-  assert.equal(createManyCount, 2, 'Notifications must be batch-inserted via createMany');
+test('[HIGH 1.3 & 2.1] Export worker queue contract, multi-container S3/R2 download, Excel formula sanitization, P2034 retry & batched retention', async () => {
+  await assertExportQueueAndMultiContainerR2();
+  await assertSerializableRetryAndBatchedRetention();
 });

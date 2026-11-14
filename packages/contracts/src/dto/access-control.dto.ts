@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import { PositiveBigIntSchema } from './validation-primitives.js';
 
-export const GrantPermissionSchema = z.enum(['VIEW', 'DOWNLOAD']);
-export type GrantPermission = z.infer<typeof GrantPermissionSchema>;
+const GrantPermissionSchema = z.enum(['VIEW', 'DOWNLOAD']);
 
 /**
  * Thuật toán: Kiểm định loại trừ tương hỗ chủ thể (XOR Principal Discriminator) & thứ tự khoảng thời gian hiệu lực (`superRefine`).
@@ -142,23 +141,17 @@ export const PreviewPageParamSchema = z
   })
   .strict();
 
-export type PreviewPageParamInput = z.infer<typeof PreviewPageParamSchema>;
-
 export const DownloadTicketParamSchema = z
   .object({
     ticket: z.string().regex(/^DT-[0-9a-f]{64}$/i, 'Invalid download ticket format'),
   })
   .strict();
 
-export type DownloadTicketParamInput = z.infer<typeof DownloadTicketParamSchema>;
-
 export const WatermarkTokenParamSchema = z
   .object({
     token: z.string().regex(/^WM-[0-9a-f]{12,64}$/i, 'Invalid watermark token format'),
   })
   .strict();
-
-export type WatermarkTokenParamInput = z.infer<typeof WatermarkTokenParamSchema>;
 
 export const ListAccessSessionsSchema = z
   .object({
@@ -167,8 +160,6 @@ export const ListAccessSessionsSchema = z
     page: z.coerce.number().int().min(1).default(1),
   })
   .strict();
-
-export type ListAccessSessionsInput = z.infer<typeof ListAccessSessionsSchema>;
 
 export const TerminateAccessSessionSchema = z
   .object({
@@ -180,5 +171,3 @@ export const TerminateAccessSessionSchema = z
       .optional(),
   })
   .strict();
-
-export type TerminateAccessSessionInput = z.infer<typeof TerminateAccessSessionSchema>;

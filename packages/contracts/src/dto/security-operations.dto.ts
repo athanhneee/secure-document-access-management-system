@@ -1,11 +1,16 @@
 import { z } from 'zod';
 import { IsoDateOrDateTimeSchema, PositiveBigIntSchema } from './validation-primitives.js';
 
-export const AlertStatusSchema = z.enum(['OPEN', 'INVESTIGATING', 'RESOLVED', 'FALSE_POSITIVE']);
-export type AlertStatus = z.infer<typeof AlertStatusSchema>;
+/**
+ * Module: Security Operations, Alerts, Incident Response & Detection Rules DTO Schemas (`@sda/contracts`)
+ * Thuật toán: Xác thực máy trạng thái cảnh báo an ninh SOC, hồ sơ sự cố và cấu hình ngưỡng phát hiện bất thường:
+ *   - Chặn khóa lạ (`.strict()`) và ép buộc giới hạn số nguyên 64-bit PostgreSQL `BIGINT` (`PositiveBigIntSchema`) cho mọi trường định danh người dùng.
+ *   - Cưỡng chế ghi chú giải trình (`resolutionNote >= 5` ký tự) qua `superRefine` khi chuyển trạng thái cảnh báo sang `RESOLVED` hoặc `FALSE_POSITIVE`.
+ *   - Kiểm định biên ngưỡng phát hiện (`threshold: 1..1000`, `windowMinutes`/`cooldownMinutes: 1..1440`) để ngăn cấu hình vô hiệu hóa ngầm hoặc tràn bộ nhớ truy vấn.
+ */
+const AlertStatusSchema = z.enum(['OPEN', 'INVESTIGATING', 'RESOLVED', 'FALSE_POSITIVE']);
 
-export const SeverityLevelSchema = z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
-export type SeverityLevel = z.infer<typeof SeverityLevelSchema>;
+const SeverityLevelSchema = z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
 
 export const QuerySecurityAlertsSchema = z
   .object({
@@ -26,6 +31,10 @@ export const QuerySecurityAlertsSchema = z
 
 export type QuerySecurityAlertsInput = z.infer<typeof QuerySecurityAlertsSchema>;
 
+/**
+ * Thuật toán: Kiểm định điều kiện ràng buộc phụ thuộc trạng thái (`superRefine`) cho cập nhật cảnh báo SOC:
+ * Khi đóng cảnh báo (`RESOLVED` hoặc `FALSE_POSITIVE`), bắt buộc đính kèm `resolutionNote` tối thiểu 5 ký tự phục vụ hậu kiểm.
+ */
 export const UpdateAlertStatusSchema = z
   .object({
     status: AlertStatusSchema,
@@ -54,18 +63,13 @@ export const AssignAlertSchema = z
   })
   .strict();
 
-export type AssignAlertInput = z.infer<typeof AssignAlertSchema>;
-
 export const AddAlertNoteSchema = z
   .object({
     note: z.string().trim().min(5, 'Investigation note must be at least 5 characters.').max(2000),
   })
   .strict();
 
-export type AddAlertNoteInput = z.infer<typeof AddAlertNoteSchema>;
-
-export const IncidentStatusSchema = z.enum(['DRAFT', 'SUBMITTED', 'IN_REVIEW', 'CLOSED']);
-export type IncidentStatus = z.infer<typeof IncidentStatusSchema>;
+const IncidentStatusSchema = z.enum(['DRAFT', 'SUBMITTED', 'IN_REVIEW', 'CLOSED']);
 
 export const CreateIncidentReportSchema = z
   .object({
@@ -165,5 +169,3 @@ export const RunDetectionInputSchema = z
     windowMinutes: z.number().int().min(1).max(1440).optional(),
   })
   .strict();
-
-export type RunDetectionInput = z.infer<typeof RunDetectionInputSchema>;

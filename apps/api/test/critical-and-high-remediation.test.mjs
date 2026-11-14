@@ -1,6 +1,5 @@
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
-import { createHmac, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { ForbiddenException, HttpException } from '@nestjs/common';
@@ -9,8 +8,6 @@ import * as OTPAuth from 'otpauth';
 import { AppErrorCode } from '@sda/contracts';
 import { buildPgPoolConfig } from '@sda/database';
 import { AppConfigService } from '../dist/config/config.service.js';
-import { AuditVerifierService } from '../dist/modules/audit/audit-verifier.service.js';
-import { AuditWriterService } from '../dist/modules/audit/audit-writer.service.js';
 import { ZipBombGuardService } from '../dist/modules/documents/zip-bomb-guard.service.js';
 import { inspectOfficeArchiveSecurity } from '../dist/modules/documents/office-archive-inspector.js';
 import { inspectOoxmlEntryPathSecurity } from '../dist/modules/documents/zip-xml-security.helper.js';
@@ -21,91 +18,11 @@ import { AuthorizationGuard } from '../dist/modules/rbac/authorization.guard.js'
 import { MfaService } from '../dist/modules/auth/mfa.service.js';
 import { LoginRateLimitService } from '../dist/modules/auth/login-rate-limit.service.js';
 import { validatePolicy } from '../dist/modules/abac/policy-validator.js';
+import { buildTruncatedAuditVerifierFixture } from './helpers/audit-truncation-fixture.helper.mjs';
 import { createZipBuffer } from './helpers/zip-builder.mjs';
 
 test('[CRIT-01 & CRIT-02] AuditVerifierService detects head-truncation & missing priorLog without leaking HMAC oracle', async () => {
-  const hmacKey = 'audit-verifier-hmac-test-key-at-least-32-chars!!';
-  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-  const config = new AppConfigService({
-    NODE_ENV: 'test',
-    APP_ENCRYPTION_MASTER_KEY: 'test-master-key-32-chars-long-000000000',
-    AUDIT_INTEGRITY_KEY: hmacKey,
-    AUTH_SIGNING_PRIVATE_KEY_PEM: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
-    AUTH_SIGNING_PUBLIC_KEYS_JSON: JSON.stringify({
-      'kid-1': publicKey.export({ type: 'spki', format: 'pem' }).toString(),
-    }),
-  });
-
-  const occurredAt = new Date('2026-10-15T12:00:00.000Z');
-  const corrId = randomUUID();
-  const truncatedLog = {
-    id: 3n,
-    chain_partition: 'GLOBAL',
-    chain_sequence: 3n, // Sequences 1..2 truncated!
-    hmac_key_version: 1,
-    chain_algorithm: 'HMAC-SHA-256',
-    action: 'DOCUMENT_VIEWED',
-    actor_user_id: 7n,
-    actor_username: 'reader1',
-    correlation_id: corrId,
-    details: {},
-    document_id: null,
-    access_session_id: null,
-    ip_address: '127.0.0.1',
-    object_type: 'DOCUMENT',
-    object_id: 'doc-1',
-    occurred_at: occurredAt,
-    outcome: 'SUCCESS',
-    previous_hash: 'a'.repeat(64),
-    reason_code: null,
-    user_agent: null,
-    entry_hash: 'f'.repeat(64),
-  };
-
-  const canonical = JSON.stringify({
-    accessSessionId: null,
-    action: 'DOCUMENT_VIEWED',
-    actorUserId: '7',
-    actorUsername: 'reader1',
-    chainAlgorithm: 'HMAC-SHA-256',
-    chainPartition: 'GLOBAL',
-    chainSequence: '3',
-    correlationId: corrId,
-    details: {},
-    documentId: null,
-    ipAddress: '127.0.0.1',
-    objectId: 'doc-1',
-    objectType: 'DOCUMENT',
-    occurredAt: occurredAt.toISOString(),
-    outcome: 'SUCCESS',
-    previousHash: 'a'.repeat(64),
-    reasonCode: null,
-    userAgent: null,
-  });
-  const realHmac = createHmac('sha256', hmacKey).update(canonical, 'utf8').digest('hex');
-
-  const alertsPersisted = [];
-  const mockDb = {
-    auditLog: {
-      findFirst: async () => null, // priorLog deleted!
-      findMany: async ({ where }) => (where?.chain_sequence?.gt === 3n ? [] : [truncatedLog]),
-    },
-    auditAnchor: {
-      findFirst: async () => null,
-      findMany: async () => [],
-    },
-    securityAlert: {
-      findFirst: async () => null,
-      create: async ({ data }) => {
-        alertsPersisted.push(data);
-        return { id: 11n, ...data };
-      },
-    },
-    alertAuditLink: { create: async () => ({}), createMany: async () => ({ count: 1 }) },
-    $transaction: async (fn) => fn(mockDb),
-  };
-  const writer = new AuditWriterService(config, mockDb);
-  const verifier = new AuditVerifierService(writer, mockDb);
+  const { verifier, realHmac, alertsPersisted } = buildTruncatedAuditVerifierFixture();
 
   const headRes = await verifier.verifyPartition('GLOBAL');
   assert.equal(headRes.valid, false);
@@ -180,7 +97,6 @@ test('[CRIT-07] Web preview hooks & modals fail closed on invalid %PDF- stream w
 });
 
 test('[HIGH-01..12] Custom Role SoD, Default-Deny Guard, AES-GCM AAD, TOTP anti-replay, RateLimit lock, CIDR & CI/CD', async () => {
-  // HIGH-01: Custom role carrying USER:MANAGE cannot coexist with DOCUMENT_OWNER
   assert.equal(
     areOverlappingRolesSodCompatible([
       {
@@ -195,7 +111,6 @@ test('[HIGH-01..12] Custom Role SoD, Default-Deny Guard, AES-GCM AAD, TOTP anti-
     false,
   );
 
-  // HIGH-03: AuthorizationGuard fails closed when route lacks metadata decorators
   const guard = new AuthorizationGuard(new Reflector(), { hasPermission: async () => true });
   await assert.rejects(
     guard.canActivate({
@@ -206,7 +121,6 @@ test('[HIGH-01..12] Custom Role SoD, Default-Deny Guard, AES-GCM AAD, TOTP anti-
     (err) => err instanceof ForbiddenException,
   );
 
-  // HIGH-09: AES-256-GCM SDAE v2 AAD prevents cross-document ciphertext swap
   const config = new AppConfigService({
     NODE_ENV: 'test',
     APP_ENCRYPTION_MASTER_KEY: 'test-master-key-32-chars-long-000000000',
@@ -225,7 +139,6 @@ test('[HIGH-01..12] Custom Role SoD, Default-Deny Guard, AES-GCM AAD, TOTP anti-
     /integrity|authentication|decrypt/iu,
   );
 
-  // HIGH-10: TOTP anti-replay within 90s window & rate-limit victim lock preservation under 10,005 fake keys
   const mfa = new MfaService(config);
   const { encryptedSecret, secret } = mfa.createEnrollment('user42@corp.test');
   const code = new OTPAuth.TOTP({
@@ -250,7 +163,6 @@ test('[HIGH-01..12] Custom Role SoD, Default-Deny Guard, AES-GCM AAD, TOTP anti-
     (err) => err instanceof HttpException && err.getStatus() === 429,
   );
 
-  // HIGH-11: Strict CIDR_MATCH validation rejects malformed CIDR
   const issues = validatePolicy(
     {
       version: 1n,
@@ -281,7 +193,6 @@ test('[HIGH-01..12] Custom Role SoD, Default-Deny Guard, AES-GCM AAD, TOTP anti-
   );
   assert.ok(issues.some((i) => i.code === 'INVALID_EXPECTED_VALUE'));
 
-  // HIGH-12: Supabase TLS enforcement in dev & CD pipeline container-first order
   const prevEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = 'development';
   try {

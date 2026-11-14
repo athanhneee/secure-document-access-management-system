@@ -19,7 +19,7 @@ const environmentPath = path.join(repositoryRoot, '.local', 'dev.env');
  *   - Tách dòng theo `/\r?\n/u`, loại bỏ dòng chỉ chứa khoảng trắng và dòng chú thích `#` (kể cả thụt lề).
  *   - Tìm dấu `=` đầu tiên, cắt tỉa khoảng trắng quanh tên khóa (`key.trim()`), từ chối khóa rỗng và giữ nguyên phần giá trị sau dấu `=`.
  */
-export function parseEnvironment(source) {
+function parseEnvironment(source) {
   const entries = [];
   for (const rawLine of source.split(/\r?\n/u)) {
     // CONFLICT-RESOLVED: Bỏ qua dòng chỉ chứa khoảng trắng hoặc chú thích có khoảng trắng đầu dòng để không ném lỗi giả ([MED-14]).

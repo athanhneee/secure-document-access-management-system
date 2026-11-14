@@ -21,7 +21,6 @@
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
-    "@sda/config": "workspace:*",
     "@tailwindcss/postcss": "^4.3.3",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3"

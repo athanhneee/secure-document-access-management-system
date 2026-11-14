@@ -1,4 +1,9 @@
-import { IcapServer, persistNetworkDlpSecurityAlert } from './icap-server.js';
+import {
+  IcapServer,
+  persistNetworkDlpSecurityAlert,
+  resolveIcapBindHost,
+  resolveIcapListenPort,
+} from './icap-server.js';
 import type { IcapServerConfig } from './icap.types.js';
 
 /**
@@ -39,13 +44,9 @@ export function resolveIcapDlpAction(rawAction: string | undefined): 'BLOCK' | '
  */
 export function startIcapServerJob(options?: IcapServerConfig, signal?: AbortSignal): IcapServer {
   const enabled = options?.enabled ?? process.env['ICAP_SERVER_ENABLED'] !== 'false';
-  const port =
-    options?.port ?? Number(process.env['ICAP_PORT'] ?? process.env['ICAP_SERVER_PORT'] ?? '1344');
-  const host =
-    options?.host ??
-    process.env['ICAP_BIND_HOST']?.trim() ??
-    process.env['ICAP_SERVER_HOST']?.trim() ??
-    '0.0.0.0';
+  // CONFLICT-RESOLVED: Dùng chung bộ phân giải `resolveIcapListenPort` và `resolveIcapBindHost` giữa `startIcapServerJob` và `IcapServer`.
+  const port = resolveIcapListenPort(options?.port);
+  const host = resolveIcapBindHost(options?.host);
   const maxConcurrentInspections =
     options?.maxConcurrentInspections ??
     Number(process.env['ICAP_MAX_CONCURRENT_INSPECTIONS'] ?? '16');

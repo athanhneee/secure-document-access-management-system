@@ -25,7 +25,7 @@ const DEFAULT_ITERATIONS = parseInt(process.env['LOAD_ITERATIONS'] || '50', 10);
 /**
  * Thuật toán: Thống Kê Thứ Tự & Nội Suy Phân Vị Độ Trễ Thực Nghiệm (`min`, `mean`, `p50`, `p90`, `p95`, `p99`, `max`).
  */
-export function calculatePercentiles(latenciesMs) {
+function calculatePercentiles(latenciesMs) {
   if (latenciesMs.length === 0) {
     return { min: 0, mean: 0, p50: 0, p90: 0, p95: 0, p99: 0, max: 0 };
   }
@@ -46,7 +46,7 @@ export function calculatePercentiles(latenciesMs) {
 /**
  * Thuật toán: Điều Phối Hồ Công Tác Giới Hạn Đồng Thời Không Khóa (`Bounded-Concurrency Worker Pool Scheduler`).
  */
-export async function runScenarioPool(name, fn, totalCount, concurrency) {
+async function runScenarioPool(name, fn, totalCount, concurrency) {
   const latencies = [];
   let errors = 0;
   let cursor = 0;
@@ -231,7 +231,7 @@ async function buildOffline13MigrationScenarios(totalOps, concurrency) {
   };
 }
 
-export async function main() {
+async function main() {
   const concurrency = parseInt(process.env['LOAD_CONCURRENCY'] || String(DEFAULT_CONCURRENCY), 10);
   const iterations = parseInt(process.env['LOAD_ITERATIONS'] || String(DEFAULT_ITERATIONS), 10);
   const totalOps = concurrency * iterations;

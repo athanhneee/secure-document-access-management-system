@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as net from 'node:net';
-import { IcapServer } from '../dist/icap/icap-server.js';
-import { resolveIcapDlpAction } from '../dist/icap/icap-worker-job.js';
+import {
+  IcapServer,
+  resolveIcapBindHost,
+  resolveIcapListenPort,
+} from '../dist/icap/icap-server.js';
+import { resolveIcapDlpAction, startIcapServerJob } from '../dist/icap/icap-worker-job.js';
 
 function sendIcap(port, payload) {
   return new Promise((resolve, reject) => {
@@ -263,5 +267,27 @@ test('IcapServer — immediately completes TCP-fragmented REQMOD and RESPMOD nul
     assert.equal(metrics.cleanPassThrough, 2);
   } finally {
     await server.stop();
+  }
+});
+
+test('ICAP Env Resolution — honors both ICAP_PORT/ICAP_SERVER_PORT and ICAP_BIND_HOST/ICAP_SERVER_HOST', async () => {
+  assert.equal(resolveIcapBindHost(undefined, { ICAP_BIND_HOST: '127.0.0.1' }), '127.0.0.1');
+  assert.equal(resolveIcapBindHost(undefined, { ICAP_SERVER_HOST: '127.0.0.2' }), '127.0.0.2');
+  assert.equal(resolveIcapListenPort(undefined, { ICAP_PORT: '11344' }), 11344);
+  assert.equal(resolveIcapListenPort(undefined, { ICAP_SERVER_PORT: '12344' }), 12344);
+
+  const prevHost = process.env['ICAP_SERVER_HOST'];
+  const prevPort = process.env['ICAP_SERVER_PORT'];
+  process.env['ICAP_SERVER_HOST'] = '127.0.0.1';
+  process.env['ICAP_SERVER_PORT'] = '14344';
+  try {
+    const disabledServer = startIcapServerJob({ enabled: false });
+    const started = await disabledServer.start();
+    assert.deepEqual(started, { host: '127.0.0.1', port: 14344 });
+  } finally {
+    if (prevHost === undefined) delete process.env['ICAP_SERVER_HOST'];
+    else process.env['ICAP_SERVER_HOST'] = prevHost;
+    if (prevPort === undefined) delete process.env['ICAP_SERVER_PORT'];
+    else process.env['ICAP_SERVER_PORT'] = prevPort;
   }
 });

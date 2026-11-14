@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fsp from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import * as net from 'node:net';
@@ -9,11 +10,18 @@ import { cleanExpiredExportJobs } from '../dist/export-cleanup-job.js';
 import { processOutboxBatch } from '../dist/notification-outbox-job.js';
 import { runDetectionCycle } from '../dist/security-detection-job.js';
 
-test('[CRIT-08] cleanExpiredExportJobs — unlinks valid files, cleans ENOENT, and preserves DB rows on out-of-bounds or non-regular files', async () => {
+test('[CRIT-08] cleanExpiredExportJobs — unlinks valid local & S3 files, cleans ENOENT, and preserves DB rows on out-of-bounds paths', async () => {
   const tempBase = await fsp.mkdtemp(path.join(os.tmpdir(), 'sda-export-test-'));
   const validFile = path.join(tempBase, 'export-valid.csv');
   const nestedDir = path.join(tempBase, 'subdir-not-a-file');
   const outsideFile = path.join(os.tmpdir(), `outside-${randomUUID()}.csv`);
+  const s3DeletedPaths = [];
+  const s3Server = http.createServer((req, res) => {
+    if (req.method === 'DELETE') s3DeletedPaths.push((req.url ?? '').split('?')[0]);
+    res.writeHead(204);
+    res.end();
+  });
+  await new Promise((resolve) => s3Server.listen(0, '127.0.0.1', resolve));
 
   await fsp.writeFile(validFile, 'id,action\n1,TEST\n', 'utf8');
   await fsp.mkdir(nestedDir);
@@ -23,6 +31,8 @@ test('[CRIT-08] cleanExpiredExportJobs — unlinks valid files, cleans ENOENT, a
     const jobs = [
       { id: 'job-valid', file_path: validFile },
       { id: 'job-enoent', file_path: path.join(tempBase, 'already-gone.csv') },
+      { id: 'job-s3-uri', file_path: 's3://sda-derivatives/exports/job-s3-uri.dat' },
+      { id: 'job-s3-bad', file_path: 's3://sda-derivatives/../evil.dat' },
       { id: 'job-outside', file_path: outsideFile },
       { id: 'job-dir', file_path: nestedDir },
     ];
@@ -38,16 +48,33 @@ test('[CRIT-08] cleanExpiredExportJobs — unlinks valid files, cleans ENOENT, a
       },
     };
 
-    const prevExportDir = process.env['EXPORT_STORAGE_DIR'];
+    const savedEnv = {
+      NODE_ENV: process.env['NODE_ENV'],
+      STORAGE_MOCK: process.env['STORAGE_MOCK'],
+      STORAGE_ENDPOINT: process.env['STORAGE_ENDPOINT'],
+      STORAGE_ACCESS_KEY: process.env['STORAGE_ACCESS_KEY'],
+      STORAGE_SECRET_KEY: process.env['STORAGE_SECRET_KEY'],
+      STORAGE_BUCKET_DERIVATIVES: process.env['STORAGE_BUCKET_DERIVATIVES'],
+      EXPORT_STORAGE_DIR: process.env['EXPORT_STORAGE_DIR'],
+    };
+    process.env['NODE_ENV'] = 'production';
+    process.env['STORAGE_MOCK'] = 'false';
+    process.env['STORAGE_ENDPOINT'] = `http://127.0.0.1:${s3Server.address().port}`;
+    process.env['STORAGE_ACCESS_KEY'] = 'cleanup-key';
+    process.env['STORAGE_SECRET_KEY'] = 'cleanup-secret';
+    process.env['STORAGE_BUCKET_DERIVATIVES'] = 'sda-derivatives';
     process.env['EXPORT_STORAGE_DIR'] = tempBase;
     try {
       const result = await cleanExpiredExportJobs({ databaseClient: mockDb });
-      assert.equal(result.filesDeleted, 1);
-      assert.equal(result.expiredJobsCleaned, 2);
-      assert.deepEqual(deletedJobIds, ['job-valid', 'job-enoent']);
+      assert.equal(result.filesDeleted, 3);
+      assert.equal(result.expiredJobsCleaned, 3);
+      assert.deepEqual(deletedJobIds, ['job-valid', 'job-enoent', 'job-s3-uri']);
+      assert.ok(s3DeletedPaths.includes('/sda-derivatives/exports/job-s3-uri.dat'));
     } finally {
-      if (prevExportDir === undefined) delete process.env['EXPORT_STORAGE_DIR'];
-      else process.env['EXPORT_STORAGE_DIR'] = prevExportDir;
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
 
     const outsideStillExists = await fsp
@@ -56,6 +83,7 @@ test('[CRIT-08] cleanExpiredExportJobs — unlinks valid files, cleans ENOENT, a
       .catch(() => false);
     assert.equal(outsideStillExists, true);
   } finally {
+    await new Promise((resolve) => s3Server.close(resolve));
     await fsp.rm(outsideFile, { force: true });
     await fsp.rm(tempBase, { recursive: true, force: true });
   }
@@ -188,63 +216,39 @@ test('[HIGH-14] processOutboxBatch — claims via FOR UPDATE SKIP LOCKED, fails 
 test('[HIGH-16] runDetectionCycle — isolates per-user and anonymous cooldowns for UNTRUSTED_CONTEXT and REFRESH_TOKEN_REUSE', async () => {
   const now = new Date('2026-10-10T10:00:00Z');
   const createdAlerts = [];
+  const makeRule = (rule_code, cooldown_minutes) => ({
+    rule_code,
+    name: rule_code,
+    is_enabled: true,
+    severity: 'HIGH',
+    threshold: 1,
+    window_minutes: 5,
+    cooldown_minutes,
+    parameters: {},
+  });
+  const makeLog = (id, actor_user_id, action, details = {}) => ({
+    id,
+    actor_user_id,
+    action,
+    details,
+    occurred_at: now,
+  });
   const mockDb = {
     detectionRuleConfig: {
       findMany: async () => [
-        {
-          rule_code: 'UNTRUSTED_CONTEXT',
-          name: 'Untrusted Context',
-          is_enabled: true,
-          severity: 'HIGH',
-          threshold: 1,
-          window_minutes: 5,
-          cooldown_minutes: 30,
-          parameters: {},
-        },
-        {
-          rule_code: 'REFRESH_TOKEN_REUSE',
-          name: 'Refresh Reuse',
-          is_enabled: true,
-          severity: 'HIGH',
-          threshold: 1,
-          window_minutes: 5,
-          cooldown_minutes: 15,
-          parameters: {},
-        },
+        makeRule('UNTRUSTED_CONTEXT', 30),
+        makeRule('REFRESH_TOKEN_REUSE', 15),
       ],
     },
     auditLog: {
-      findMany: async ({ where }) => {
-        if (Array.isArray(where?.OR)) {
-          return [
-            {
-              id: 1n,
-              actor_user_id: 101n,
-              action: 'LOGIN_SUCCESS',
-              details: { untrustedIp: true },
-              occurred_at: now,
-            },
-            {
-              id: 2n,
-              actor_user_id: 202n,
-              action: 'LOGIN_SUCCESS',
-              details: { untrustedDevice: true },
-              occurred_at: now,
-            },
-            {
-              id: 3n,
-              actor_user_id: null,
-              action: 'ACCESS_DENIED_UNTRUSTED_IP',
-              details: {},
-              occurred_at: now,
-            },
-          ];
-        }
-        return [
-          { id: 4n, actor_user_id: 101n, occurred_at: now },
-          { id: 5n, actor_user_id: 202n, occurred_at: now },
-        ];
-      },
+      findMany: async ({ where }) =>
+        Array.isArray(where?.OR)
+          ? [
+              makeLog(1n, 101n, 'LOGIN_SUCCESS', { untrustedIp: true }),
+              makeLog(2n, 202n, 'LOGIN_SUCCESS', { untrustedDevice: true }),
+              makeLog(3n, null, 'ACCESS_DENIED_UNTRUSTED_IP'),
+            ]
+          : [makeLog(4n, 101n, 'REFRESH_TOKEN_REUSE'), makeLog(5n, 202n, 'REFRESH_TOKEN_REUSE')],
     },
     securityAlert: {
       findFirst: async ({ where }) => {

@@ -16,6 +16,12 @@ import {
   readContainedExportArtifactBuffer,
 } from './export-disk-cipher.helper.js';
 import { generateExcelTable, generatePdfTable, type ExportColumn } from './export-formatter.js';
+import {
+  downloadEncryptedExportFromS3,
+  isCrossContainerExportFilename,
+  isValidExportS3UriForJob,
+  resolveApiExportS3Config,
+} from './export-s3-storage.helper.js';
 
 export {
   assertCrossUserExportScope,
@@ -121,7 +127,68 @@ export function persistExportArtifact(
 }
 
 /**
- * Thuật toán: Đọc tệp báo cáo từ đĩa kèm kiểm tra bao đóng đường dẫn chuẩn hóa, chống symlink (`O_NOFOLLOW`), giải mã `AES-256-GCM` và xác minh `SHA-256`.
+ * Thuật toán: Đọc tệp báo cáo đa container (ưu tiên đĩa cục bộ giam cầm `O_NOFOLLOW`, tự động tải dự phòng từ S3/R2 `exports/<jobId>.dat`), giải mã `AES-256-GCM` và xác minh `SHA-256`.
+ */
+export async function readVerifiedExportArtifactAsync(
+  exportDir: string,
+  id: string,
+  filePath: string | null,
+  logger: Logger,
+  expectedSha256Hash?: string | null,
+): Promise<Buffer | null> {
+  if (!filePath) return null;
+  const safeId = id.replace(/[^a-zA-Z0-9_-]/gu, '');
+
+  if (filePath.startsWith('s3://')) {
+    if (!safeId || !isValidExportS3UriForJob(filePath, safeId)) {
+      logger.error(`Blocked invalid S3 export file_path read for job ${id}`);
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
+        message: 'Export artifact path is invalid.',
+      });
+    }
+    const rawS3Buffer = await downloadEncryptedExportFromS3(safeId);
+    return rawS3Buffer
+      ? decryptAndVerifyExportArtifactBuffer(id, rawS3Buffer, expectedSha256Hash, true)
+      : null;
+  }
+
+  const resolvedBase = path.resolve(exportDir);
+  const resolvedTarget = path.resolve(filePath);
+  const isContainedLocally =
+    resolvedTarget.startsWith(`${resolvedBase}${path.sep}`) || resolvedTarget === resolvedBase;
+
+  if (!isContainedLocally) {
+    // CONFLICT-RESOLVED: Trên triển khai đa container Railway/Cloudflare R2, nếu `file_path` mang đường dẫn cục bộ của container Worker khác nhưng khớp đúng `<jobId>.dat` (không có `..`), tải từ S3 thay vì đọc đĩa cục bộ; ngược lại chặn `ForbiddenException`.
+    if (resolveApiExportS3Config() !== null && isCrossContainerExportFilename(filePath, safeId)) {
+      const rawS3Buffer = await downloadEncryptedExportFromS3(safeId);
+      return rawS3Buffer
+        ? decryptAndVerifyExportArtifactBuffer(id, rawS3Buffer, expectedSha256Hash, true)
+        : null;
+    }
+    logger.error(`Blocked out-of-bounds export file_path read for job ${id}`);
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
+      message: 'Export artifact path is invalid.',
+    });
+  }
+
+  const rawDiskBuffer = readContainedExportArtifactBuffer(resolvedTarget);
+  if (rawDiskBuffer) {
+    return decryptAndVerifyExportArtifactBuffer(id, rawDiskBuffer, expectedSha256Hash, true);
+  }
+
+  if (resolveApiExportS3Config() !== null && safeId) {
+    const rawS3Buffer = await downloadEncryptedExportFromS3(safeId);
+    if (rawS3Buffer) {
+      return decryptAndVerifyExportArtifactBuffer(id, rawS3Buffer, expectedSha256Hash, true);
+    }
+  }
+  return null;
+}
+
+/**
+ * Thuật toán: Đọc tệp báo cáo đồng bộ trên đĩa cục bộ kèm kiểm tra bao đóng đường dẫn, chống symlink (`O_NOFOLLOW`), giải mã `AES-256-GCM` và xác minh `SHA-256`.
  */
 export function readVerifiedExportArtifact(
   exportDir: string,

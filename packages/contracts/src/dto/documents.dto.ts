@@ -12,21 +12,11 @@ export const IdParamSchema = z
   })
   .strict();
 
-export type IdParam = z.infer<typeof IdParamSchema>;
-
 export const UuidParamSchema = z
   .object({
     id: z.string().uuid(),
   })
   .strict();
-
-export type UuidParam = z.infer<typeof UuidParamSchema>;
-
-export const DocumentStatusSchema = z.enum(['DRAFT', 'ACTIVE', 'ARCHIVED', 'DELETED']);
-export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
-
-export const ScanStatusSchema = z.enum(['PENDING', 'CLEAN', 'INFECTED', 'FAILED']);
-export type ScanStatus = z.infer<typeof ScanStatusSchema>;
 
 // CONFLICT-RESOLVED: Áp dụng kiểm tra giới hạn BIGINT 64-bit và ngày lịch Gregorian thực cho toàn bộ lược đồ tài liệu.
 export const CreateDocumentDraftSchema = z

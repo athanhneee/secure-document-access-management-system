@@ -1,14 +1,14 @@
 import { z } from 'zod';
 
+/**
+ * Module: WebAuthn / FIDO2 Registration & Authentication DTO Schemas (`@sda/contracts`)
+ * Thuật toán: Xác thực cấu trúc yêu cầu đăng ký và xác thực khóa phần cứng FIDO2/Passkey với chế độ `.strict()` chống tràn thuộc tính.
+ */
 export const WebAuthnRegistrationOptionsRequestSchema = z
   .object({
     label: z.string().trim().min(1).max(80).optional(),
   })
   .strict();
-
-export type WebAuthnRegistrationOptionsRequest = z.infer<
-  typeof WebAuthnRegistrationOptionsRequestSchema
->;
 
 export const WebAuthnVerifyRegistrationRequestSchema = z
   .object({
@@ -18,17 +18,11 @@ export const WebAuthnVerifyRegistrationRequestSchema = z
   })
   .strict();
 
-export type WebAuthnVerifyRegistrationRequest = z.infer<
-  typeof WebAuthnVerifyRegistrationRequestSchema
->;
-
 export const WebAuthnAuthOptionsRequestSchema = z
   .object({
     username: z.string().trim().min(1).max(255).optional(),
   })
   .strict();
-
-export type WebAuthnAuthOptionsRequest = z.infer<typeof WebAuthnAuthOptionsRequestSchema>;
 
 export const WebAuthnVerifyAuthRequestSchema = z
   .object({
@@ -36,5 +30,3 @@ export const WebAuthnVerifyAuthRequestSchema = z
     response: z.record(z.string(), z.unknown()),
   })
   .strict();
-
-export type WebAuthnVerifyAuthRequest = z.infer<typeof WebAuthnVerifyAuthRequestSchema>;

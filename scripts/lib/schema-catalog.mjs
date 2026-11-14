@@ -1,3 +1,9 @@
+/**
+ * Module: Khám Phá Chuỗi Di Trú Prisma & Chụp Ảnh Tương Đương Danh Mục Hệ Thống PostgreSQL (`SchemaCatalog`)
+ * Thuật toán: Sắp Xếp Từ Điển Di Trú Kèm Băm SHA-256 & Nội Soi Danh Mục Hệ Thống Tất Định (`Deterministic Catalog Introspection`).
+ *   - Đọc tuần tự các thư mục di trú Prisma theo thứ tự dấu thời gian, tính mã băm SHA-256 nguyên bản khớp chuẩn `_prisma_migrations`.
+ *   - Truy vấn `pg_catalog` và `information_schema` với `ORDER BY` tất định trên 9 chiều cấu trúc (bảng, cột, enum, ràng buộc, chỉ mục, trigger, RLS, FORCE RLS, chính sách RLS) để phát hiện lệch lược đồ.
+ */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { access, readdir, readFile } from 'node:fs/promises';
@@ -47,9 +53,8 @@ export const EXPECTED_BUSINESS_TABLES = [
 ];
 
 /**
- * Algorithm: Lexicographical Migration Chain Discovery & SHA-256 Checksum Indexing.
- * Scans Prisma migration directories, sorts them chronologically by timestamp prefix,
- * and computes raw SHA-256 digests matching Prisma Migrate's _prisma_migrations checksums.
+ * Thuật toán: Khám Phá Chuỗi Di Trú Theo Thứ Tự Từ Điển & Lập Chỉ Mục Băm SHA-256 (`Lexicographical Migration Chain Discovery`).
+ * Quét thư mục `migrations`, sắp xếp tăng dần theo tiền tố dấu thời gian và tính SHA-256 khớp với bảng `_prisma_migrations`.
  */
 export async function loadPrismaMigrations(migrationsDirUrl) {
   const migrationsRoot = fileURLToPath(migrationsDirUrl);
@@ -73,10 +78,9 @@ export async function loadPrismaMigrations(migrationsDirUrl) {
 }
 
 /**
- * Algorithm: Deterministic PostgreSQL System-Catalog Introspection.
- * Queries pg_catalog and information_schema in deterministic sort order (excluding Prisma's
- * internal _prisma_migrations bookkeeping table) so two independent SQL sources can be
- * compared for exact structural equivalence via deep equality.
+ * Thuật toán: Nội Soi Danh Mục Hệ Thống PostgreSQL Tất Định (`Deterministic System-Catalog Introspection`).
+ * Truy vấn `pg_catalog` và `information_schema` theo thứ tự sắp xếp cố định (loại trừ bảng quản trị `_prisma_migrations`)
+ * để đối chiếu tương đương cấu trúc tuyệt đối giữa hai nguồn SQL độc lập.
  */
 export async function captureCatalogSnapshot(database) {
   const tables = (
@@ -170,9 +174,8 @@ export async function captureCatalogSnapshot(database) {
 }
 
 /**
- * Algorithm: Field-by-Field Catalog Equivalence Verification.
- * Compares each normalized catalog dimension independently to pinpoint any schema drift
- * between Prisma migrations and standalone SQL definitions.
+ * Thuật toán: Đối Chiếu Tương Đương Từng Chiều Danh Mục (`Field-by-Field Catalog Equivalence Verification`).
+ * So sánh sâu từng chiều cấu trúc độc lập để định vị chính xác mọi sai lệch lược đồ giữa chuỗi di trú Prisma và định nghĩa SQL chuẩn.
  */
 export function assertCatalogParity(referenceSnapshot, candidateSnapshot, candidateLabel) {
   for (const dimension of Object.keys(referenceSnapshot)) {
@@ -184,6 +187,9 @@ export function assertCatalogParity(referenceSnapshot, candidateSnapshot, candid
   }
 }
 
+/**
+ * Thuật toán: Kiểm tra sự tồn tại của tệp cấu hình/di trú qua lời gọi hệ thống `fs.access` không ném ngoại lệ ra ngoài.
+ */
 export async function fileExists(fileUrl) {
   try {
     await access(fileUrl);

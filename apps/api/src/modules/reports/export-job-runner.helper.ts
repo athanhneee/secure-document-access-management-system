@@ -6,13 +6,17 @@
  */
 import type { Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { getDatabaseClient } from '@sda/database';
 import type { CreateExportJobInput, ExportFormat, ExportType } from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
-import { persistExportArtifact, renderExportBuffer } from './export-artifact.helper.js';
+import { renderExportBuffer } from './export-artifact.helper.js';
 import { buildExportDataset } from './export-dataset.builder.js';
+import { encryptExportArtifactBuffer } from './export-disk-cipher.helper.js';
 import { resolveExportAuthorizationScope } from './export-filter-scope.helper.js';
+import { resolveApiExportS3Config, uploadEncryptedExportToS3 } from './export-s3-storage.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -104,7 +108,22 @@ export async function executeExportJobPipeline(params: {
     );
     const { contentBuffer, mimeType } = await renderExportBuffer(input.format, dataset);
     const sha256Hash = createHash('sha256').update(contentBuffer).digest('hex');
-    const filePath = persistExportArtifact(exportDir, jobId, contentBuffer);
+    const encryptedEnvelope = encryptExportArtifactBuffer(jobId, contentBuffer);
+    const s3Uri =
+      resolveApiExportS3Config() !== null
+        ? await uploadEncryptedExportToS3(jobId, encryptedEnvelope)
+        : null;
+
+    let filePath = path.join(exportDir, `${jobId}.dat`);
+    try {
+      if (!fs.existsSync(exportDir)) {
+        fs.mkdirSync(exportDir, { recursive: true, mode: 0o700 });
+      }
+      fs.writeFileSync(filePath, encryptedEnvelope, { mode: 0o600 });
+    } catch (fsErr) {
+      if (!s3Uri) throw fsErr;
+      filePath = s3Uri;
+    }
 
     await database.asyncExportJob.update({
       where: { id: jobId },

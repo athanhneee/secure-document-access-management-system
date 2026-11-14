@@ -11,7 +11,7 @@
  */
 
 const DANGEROUS_PREFIXES = new Set(['=', '+', '-', '@', '|', '\t', '\r', '\n']);
-const LEADING_WHITESPACE_FORMULA_RE = /^[\s\u00A0]+[=+\-@|]/u;
+const LEADING_OR_EMBEDDED_FORMULA_RE = /^(?:[\s\u00A0]+[=+\-@|])|[\r\n][\s\u00A0]*[=+\-@|]/u;
 
 /**
  * Thuật toán: Vô hiệu hóa chèn công thức bảng tính OWASP CWE-1236 (Spreadsheet Formula & DDE Prefix Neutralization)
@@ -29,7 +29,7 @@ export function sanitizeCsvCell(value: unknown): string {
   const str = String(value);
   if (
     str.length > 0 &&
-    (DANGEROUS_PREFIXES.has(str[0]!) || LEADING_WHITESPACE_FORMULA_RE.test(str))
+    (DANGEROUS_PREFIXES.has(str[0]!) || LEADING_OR_EMBEDDED_FORMULA_RE.test(str))
   ) {
     return `'${str}`;
   }

@@ -14,7 +14,6 @@ import {
   buildGrantSubjectAttributes,
   buildRoleGrantSubjectAttributes,
   fetchUserClearanceRank,
-  isTrustedClientNetwork,
 } from './grant-pip.helper.js';
 import { validateGrantTargetAndSod } from './grant-target-sod.helper.js';
 
@@ -42,12 +41,15 @@ export interface ValidateCreateGrantParams {
 export async function validateCreateGrantPreconditions(
   params: ValidateCreateGrantParams,
 ): Promise<{ validFrom: Date; validUntil: Date; maxMs: number }> {
-  const { input, principal, context, now, maxDurationDays, database, authorization, abac, config } =
-    params;
-  const validFrom = new Date(input.validFrom);
+  const { input, principal, now, maxDurationDays, database, authorization, abac } = params;
+  const validFrom = input.validFrom ? new Date(input.validFrom) : now;
   const validUntil = new Date(input.validUntil);
 
-  if (validUntil <= validFrom) {
+  if (
+    Number.isNaN(validFrom.getTime()) ||
+    Number.isNaN(validUntil.getTime()) ||
+    validUntil <= validFrom
+  ) {
     throw new BadRequestException({
       errorCode: AppErrorCode.GRANT_TIME_RANGE_INVALID,
       message: 'validUntil must be after validFrom.',
@@ -157,7 +159,14 @@ export async function validateCreateGrantPreconditions(
     };
   }
   const resourceAttributes = buildGrantResourceAttributes(document, currentClassification);
-  const trustedNetwork = isTrustedClientNetwork(config, context.ip);
+  const staticIssuanceEnvironment = {
+    currentTime: validFrom.toISOString(),
+    ip: '127.0.0.1',
+    trustedNetwork: true,
+    deviceTrust: true,
+    mfa: true,
+    riskScore: 0,
+  };
 
   for (const permission of input.permissions) {
     const abacResult = await abac.evaluate({
@@ -165,14 +174,7 @@ export async function validateCreateGrantPreconditions(
       action: permission as 'VIEW' | 'DOWNLOAD',
       subject: subjectAttributes,
       resource: resourceAttributes,
-      environment: {
-        currentTime: now.toISOString(),
-        ip: context.ip,
-        trustedNetwork,
-        deviceTrust: false,
-        mfa: principal.mfa,
-        riskScore: 0,
-      },
+      environment: staticIssuanceEnvironment,
     });
     if (abacResult.decision === 'DENY') {
       throw new ForbiddenException({

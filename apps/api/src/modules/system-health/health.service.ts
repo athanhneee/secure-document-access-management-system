@@ -1,11 +1,11 @@
 /**
  * Module: HealthService — Tổng hợp trạng thái sẵn sàng đa thành phần hạ tầng (PostgreSQL, Redis, S3/MinIO) và ảnh chụp sức khỏe vận hành.
  */
-import * as path from 'node:path';
 import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import type { LivenessResponse, ReadinessResponse } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
+import { resolveWorkspaceExportDir } from '../reports/export-access-policy.helper.js';
 import { unlinkContainedExportArtifact } from '../reports/export-disk-cipher.helper.js';
 import {
   probeDatabaseEndpoint,
@@ -169,9 +169,7 @@ export class HealthService {
     }
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
     const now = new Date();
-    const exportBaseDir = path.resolve(
-      process.env['EXPORT_STORAGE_DIR']?.trim() || path.join(process.cwd(), '.local', 'exports'),
-    );
+    const exportBaseDir = resolveWorkspaceExportDir();
     let deletedExportFiles = 0;
 
     // CONFLICT-RESOLVED: Thu hồi tệp `.dat` vật lý trên đĩa trước khi xóa bản ghi `asyncExportJob` trong CSDL (HIGH-07).

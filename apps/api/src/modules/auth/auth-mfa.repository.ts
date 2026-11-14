@@ -195,7 +195,7 @@ export async function advanceWebAuthnCounterAtomic<TCred extends { counter: numb
 }
 
 /**
- * Algorithm / Thuật toán: Cập nhật danh sách mã khôi phục còn lại sau khi tiêu thụ một mã.
+ * Algorithm / Thuật toán: Cập nhật mã khôi phục còn lại, bí mật MFA, danh sách nhân tố hoạt động, vô hiệu hóa MFA và ghi cảnh báo.
  */
 export async function consumeMfaRecoveryCode(
   database: PrismaClient,
@@ -208,9 +208,6 @@ export async function consumeMfaRecoveryCode(
   });
 }
 
-/**
- * Algorithm / Thuật toán: Cập nhật bản mã bí mật MFA (ví dụ tăng bộ đếm chữ ký WebAuthn).
- */
 export async function updateUserMfaSecret(
   database: PrismaClient,
   methodId: string,
@@ -222,9 +219,6 @@ export async function updateUserMfaSecret(
   });
 }
 
-/**
- * Algorithm / Thuật toán: Liệt kê các nhân tố MFA đang kích hoạt của người dùng theo thứ tự mới nhất.
- */
 export async function listActiveMfaMethods(
   database: PrismaClient,
   userId: bigint,
@@ -244,9 +238,6 @@ export async function listActiveMfaMethods(
   }));
 }
 
-/**
- * Algorithm / Thuật toán: Vô hiệu hóa toàn bộ nhân tố MFA đang hoạt động của tài khoản.
- */
 export async function disableUserMfaMethods(
   database: PrismaClient,
   userId: bigint,
@@ -258,9 +249,6 @@ export async function disableUserMfaMethods(
   return result.count > 0;
 }
 
-/**
- * Algorithm / Thuật toán: Ghi nhận cảnh báo an ninh (ví dụ phát hiện nhân bản khóa WebAuthn).
- */
 export async function insertSecurityAlert(
   database: PrismaClient,
   data: {

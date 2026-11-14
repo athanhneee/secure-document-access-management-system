@@ -94,7 +94,7 @@ export async function executeCreateUser(params: {
     { client: database },
   );
 
-  authorization.invalidateUser(id);
+  await authorization.invalidateUser(id);
   return { id: id.toString() };
 }
 
@@ -165,7 +165,7 @@ export async function executeUpdateUser(params: {
     { client: database },
   );
 
-  authorization.invalidateUser(id);
+  await authorization.invalidateUser(id);
   return presentUserRecord(result);
 }
 
@@ -237,6 +237,6 @@ export async function executeChangeUserStatus(params: {
     { client: database },
   );
 
-  authorization.invalidateUser(id);
+  await authorization.invalidateUser(id);
   return presentUserRecord(result);
 }

@@ -113,8 +113,8 @@ test('[MED-03, MED-05, MED-07] Detection rules merge, watermark DB fallback & <=
     roles: ['SYSTEM_ADMIN'],
     mfa: true,
   };
-  assert.throws(
-    () => usersSvc.lock(adminActor, 1n, 0, { ip: '127.0.0.1', correlationId: 'c1' }),
+  await assert.rejects(
+    async () => usersSvc.lock(adminActor, 1n, 0, { ip: '127.0.0.1', correlationId: 'c1' }),
     ForbiddenException,
   );
   await assert.rejects(

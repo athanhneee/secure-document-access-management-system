@@ -125,14 +125,14 @@ export async function executeVerifyMfaEnrollment(
   context: RequestContext,
 ): Promise<SessionArtifacts & { recoveryCodes: string[] }> {
   const rateKey = `mfa-enroll:${principal.userId}`;
-  deps.rateLimit.assertAllowed(context.ip, rateKey);
+  await deps.rateLimit.assertAllowed(context.ip, rateKey);
   await assertMfaEnrollmentAllowed(deps, principal, context);
   const pending = await deps.repository.pendingMfaMethod(principal.userId);
-  if (!pending || !deps.mfa.verifyTotp(pending.encryptedSecret, code)) {
-    deps.rateLimit.recordFailure(context.ip, rateKey);
+  if (!pending || !(await deps.mfa.verifyTotp(pending.encryptedSecret, code, principal.userId))) {
+    await deps.rateLimit.recordFailure(context.ip, rateKey);
     throw new UnauthorizedException('MFA verification failed.');
   }
-  deps.rateLimit.clearAccount(rateKey);
+  await deps.rateLimit.clearAccount(rateKey);
   const recovery = deps.mfa.createRecoveryCodes();
   await deps.repository.enableMfa(pending.id, principal.userId, recovery.hashes);
   const artifacts = await activateVerifiedMfaSession(deps, principal);
@@ -158,7 +158,7 @@ export async function verifyActiveMfaChallenge(
   if (code) {
     for (const method of activeMethods) {
       try {
-        if (deps.mfa.verifyTotp(method.encryptedSecret, code)) {
+        if (await deps.mfa.verifyTotp(method.encryptedSecret, code, userId)) {
           return true;
         }
       } catch {
@@ -199,17 +199,17 @@ export async function executeVerifyMfa(
   context: RequestContext,
 ): Promise<SessionArtifacts> {
   const rateKey = `mfa:${principal.userId}`;
-  deps.rateLimit.assertAllowed(context.ip, rateKey);
+  await deps.rateLimit.assertAllowed(context.ip, rateKey);
   const valid = await verifyActiveMfaChallenge(deps, principal.userId, code, recoveryCode);
   if (!valid) {
-    deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey);
     await deps.audit.record(
       { action: 'MFA_VERIFY', outcome: 'DENIED', actorUserId: principal.userId },
       context,
     );
     throw new UnauthorizedException('MFA verification failed.');
   }
-  deps.rateLimit.clearAccount(rateKey);
+  await deps.rateLimit.clearAccount(rateKey);
   const artifacts = await activateVerifiedMfaSession(deps, principal);
   await deps.audit.record(
     { action: 'MFA_VERIFY', outcome: 'SUCCESS', actorUserId: principal.userId },

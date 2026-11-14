@@ -1,44 +1,45 @@
 /**
  * @module MfaService
- * Dịch vụ xác thực đa nhân tố (Multi-Factor Authentication) chuẩn RFC 6238 TOTP,
- * mã hóa xác thực AES-256-GCM và quản lý mã khôi phục một lần băm kèm Pepper phân tách miền.
+ * Thuật toán: Dịch vụ xác thực đa nhân tố chuẩn RFC 6238 TOTP chống phát lại phi chặn qua `HMAC-SHA256` + `DistributedStateService.claimOnce`,
+ * mã hóa xác thực đối xứng AEAD AES-256-GCM và quản lý mã khôi phục một lần băm kèm Pepper phân tách miền.
  */
 import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  createHmac,
   randomBytes,
-  scryptSync,
   timingSafeEqual,
 } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import * as OTPAuth from 'otpauth';
 import { AppConfigService } from '../../config/config.service.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
+
+const TOTP_REPLAY_WINDOW_TTL_MS = 90_000;
 
 @Injectable()
 export class MfaService {
   private readonly encryptionKey: Buffer;
   private readonly recoveryPepper: Buffer;
-  private readonly lastAcceptedStepBySecret = new Map<
-    string,
-    { step: number; expiresAt: number }
-  >();
+  private readonly replayHmacSecret: Buffer;
+  private readonly stateStore: DistributedStateService;
 
   /**
    * Thuật toán: Dẫn xuất khóa con phân tách miền bằng SHA-256 (Domain-Separated SHA-256 Key Derivation).
-   * Mục đích: Từ khóa chủ `APP_ENCRYPTION_MASTER_KEY`, tách biệt hoàn toàn khóa mã hóa bí mật TOTP
-   * (`mfa-encryption:`) và khóa pepper băm mã khôi phục (`mfa-recovery:`) chống tấn công tái sử dụng khóa chéo miền.
+   * Mục đích: Từ khóa chủ `APP_ENCRYPTION_MASTER_KEY`, tách biệt hoàn toàn khóa mã hóa bí mật TOTP (`mfa-encryption:`),
+   * khóa pepper băm mã khôi phục (`mfa-recovery:`) và khóa HMAC chống phát lại (`mfa-totp-replay:`).
    */
-  constructor(config: AppConfigService) {
+  constructor(config: AppConfigService, @Optional() stateStore?: DistributedStateService) {
     const master = config.get('APP_ENCRYPTION_MASTER_KEY');
     this.encryptionKey = createHash('sha256').update(`mfa-encryption:${master}`).digest();
     this.recoveryPepper = createHash('sha256').update(`mfa-recovery:${master}`).digest();
+    this.replayHmacSecret = createHash('sha256').update(`mfa-totp-replay:${master}`).digest();
+    this.stateStore = stateStore ?? new DistributedStateService(config);
   }
 
   /**
    * Thuật toán: Khởi tạo hạt giống mật mã TOTP chuẩn RFC 6238 (256-bit Base32 Secret Enrollment).
-   * Cơ chế hoạt động: Sinh ngẫu nhiên 32 byte bí mật gốc, đóng gói URI `otpauth://totp/...` (HMAC-SHA1,
-   * 6 chữ số, chu kỳ 30 giây) và mã hóa xác thực AES-256-GCM trước khi lưu xuống cơ sở dữ liệu.
    */
   createEnrollment(accountName: string): { encryptedSecret: string; uri: string; secret: string } {
     const secret = new OTPAuth.Secret({ size: 32 });
@@ -58,9 +59,14 @@ export class MfaService {
   }
 
   /**
-   * Thuật toán: Xác thực mã OTP theo thời gian chuẩn RFC 6238 §5.2 TOTP với cửa sổ lệch đồng hồ ±1 chu kỳ và chốt chống phát lại theo bước thời gian.
+   * Thuật toán: Xác thực mã OTP theo thời gian chuẩn RFC 6238 §5.2 TOTP (cửa sổ ±1 chu kỳ 30s)
+   * và tiêu thụ nguyên tử một lần bước thời gian qua `HMAC-SHA256(userId:stepCounter)` trên `DistributedStateService` (không chặn Event Loop).
    */
-  verifyTotp(encryptedSecret: string, token: string): boolean {
+  async verifyTotp(
+    encryptedSecret: string,
+    token: string,
+    userId?: bigint | string,
+  ): Promise<boolean> {
     if (!/^\d{6}$/.test(token)) return false;
     const rawSecret = this.decrypt(encryptedSecret);
     const now = Date.now();
@@ -75,33 +81,22 @@ export class MfaService {
     const delta = totp.validate({ token, window: 1, timestamp: now });
     if (delta === null) return false;
 
-    // CONFLICT-RESOLVED: Chặn phát lại mã TOTP trong cửa sổ 90 giây theo RFC 6238 §5.2 bằng theo dõi bước thời gian cuối đã chấp nhận (HIGH-10).
-    if (this.lastAcceptedStepBySecret.size >= 4_096) {
-      for (const [key, entry] of this.lastAcceptedStepBySecret) {
-        if (entry.expiresAt <= now) this.lastAcceptedStepBySecret.delete(key);
-      }
-    }
-    if (this.lastAcceptedStepBySecret.size >= 16_384) {
-      return false;
-    }
+    const stepCounter = Math.floor(now / 30_000) + delta;
+    const subjectScope =
+      userId !== undefined
+        ? String(userId)
+        : createHmac('sha256', this.replayHmacSecret).update(`secret:${rawSecret}`).digest('hex');
+    const replayKey = createHmac('sha256', this.replayHmacSecret)
+      .update(`${subjectScope}:${stepCounter}`)
+      .digest('hex');
 
-    // CONFLICT-RESOLVED: Dùng hàm dẫn xuất khóa tốn bộ nhớ scryptSync kèm recoveryPepper để định danh khe chống phát lại TOTP, đáp ứng chuẩn CWE-916 (CodeQL js/insufficient-password-hash).
-    const secretDigest = scryptSync(rawSecret, this.recoveryPepper, 32).toString('hex');
-    const matchedStep = Math.floor(now / 30_000) + delta;
-    const previous = this.lastAcceptedStepBySecret.get(secretDigest);
-    if (previous && previous.expiresAt > now && matchedStep <= previous.step) {
-      return false;
-    }
-    this.lastAcceptedStepBySecret.set(secretDigest, {
-      step: matchedStep,
-      expiresAt: now + 120_000,
+    return this.stateStore.claimOnce('totp-step', replayKey, TOTP_REPLAY_WINDOW_TTL_MS, {
+      failClosedInProd: true,
     });
-    return true;
   }
 
   /**
    * Thuật toán: Sinh tập mã khôi phục dự phòng entropy cao (128-bit CSPRNG Base64URL Recovery Codes).
-   * Cơ chế hoạt động: Tạo `count` mã ngẫu nhiên độc lập 16 byte qua CSPRNG và chỉ lưu bản băm một chiều.
    */
   createRecoveryCodes(count = 10): { plaintext: string[]; hashes: string[] } {
     const plaintext = Array.from({ length: count }, () => randomBytes(16).toString('base64url'));
@@ -110,8 +105,6 @@ export class MfaService {
 
   /**
    * Thuật toán: Đối chiếu thời gian hằng số và tiêu thụ nguyên tử mã khôi phục một lần (Constant-Time Single-Use Consumption).
-   * Cơ chế hoạt động: Băm mã ứng viên kèm pepper, duyệt danh sách bằng `timingSafeEqual` để chống rò rỉ kênh kề
-   * thời gian (timing side-channel), và trả về mảng mới đã loại bỏ phần tử vừa tiêu thụ.
    */
   consumeRecoveryCode(storedHashes: string[], candidate: string): string[] | null {
     const candidateHash = Buffer.from(this.hashRecoveryCode(candidate), 'hex');
@@ -135,8 +128,6 @@ export class MfaService {
 
   /**
    * Thuật toán: Mã hóa xác thực đối xứng AEAD AES-256-GCM đóng gói nhị phân `[12B IV || 16B AuthTag || Ciphertext]`.
-   * Cơ chế hoạt động: Sinh IV ngẫu nhiên 96-bit cho mỗi lần mã hóa, thu thẻ xác thực Galois 128-bit (`AuthTag`)
-   * và nối thành một khung nhị phân duy nhất mã hóa Base64URL an toàn cho lưu trữ.
    */
   encrypt(value: string): string {
     const iv = randomBytes(12);
@@ -147,8 +138,6 @@ export class MfaService {
 
   /**
    * Thuật toán: Giải mã và xác minh toàn vẹn AEAD AES-256-GCM từ khung `[12B IV || 16B AuthTag || Ciphertext]`.
-   * Cơ chế hoạt động: Kiểm tra chiều dài tối thiểu 29 byte, tách 12 byte đầu làm IV, byte `[12..28)` làm thẻ GCM,
-   * và gọi `decipher.final()` để xác thực tính toàn vẹn trước khi trả bản rõ UTF-8.
    */
   decrypt(value: string): string {
     const packed = Buffer.from(value, 'base64url');
@@ -161,7 +150,7 @@ export class MfaService {
   }
 
   /**
-   * Thuật toán: Tuần tự hóa JSON kết hợp mã hóa xác thực AEAD AES-256-GCM cho trạng thái thử thách tạm thời.
+   * Thuật toán: Tuần tự hóa JSON kết hợp mã hóa xác thực AEAD AES-256-GCM cho trạng thái khóa WebAuthn.
    */
   encryptPayload<T>(payload: T): string {
     return this.encrypt(JSON.stringify(payload));

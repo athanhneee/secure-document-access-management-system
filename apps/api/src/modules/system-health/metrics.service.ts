@@ -21,12 +21,12 @@ const DEFAULT_PDP_BUCKETS = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1
 const DEFAULT_SCAN_BUCKETS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5];
 const DEFAULT_WATERMARK_BUCKETS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5];
 const DEFAULT_REVOKE_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5];
+const MAX_SERIES_PER_METRIC = 2_000;
 
 @Injectable()
 export class MetricsService {
   private static instance: MetricsService;
 
-  // shortcut: ~2,000 UUID-scrubbed metric label series (<2 MB) per process, scrape per-pod /metrics or push via OTLP Collector
   private readonly counters = new Map<string, Map<string, number>>();
   private readonly gauges = new Map<string, Map<string, number>>();
   private readonly histograms = new Map<string, HistogramData>();
@@ -94,16 +94,12 @@ export class MetricsService {
       this.counters.set(name, labelMap);
     }
     const key = serializeMetricLabels(labels);
+    if (!labelMap.has(key) && labelMap.size >= MAX_SERIES_PER_METRIC) return;
     labelMap.set(key, (labelMap.get(key) ?? 0) + value);
   }
 
   /**
-   * Thuật toán: Gán giá trị tức thời Gauge theo khóa nhãn chuẩn hóa (Instantaneous Gauge Assignment)
-   * Mục đích: Phản ánh số lượng tài nguyên biến thiên tăng/giảm tại thời điểm lấy mẫu (số phiên truy cập đang mở, độ sâu hàng đợi xuất báo cáo).
-   * Cơ chế hoạt động:
-   *   - Ánh xạ tập nhãn về chuỗi khóa chuẩn hóa `key` và ghi đè trực tiếp giá trị hiện hành trong `Map` `O(1)`.
-   *
-   * Algorithm: Instantaneous Gauge Assignment by Canonical Label Key.
+   * Thuật toán: Gán giá trị tức thời Gauge theo khóa nhãn chuẩn hóa có trần số lượng chuỗi (Bounded Instantaneous Gauge Assignment)
    */
   setGauge(name: string, value: number, labels: MetricLabels = {}): void {
     let labelMap = this.gauges.get(name);
@@ -112,19 +108,12 @@ export class MetricsService {
       this.gauges.set(name, labelMap);
     }
     const key = serializeMetricLabels(labels);
+    if (!labelMap.has(key) && labelMap.size >= MAX_SERIES_PER_METRIC) return;
     labelMap.set(key, value);
   }
 
   /**
-   * Thuật toán: Ghi nhận mẫu quan sát vào các nhóm ngưỡng trên Histogram (Upper-Bound `le` Bucket Histogram Observation)
-   * Mục đích: Phân bổ thời gian thực thi (tính bằng giây) vào các ranh giới độ trễ định sẵn để ước lượng phân vị (p50, p95, p99) trên Prometheus.
-   * Cơ chế hoạt động:
-   *   - Tự động khởi tạo histogram với `DEFAULT_HTTP_BUCKETS` nếu tên chỉ số chưa đăng ký.
-   *   - Tăng tổng số mẫu `counts` thêm 1, cộng dồn tổng thời gian không âm `Math.max(0, valueSeconds)` vào `sums`, và duyệt các ranh giới `buckets[i]` để tăng bộ đếm tại các ô thỏa `valueSeconds <= buckets[i]`.
-   *
-   * Algorithm: Non-Cumulative Bucket Histogram Observation.
-   * Updates observation count, clamped non-negative sum, and matching bucket slot;
-   * cumulative summation is deferred to scrape serialization time.
+   * Thuật toán: Ghi nhận mẫu quan sát vào các nhóm ngưỡng trên Histogram có trần số lượng chuỗi (Bounded Histogram Observation)
    */
   observeHistogram(name: string, valueSeconds: number, labels: MetricLabels = {}): void {
     let histo = this.histograms.get(name);
@@ -134,6 +123,7 @@ export class MetricsService {
     }
 
     const key = serializeMetricLabels(labels);
+    if (!histo.counts.has(key) && histo.counts.size >= MAX_SERIES_PER_METRIC) return;
     histo.counts.set(key, (histo.counts.get(key) ?? 0) + 1);
     histo.sums.set(key, (histo.sums.get(key) ?? 0) + Math.max(0, valueSeconds));
 

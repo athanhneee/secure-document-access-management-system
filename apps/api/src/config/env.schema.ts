@@ -1,4 +1,15 @@
+/**
+ * @module EnvSchema
+ * Thuật toán: Thẩm định kiểu tĩnh và cưỡng chế bất biến an ninh biến môi trường bằng Zod (`EnvSchema` + `validateEnv`).
+ */
 import { z } from 'zod';
+import {
+  enforceStrictEnvironmentInvariants,
+  normalizeLegacyEnvAliases,
+  resolveTrustProxyConfig,
+} from './env-strict.helper.js';
+
+export { resolveTrustProxyConfig };
 
 export const EnvSchema = z
   .object({
@@ -87,6 +98,8 @@ export const EnvSchema = z
     SMTP_HOST: z.string().default('127.0.0.1'),
     SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
     SMTP_SECURE: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(false),
+    SMTP_USER: z.string().min(1).optional(),
+    SMTP_PASS: z.string().min(1).optional(),
     SMTP_FROM: z.string().email().default('no-reply@secure-docs.internal'),
     PASSWORD_RESET_BASE_URL: z.string().url().default('http://localhost:3000/reset-password'),
     GRANT_MAX_DURATION_DAYS: z.coerce.number().int().min(1).max(90).default(30),
@@ -105,185 +118,15 @@ export const EnvSchema = z
     METRICS_SCRAPE_TOKEN: z.string().min(16).optional(),
     EXPORT_STORAGE_DIR: z.string().min(1).optional(),
   })
-  /**
-   * Thuật toán: Kiểm chứng bất biến bảo mật môi trường Production theo cơ chế Fail-Fast (`superRefine`).
-   * Cơ chế hoạt động: Bắt buộc khóa ký Ed25519 ngoại vi, cấm mọi giá trị khóa mặc định/placeholder phát triển,
-   * chặn adapter KMS mô phỏng, cấm tắt kiểm tra chứng chỉ TLS CWE-295 và cấm mã thông báo Vault mẫu.
-   */
-  .superRefine((value, context) => {
-    const docBucket = value.STORAGE_BUCKET_DOCUMENTS.trim();
-    const quarantineBucket = value.STORAGE_BUCKET_QUARANTINE.trim();
-    const derivativesBucket = value.STORAGE_BUCKET_DERIVATIVES.trim();
-    if (quarantineBucket === docBucket || quarantineBucket === derivativesBucket) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['STORAGE_BUCKET_QUARANTINE'],
-        message:
-          'STORAGE_BUCKET_QUARANTINE must be isolated in a separate bucket from STORAGE_BUCKET_DOCUMENTS and STORAGE_BUCKET_DERIVATIVES.',
-      });
-    }
-
-    if ((value.NODE_ENV === 'production' || value.NODE_ENV === 'staging') && value.STORAGE_MOCK) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['STORAGE_MOCK'],
-        message: 'STORAGE_MOCK=true is strictly forbidden in staging and production environments.',
-      });
-    }
-
-    if (value.NODE_ENV !== 'production') {
-      return;
-    }
-
-    if (!value.AUTH_SIGNING_PRIVATE_KEY_PEM || !value.AUTH_SIGNING_PUBLIC_KEYS_JSON) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['AUTH_SIGNING_PRIVATE_KEY_PEM'],
-        message: 'Production requires externally managed Ed25519 signing keys.',
-      });
-    }
-
-    const forbiddenProductionDefaults: Array<[keyof typeof value, string]> = [
-      [
-        'APP_ENCRYPTION_MASTER_KEY',
-        'local-placeholder-not-for-real-encryption-000000000000000000000000',
-      ],
-      ['DOCUMENT_AUDIT_HMAC_KEY', 'local-only-document-audit-hmac-key-0000000000000000'],
-      ['AUTH_AUDIT_HMAC_KEY', 'local-only-audit-hmac-key-not-for-production'],
-      ['AUDIT_INTEGRITY_KEY', 'local-only-audit-integrity-hmac-key-0000000000000000'],
-      ['STORAGE_ACCESS_KEY', 'local-placeholder-access-key'],
-      ['STORAGE_SECRET_KEY', 'local-placeholder-not-a-secret'],
-    ];
-
-    for (const [field, placeholder] of forbiddenProductionDefaults) {
-      const current = String(value[field] ?? '');
-      if (
-        current === placeholder ||
-        current.startsWith('local-only-') ||
-        current.startsWith('local-placeholder-')
-      ) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [field],
-          message: `${String(field)} cannot use development placeholder secrets in production.`,
-        });
-      }
-    }
-
-    if (value.KMS_PROVIDER === 'hsm-pkcs11' || value.KMS_PROVIDER === 'aws-kms') {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['KMS_PROVIDER'],
-        message: `KMS_PROVIDER="${value.KMS_PROVIDER}" is a simulated adapter and cannot be used in production; use "vault" or externally managed "local" master key.`,
-      });
-    }
-
-    if (!value.DATABASE_SSL_REJECT_UNAUTHORIZED) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['DATABASE_SSL_REJECT_UNAUTHORIZED'],
-        message:
-          'CWE-295: Disabling DATABASE_SSL_REJECT_UNAUTHORIZED is forbidden in production; configure DATABASE_CA_CERT instead.',
-      });
-    }
-
-    if (value.KMS_PROVIDER === 'vault' && value.VAULT_TOKEN === 'dev-mock-vault-token') {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['VAULT_TOKEN'],
-        message: 'Production Vault KMS requires a non-placeholder VAULT_TOKEN.',
-      });
-    }
-
-    if (value.TRUST_PROXY.trim().toLowerCase() === 'true') {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['TRUST_PROXY'],
-        message:
-          'Wildcard TRUST_PROXY=true is forbidden in production; configure "loopback", a hop count integer, or explicit reverse-proxy CIDRs.',
-      });
-    }
-
-    const trustedCidrs = value.ABAC_TRUSTED_NETWORK_CIDRS.split(',')
-      .map((cidr) => cidr.trim().toLowerCase())
-      .filter(Boolean);
-    if (
-      trustedCidrs.some(
-        (cidr) => cidr.startsWith('127.') || cidr === '::1' || cidr.startsWith('::1/'),
-      )
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['ABAC_TRUSTED_NETWORK_CIDRS'],
-        message:
-          'Loopback CIDRs (127.0.0.0/8, ::1/128) are forbidden in ABAC_TRUSTED_NETWORK_CIDRS in production to prevent reverse-proxy trustedNetwork bypass.',
-      });
-    }
-  });
+  .superRefine(enforceStrictEnvironmentInvariants);
 
 export type EnvConfig = z.infer<typeof EnvSchema>;
-
-/**
- * Thuật toán: Phân giải cấu hình `trustProxy` cho Fastify từ chuỗi môi trường (`false`, `loopback`, số bước nhảy hoặc danh sách CIDR).
- */
-export function resolveTrustProxyConfig(
-  raw?: string,
-): boolean | string[] | ((address: string, hop: number) => boolean) {
-  const normalized = (raw ?? 'loopback').trim().toLowerCase();
-  if (!normalized || normalized === 'false' || normalized === '0' || normalized === 'off') {
-    return false;
-  }
-  if (normalized === 'loopback') {
-    return ['127.0.0.0/8', '::1/128'];
-  }
-  if (normalized === 'true') {
-    return true;
-  }
-  if (/^\d+$/.test(normalized)) {
-    const maxHops = Number.parseInt(normalized, 10);
-    return (_address: string, hop: number) => hop <= maxHops;
-  }
-  return (raw ?? '')
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
 
 /**
  * Thuật toán: Chuẩn hóa bí danh biến môi trường tương thích ngược và thẩm định lược đồ Zod toàn cục.
  */
 export function validateEnv(rawEnv: Record<string, unknown> = process.env): EnvConfig {
-  const normalizedEnv: Record<string, unknown> = { ...rawEnv };
-  if (!normalizedEnv['HOST'] && normalizedEnv['API_HOST']) {
-    normalizedEnv['HOST'] = normalizedEnv['API_HOST'];
-  }
-  if (normalizedEnv['API_PORT']) {
-    normalizedEnv['PORT'] = normalizedEnv['API_PORT'];
-  }
-  if (!normalizedEnv['AUTH_SIGNING_PRIVATE_KEY_PEM'] && normalizedEnv['JWT_PRIVATE_KEY']) {
-    normalizedEnv['AUTH_SIGNING_PRIVATE_KEY_PEM'] = normalizedEnv['JWT_PRIVATE_KEY'];
-  }
-  if (!normalizedEnv['AUTH_SIGNING_PUBLIC_KEYS_JSON'] && normalizedEnv['JWT_PUBLIC_KEY']) {
-    normalizedEnv['AUTH_SIGNING_PUBLIC_KEYS_JSON'] = JSON.stringify([
-      {
-        kid: String(normalizedEnv['AUTH_ACTIVE_KID'] ?? 'production-default'),
-        publicKeyPem: String(normalizedEnv['JWT_PUBLIC_KEY']),
-      },
-    ]);
-  }
-  if (!normalizedEnv['APP_ENCRYPTION_MASTER_KEY'] && normalizedEnv['KMS_MASTER_KEY']) {
-    normalizedEnv['APP_ENCRYPTION_MASTER_KEY'] = normalizedEnv['KMS_MASTER_KEY'];
-  }
-  if (!normalizedEnv['DOCUMENT_AUDIT_HMAC_KEY'] && normalizedEnv['AUDIT_HMAC_KEY']) {
-    normalizedEnv['DOCUMENT_AUDIT_HMAC_KEY'] = normalizedEnv['AUDIT_HMAC_KEY'];
-  }
-  if (!normalizedEnv['AUTH_AUDIT_HMAC_KEY'] && normalizedEnv['AUDIT_HMAC_KEY']) {
-    normalizedEnv['AUTH_AUDIT_HMAC_KEY'] = normalizedEnv['AUDIT_HMAC_KEY'];
-  }
-  if (!normalizedEnv['AUDIT_INTEGRITY_KEY'] && normalizedEnv['AUDIT_HMAC_KEY']) {
-    normalizedEnv['AUDIT_INTEGRITY_KEY'] = normalizedEnv['AUDIT_HMAC_KEY'];
-  }
-
+  const normalizedEnv = normalizeLegacyEnvAliases(rawEnv);
   const result = EnvSchema.safeParse(normalizedEnv);
   if (!result.success) {
     const formatted = result.error.issues

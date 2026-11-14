@@ -35,10 +35,7 @@ export class AbacRepository {
       includeInactiveRuleId?: bigint;
       client?: Pick<ReturnType<typeof getDatabaseClient>, 'attributeDefinition' | 'policyRule'>;
     } = {},
-  ): Promise<{
-    definitions: StoredDefinition[];
-    rules: StoredRule[];
-  }> {
+  ): Promise<{ definitions: StoredDefinition[]; rules: StoredRule[] }> {
     const db = options.client ?? this.database;
     const [definitions, rules] = await Promise.all([
       db.attributeDefinition.findMany({
@@ -106,12 +103,13 @@ export class AbacRepository {
   }
 
   /**
-   * Thuật toán: Liệt kê toàn bộ luật chính sách kèm mô tả, nghĩa vụ và danh sách điều kiện DNF sắp xếp tất định.
+   * Thuật toán: Liệt kê luật chính sách có giới hạn trần (`take: 200`) kèm điều kiện DNF sắp xếp tất định.
    */
   async listPolicies() {
     // CONFLICT-RESOLVED: Nạp đầy đủ description, obligations và policy_rule_conditions kèm attribute_definitions cho UI biên tập (HIGH-04)
     return this.database.policyRule.findMany({
       orderBy: [{ priority: 'asc' }, { id: 'asc' }],
+      take: 200,
       select: {
         id: true,
         code: true,
@@ -148,6 +146,7 @@ export class AbacRepository {
   async listAttributes() {
     return this.database.attributeDefinition.findMany({
       orderBy: { code: 'asc' },
+      take: 200,
       select: {
         id: true,
         code: true,

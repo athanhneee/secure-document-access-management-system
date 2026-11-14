@@ -144,6 +144,16 @@ export class AuditService {
 
     applyAuditFilterAllowlist(where, query);
 
+    if (!isGlobalAuditor && isDocumentOwner) {
+      if (query.action === 'WATERMARK_TRACE_PERFORMED') {
+        where.action = { in: [], notIn: ['WATERMARK_TRACE_PERFORMED'] };
+      } else if (query.action) {
+        where.action = { equals: query.action, notIn: ['WATERMARK_TRACE_PERFORMED'] };
+      } else {
+        where.action = { notIn: ['WATERMARK_TRACE_PERFORMED'] };
+      }
+    }
+
     const total = await this.database.auditLog.count({ where });
     const skip = (query.page - 1) * query.pageSize;
     const sortField = query.sort === 'chain_sequence' ? 'chain_sequence' : 'occurred_at';

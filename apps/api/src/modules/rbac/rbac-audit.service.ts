@@ -1,7 +1,16 @@
+/**
+ * @module RbacAuditService
+ * Thuật toán: Ghi nhật ký kiểm toán biến đổi RBAC/Người dùng/Phòng ban vào chuỗi băm phân vùng `RBAC`
+ * kèm cơ chế thử lại lũy tiến có nhiễu ngẫu nhiên khi gặp xung đột tuần tự hóa tạm thời (`40001` / `P2034`).
+ */
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
-import { appendChainedAuditLog, resolveActiveAuditKey } from '../audit/audit-chain-helper.js';
+import {
+  appendChainedAuditLog,
+  executeAuditWithRetry,
+  resolveActiveAuditKey,
+} from '../audit/audit-chain-helper.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 
 export interface RbacAuditEvent {
@@ -24,24 +33,37 @@ export class RbacAuditService {
     this.keyVersion = active.keyVersion;
   }
 
+  /**
+   * Thuật toán: Nối tiếp mắt xích kiểm toán `RBAC` trong giao dịch hiện hành hoặc giao dịch độc lập có thử lại xung đột.
+   */
   async record(
     transaction: Prisma.TransactionClient,
     event: RbacAuditEvent,
     principal: AuthPrincipal,
     context: RequestContext,
   ): Promise<void> {
-    await appendChainedAuditLog(transaction, {
-      partition: 'RBAC',
-      hmacKey: this.hmacKey,
-      keyVersion: this.keyVersion,
-      action: event.action,
-      outcome: 'SUCCESS',
-      objectType: event.objectType,
-      objectId: event.objectId,
-      actorUserId: principal.userId,
-      actorUsername: principal.username,
-      details: { before: event.before, after: event.after },
-      context,
-    });
+    const maybeClient = transaction as Prisma.TransactionClient & {
+      $transaction?: <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => Promise<T>;
+    };
+    const append = (tx: Prisma.TransactionClient) =>
+      appendChainedAuditLog(tx, {
+        partition: 'RBAC',
+        hmacKey: this.hmacKey,
+        keyVersion: this.keyVersion,
+        action: event.action,
+        outcome: 'SUCCESS',
+        objectType: event.objectType,
+        objectId: event.objectId,
+        actorUserId: principal.userId,
+        actorUsername: principal.username,
+        details: { before: event.before, after: event.after },
+        context,
+      });
+
+    await executeAuditWithRetry(() =>
+      typeof maybeClient.$transaction === 'function'
+        ? maybeClient.$transaction((tx) => append(tx))
+        : append(transaction),
+    );
   }
 }

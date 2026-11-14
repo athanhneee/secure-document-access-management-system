@@ -115,6 +115,7 @@ export function formatForensicWatermarkText(
     .replace(/{documentCode}/g, documentCode)
     .replace(/{timestamp}/g, utcTimestamp)
     .replace(/{utcTimestamp}/g, utcTimestamp)
+    .replace(/{watermarkToken}/g, token)
     .replace(/{shortToken}/g, shortToken)
     .replace(/{token}/g, shortToken);
 

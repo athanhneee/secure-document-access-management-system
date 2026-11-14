@@ -55,6 +55,7 @@ export class DepartmentsService {
     const departments = await this.database.department.findMany({
       where: visible === null ? {} : { id: { in: visible } },
       orderBy: [{ code: 'asc' }, { id: 'asc' }],
+      take: 200,
       select: DEPARTMENT_SELECT,
     });
     return { data: departments.map((department) => presentDepartment(department)) };
@@ -139,6 +140,7 @@ export class DepartmentsService {
       },
       { client: this.database },
     );
+    await this.authorization.invalidateAll();
     return presentDepartment(department);
   }
 
@@ -212,7 +214,7 @@ export class DepartmentsService {
       },
       { client: this.database },
     );
-    this.authorization.invalidateAll();
+    await this.authorization.invalidateAll();
     return presentDepartment(department);
   }
 
@@ -263,7 +265,7 @@ export class DepartmentsService {
       },
       { client: this.database },
     );
-    this.authorization.invalidateAll();
+    await this.authorization.invalidateAll();
     return presentDepartment(department);
   }
 }

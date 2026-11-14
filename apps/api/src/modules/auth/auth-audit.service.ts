@@ -1,7 +1,16 @@
+/**
+ * @module AuthAuditService
+ * Thuật toán: Ghi nhật ký kiểm toán xác thực chuỗi băm HMAC-SHA256 vào phân vùng `AUTH`
+ * kèm cơ chế thử lại giao dịch có trễ lũy tiến + nhiễu ngẫu nhiên khi gặp xung đột tuần tự hóa (`40001` / `P2034`).
+ */
 import { Injectable } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
-import { appendChainedAuditLog, resolveActiveAuditKey } from '../audit/audit-chain-helper.js';
+import {
+  appendChainedAuditLog,
+  executeAuditWithRetry,
+  resolveActiveAuditKey,
+} from '../audit/audit-chain-helper.js';
 import type { RequestContext } from './auth.types.js';
 
 interface AuditEvent {
@@ -28,23 +37,28 @@ export class AuthAuditService {
     this.keyVersion = active.keyVersion;
   }
 
+  /**
+   * Thuật toán: Ghi bản ghi kiểm toán `AUTH` nguyên tử kèm thử lại tự động khi đụng độ khóa tuần tự hóa tạm thời.
+   */
   async record(event: AuditEvent, context: RequestContext): Promise<void> {
-    await this.database.$transaction(async (transaction) => {
-      await appendChainedAuditLog(transaction, {
-        partition: 'AUTH',
-        hmacKey: this.hmacKey,
-        keyVersion: this.keyVersion,
-        action: event.action,
-        outcome: event.outcome,
-        objectType: 'AUTHENTICATION',
-        objectId: event.objectId ?? null,
-        actorUserId: event.actorUserId ?? null,
-        actorUsername: event.actorUsername ?? null,
-        accessSessionId: event.sessionId ?? null,
-        reasonCode: event.reasonCode ?? null,
-        details: event.details ?? {},
-        context,
-      });
-    });
+    await executeAuditWithRetry(() =>
+      this.database.$transaction(async (transaction) => {
+        await appendChainedAuditLog(transaction, {
+          partition: 'AUTH',
+          hmacKey: this.hmacKey,
+          keyVersion: this.keyVersion,
+          action: event.action,
+          outcome: event.outcome,
+          objectType: 'AUTHENTICATION',
+          objectId: event.objectId ?? null,
+          actorUserId: event.actorUserId ?? null,
+          actorUsername: event.actorUsername ?? null,
+          accessSessionId: event.sessionId ?? null,
+          reasonCode: event.reasonCode ?? null,
+          details: event.details ?? {},
+          context,
+        });
+      }),
+    );
   }
 }

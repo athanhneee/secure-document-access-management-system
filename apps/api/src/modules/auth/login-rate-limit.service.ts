@@ -1,14 +1,16 @@
 /**
  * @module LoginRateLimitService
- * Bộ giới hạn tần suất đăng nhập hai chiều (IP & Tài khoản) sử dụng thuật toán cửa sổ trượt 15 phút
- * kết hợp độ trễ khóa lũy thừa có trần (Sliding-Window Exponential Backoff Rate Limiter).
+ * Thuật toán: Bộ giới hạn tần suất đăng nhập hai chiều (IP & Tài khoản) phân tán xuyên bản sao qua `DistributedStateService`
+ * sử dụng cửa sổ 15 phút (`incrementWindowCounter`) kết hợp khóa trễ lũy thừa có trần (`min(5000ms, 250 * 2^(n-3))`).
  */
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Optional } from '@nestjs/common';
+import { AppConfigService } from '../../config/config.service.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 
-interface AttemptState {
-  failures: number;
+const LOGIN_WINDOW_MS = 15 * 60_000;
+
+interface BlockState {
   blockedUntil: number;
-  lastFailure: number;
 }
 
 function isLoopbackOrUnresolvedIp(ip: string): boolean {
@@ -24,96 +26,81 @@ function isLoopbackOrUnresolvedIp(ip: string): boolean {
 
 @Injectable()
 export class LoginRateLimitService {
-  // shortcut: 10,000 attempt states (~2 MB) per replica, move to Redis sliding-window Lua script for cluster-wide throttling
-  private readonly states = new Map<string, AttemptState>();
+  private readonly stateStore: DistributedStateService;
 
-  /**
-   * Thuật toán: Tách khóa giới hạn tần suất an toàn cho proxy nội bộ (Proxy-Safe Composite Keying).
-   * Mục đích: Với IP ngoại vi thực (`192.0.2.1`...), khóa trên cả `ip:<ip>` và `account:<key>` chống password spraying;
-   *   với IP loopback/chưa phân giải (`127.0.0.1`, `::1`, `unknown`), ghép `ip:<ip>:account:<key>` để ngăn tấn công DoS
-   *   khóa đăng nhập toàn hệ thống khi đứng sau reverse proxy cục bộ.
-   */
-  private resolveKeys(ip: string, accountKey: string): [string, string] {
-    const ipKey = isLoopbackOrUnresolvedIp(ip) ? `ip:${ip}:account:${accountKey}` : `ip:${ip}`;
-    return [ipKey, `account:${accountKey}`];
+  constructor(
+    @Optional() config?: AppConfigService,
+    @Optional() stateStore?: DistributedStateService,
+  ) {
+    this.stateStore = stateStore ?? new DistributedStateService(config);
   }
 
   /**
-   * Thuật toán: Kiểm tra khóa tạm thời trên hai khóa độc lập (`ip` và `account`).
-   * Mục đích: Chặn sớm với HTTP 429 nếu bất kỳ chiều nào đang trong thời gian phạt `blockedUntil > now`.
+   * Thuật toán: Tách khóa giới hạn tần suất an toàn cho proxy nội bộ kết hợp số hiệu thế hệ tài khoản (`Epoch Versioning`).
+   *   - Với IP ngoại vi thực (`192.0.2.1`...): khóa trên `ip:<ip>` và `account:<key>:e<epoch>` chống password spraying.
+   *   - Với IP loopback (`127.0.0.1`, `::1`, `unknown`): ghép `ip:<ip>:account:<key>:e<epoch>` chống DoS toàn hệ thống.
    */
-  assertAllowed(ip: string, accountKey: string, now = Date.now()): void {
-    for (const key of this.resolveKeys(ip, accountKey)) {
-      const state = this.states.get(key);
-      if (state && state.blockedUntil > now) {
-        throw new HttpException(
-          'Authentication temporarily unavailable. Try again later.',
-          HttpStatus.TOO_MANY_REQUESTS,
+  private async resolveKeys(ip: string, accountKey: string): Promise<[string, string]> {
+    const accountEpoch = await this.stateStore.getNamespaceEpoch(`login-acct:${accountKey}`);
+    const scopedAccountKey = `account:${accountKey}:e${accountEpoch}`;
+    const ipKey = isLoopbackOrUnresolvedIp(ip)
+      ? `ip:${ip}:account:${accountKey}:e${accountEpoch}`
+      : `ip:${ip}`;
+    return [ipKey, scopedAccountKey];
+  }
+
+  /**
+   * Thuật toán: Kiểm tra khóa tạm thời trên hai chiều độc lập (`ip` và `account`) qua `DistributedStateService.getJson`.
+   */
+  async assertAllowed(ip: string, accountKey: string, now = Date.now()): Promise<void> {
+    const keys = await this.resolveKeys(ip, accountKey);
+    const blocks = await Promise.all(
+      keys.map((key) => this.stateStore.getJson<BlockState>('login-block', key)),
+    );
+    if (blocks.some((state) => state !== null && state.blockedUntil > now)) {
+      throw new HttpException(
+        'Authentication temporarily unavailable. Try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  /**
+   * Thuật toán: Tăng nguyên tử bộ đếm lỗi cửa sổ 15 phút (`incrementWindowCounter`) và áp phạt trễ lũy thừa cơ số 2 (`min(5000ms, 250 * 2^(n-3))`).
+   */
+  async recordFailure(ip: string, accountKey: string, now = Date.now()): Promise<number> {
+    const keys = await this.resolveKeys(ip, accountKey);
+    let delay = 0;
+    for (const key of keys) {
+      const { count } = await this.stateStore.incrementWindowCounter(
+        'login-failures',
+        key,
+        LOGIN_WINDOW_MS,
+      );
+      const progressiveDelay = Math.min(5_000, count < 3 ? 0 : 250 * 2 ** (count - 3));
+      if (progressiveDelay > 0) {
+        await this.stateStore.putEphemeral<BlockState>(
+          'login-block',
+          key,
+          { blockedUntil: now + progressiveDelay },
+          Math.max(progressiveDelay, 5_000),
         );
       }
-    }
-  }
-
-  /**
-   * Thuật toán: Đếm lỗi cửa sổ trượt 15 phút kết hợp phạt trễ lũy thừa cơ số 2 (`min(5000ms, 250 * 2^(n-3))`).
-   * Cơ chế hoạt động:
-   *   1. Nếu lần thất bại trước cách hiện tại < 15 phút, tăng bộ đếm `failures`; ngược lại đặt lại về 1.
-   *   2. Từ lần thất bại thứ 3 trở đi, áp thời gian chặn tăng gấp đôi mỗi lần (`250ms, 500ms, 1000ms...`) tối đa 5000ms.
-   *   3. Lấy giá trị phạt lớn nhất giữa chiều IP và chiều tài khoản, đồng thời kích hoạt thu gom rác khi bảng vượt ngưỡng.
-   */
-  recordFailure(ip: string, accountKey: string, now = Date.now()): number {
-    let delay = 0;
-    for (const key of this.resolveKeys(ip, accountKey)) {
-      const previous = this.states.get(key);
-      const failures =
-        previous && now - previous.lastFailure < 15 * 60_000 ? previous.failures + 1 : 1;
-      const progressiveDelay = Math.min(5_000, failures < 3 ? 0 : 250 * 2 ** (failures - 3));
-      this.states.set(key, {
-        failures,
-        blockedUntil: now + progressiveDelay,
-        lastFailure: now,
-      });
       delay = Math.max(delay, progressiveDelay);
     }
-    this.prune(now);
     return delay;
   }
 
   /**
-   * Thuật toán: Xóa trạng thái phạt của tài khoản sau khi xác thực thành công (giữ nguyên bộ đếm IP ngoại vi chống password spraying).
+   * Thuật toán: Xóa trạng thái phạt của tài khoản trên mọi bản sao trong `O(1)` bằng tăng Epoch tài khoản (giữ nguyên bộ đếm IP ngoại vi chống password spraying).
    */
-  clearAccount(accountKey: string): void {
-    this.states.delete(`account:${accountKey}`);
-    const loopbackSuffix = `:account:${accountKey}`;
-    for (const key of this.states.keys()) {
-      if (key.startsWith('ip:') && key.endsWith(loopbackSuffix)) {
-        this.states.delete(key);
-      }
-    }
-  }
-
-  /**
-   * Thuật toán: Dọn dẹp bộ nhớ ưu tiên giữ nguyên các khóa đang bị khóa phạt (`blockedUntil > now`) chống làm tràn bộ nhớ đệm (HIGH-10).
-   */
-  private prune(now: number): void {
-    if (this.states.size < 10_000) return;
-    for (const [key, state] of this.states) {
-      if (now - state.lastFailure > 30 * 60_000) this.states.delete(key);
-    }
-    if (this.states.size < 10_000) return;
-
-    // CONFLICT-RESOLVED: Ưu tiên thu hồi các khóa chưa chạm ngưỡng phạt (`failures < 3` và `blockedUntil <= now`), tuyệt đối không xóa tài khoản đang bị khóa phạt bởi 10.000 khóa giả (HIGH-10).
-    for (const [key, state] of this.states) {
-      if (this.states.size < 10_000) break;
-      if (state.blockedUntil <= now && state.failures < 3) {
-        this.states.delete(key);
-      }
-    }
-    for (const [key, state] of this.states) {
-      if (this.states.size < 10_000) break;
-      if (state.blockedUntil <= now) {
-        this.states.delete(key);
-      }
-    }
+  async clearAccount(accountKey: string): Promise<void> {
+    const currentEpoch = await this.stateStore.getNamespaceEpoch(`login-acct:${accountKey}`);
+    const scopedAccountKey = `account:${accountKey}:e${currentEpoch}`;
+    await Promise.all([
+      this.stateStore.deleteKey('login-block', scopedAccountKey),
+      this.stateStore.deleteKey('login-failures', scopedAccountKey),
+      this.stateStore.bumpNamespaceEpoch(`login-acct:${accountKey}`),
+    ]);
   }
 }

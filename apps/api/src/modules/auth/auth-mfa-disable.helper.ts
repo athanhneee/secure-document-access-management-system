@@ -45,11 +45,11 @@ export async function executeDisableMfa(
   }
 
   const rateKey = `mfa-disable:${principal.userId}`;
-  deps.rateLimit.assertAllowed(context.ip, rateKey);
+  await deps.rateLimit.assertAllowed(context.ip, rateKey);
 
   const user = await deps.repository.findUserById(principal.userId);
   if (!user || user.status !== 'ACTIVE') {
-    deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey);
     throw new UnauthorizedException('Step-up authentication failed.');
   }
 
@@ -74,7 +74,7 @@ export async function executeDisableMfa(
     ? await verifyActiveMfaChallenge(deps, principal.userId, code, recoveryCode)
     : false;
   if (!passwordValid || !mfaValid) {
-    deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey);
     await deps.audit.record(
       {
         action: 'MFA_DISABLE_DENIED',
@@ -88,7 +88,7 @@ export async function executeDisableMfa(
     throw new UnauthorizedException('Step-up authentication failed.');
   }
 
-  deps.rateLimit.clearAccount(rateKey);
+  await deps.rateLimit.clearAccount(rateKey);
   await deps.repository.disableMfa(principal.userId);
   await deps.repository.revokeAllSessions(principal.userId, 'MFA_CHANGED');
   await deps.audit.record(

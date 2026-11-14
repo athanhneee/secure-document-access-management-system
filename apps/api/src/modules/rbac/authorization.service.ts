@@ -1,8 +1,8 @@
 /**
  * @module AuthorizationService
  * Dịch vụ phân giải quyền RBAC có phạm vi phân cấp phòng ban (Hierarchical Scoped RBAC):
- * tính bao đóng bắc cầu cây phòng ban, kiểm tra thống trị ủy quyền chống leo thang đặc quyền
- * và duyệt ngược tổ tiên có bảo vệ chu trình.
+ * tính bao đóng bắc cầu cây phòng ban bằng truy vấn đệ quy SQL `WITH RECURSIVE`, kiểm tra thống trị ủy quyền
+ * chống leo thang đặc quyền và duyệt ngược tổ tiên có bảo vệ chu trình.
  */
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
@@ -18,10 +18,10 @@ export class AuthorizationService {
   /**
    * Thuật toán: Tổng hợp và trải phẳng tập quyền hiệu lực theo cửa sổ thời gian (Temporal Effective-Grant Materialization).
    * Cơ chế hoạt động: Chỉ lấy các phép gán thỏa `valid_from <= now < valid_to` của người dùng `ACTIVE`, vai trò `is_active`
-   * và phòng ban phạm vi (nếu có) đang `is_active`, sau đó tích Đề-các phẳng qua `role_permissions` và lưu vào cache cắt trần TTL.
+   * và phòng ban phạm vi (nếu có) đang `is_active`, sau đó tích Đề-các phẳng qua `role_permissions` và lưu vào cache phân tán cắt trần TTL.
    */
   async effectiveGrants(userId: bigint): Promise<EffectiveGrant[]> {
-    const cached = this.cache.get(userId);
+    const cached = await this.cache.get(userId);
     if (cached) return cached;
     const now = new Date();
     const assignments = await this.database.userRole.findMany({
@@ -55,16 +55,12 @@ export class AuthorizationService {
         validTo: assignment.valid_to,
       })),
     );
-    this.cache.set(userId, grants);
+    await this.cache.set(userId, grants);
     return grants;
   }
 
   /**
    * Thuật toán: Kiểm tra quyền phân cấp theo tổ tiên phòng ban (Hierarchical Scope Dominance Check).
-   * Cơ chế hoạt động:
-   *   - Nếu đòi phạm vi toàn cục (`requireGlobal`) hoặc không truyền phòng ban đích: bắt buộc có grant `scopeDepartmentId === null`.
-   *   - Nếu có `targetDepartmentId`: thu tập tổ tiên của phòng ban đích (`departmentAncestors`) và chấp nhận nếu người dùng
-   *     nắm grant toàn cục (`null`) hoặc nắm grant tại bất kỳ nút tổ tiên nào bao hàm phòng ban đích.
    */
   async hasPermission(
     principal: AuthPrincipal,
@@ -110,8 +106,6 @@ export class AuthorizationService {
 
   /**
    * Thuật toán: Kiểm tra bất biến thống trị ủy quyền chống khuếch đại đặc quyền (Anti-Escalation Grant Dominance Check).
-   * Cơ chế hoạt động: Với MỌI `permissionId` định cấp cho người khác tại phạm vi `targetDepartmentId`, người cấp
-   * bắt buộc phải đang sở hữu chính quyền đó ở phạm vi toàn cục (`null`) hoặc ở một phòng ban tổ tiên bao trùm `targetDepartmentId`.
    */
   async assertCanDelegate(
     principal: AuthPrincipal,
@@ -138,11 +132,8 @@ export class AuthorizationService {
   }
 
   /**
-   * Thuật toán: Tính bao đóng bắc cầu cây con phòng ban bằng lặp điểm bất động tương đương BFS (Transitive Closure Fixed-Point Traversal).
-   * Cơ chế hoạt động:
-   *   1. Nếu có ít nhất một quyền phạm vi toàn cục (`scopeDepartmentId === null`), trả về `null` (không giới hạn phòng ban).
-   *   2. Khởi tạo tập hạt giống `visible` từ các phòng ban gốc được cấp quyền.
-   *   3. Lặp mở rộng biên đồ thị: nạp mọi nút con có `parent_id` thuộc `visible` cho tới khi đạt điểm bất động (`changed === false`).
+   * Thuật toán: Tính bao đóng bắc cầu cây con phòng ban bằng CTE đệ quy SQL `WITH RECURSIVE` chống chu trình (`ARRAY[d.id]`).
+   * Chỉ rơi về duyệt lặp trong bộ nhớ khi đối tượng Prisma giả lập trong kiểm thử đơn vị không có `$queryRaw`.
    */
   async visibleDepartmentIds(
     principal: AuthPrincipal,
@@ -153,10 +144,31 @@ export class AuthorizationService {
       (grant) => grant.resource === resource && grant.action === action,
     );
     if (matching.some((grant) => grant.scopeDepartmentId === null)) return null;
-    const roots = matching.flatMap((grant) =>
-      grant.scopeDepartmentId === null ? [] : [grant.scopeDepartmentId],
-    );
+    const roots = [
+      ...new Set(
+        matching.flatMap((grant) =>
+          grant.scopeDepartmentId === null ? [] : [grant.scopeDepartmentId],
+        ),
+      ),
+    ];
     if (roots.length === 0) return [];
+    if (typeof this.database?.$queryRaw === 'function') {
+      const rootStrings = roots.map((id) => id.toString());
+      const rows = await this.database.$queryRaw<Array<{ id: bigint }>>`
+        WITH RECURSIVE subtree AS (
+          SELECT d.id, ARRAY[d.id] AS visited
+          FROM departments d
+          WHERE d.id = ANY((${rootStrings}::text[])::bigint[])
+          UNION ALL
+          SELECT c.id, s.visited || c.id
+          FROM departments c
+          INNER JOIN subtree s ON c.parent_id = s.id
+          WHERE NOT (c.id = ANY(s.visited))
+        )
+        SELECT DISTINCT id FROM subtree
+      `;
+      return rows.map((row) => BigInt(row.id));
+    }
     const departments = await this.database.department.findMany({
       select: { id: true, parent_id: true },
     });
@@ -178,12 +190,12 @@ export class AuthorizationService {
     return [...visible];
   }
 
-  invalidateUser(userId: bigint): void {
-    this.cache.invalidateUser(userId);
+  async invalidateUser(userId: bigint): Promise<void> {
+    await this.cache.invalidateUser(userId);
   }
 
-  invalidateAll(): void {
-    this.cache.invalidateAll();
+  async invalidateAll(): Promise<void> {
+    await this.cache.invalidateAll();
   }
 
   /**
@@ -194,11 +206,26 @@ export class AuthorizationService {
   }
 
   /**
-   * Thuật toán: Duyệt ngược đường đi tổ tiên có tập đánh dấu chống lặp vô hạn khi có chu trình (Cycle-Safe Ancestor Walk).
-   * Cơ chế hoạt động: Đi ngược liên kết `parent_id` từ nút hiện tại lên gốc và ghi nhận vào `Set<bigint>`;
-   * dừng ngay lập tức nếu chạm `null` hoặc gặp đỉnh đã thăm (`!ancestors.has(current)`).
+   * Thuật toán: Truy vấn đường đi tổ tiên đơn truy vấn bằng `WITH RECURSIVE` kèm mảng `visited` chống chu trình;
+   * dự phòng sang duyệt lặp `findUnique` khi mock kiểm thử không hỗ trợ `$queryRaw`.
    */
   private async departmentAncestors(departmentId: bigint): Promise<Set<bigint>> {
+    if (typeof this.database?.$queryRaw === 'function') {
+      const rows = await this.database.$queryRaw<Array<{ id: bigint }>>`
+        WITH RECURSIVE ancestor_tree AS (
+          SELECT d.id, d.parent_id, ARRAY[d.id] AS visited
+          FROM departments d
+          WHERE d.id = ${departmentId}
+          UNION ALL
+          SELECT p.id, p.parent_id, a.visited || p.id
+          FROM departments p
+          INNER JOIN ancestor_tree a ON p.id = a.parent_id
+          WHERE NOT (p.id = ANY(a.visited))
+        )
+        SELECT id FROM ancestor_tree
+      `;
+      return new Set(rows.map((row) => BigInt(row.id)));
+    }
     const ancestors = new Set<bigint>();
     let current: bigint | null = departmentId;
     while (current !== null && !ancestors.has(current)) {

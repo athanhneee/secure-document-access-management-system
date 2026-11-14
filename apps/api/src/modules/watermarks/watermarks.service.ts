@@ -1,11 +1,13 @@
 /**
- * Module: WatermarksService — Quản lý cấu hình thủy vân pháp y (Forensic Watermark Policy Configuration) và truy vết nguồn rò rỉ tài liệu mật theo mã token (UC28).
+ * @module WatermarksService
+ * Thuật toán: Quản lý cấu hình thủy vân pháp y có ràng buộc độ mờ `[10%, 90%]`, tương phản màu tối thiểu,
+ * cưỡng chế mã QR hoặc `{watermarkToken}` đầy đủ đối với cấp độ mật `SECRET` / `TOP_SECRET`, và truy vết nguồn rò rỉ (UC28).
  */
 import {
-  Injectable,
-  NotFoundException,
   BadRequestException,
+  Injectable,
   Logger,
+  NotFoundException,
   Optional,
 } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
@@ -20,6 +22,30 @@ import {
 export type { WatermarkVerificationResult };
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
+
+/**
+ * Thuật toán: Kiểm tra chính sách bắt buộc nhúng mã QR hoặc `{watermarkToken}` đầy đủ trên các mức mật `SECRET` / `TOP_SECRET`.
+ */
+export function assertHighClassificationWatermarkIntegrity(params: {
+  classificationCode?: string | null | undefined;
+  classificationRank?: number | null | undefined;
+  includeQrCode: boolean;
+  templateText: string;
+}): void {
+  const { classificationCode, classificationRank, includeQrCode, templateText } = params;
+  const isHighClassification =
+    classificationCode === 'SECRET' ||
+    classificationCode === 'TOP_SECRET' ||
+    (typeof classificationRank === 'number' && classificationRank >= 3);
+  if (!isHighClassification) return;
+
+  const hasFullTokenPlaceholder = /\{\{?watermarkToken\}?\}/u.test(templateText);
+  if (!includeQrCode && !hasFullTokenPlaceholder) {
+    throw new BadRequestException(
+      'Watermark configurations bound to SECRET or TOP_SECRET classifications cannot disable QR codes unless {watermarkToken} is included in templateText.',
+    );
+  }
+}
 
 @Injectable()
 export class WatermarksService {
@@ -39,17 +65,12 @@ export class WatermarksService {
   }
 
   /**
-   * Thuật toán: Chiếu danh mục cấu hình thủy vân đang kích hoạt kèm cấp độ mật (Active Watermark Catalog Projection)
-   * Mục đích: Liệt kê các mẫu thủy vân đang áp dụng theo thứ tự thời gian khởi tạo cùng thông tin hạng bảo mật `rank` của mức phân loại gắn kèm.
-   * Cơ chế hoạt động:
-   *   - Truy vấn `watermarkConfig` với bộ lọc `is_active: true` kèm quan hệ `classification_levels`, chuẩn hóa các trường `BigInt`/`Date` sang DTO.
-   *
-   * Algorithm: Active Watermark Configuration Catalog Projection.
-   * Queries active watermark templates ordered by creation time with classification level metadata.
+   * Thuật toán: Chiếu danh mục cấu hình thủy vân đang kích hoạt kèm cấp độ mật (`Active Watermark Catalog Projection`).
    */
   async listConfigs(): Promise<{ data: unknown[] }> {
     const configs = await this.database.watermarkConfig.findMany({
       where: { is_active: true },
+      take: 200,
       include: {
         classification_levels: {
           select: { id: true, code: true, name: true, rank: true },
@@ -85,15 +106,7 @@ export class WatermarksService {
   }
 
   /**
-   * Thuật toán: Cập nhật cấu hình thủy vân có chốt chặn chính sách hiển thị & biên độ mờ đục (Policy-Constrained Watermark Config Mutation)
-   * Mục đích: Cho phép tinh chỉnh giao diện thủy vân nhưng ngăn chặn hành vi tắt thủy vân pháp y hoặc đặt độ mờ quá nhạt/quá đặc làm hỏng khả năng truy vết.
-   * Cơ chế hoạt động:
-   *   - Chặn tuyệt đối yêu cầu tắt hiển thị (`input.isVisible === false`) và cưỡng chế độ mờ nằm trong đoạn đóng `[10%, 90%]`.
-   *   - Làm tròn số nguyên các tham số hình học (`opacityPercent`, `fontSize`, `rotationDegrees`), cập nhật CSDL và ghi nhật ký kiểm toán `WATERMARK_CONFIG_UPDATED`.
-   *
-   * Algorithm: Policy-Constrained Watermark Configuration Mutation.
-   * Rejects attempts to disable visible forensic watermarks or set opacity outside [10%, 90%],
-   * persists rounded numeric settings, and emits `WATERMARK_CONFIG_UPDATED` audit log.
+   * Thuật toán: Cập nhật cấu hình thủy vân có chốt chặn hiển thị, biên độ mờ đục, tương phản màu và bảo toàn QR cho `SECRET`/`TOP_SECRET`.
    */
   async updateConfig(
     id: bigint,
@@ -132,10 +145,40 @@ export class WatermarksService {
 
     const existing = await this.database.watermarkConfig.findUnique({
       where: { id },
+      include: {
+        classification_levels: {
+          select: { code: true, rank: true },
+        },
+      },
     });
     if (!existing) {
       throw new NotFoundException('Watermark configuration not found.');
     }
+
+    const existingWithClass = existing as typeof existing & {
+      classification_levels?: { code?: string; rank?: number } | null;
+    };
+    let classCode = existingWithClass.classification_levels?.code ?? null;
+    let classRank = existingWithClass.classification_levels?.rank ?? null;
+    if (
+      classCode === null &&
+      existing.classification_level_id !== null &&
+      typeof this.database.classificationLevel?.findUnique === 'function'
+    ) {
+      const level = await this.database.classificationLevel.findUnique({
+        where: { id: existing.classification_level_id },
+        select: { code: true, rank: true },
+      });
+      classCode = level?.code ?? null;
+      classRank = level?.rank ?? null;
+    }
+
+    assertHighClassificationWatermarkIntegrity({
+      classificationCode: classCode,
+      classificationRank: classRank,
+      includeQrCode: input.includeQrCode ?? existing.include_qr_code,
+      templateText: input.templateText ?? existing.template_text,
+    });
 
     const updated = await this.database.watermarkConfig.update({
       where: { id },
@@ -190,12 +233,7 @@ export class WatermarksService {
   }
 
   /**
-   * Thuật toán: Truy vết định danh pháp y từ mã thủy vân tài liệu rò rỉ (Forensic Watermark Token Attribution - UC28)
-   * Mục đích: Đối chiếu chuỗi `watermark_token` thu được từ bản chụp/tệp rò rỉ để xác định chính xác người xem, phiên truy cập, địa chỉ IP, phiên bản tài liệu và mã băm SHA-256.
-   * Cơ chế hoạt động:
-   *   - Ủy quyền cho `traceWatermarkToken` thực hiện phép kết nối 4 bảng (`users`, `access_sessions`, `document_versions`, `watermark_configs`) và ghi vết kiểm toán `WATERMARK_TRACE_PERFORMED`.
-   *
-   * UC28: Trace a watermark token to verify the user, session, document, version, and generation time.
+   * Thuật toán: Truy vết định danh pháp y từ mã thủy vân tài liệu rò rỉ (`Forensic Watermark Token Attribution - UC28`).
    */
   async verifyWatermarkToken(
     token: string,

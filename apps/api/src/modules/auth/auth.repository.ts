@@ -1,10 +1,12 @@
 /**
  * @module AuthRepository
- * Algorithm: Threshold Exponential Lockout, Atomic CAS Password Reset & Session/MFA Repository Facade.
+ * Thuật toán: Mặt tiền kho dữ liệu xác thực, xoay vòng phiên/Refresh Token, MFA và vô hiệu hóa bộ đệm phiên phân tán theo Epoch.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
-import type { AuthPrincipal, AuthUser } from './auth.types.js';
+import { AppConfigService } from '../../config/config.service.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
+import { MFA_REQUIRED_ROLES, type AuthPrincipal, type AuthUser } from './auth.types.js';
 import {
   activateMfaAuthSession,
   createAuthSession,
@@ -38,6 +40,7 @@ import {
   createUserPasswordReset,
   findPasswordResetTokenOwner,
   mapRecordToAuthUser,
+  recordUserLoginFailure,
 } from './auth-user.repository.js';
 
 export type { RotationResult, SessionTokensInput } from './auth-session.repository.js';
@@ -45,6 +48,24 @@ export type { RotationResult, SessionTokensInput } from './auth-session.reposito
 @Injectable()
 export class AuthRepository {
   private readonly database = getDatabaseClient();
+  private readonly stateStore: DistributedStateService;
+
+  constructor(
+    @Optional() config?: AppConfigService,
+    @Optional() stateStore?: DistributedStateService,
+  ) {
+    this.stateStore = stateStore ?? new DistributedStateService(config);
+  }
+
+  /**
+   * Thuật toán: Vô hiệu hóa tức thì bộ đệm phiên `auth-session:${sessionId}` và tăng epoch người dùng `auth-user:${userId}`.
+   */
+  async invalidateSessionCache(userId: bigint, sessionId?: string): Promise<void> {
+    if (sessionId) {
+      await this.stateStore.deleteKey('auth-session', sessionId);
+    }
+    await this.stateStore.bumpNamespaceEpoch(`auth-user:${userId.toString()}`);
+  }
 
   async findUserByIdentifier(identifier: string): Promise<AuthUser | null> {
     const user = await this.database.user.findFirst({
@@ -67,45 +88,8 @@ export class AuthRepository {
     return user ? mapRecordToAuthUser(user) : null;
   }
 
-  /**
-   * Algorithm / Thuật toán: Khóa tài khoản lũy thừa đơn điệu theo ngưỡng thất bại liên tiếp (`GREATEST(existingLockedUntil, candidateLockUntil)`).
-   * Cơ chế hoạt động:
-   *   - Tính bước phạt tự động `min(900s, 30 * 2^min(failures - 5, 5))` khi `failures >= 5`.
-   *   - Đối chiếu với `locked_until` hiện hữu của quản trị viên (cả trên đối tượng `user` lẫn bản ghi DB mới nhất);
-   *     chỉ nâng mốc khóa về tương lai xa hơn và tuyệt đối không xóa (`null`) hay rút ngắn thời hạn khóa quản trị (MED-02).
-   */
-  async recordLoginFailure(user: AuthUser): Promise<void> {
-    const failures = user.failedLoginCount + 1;
-    const lockSeconds = failures < 5 ? 0 : Math.min(900, 30 * 2 ** Math.min(failures - 5, 5));
-    const candidateLockUntil = lockSeconds > 0 ? new Date(Date.now() + lockSeconds * 1_000) : null;
-    const latestRow =
-      typeof this.database.user.findUnique === 'function'
-        ? await this.database.user.findUnique({
-            where: { id: user.id },
-            select: { locked_until: true },
-          })
-        : null;
-    const existingLock = [
-      user.lockedUntil ?? null,
-      latestRow?.locked_until ?? null,
-    ].reduce<Date | null>((acc, cur) => {
-      if (!cur) return acc;
-      if (!acc) return cur;
-      return cur.getTime() > acc.getTime() ? cur : acc;
-    }, null);
-    // CONFLICT-RESOLVED: Giữ nguyên mốc khóa quản trị viên dài hạn thay vì ghi đè bằng null hoặc thời hạn khóa tự động ngắn hơn (MED-02).
-    const effectiveLockUntil =
-      existingLock && (!candidateLockUntil || existingLock.getTime() > candidateLockUntil.getTime())
-        ? existingLock
-        : candidateLockUntil;
-
-    await this.database.user.update({
-      where: { id: user.id },
-      data: {
-        failed_login_count: { increment: 1 },
-        ...(effectiveLockUntil !== null ? { locked_until: effectiveLockUntil } : {}),
-      },
-    });
+  recordLoginFailure(user: AuthUser): Promise<void> {
+    return recordUserLoginFailure(this.database, user);
   }
 
   async recordLoginSuccess(userId: bigint): Promise<void> {
@@ -119,54 +103,92 @@ export class AuthRepository {
     return createAuthSession(this.database, input);
   }
 
-  activateMfaSession(
+  async activateMfaSession(
     sessionId: string,
     userId: bigint,
     refresh: { id: string; hash: string; expiresAt: Date },
   ): Promise<string | null> {
-    return activateMfaAuthSession(this.database, sessionId, userId, refresh);
+    const newSessionId = await activateMfaAuthSession(this.database, sessionId, userId, refresh);
+    if (newSessionId) await this.invalidateSessionCache(userId, sessionId);
+    return newSessionId;
   }
 
-  rotateRefreshToken(
+  async rotateRefreshToken(
     oldHash: string,
     replacement: { id: string; hash: string; expiresAt: Date },
   ): Promise<RotationResult> {
-    return rotateSessionRefreshToken(this.database, oldHash, replacement, (id) =>
+    const result = await rotateSessionRefreshToken(this.database, oldHash, replacement, (id) =>
       this.findUserById(id),
     );
+    if (result.kind === 'reuse') {
+      await this.invalidateSessionCache(result.userId, result.sessionId);
+    }
+    return result;
   }
 
+  /**
+   * Thuật toán: Phân giải danh tính phiên hoạt động kèm kiểm tra tài khoản khóa/vô hiệu hóa và xác định trạng thái `mfaPending`.
+   */
   async principalForSession(userId: bigint, sessionId: string): Promise<AuthPrincipal | null> {
+    const now = new Date();
     const [session, user] = await Promise.all([
       this.database.authSession.findFirst({
-        where: { id: sessionId, user_id: userId, status: 'ACTIVE', expires_at: { gt: new Date() } },
+        where: { id: sessionId, user_id: userId, status: 'ACTIVE', expires_at: { gt: now } },
       }),
       this.findUserById(userId),
     ]);
-    if (!session || !user || user.status !== 'ACTIVE') return null;
+    if (
+      !session ||
+      !user ||
+      user.status !== 'ACTIVE' ||
+      (user.lockedUntil !== null && user.lockedUntil !== undefined && user.lockedUntil > now)
+    ) {
+      return null;
+    }
+    const mfa = session.mfa_verified_at !== null;
+    const mfaRequiredForUser =
+      Boolean(user.requiresMfa) ||
+      Boolean(user.mfaMethod) ||
+      user.roles.some((role) => MFA_REQUIRED_ROLES.has(role));
     return {
       userId,
       sessionId,
       username: user.username,
       roles: user.roles,
-      mfa: session.mfa_verified_at !== null,
+      mfa,
+      mfaPending: !mfa && mfaRequiredForUser,
     };
   }
 
-  revokeSession(sessionId: string, userId: bigint, reason: string): Promise<boolean> {
-    return revokeSingleSession(this.database, sessionId, userId, reason);
+  async revokeSession(sessionId: string, userId: bigint, reason: string): Promise<boolean> {
+    const revoked = await revokeSingleSession(this.database, sessionId, userId, reason);
+    await this.invalidateSessionCache(userId, sessionId);
+    return revoked;
   }
 
-  revokeAllSessions(userId: bigint, reason: string): Promise<number> {
-    return revokeAllUserSessions(this.database, userId, reason);
+  async revokeAllSessions(userId: bigint, reason: string): Promise<number> {
+    const count = await revokeAllUserSessions(this.database, userId, reason);
+    await this.invalidateSessionCache(userId);
+    return count;
   }
 
   listActiveSessions(userId: bigint, currentSessionId: string): Promise<ActiveAuthSessionItem[]> {
     return queryActiveUserSessions(this.database, userId, currentSessionId);
   }
 
-  revokeOtherSessions(userId: bigint, currentSessionId: string, reason: string): Promise<number> {
-    return revokeOtherActiveUserSessions(this.database, userId, currentSessionId, reason);
+  async revokeOtherSessions(
+    userId: bigint,
+    currentSessionId: string,
+    reason: string,
+  ): Promise<number> {
+    const count = await revokeOtherActiveUserSessions(
+      this.database,
+      userId,
+      currentSessionId,
+      reason,
+    );
+    if (count > 0) await this.invalidateSessionCache(userId);
+    return count;
   }
 
   async updatePassword(userId: bigint, passwordHash: string): Promise<void> {
@@ -191,8 +213,10 @@ export class AuthRepository {
     return findPasswordResetTokenOwner(this.database, tokenHash);
   }
 
-  consumePasswordReset(tokenHash: string, passwordHash: string): Promise<bigint | null> {
-    return consumeUserPasswordReset(this.database, tokenHash, passwordHash);
+  async consumePasswordReset(tokenHash: string, passwordHash: string): Promise<bigint | null> {
+    const userId = await consumeUserPasswordReset(this.database, tokenHash, passwordHash);
+    if (userId !== null) await this.invalidateSessionCache(userId);
+    return userId;
   }
 
   createMfaEnrollment(
@@ -259,7 +283,9 @@ export class AuthRepository {
     return insertSecurityAlert(this.database, data);
   }
 
-  disableMfa(userId: bigint): Promise<boolean> {
-    return disableUserMfaMethods(this.database, userId);
+  async disableMfa(userId: bigint): Promise<boolean> {
+    const disabled = await disableUserMfaMethods(this.database, userId);
+    await this.invalidateSessionCache(userId);
+    return disabled;
   }
 }

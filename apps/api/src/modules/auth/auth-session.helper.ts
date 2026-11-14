@@ -36,7 +36,7 @@ export async function executeLogin(
   context: RequestContext,
 ): Promise<SessionArtifacts> {
   const accountKey = identifier.normalize('NFKC').trim().toLowerCase();
-  deps.rateLimit.assertAllowed(context.ip, accountKey);
+  await deps.rateLimit.assertAllowed(context.ip, accountKey);
   const user = await deps.repository.findUserByIdentifier(accountKey);
   const passwordMatches = user
     ? await deps.passwords.verify(user.passwordHash, password)
@@ -44,7 +44,7 @@ export async function executeLogin(
   const eligible =
     user?.status === 'ACTIVE' && (!user.lockedUntil || user.lockedUntil <= new Date());
   if (!user || !passwordMatches || !eligible) {
-    const delayMs = deps.rateLimit.recordFailure(context.ip, accountKey);
+    const delayMs = await deps.rateLimit.recordFailure(context.ip, accountKey);
     if (user) await deps.repository.recordLoginFailure(user);
     await deps.audit.record(
       {
@@ -60,10 +60,12 @@ export async function executeLogin(
     throw new UnauthorizedException(GENERIC_LOGIN_ERROR);
   }
 
-  deps.rateLimit.clearAccount(accountKey);
+  await deps.rateLimit.clearAccount(accountKey);
   await deps.repository.recordLoginSuccess(user.id);
   const mfaRequired =
-    Boolean(user.mfaMethod) || user.roles.some((role) => MFA_REQUIRED_ROLES.has(role));
+    Boolean(user.requiresMfa) ||
+    Boolean(user.mfaMethod) ||
+    user.roles.some((role) => MFA_REQUIRED_ROLES.has(role));
   const artifacts = await startAuthSession(deps, user.id, context, !mfaRequired, mfaRequired);
   await deps.audit.record(
     {
@@ -137,6 +139,9 @@ export async function executeRefresh(
 
 /**
  * Algorithm / Thuật toán: Khởi tạo phiên xác thực mới kèm cặp khóa họ Refresh Token và mã CSRF ngẫu nhiên 256-bit.
+ * Lưu ý an ninh: Đăng nhập bằng mật khẩu đơn thuần (kể cả khi `preMfa === false`) chưa xác minh nhân tố thứ hai,
+ * nên `mfaVerified` bắt buộc bằng `false` (`mfa_verified_at = null`) và JWT claim `mfa` bắt buộc bằng `false`;
+ * chỉ `activateMfaAuthSession` sau khi xác minh TOTP/WebAuthn mới được phép cấp `mfa: true`.
  */
 async function startAuthSession(
   deps: AuthSessionLifecycleDeps,
@@ -157,12 +162,12 @@ async function startAuthSession(
     refreshTokenHash: refreshToken ? deps.tokens.hashOpaqueToken(refreshToken) : undefined,
     refreshExpiresAt: refreshToken ? new Date(Date.now() + deps.refreshTtl * 1_000) : undefined,
     sessionExpiresAt: new Date(Date.now() + lifetime * 1_000),
-    mfaVerified: !preMfa,
+    mfaVerified: false,
     context,
   });
   return {
     sessionId,
-    accessToken: await deps.tokens.issueAccessToken(userId, sessionId, !preMfa),
+    accessToken: await deps.tokens.issueAccessToken(userId, sessionId, false),
     refreshToken,
     csrfToken: randomBytes(32).toString('base64url'),
     accessMaxAge: preMfa ? 300 : deps.accessTtl,

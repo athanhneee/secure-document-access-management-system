@@ -1,3 +1,8 @@
+/**
+ * @module AccessGrantsController
+ * Thuật toán: Điều phối API cấp phát, tra cứu và thu hồi quyền truy cập tài liệu có thời hạn
+ * với bảo vệ CSRF và kiểm tra quyền nguyên tử (`@RequirePermission`).
+ */
 import {
   BadRequestException,
   Body,

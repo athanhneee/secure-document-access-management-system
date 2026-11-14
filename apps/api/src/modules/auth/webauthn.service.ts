@@ -2,7 +2,7 @@
  * @module WebAuthnService
  * Algorithm: W3C WebAuthn Level 3 Registration, Attestation & Sign-Counter Clone Detection.
  */
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional, UnauthorizedException } from '@nestjs/common';
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -13,6 +13,7 @@ import {
   type WebAuthnCredential,
 } from '@simplewebauthn/server';
 import { AppConfigService } from '../../config/config.service.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 import { MfaService } from './mfa.service.js';
 import { WebAuthnChallengeStore } from './webauthn-challenge.helper.js';
 
@@ -37,6 +38,7 @@ export class WebAuthnService {
   constructor(
     private readonly mfa: MfaService,
     config: AppConfigService,
+    @Optional() stateStore?: DistributedStateService,
   ) {
     this.rpName = config.get('WEBAUTHN_RP_NAME') || 'Secure Document Access';
     this.rpId = config.get('WEBAUTHN_RP_ID') || 'localhost';
@@ -46,7 +48,11 @@ export class WebAuthnService {
       .split(',')
       .map((o) => o.trim())
       .filter((o) => o.length > 0);
-    this.challenges = new WebAuthnChallengeStore(config.get('APP_ENCRYPTION_MASTER_KEY'));
+    this.challenges = new WebAuthnChallengeStore(
+      config.get('APP_ENCRYPTION_MASTER_KEY'),
+      stateStore,
+      config,
+    );
   }
 
   getRpId(): string {
@@ -61,7 +67,7 @@ export class WebAuthnService {
     return this.challenges.createChallengeToken(challenge, userId);
   }
 
-  verifyChallengeToken(token: string, expectedUserId?: bigint | string): string {
+  verifyChallengeToken(token: string, expectedUserId?: bigint | string): Promise<string> {
     return this.challenges.verifyChallengeToken(token, expectedUserId);
   }
 
@@ -107,7 +113,7 @@ export class WebAuthnService {
     credential: StoredWebAuthnCredential;
     encryptedSecret: string;
   }> {
-    const expectedChallenge = this.verifyChallengeToken(challengeToken, userId);
+    const expectedChallenge = await this.verifyChallengeToken(challengeToken, userId);
 
     const verification = await verifyRegistrationResponse({
       response,
@@ -169,7 +175,7 @@ export class WebAuthnService {
     newCounter: number;
     updatedEncryptedSecret: string;
   }> {
-    const expectedChallenge = this.verifyChallengeToken(challengeToken, userId);
+    const expectedChallenge = await this.verifyChallengeToken(challengeToken, userId);
 
     // Pass counter: 0 to @simplewebauthn/server so cryptographic signature verification completes
     // without prematurely throwing on counter rollback, allowing explicit clone detection below.

@@ -1,6 +1,6 @@
 /**
  * @module AuthWebAuthnController
- * Algorithm: FIDO2 / WebAuthn Step-Up MFA Registration & Assertion HTTP Controller.
+ * Thuật toán: Điều phối HTTP đăng ký khóa phần cứng FIDO2/WebAuthn và xác thực chữ ký thử thách nâng bậc MFA.
  */
 import { Body, Controller, Post, Req, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
@@ -78,7 +78,7 @@ export class AuthWebAuthnController {
    * Thuật toán: Sinh thử thách xác thực chữ ký WebAuthn cho các khóa đã kích hoạt của tài khoản.
    */
   @AllowPreMfa()
-  @Post('mfa/webauthn/auth/options')
+  @Post(['mfa/webauthn/auth/options', 'webauthn/authenticate/options'])
   async webauthnAuthOptions(@Body() body: unknown, @Req() request: FastifyRequest) {
     this.csrf.assertRequest(request);
     const input = S.parseAuthBody(S.WebAuthnAuthOptionsRequestSchema, body);
@@ -93,7 +93,7 @@ export class AuthWebAuthnController {
    * Thuật toán: Xác minh chữ ký phần cứng WebAuthn, kiểm tra bộ đếm nhân bản và thăng cấp phiên MFA.
    */
   @AllowPreMfa()
-  @Post('mfa/webauthn/auth/verify')
+  @Post(['mfa/webauthn/auth/verify', 'webauthn/authenticate/verify'])
   async webauthnAuthVerify(
     @Body() body: unknown,
     @Req() req: FastifyRequest,

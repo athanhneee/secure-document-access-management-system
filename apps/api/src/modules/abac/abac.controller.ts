@@ -1,3 +1,8 @@
+/**
+ * @module AbacController
+ * Thuật toán: Điều phối API quản trị quy tắc chính sách ABAC, danh mục thuộc tính và mô phỏng quyết định PDP
+ * với bảo vệ CSRF và kiểm tra quyền nguyên tử toàn cục (`@RequirePermission(..., true)`).
+ */
 import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import {

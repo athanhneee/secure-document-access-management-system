@@ -123,8 +123,15 @@ test('[HIGH-01] resolveAndEnforceSessionPolicy re-hydrates obligations after res
   );
 });
 
-test('[HIGH-02] TRUST_PROXY config & LoginRateLimitService prevent proxy-wide DoS and loopback trustedNetwork bypass', () => {
+test('[HIGH-02] TRUST_PROXY config & LoginRateLimitService prevent proxy-wide DoS, hop spoofing, and staging secret bypass', async () => {
   assert.deepEqual(resolveTrustProxyConfig('loopback'), ['127.0.0.0/8', '::1/128']);
+  assert.deepEqual(resolveTrustProxyConfig('linklocal'), ['169.254.0.0/16', 'fe80::/10']);
+  assert.deepEqual(resolveTrustProxyConfig('uniquelocal'), [
+    '10.0.0.0/8',
+    '172.16.0.0/12',
+    '192.168.0.0/16',
+    'fc00::/7',
+  ]);
   assert.equal(resolveTrustProxyConfig('false'), false);
   const hopFn = resolveTrustProxyConfig('2');
   assert.equal(typeof hopFn, 'function');
@@ -152,6 +159,15 @@ test('[HIGH-02] TRUST_PROXY config & LoginRateLimitService prevent proxy-wide Do
   };
 
   assert.throws(() => validateEnv({ ...baseProdEnv, TRUST_PROXY: 'true' }), /TRUST_PROXY/);
+  assert.throws(() => validateEnv({ ...baseProdEnv, TRUST_PROXY: '2' }), /TRUST_PROXY/);
+  assert.throws(
+    () => validateEnv({ ...baseProdEnv, NODE_ENV: 'staging', TRUST_PROXY: '1' }),
+    /TRUST_PROXY/,
+  );
+  assert.throws(() => validateEnv({ NODE_ENV: 'staging' }), /staging/);
+  assert.doesNotThrow(() =>
+    validateEnv({ ...baseProdEnv, NODE_ENV: 'staging', TRUST_PROXY: '10.0.0.0/8,172.16.0.10' }),
+  );
   assert.throws(
     () => validateEnv({ ...baseProdEnv, ABAC_TRUSTED_NETWORK_CIDRS: '127.0.0.0/8,10.20.0.0/16' }),
     /ABAC_TRUSTED_NETWORK_CIDRS/,
@@ -160,10 +176,10 @@ test('[HIGH-02] TRUST_PROXY config & LoginRateLimitService prevent proxy-wide Do
   // Proxy loopback IP must NOT lock out unrelated accounts
   const limiter = new LoginRateLimitService();
   for (let i = 0; i < 6; i++) {
-    limiter.recordFailure('127.0.0.1', 'attacker.user');
+    await limiter.recordFailure('127.0.0.1', 'attacker.user');
   }
-  assert.throws(() => limiter.assertAllowed('127.0.0.1', 'attacker.user'));
-  assert.doesNotThrow(() => limiter.assertAllowed('127.0.0.1', 'legit.victim'));
+  await assert.rejects(() => limiter.assertAllowed('127.0.0.1', 'attacker.user'));
+  await limiter.assertAllowed('127.0.0.1', 'legit.victim');
 });
 
 test('[HIGH-03] consumeMfaRecoveryCodeAtomic & advanceWebAuthnCounterAtomic serialize concurrent requests via FOR UPDATE', async () => {

@@ -1,3 +1,7 @@
+/**
+ * Module: Document Access Requests & Approval Workflow HTTP Controller
+ * Thuật toán: Xác Thực Lược Đồ Zod, Bảo Vệ CSRF Và Cưỡng Chế Quyền RBAC Cho Quy Trình Xin Cấp / Phê Duyệt Quyền Truy Cập Tài Liệu.
+ */
 import {
   BadRequestException,
   Body,

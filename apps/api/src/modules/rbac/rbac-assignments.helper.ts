@@ -1,20 +1,30 @@
 /**
- * Module: RBAC Temporal SoD User-Role Assignment & Revocation Helper
- * Algorithm: Enforces department subtree containment, delegation ceilings, and half-open temporal
- *   interval overlap checks (`[valid_from, valid_to)`) over `PRIVILEGED_SEPARATION_ROLES`.
+ * @module RbacAssignmentsHelper
+ * Thuật toán: Cấp phát & thu hồi vai trò theo khoảng thời gian nửa mở `[valid_from, valid_to)` với kiểm chứng
+ * bao đóng phòng ban, trần ủy quyền, Phân tách Nhiệm vụ (SoD) và thu hồi tức thì mọi phiên chưa xác thực MFA
+ * khi gán vai trò đặc quyền (`PRIVILEGED_ROLE_ASSIGNED_REQUIRES_MFA`).
  */
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { withSerializableTransaction, type getDatabaseClient } from '@sda/database';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from './authorization.service.js';
-import { areOverlappingRolesSodCompatible } from './permission-matrix.js';
+import {
+  areOverlappingRolesSodCompatible,
+  isPrivilegedSeparationRoleOrCapability,
+} from './permission-matrix.js';
 import type { RbacAuditService } from './rbac-audit.service.js';
+import {
+  PRIVILEGED_ROLE_MFA_REVOKE_REASON,
+  revokeUnverifiedMfaSessionsForUsers,
+} from './rbac-role-permissions.helper.js';
+
+export { PRIVILEGED_ROLE_MFA_REVOKE_REASON, revokeUnverifiedMfaSessionsForUsers };
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 type RoleLookupClient = Pick<PrismaClient, 'userRole'>;
 
 /**
- * Algorithm: Temporal Separation-of-Duties (SoD) & Department-Subtree User Role Assignment
+ * Thuật toán: Gán vai trò có kiểm tra Phân tách Nhiệm vụ (SoD), phạm vi phòng ban và cưỡng chế thu hồi phiên thiếu MFA.
  */
 export async function executeAssignUserRole(
   authorization: AuthorizationService,
@@ -79,11 +89,7 @@ export async function executeAssignUserRole(
           ],
         },
         include: {
-          roles: {
-            include: {
-              role_permissions: { include: { permissions: true } },
-            },
-          },
+          roles: { include: { role_permissions: { include: { permissions: true } } } },
         },
       });
       const candidateDescriptor = {
@@ -113,6 +119,9 @@ export async function executeAssignUserRole(
           assigned_by: principal.userId,
         },
       });
+      if (isPrivilegedSeparationRoleOrCapability(role.code, candidateDescriptor.permissions)) {
+        await revokeUnverifiedMfaSessionsForUsers(transaction, [userId], new Date());
+      }
       await audit.record(
         transaction,
         {
@@ -129,12 +138,12 @@ export async function executeAssignUserRole(
     },
     database ? { client: database } : undefined,
   );
-  authorization.invalidateUser(userId);
+  await authorization.invalidateUser(userId);
   return { id: id.toString() };
 }
 
 /**
- * Algorithm: Delegation-Bounded Serializable User Role Revocation
+ * Thuật toán: Thu hồi phép gán vai trò trong giao dịch `SERIALIZABLE` có giới hạn trần ủy quyền.
  */
 export async function executeRevokeUserRole(
   authorization: AuthorizationService,
@@ -175,9 +184,7 @@ export async function executeRevokeUserRole(
       }
       // CONFLICT-RESOLVED: Xóa trực tiếp bản ghi gán vai trò chưa đến giờ hiệu lực (`valid_from >= now`) để không vi phạm ràng buộc SQL `CHECK (valid_to IS NULL OR valid_to > valid_from)` (HIGH-12)
       if (assignment.valid_from >= now) {
-        await transaction.userRole.delete({
-          where: { id: assignmentId },
-        });
+        await transaction.userRole.delete({ where: { id: assignmentId } });
         await audit.record(
           transaction,
           {
@@ -211,13 +218,11 @@ export async function executeRevokeUserRole(
     },
     database ? { client: database } : undefined,
   );
-  authorization.invalidateUser(userId);
+  await authorization.invalidateUser(userId);
 }
 
 /**
- * Algorithm: Temporal Active-or-Scheduled Role Membership Predicate
- * Checks inside the caller's `SERIALIZABLE` transaction whether `userId` holds any non-expired
- * assignment (active now OR scheduled in the future) for `roleId` to block self-escalation races.
+ * Thuật toán: Kiểm tra xem người thực thi có đang giữ hoặc được hẹn giờ giữ vai trò `roleId` hay không để chặn tự nâng quyền.
  */
 export async function actorHoldsActiveRole(
   database: RoleLookupClient,

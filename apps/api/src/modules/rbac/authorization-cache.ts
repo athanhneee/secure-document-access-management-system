@@ -1,9 +1,12 @@
 /**
  * @module AuthorizationCache
- * Bộ nhớ đệm quyền hiệu lực RBAC trong tiến trình với thuật toán cắt trần TTL theo chân trời hết hạn vai trò
- * (Horizon-Clamped TTL Cache) kèm bộ đếm thế hệ phục vụ vô hiệu hóa tức thì.
+ * Bộ nhớ đệm quyền hiệu lực RBAC phân tán qua `DistributedStateService` (Redis + dự phòng cục bộ có trần)
+ * với thuật toán cắt trần TTL theo chân trời hết hạn vai trò (`Horizon-Clamped TTL`) kết hợp số hiệu thế hệ
+ * toàn cục và theo từng người dùng (`rbac-global`, `rbac-user:<id>`) để vô hiệu hóa tức thì trên mọi bản sao.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { AppConfigService } from '../../config/config.service.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 
 export interface EffectiveGrant {
   permissionId: bigint;
@@ -16,73 +19,133 @@ export interface EffectiveGrant {
   validTo: Date | null;
 }
 
-interface CacheEntry {
-  grants: EffectiveGrant[];
+interface SerializedEffectiveGrant {
+  permissionId: string;
+  code: string;
+  resource: string;
+  action: string;
+  roleId: string;
+  roleCode: string;
+  scopeDepartmentId: string | null;
+  validTo: string | null;
+}
+
+interface SerializedCacheEntry {
+  grants: SerializedEffectiveGrant[];
   expiresAt: number;
 }
 
 @Injectable()
 export class AuthorizationCache {
-  // shortcut: 10,000 user grant entries (~5 MB) with 30s horizon-clamped TTL, broadcast invalidations via Redis Pub/Sub across replicas
-  private readonly entries = new Map<string, CacheEntry>();
+  private readonly stateStore: DistributedStateService;
   private generation = 0;
 
-  /**
-   * Thuật toán: Tra cứu bộ nhớ đệm kèm thu hồi lười khi quá hạn (Lazy-Expiration Lookup).
-   * Cơ chế hoạt động: Kiểm tra `entry.expiresAt <= now`; nếu đã chạm mốc hết hạn thì xóa khóa ngay tại chỗ
-   * và trả về `undefined` để buộc tầng dịch vụ nạp lại quyền mới từ cơ sở dữ liệu.
-   */
-  get(userId: bigint, now = Date.now()): EffectiveGrant[] | undefined {
-    const key = userId.toString();
-    const entry = this.entries.get(key);
-    if (!entry) return undefined;
-    if (entry.expiresAt <= now) {
-      this.entries.delete(key);
-      return undefined;
-    }
-    return entry.grants;
+  constructor(
+    @Optional() config?: AppConfigService,
+    @Optional() stateStore?: DistributedStateService,
+  ) {
+    this.stateStore = stateStore ?? new DistributedStateService(config);
   }
 
   /**
-   * Thuật toán: Cắt trần TTL theo chân trời hết hạn vai trò gần nhất (Temporal Horizon TTL Clamping).
-   * Cơ chế hoạt động: Tính `nearestExpiry = min(now + ttlMs, min_{g}(g.validTo))` trên toàn bộ các phép gán
-   * vai trò có thời hạn hữu hạn, đảm bảo không bao giờ phục vụ quyền đã hết hạn `valid_to` dù TTL mặc định chưa trôi hết.
+   * Thuật toán: Tra cứu bộ nhớ đệm quyền phân tán gắn phiên bản Epoch kèm thu hồi lười khi quá hạn (`Epoch-Scoped Lazy-Expiration Lookup`).
+   * Cơ chế hoạt động: Ghép khóa `${globalEpoch}:${userEpoch}:${userId}` từ `DistributedStateService`, kiểm tra `entry.expiresAt <= now`
+   * để đảm bảo quyền có `valid_to` hữu hạn không bao giờ sống sót quá thời điểm hết hạn ngay cả khi TTL mặc định chưa trôi hết.
    */
-  set(userId: bigint, grants: EffectiveGrant[], ttlMs = 30_000, now = Date.now()): void {
+  async get(userId: bigint, now = Date.now()): Promise<EffectiveGrant[] | undefined> {
+    const scopedKey = await this.buildScopedKey(userId);
+    const entry = await this.stateStore.getJson<SerializedCacheEntry>('rbac-grants', scopedKey);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= now) {
+      await this.stateStore.deleteKey('rbac-grants', scopedKey);
+      return undefined;
+    }
+    return entry.grants.map((grant) => ({
+      permissionId: BigInt(grant.permissionId),
+      code: grant.code,
+      resource: grant.resource,
+      action: grant.action,
+      roleId: BigInt(grant.roleId),
+      roleCode: grant.roleCode,
+      scopeDepartmentId: grant.scopeDepartmentId !== null ? BigInt(grant.scopeDepartmentId) : null,
+      validTo: grant.validTo !== null ? new Date(grant.validTo) : null,
+    }));
+  }
+
+  /**
+   * Thuật toán: Cắt trần TTL theo chân trời hết hạn vai trò gần nhất (`Temporal Horizon TTL Clamping`).
+   * Cơ chế hoạt động: Tính `nearestExpiry = min(now + ttlMs, min_{g}(g.validTo))` trên toàn bộ các phép gán
+   * vai trò có thời hạn hữu hạn, sau đó lưu vào `DistributedStateService` với TTL đã kẹp chặt.
+   */
+  async set(
+    userId: bigint,
+    grants: EffectiveGrant[],
+    ttlMs = 30_000,
+    now = Date.now(),
+  ): Promise<void> {
     const nearestExpiry = grants.reduce(
       (minimum, grant) => (grant.validTo ? Math.min(minimum, grant.validTo.getTime()) : minimum),
       now + ttlMs,
     );
-    if (this.entries.size >= 10_000) {
-      for (const [k, v] of this.entries) {
-        if (v.expiresAt <= now) this.entries.delete(k);
-      }
-      while (this.entries.size >= 10_000) {
-        const oldestKey = this.entries.keys().next().value;
-        if (!oldestKey) break;
-        this.entries.delete(oldestKey);
-      }
+    const scopedKey = await this.buildScopedKey(userId);
+    if (nearestExpiry <= now) {
+      await this.stateStore.deleteKey('rbac-grants', scopedKey);
+      return;
     }
-    this.entries.set(userId.toString(), { grants, expiresAt: nearestExpiry });
+    const serialized: SerializedCacheEntry = {
+      expiresAt: nearestExpiry,
+      grants: grants.map((grant) => ({
+        permissionId: grant.permissionId.toString(),
+        code: grant.code,
+        resource: grant.resource,
+        action: grant.action,
+        roleId: grant.roleId.toString(),
+        roleCode: grant.roleCode,
+        scopeDepartmentId: grant.scopeDepartmentId?.toString() ?? null,
+        validTo: grant.validTo ? grant.validTo.toISOString() : null,
+      })),
+    };
+    await this.stateStore.putEphemeral(
+      'rbac-grants',
+      scopedKey,
+      serialized,
+      Math.max(1_000, nearestExpiry - now),
+    );
   }
 
   /**
-   * Thuật toán: Vô hiệu hóa mục đơn lẻ và tăng đơn điệu số hiệu thế hệ (`generation`).
+   * Thuật toán: Vô hiệu hóa tức thì quyền RBAC và phiên xác thực của một người dùng trên toàn cụm bằng tăng Epoch `O(1)`.
    */
-  invalidateUser(userId: bigint): void {
-    this.entries.delete(userId.toString());
+  async invalidateUser(userId: bigint): Promise<void> {
+    const id = userId.toString();
     this.generation += 1;
+    await Promise.all([
+      this.stateStore.bumpNamespaceEpoch(`rbac-user:${id}`),
+      this.stateStore.bumpNamespaceEpoch(`auth-user:${id}`),
+    ]);
   }
 
   /**
-   * Thuật toán: Xóa trắng toàn cục bộ nhớ đệm khi thay đổi định nghĩa vai trò hoặc ánh xạ quyền hệ thống.
+   * Thuật toán: Xóa trắng toàn cục bộ nhớ đệm quyền và phiên xác thực trên mọi bản sao khi thay đổi định nghĩa vai trò/cây phòng ban.
    */
-  invalidateAll(): void {
-    this.entries.clear();
+  async invalidateAll(): Promise<void> {
     this.generation += 1;
+    await Promise.all([
+      this.stateStore.bumpNamespaceEpoch('rbac-global'),
+      this.stateStore.bumpNamespaceEpoch('auth-global'),
+    ]);
   }
 
   currentGeneration(): number {
     return this.generation;
+  }
+
+  private async buildScopedKey(userId: bigint): Promise<string> {
+    const id = userId.toString();
+    const [globalEpoch, userEpoch] = await Promise.all([
+      this.stateStore.getNamespaceEpoch('rbac-global'),
+      this.stateStore.getNamespaceEpoch(`rbac-user:${id}`),
+    ]);
+    return `${globalEpoch}:${userEpoch}:${id}`;
   }
 }

@@ -5,6 +5,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { AppConfigService } from '../../config/config.service.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 import { AuthAuditService } from './auth-audit.service.js';
 import {
   executeBeginMfaEnrollment,
@@ -64,8 +65,9 @@ export class AuthService {
     private readonly mailer: ResetMailerService,
     config: AppConfigService,
     @Optional() webauthn?: WebAuthnService,
+    @Optional() stateStore?: DistributedStateService,
   ) {
-    this.webauthn = webauthn ?? new WebAuthnService(this.mfa, config);
+    this.webauthn = webauthn ?? new WebAuthnService(this.mfa, config, stateStore);
     this.accessTtl = config.get('AUTH_ACCESS_TTL_SECONDS');
     this.refreshTtl = config.get('AUTH_REFRESH_TTL_SECONDS');
     this.resetTtl = config.get('AUTH_RESET_TTL_SECONDS');

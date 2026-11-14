@@ -1,18 +1,21 @@
 /**
- * Module: Quản lý Vòng đời Phiên Truy cập Tài liệu (Document Access Session Lifecycle Service)
- * Algorithm / Thuật toán: Theo dõi phiên đọc tài liệu đang hoạt động (Bounded Session Listing)
- *   và thực thi chấm dứt phiên đơn lẻ lũy đẳng (Idempotent Session Termination).
+ * @module AccessSessionsService
+ * Thuật toán: Theo dõi phiên đọc tài liệu có giới hạn trần + phân lập phạm vi phòng ban (`scope_department_id`)
+ * và chấm dứt phiên nguyên tử chống tranh chấp TOCTOU bằng cập nhật có điều kiện `updateMany(status = 'ACTIVE')` trong giao dịch.
  */
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { getDatabaseClient, type session_status } from '@sda/database';
+import { getDatabaseClient, type Prisma, type session_status } from '@sda/database';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import { AuthorizationService } from '../rbac/authorization.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -46,6 +49,7 @@ export class AccessSessionsService {
   constructor(
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -55,27 +59,47 @@ export class AccessSessionsService {
   }
 
   /**
-   * Algorithm / Thuật toán: Truy Vấn Phiên Truy Cập Có Giới Hạn Trần (Bounded Session Listing)
-   * Mục đích: Trả về danh sách các phiên truy cập mới nhất theo trạng thái để giám sát vận hành an ninh.
-   * Cơ chế hoạt động:
-   *   - Kẹp ngưỡng kích thước trang tối đa ở 100 bản ghi (`Math.min(limit, 100)`), mặc định lọc `ACTIVE`
-   *     và sắp xếp giảm dần theo `started_at` kèm thông tin người dùng và phiên bản tài liệu.
+   * Thuật toán: Truy Vấn Phiên Truy Cập Có Giới Hạn Trần Kèm Cô Lập Cây Con Phòng Ban (`Scope-Isolated Bounded Session Listing`).
    */
-  async listSessions(options?: {
-    status?: session_status;
-    limit?: number;
-  }): Promise<{ data: AccessSessionDto[] }> {
+  async listSessions(
+    options?: {
+      status?: session_status;
+      limit?: number;
+      page?: number;
+    },
+    actor?: AuthPrincipal,
+  ): Promise<{ data: AccessSessionDto[] }> {
     const status = options?.status ?? 'ACTIVE';
-    const limit = Math.min(options?.limit ?? 50, 100);
+    const limit = Math.min(Math.max(options?.limit ?? 50, 1), 100);
+    const page = Math.max(options?.page ?? 1, 1);
+    const skip = (page - 1) * limit;
 
-    const where: { status?: session_status } = {};
+    const where: Prisma.AccessSessionWhereInput = {};
     if (status) {
       where.status = status;
+    }
+
+    if (
+      this.authorization &&
+      actor &&
+      typeof this.authorization.visibleDepartmentIds === 'function'
+    ) {
+      const visibleDepts = await this.authorization.visibleDepartmentIds(
+        actor,
+        'ACCESS_SESSION',
+        'TERMINATE',
+      );
+      if (visibleDepts !== null) {
+        where.document_versions = {
+          document: { department_id: { in: visibleDepts } },
+        };
+      }
     }
 
     const sessions = await this.database.accessSession.findMany({
       where,
       take: limit,
+      ...(skip > 0 ? { skip } : {}),
       orderBy: { started_at: 'desc' },
       include: {
         users: { select: { id: true, username: true, full_name: true } },
@@ -113,11 +137,8 @@ export class AccessSessionsService {
   }
 
   /**
-   * Algorithm / Thuật toán: Chấm Dứt Phiên Truy Cập Đơn Lẻ Lũy Đẳng (Idempotent Session Termination)
-   * Mục đích: Ngắt ngay lập tức một phiên xem tài liệu cụ thể theo yêu cầu cưỡng chế của cán bộ an ninh.
-   * Cơ chế hoạt động:
-   *   - Kiểm tra sự tồn tại của phiên; nếu phiên không còn ở trạng thái `ACTIVE` thì trả về nguyên trạng (lũy đẳng).
-   *   - Chuyển trạng thái sang `TERMINATED`, đóng dấu thời gian `ended_at` và lưu lý do chấm dứt.
+   * Thuật toán: Chấm Dứt Phiên Truy Cập Nguyên Tử Chống TOCTOU Có Kiểm Chứng Phạm Vi Phòng Ban (`Conditional CAS Session Termination`).
+   * Thực thi `updateMany({ where: { id, status: 'ACTIVE' } })` bên trong giao dịch; ném `409 Conflict` nếu `count === 0`.
    */
   async terminateSession(
     id: string,
@@ -129,63 +150,119 @@ export class AccessSessionsService {
       throw new BadRequestException('Session identifier must be a valid UUID.');
     }
 
-    const session = await this.database.accessSession.findUnique({
-      where: { id },
-      include: {
-        document_versions: {
-          select: { document_id: true },
-        },
-      },
-    });
-
-    if (!session) {
-      throw new NotFoundException(`Session ${id} not found.`);
-    }
-
-    if (session.status !== 'ACTIVE') {
-      return { id: session.id, status: session.status };
-    }
-
-    const updated = await this.database.accessSession.update({
-      where: { id },
-      data: {
-        status: 'TERMINATED',
-        ended_at: new Date(),
-        terminated_reason: reason,
-      },
-    });
-
-    if (this.auditWriter) {
-      const sessionMeta = session as {
-        user_id?: bigint | null;
-        document_versions?: { document_id?: string | null } | null;
-      };
-      await this.auditWriter.writeLog(
-        {
-          action: 'ACCESS_SESSION_TERMINATED',
-          outcome: 'SUCCESS',
-          objectType: 'ACCESS_SESSION',
-          objectId: updated.id,
-          accessSessionId: updated.id,
-          documentId: sessionMeta.document_versions?.document_id ?? null,
-          actorUserId: actor?.userId ?? null,
-          actorUsername: actor?.username ?? 'system',
-          reasonCode: 'MANUAL_TERMINATION',
-          chainPartition: 'SECURITY',
-          details: {
-            reason,
-            targetUserId:
-              sessionMeta.user_id !== undefined && sessionMeta.user_id !== null
-                ? sessionMeta.user_id.toString()
-                : null,
-          },
-        },
-        context,
+    let visibleDepts: bigint[] | null = null;
+    if (
+      this.authorization &&
+      actor &&
+      typeof this.authorization.visibleDepartmentIds === 'function'
+    ) {
+      visibleDepts = await this.authorization.visibleDepartmentIds(
+        actor,
+        'ACCESS_SESSION',
+        'TERMINATE',
       );
     }
 
-    this.logger.warn(`Access session ${id} terminated manually. Reason: ${reason}`);
+    const executeInTx = async (tx: PrismaClient | Prisma.TransactionClient) => {
+      const session = await tx.accessSession.findUnique({
+        where: { id },
+        include: {
+          document_versions: {
+            select: {
+              document_id: true,
+              document: { select: { department_id: true } },
+            },
+          },
+        },
+      });
 
-    return { id: updated.id, status: updated.status };
+      if (!session) {
+        throw new NotFoundException(`Session ${id} not found.`);
+      }
+
+      const sessionMeta = session as {
+        id: string;
+        status: string;
+        user_id?: bigint | null;
+        document_versions?: {
+          document_id?: string | null;
+          document?: { department_id?: bigint | null } | null;
+        } | null;
+      };
+
+      if (visibleDepts !== null) {
+        const targetDeptId = sessionMeta.document_versions?.document?.department_id ?? null;
+        if (targetDeptId === null || !visibleDepts.includes(targetDeptId)) {
+          throw new ForbiddenException(
+            'Cannot terminate access session outside your assigned department scope.',
+          );
+        }
+      }
+
+      const now = new Date();
+      if (typeof tx.accessSession.updateMany === 'function') {
+        const updated = await tx.accessSession.updateMany({
+          where: { id, status: 'ACTIVE' },
+          data: {
+            status: 'TERMINATED',
+            ended_at: now,
+            terminated_reason: reason,
+          },
+        });
+        if (updated.count === 0) {
+          throw new ConflictException(`Session ${id} is no longer active.`);
+        }
+      } else {
+        if (sessionMeta.status !== 'ACTIVE') {
+          throw new ConflictException(`Session ${id} is no longer active.`);
+        }
+        await tx.accessSession.update({
+          where: { id },
+          data: {
+            status: 'TERMINATED',
+            ended_at: now,
+            terminated_reason: reason,
+          },
+        });
+      }
+
+      if (this.auditWriter) {
+        await this.auditWriter.writeLog(
+          {
+            action: 'ACCESS_SESSION_TERMINATED',
+            outcome: 'SUCCESS',
+            objectType: 'ACCESS_SESSION',
+            objectId: id,
+            accessSessionId: id,
+            documentId: sessionMeta.document_versions?.document_id ?? null,
+            actorUserId: actor?.userId ?? null,
+            actorUsername: actor?.username ?? 'system',
+            reasonCode: 'MANUAL_TERMINATION',
+            chainPartition: 'SECURITY',
+            details: {
+              reason,
+              targetUserId:
+                sessionMeta.user_id !== undefined && sessionMeta.user_id !== null
+                  ? sessionMeta.user_id.toString()
+                  : null,
+            },
+          },
+          context,
+          typeof this.database?.$transaction === 'function'
+            ? (tx as Prisma.TransactionClient)
+            : undefined,
+        );
+      }
+
+      return { id, status: 'TERMINATED' };
+    };
+
+    const result =
+      typeof this.database?.$transaction === 'function'
+        ? await this.database.$transaction((tx) => executeInTx(tx))
+        : await executeInTx(this.database);
+
+    this.logger.warn(`Access session ${id} terminated manually. Reason: ${reason}`);
+    return result;
   }
 }

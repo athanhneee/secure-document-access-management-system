@@ -10,6 +10,7 @@ export interface AuthUser {
   lockedUntil: Date | null;
   failedLoginCount: number;
   roles: string[];
+  requiresMfa?: boolean | undefined;
   mfaMethod: {
     id: string;
     encryptedSecret: string;
@@ -29,6 +30,7 @@ export interface AuthPrincipal {
   username: string;
   roles: string[];
   mfa: boolean;
+  mfaPending?: boolean | undefined;
 }
 
 declare module 'fastify' {

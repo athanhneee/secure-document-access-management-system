@@ -1,3 +1,8 @@
+/**
+ * @module UsersController
+ * Thuật toán: Điều phối API vòng đời người dùng theo quyền nguyên tử (`@RequirePermission`),
+ * bảo vệ CSRF trên mọi thao tác thay đổi trạng thái và kiểm chứng lược đồ đầu vào bằng Zod.
+ */
 import {
   Body,
   Controller,

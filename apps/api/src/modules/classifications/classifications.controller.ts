@@ -1,3 +1,7 @@
+/**
+ * Module: Security Classification Levels & Business Categories HTTP Controller
+ * Thuật toán: Kiểm Soát Quyền Tra Cứu Danh Mục Độ Mật Và Phân Loại Nghiệp Vụ (`RequireAnyPermission`).
+ */
 import { Controller, Get, HttpStatus, Req, UnauthorizedException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';

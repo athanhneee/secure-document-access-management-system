@@ -193,10 +193,10 @@ export async function executeRevokeGrantWorkflow(
   );
 
   for (const userId of affectedUserIds) {
-    cache.invalidateUser(userId);
+    await cache.invalidateUser(userId);
   }
   if (grant.principal_user_id) {
-    cache.invalidateUser(grant.principal_user_id);
+    await cache.invalidateUser(grant.principal_user_id);
   }
 
   const updated = await database.accessGrant.findUnique({

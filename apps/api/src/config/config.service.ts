@@ -1,3 +1,8 @@
+/**
+ * @module AppConfigService
+ * Thuật toán: Dịch vụ cung cấp cấu hình môi trường bất biến đã qua thẩm định Zod Fail-Fast,
+ * đối xử đồng nhất cả `production` và `staging` như môi trường bảo mật nghiêm ngặt (`isProduction`).
+ */
 import { Injectable, Optional } from '@nestjs/common';
 import { validateEnv, type EnvConfig } from './env.schema.js';
 
@@ -18,13 +23,16 @@ export class AppConfigService {
   }
 
   get isProduction(): boolean {
-    return this.config.NODE_ENV === 'production';
+    return this.config.NODE_ENV === 'production' || this.config.NODE_ENV === 'staging';
   }
 
   get isTest(): boolean {
     return this.config.NODE_ENV === 'test';
   }
 
+  /**
+   * Thuật toán: Tách danh sách nguồn gốc CORS được phép (`CORS_ALLOWED_ORIGINS`) loại bỏ phần tử rỗng.
+   */
   get corsOrigins(): string[] {
     return this.config.CORS_ALLOWED_ORIGINS.split(',')
       .map((origin) => origin.trim())

@@ -1,3 +1,8 @@
+/**
+ * @module DepartmentsController
+ * Thuật toán: Điều phối API cây phân cấp phòng ban với kiểm tra quyền nguyên tử (`@RequirePermission`),
+ * bảo vệ CSRF bắt buộc cho các thao tác ghi và chuẩn hóa dữ liệu đầu vào bằng Zod.
+ */
 import {
   Body,
   Controller,

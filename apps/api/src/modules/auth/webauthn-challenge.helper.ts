@@ -1,10 +1,12 @@
 /**
  * @module WebAuthnChallengeHelper
- * Algorithm: Stateless HMAC-SHA256 Signed Challenge Token & Two-Tier TTL/FIFO Anti-Replay Cache.
- * Ký không trạng thái thử thách WebAuthn bằng HMAC-SHA256 (TTL 5 phút) và chống phát lại bằng bộ nhớ đệm hai ngưỡng.
+ * Thuật toán: Ký không trạng thái thử thách WebAuthn bằng HMAC-SHA256 (TTL 5 phút)
+ * và chống phát lại nguyên tử xuyên bản sao qua `DistributedStateService.claimOnce` (`SET NX PX`, fail-closed).
  */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
+import type { AppConfigService } from '../../config/config.service.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 
 interface SignedChallengePayload {
   challenge: string;
@@ -14,17 +16,17 @@ interface SignedChallengePayload {
 
 export class WebAuthnChallengeStore {
   private readonly challengeSigningKey: Buffer;
-  // shortcut: 8,192 consumed challenge digests (~1 MB) per replica, move to Redis SET NX PX 300000 for multi-replica anti-replay
-  private readonly consumedChallenges = new Map<string, number>();
+  private readonly stateStore: DistributedStateService;
 
-  constructor(masterKey: string) {
+  constructor(masterKey: string, stateStore?: DistributedStateService, config?: AppConfigService) {
     this.challengeSigningKey = createHash('sha256')
       .update(`webauthn-challenge-token:${masterKey}`)
       .digest();
+    this.stateStore = stateStore ?? new DistributedStateService(config);
   }
 
   /**
-   * Algorithm / Thuật toán: Tạo thẻ thử thách không trạng thái có chữ ký HMAC-SHA256 ràng buộc định danh người dùng.
+   * Thuật toán: Tạo thẻ thử thách không trạng thái có chữ ký HMAC-SHA256 ràng buộc định danh người dùng.
    */
   createChallengeToken(challenge: string, userId?: bigint | string): string {
     const payload: SignedChallengePayload = {
@@ -40,9 +42,9 @@ export class WebAuthnChallengeStore {
   }
 
   /**
-   * Algorithm / Thuật toán: Xác minh chữ ký HMAC thời gian hằng số, cửa sổ hiệu lực 5 phút và tiêu thụ một lần chống Replay.
+   * Thuật toán: Xác minh chữ ký HMAC thời gian hằng số, cửa sổ hiệu lực 5 phút và tiêu thụ nguyên tử một lần trên `DistributedStateService`.
    */
-  verifyChallengeToken(token: string, expectedUserId?: bigint | string): string {
+  async verifyChallengeToken(token: string, expectedUserId?: bigint | string): Promise<string> {
     const parts = token.split('.');
     if (parts.length !== 2 || !parts[0] || !parts[1]) {
       throw new BadRequestException('Invalid challenge token format.');
@@ -78,7 +80,7 @@ export class WebAuthnChallengeStore {
       throw new BadRequestException('Challenge token has expired.');
     }
 
-    // CONFLICT-RESOLVED: Bắt buộc `payload.userId` hiện diện và khớp `expectedUserId`, đồng thời không trục xuất FIFO các challenge chưa hết hạn để chống Replay (HIGH-10).
+    // CONFLICT-RESOLVED: Bắt buộc `payload.userId` hiện diện và khớp `expectedUserId` để chống chiếm đoạt thử thách chéo tài khoản (HIGH-10).
     if (
       expectedUserId !== undefined &&
       (payload.userId === undefined || payload.userId !== String(expectedUserId))
@@ -86,32 +88,15 @@ export class WebAuthnChallengeStore {
       throw new BadRequestException('Challenge token is bound to a different user.');
     }
 
-    this.pruneConsumedChallenges(now);
-    const replayKey = createHash('sha256').update(token).digest('hex');
-    const consumedExpiry = this.consumedChallenges.get(replayKey);
-    if (consumedExpiry && consumedExpiry > now) {
+    const challengeDigest = createHash('sha256').update(token).digest('hex');
+    const ttlMs = Math.max(1_000, payload.timestamp + 300_000 - now);
+    const claimed = await this.stateStore.claimOnce('webauthn-challenge', challengeDigest, ttlMs, {
+      failClosedInProd: true,
+    });
+    if (!claimed) {
       throw new BadRequestException('Challenge token has already been used.');
     }
-    if (this.consumedChallenges.size >= 8_192) {
-      throw new HttpException(
-        'Too many concurrent WebAuthn challenges. Please retry shortly.',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-    this.consumedChallenges.set(replayKey, payload.timestamp + 300_000);
 
     return payload.challenge;
-  }
-
-  /**
-   * Algorithm / Thuật toán: Quét dọn bộ nhớ đệm chống phát lại thử thách theo TTL mà không làm rơi trạng thái chưa hết hạn.
-   */
-  private pruneConsumedChallenges(now: number): void {
-    if (this.consumedChallenges.size < 4_096) return;
-    for (const [key, expiresAt] of this.consumedChallenges) {
-      if (expiresAt <= now) {
-        this.consumedChallenges.delete(key);
-      }
-    }
   }
 }

@@ -183,3 +183,91 @@ export async function executeUpsertAbacPolicy(params: {
   await cache.bumpPolicyEpoch(oldVersion.toString());
   return serializeAbacPolicyRow(savedPolicy);
 }
+
+/**
+ * Thuật toán: Kích hoạt luật chính sách kiểm chứng hai pha chống tranh chấp (Two-Phase Validated SERIALIZABLE Activation).
+ */
+export async function executeActivateAbacRule(params: {
+  ruleId: bigint;
+  principal: AuthPrincipal;
+  context: RequestContext;
+  database: PrismaClient;
+  repository: AbacRepository;
+  cache: PolicyCache;
+  audit: AbacAuditService;
+}): Promise<{ id: string; policyVersion: string }> {
+  const { ruleId, principal, context, database, repository, cache, audit } = params;
+  const oldVersion = await repository.currentPolicyVersion();
+  const source = await repository.loadPolicySource({ includeInactiveRuleId: ruleId });
+  if (!source.rules.some((rule) => rule.id === ruleId)) {
+    throw new NotFoundException('Policy rule was not found.');
+  }
+  try {
+    compilePolicy(oldVersion, source.definitions, source.rules);
+  } catch (error) {
+    if (error instanceof PolicyCompilationError) {
+      throw new BadRequestException({
+        errorCode: 'INVALID_POLICY',
+        message: 'Policy cannot be activated.',
+        issues: error.issueCodes,
+      });
+    }
+    throw error;
+  }
+  await withSerializableTransaction(
+    async (transaction) => {
+      const before = await transaction.policyRule.findUnique({
+        where: { id: ruleId },
+        select: { is_active: true, version: true },
+      });
+      if (!before) throw new NotFoundException('Policy rule was not found.');
+      if (
+        typeof transaction.attributeDefinition?.findMany === 'function' &&
+        typeof transaction.policyRule?.findMany === 'function'
+      ) {
+        const lockedSource = await repository.loadPolicySource({
+          includeInactiveRuleId: ruleId,
+          client: transaction,
+        });
+        try {
+          compilePolicy(oldVersion, lockedSource.definitions, lockedSource.rules);
+        } catch (error) {
+          if (error instanceof PolicyCompilationError) {
+            throw new BadRequestException({
+              errorCode: 'INVALID_POLICY',
+              message: 'Policy cannot be activated.',
+              issues: error.issueCodes,
+            });
+          }
+          throw error;
+        }
+      }
+      const after = await transaction.policyRule.update({
+        where: { id: ruleId },
+        data: { is_active: true },
+        select: { is_active: true, version: true },
+      });
+      await audit.record(
+        transaction,
+        {
+          action: 'POLICY_ACTIVATED',
+          objectType: 'POLICY',
+          objectId: ruleId.toString(),
+          outcome: 'SUCCESS',
+          details: {
+            priorActive: before.is_active,
+            active: after.is_active,
+            priorVersion: before.version.toString(),
+            version: after.version.toString(),
+          },
+        },
+        principal,
+        context,
+      );
+    },
+    { client: database },
+  );
+  await cache.bumpPolicyEpoch(oldVersion.toString());
+  const policyVersion = await repository.currentPolicyVersion();
+  return { id: ruleId.toString(), policyVersion: policyVersion.toString() };
+}

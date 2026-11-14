@@ -112,14 +112,14 @@ export async function executeGetWebAuthnAuthOptions(
   let userId: bigint | undefined = principal?.userId;
   const normalizedUsername = username?.normalize('NFKC').trim().toLowerCase();
   if (!userId && normalizedUsername) {
-    deps.rateLimit.assertAllowed(context.ip, `webauthn-opt:${normalizedUsername}`);
+    await deps.rateLimit.assertAllowed(context.ip, `webauthn-opt:${normalizedUsername}`);
     const user = await deps.repository.findUserByIdentifier(normalizedUsername);
     if (user && user.status === 'ACTIVE') userId = user.id;
   }
 
   if (!userId) {
     if (!principal && normalizedUsername) {
-      deps.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
+      await deps.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
       throw new BadRequestException(
         'Unable to initiate WebAuthn authentication for the supplied identifier.',
       );
@@ -134,7 +134,7 @@ export async function executeGetWebAuthnAuthOptions(
 
   if (webauthnCreds.length === 0) {
     if (!principal && normalizedUsername) {
-      deps.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
+      await deps.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
       throw new BadRequestException(
         'Unable to initiate WebAuthn authentication for the supplied identifier.',
       );
@@ -169,7 +169,7 @@ export async function executeVerifyWebAuthnAuth(
   context: RequestContext,
 ): Promise<SessionArtifacts> {
   const rateKey = `webauthn:${principal.userId}`;
-  deps.rateLimit.assertAllowed(context.ip, rateKey);
+  await deps.rateLimit.assertAllowed(context.ip, rateKey);
   const activeMethods = await deps.repository.getActiveMfaMethods(principal.userId);
   let matchedMethod: (typeof activeMethods)[number] | null = null;
   let matchedCred: StoredWebAuthnCredential | null = null;
@@ -184,7 +184,7 @@ export async function executeVerifyWebAuthnAuth(
   }
 
   if (!matchedMethod || !matchedCred) {
-    deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey);
     await deps.audit.record(
       {
         action: 'MFA_WEBAUTHN_VERIFY',
@@ -206,7 +206,7 @@ export async function executeVerifyWebAuthnAuth(
       principal.userId,
     );
   } catch (error) {
-    deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey);
     throw error;
   }
 
@@ -222,13 +222,13 @@ export async function executeVerifyWebAuthnAuth(
     if (counterStatus === 'clone_detected') {
       cloneDetected = true;
     } else if (counterStatus === 'not_found') {
-      deps.rateLimit.recordFailure(context.ip, rateKey);
+      await deps.rateLimit.recordFailure(context.ip, rateKey);
       throw new UnauthorizedException('Security key credential is no longer active.');
     }
   }
 
   if (cloneDetected) {
-    deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey);
     await deps.repository.recordSecurityAlert({
       alertType: 'WEBAUTHN_CLONE_DETECTED',
       severity: 'CRITICAL',
@@ -249,7 +249,7 @@ export async function executeVerifyWebAuthnAuth(
     throw new UnauthorizedException('Security key cloning or replay attack detected.');
   }
 
-  deps.rateLimit.clearAccount(rateKey);
+  await deps.rateLimit.clearAccount(rateKey);
   if (typeof deps.repository.advanceWebAuthnCounter !== 'function') {
     await deps.repository.updateMfaSecret(matchedMethod.id, result.updatedEncryptedSecret);
   }

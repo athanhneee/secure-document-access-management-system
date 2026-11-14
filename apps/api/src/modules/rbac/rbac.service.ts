@@ -1,7 +1,8 @@
 /**
- * Module: RBAC Role Administration & User-Role Assignment Service
- * Algorithm: Manages roles with `SERIALIZABLE` optimistic CAS, self-modification blocks, system-role
- *   ceiling matrices, and temporal Separation-of-Duties (SoD) role assignments.
+ * @module RbacService
+ * Thuật toán: Quản trị vòng đời vai trò và gán vai trò người dùng với cô lập `SERIALIZABLE`,
+ * kiểm soát đồng thời lạc quan CAS, trần ma trận vai trò hệ thống, giới hạn kích thước tập kết quả (`take: 200`)
+ * và vô hiệu hóa tức thì bộ đệm quyền phân tán qua Epoch.
  */
 import {
   ConflictException,
@@ -36,14 +37,21 @@ export class RbacService {
     private readonly audit: RbacAuditService,
   ) {}
 
+  /**
+   * Thuật toán: Liệt kê danh mục vai trò có chặn trần số bản ghi (`take: 200`) chống cạn kiệt bộ nhớ.
+   */
   async listRoles() {
     const roles = await this.database.role.findMany({
       orderBy: [{ is_system_role: 'desc' }, { code: 'asc' }],
+      take: 200,
       include: { role_permissions: { include: { permissions: true } } },
     });
     return { data: roles.map((role) => presentRoleDto(role)) };
   }
 
+  /**
+   * Thuật toán: Tra cứu vai trò hoạt động có lọc ẩn các vai trò đặc quyền đối với người gọi không có thẩm quyền quản trị vai trò/nhân sự.
+   */
   async lookupRoles(principal?: AuthPrincipal) {
     const roles = await this.database.role.findMany({
       where: { is_active: true },
@@ -92,6 +100,7 @@ export class RbacService {
   async listPermissions() {
     const permissions = await this.database.permission.findMany({
       orderBy: [{ resource_type: 'asc' }, { action: 'asc' }],
+      take: 200,
     });
     return {
       data: permissions.map((permission) => ({
@@ -134,7 +143,7 @@ export class RbacService {
       );
       return created;
     });
-    this.authorization.invalidateAll();
+    await this.authorization.invalidateAll();
     return presentRoleDto({ ...role, role_permissions: [] });
   }
 
@@ -162,7 +171,7 @@ export class RbacService {
   }
 
   /**
-   * Algorithm: OCC CAS Role Deactivation (`version = expectedVersion -> version + 1`)
+   * Thuật toán: Vô hiệu hóa vai trò tùy chỉnh bằng Compare-And-Swap (`version = expectedVersion -> version + 1`).
    */
   async disableRole(
     principal: AuthPrincipal,
@@ -202,7 +211,7 @@ export class RbacService {
       },
       { client: this.database },
     );
-    this.authorization.invalidateAll();
+    await this.authorization.invalidateAll();
     return this.getRole(role.id);
   }
 

@@ -1,3 +1,8 @@
+/**
+ * @module SecurityOperationsController
+ * Thuật toán: Điều phối API Trung tâm Điều hành An ninh (SOC) cho cảnh báo xâm nhập, báo cáo sự cố
+ * và quy tắc tương quan cửa sổ trượt với bảo vệ CSRF bắt buộc và phân quyền nguyên tử.
+ */
 import { Controller, Get, Post, Patch, Param, Query, Body, Req, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';

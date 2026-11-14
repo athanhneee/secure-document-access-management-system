@@ -96,6 +96,14 @@ export class WatermarkEngineService {
       );
 
       const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+      try {
+        const form = pdfDoc.getForm();
+        if (form.getFields().length > 0) {
+          form.flatten();
+        }
+      } catch {
+        // Ignore documents lacking an AcroForm dictionary while flattening interactive forms when present
+      }
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
       const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
       const pages = pdfDoc.getPages();
@@ -110,17 +118,13 @@ export class WatermarkEngineService {
 
       let qrImage: Awaited<ReturnType<typeof pdfDoc.embedPng>> | null = null;
       if (config.include_qr_code) {
-        try {
-          const qrPayload = JSON.stringify({
-            token: watermarkToken,
-            u: user.username,
-            d: document.documentCode || document.id.slice(0, 8),
-            t: now.toISOString(),
-          });
-          qrImage = await pdfDoc.embedPng(await this.generateQrCodeBuffer(qrPayload));
-        } catch (qrErr) {
-          this.logger.warn(`QR code generation failed, proceeding with text watermark: ${qrErr}`);
-        }
+        const qrPayload = JSON.stringify({
+          token: watermarkToken,
+          u: user.username,
+          d: document.documentCode || document.id.slice(0, 8),
+          t: now.toISOString(),
+        });
+        qrImage = await pdfDoc.embedPng(await this.generateQrCodeBuffer(qrPayload));
       }
 
       for (const page of pages) {

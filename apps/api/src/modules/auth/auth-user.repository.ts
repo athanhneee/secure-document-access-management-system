@@ -4,13 +4,14 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient, Prisma } from '@sda/database';
+import { isPrivilegedSeparationRoleOrCapability } from '../rbac/permission-matrix.js';
 import { revokeTokenFamily } from './auth-session.repository.js';
 import type { AuthUser } from './auth.types.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Algorithm / Thuật toán: Xây dựng điều kiện `include` chuẩn hóa cho vai trò còn hiệu lực và nhân tố MFA đang bật.
+ * Algorithm / Thuật toán: Xây dựng điều kiện `include` chuẩn hóa cho vai trò còn hiệu lực, quyền SoD và nhân tố MFA đang bật.
  */
 export function buildActiveUserInclude(now: Date) {
   // CONFLICT-RESOLVED: Unified duplicate active user role + MFA Prisma include block across findUserByIdentifier and findUserById
@@ -24,7 +25,17 @@ export function buildActiveUserInclude(now: Date) {
         ],
         roles: { is_active: true },
       },
-      include: { roles: true },
+      include: {
+        roles: {
+          include: {
+            role_permissions: {
+              include: {
+                permissions: { select: { code: true, resource_type: true, action: true } },
+              },
+            },
+          },
+        },
+      },
     },
     mfa_methods: {
       where: { enabled_at: { not: null }, disabled_at: null },
@@ -34,7 +45,7 @@ export function buildActiveUserInclude(now: Date) {
 }
 
 /**
- * Algorithm / Thuật toán: Ánh xạ bản ghi ORM người dùng kèm quan hệ vai trò và MFA sang thực thể miền `AuthUser`.
+ * Algorithm / Thuật toán: Ánh xạ bản ghi ORM người dùng kèm quan hệ vai trò, đặc quyền bắt buộc MFA và phương thức MFA sang thực thể miền `AuthUser`.
  */
 export function mapRecordToAuthUser(user: {
   id: bigint;
@@ -45,13 +56,30 @@ export function mapRecordToAuthUser(user: {
   status: 'PENDING' | 'ACTIVE' | 'LOCKED' | 'DISABLED';
   locked_until: Date | null;
   failed_login_count: number;
-  user_roles_user_roles_user_idTousers: Array<{ roles: { code: string } }>;
+  user_roles_user_roles_user_idTousers: Array<{
+    roles: {
+      code: string;
+      role_permissions?: Array<{
+        permissions?: { code: string; resource_type?: string; action?: string } | null;
+      }>;
+    };
+  }>;
   mfa_methods: Array<{ id: string; secret_encrypted: string; recovery_code_hashes: unknown }>;
 }): AuthUser {
   const method = user.mfa_methods[0];
   const recoveryHashes = Array.isArray(method?.recovery_code_hashes)
     ? method.recovery_code_hashes.filter((value): value is string => typeof value === 'string')
     : [];
+  const requiresMfa =
+    Boolean(method) ||
+    user.user_roles_user_roles_user_idTousers.some((assignment) =>
+      isPrivilegedSeparationRoleOrCapability(
+        assignment.roles.code,
+        (assignment.roles.role_permissions ?? [])
+          .map((rp) => rp.permissions ?? undefined)
+          .filter((perm): perm is NonNullable<typeof perm> => perm !== undefined),
+      ),
+    );
   return {
     id: user.id,
     username: user.username,
@@ -62,6 +90,7 @@ export function mapRecordToAuthUser(user: {
     lockedUntil: user.locked_until,
     failedLoginCount: user.failed_login_count,
     roles: user.user_roles_user_roles_user_idTousers.map((assignment) => assignment.roles.code),
+    requiresMfa,
     mfaMethod: method
       ? {
           id: method.id,
@@ -70,6 +99,48 @@ export function mapRecordToAuthUser(user: {
         }
       : null,
   };
+}
+
+/**
+ * Algorithm / Thuật toán: Khóa tài khoản lũy thừa đơn điệu theo ngưỡng thất bại liên tiếp (`GREATEST(existingLockedUntil, candidateLockUntil)`).
+ *   - Tính bước phạt tự động `min(900s, 30 * 2^min(failures - 5, 5))` khi `failures >= 5`.
+ *   - Đối chiếu với `locked_until` hiện hữu của quản trị viên; chỉ nâng mốc khóa về tương lai xa hơn (MED-02).
+ */
+export async function recordUserLoginFailure(
+  database: PrismaClient,
+  user: AuthUser,
+): Promise<void> {
+  const failures = user.failedLoginCount + 1;
+  const lockSeconds = failures < 5 ? 0 : Math.min(900, 30 * 2 ** Math.min(failures - 5, 5));
+  const candidateLockUntil = lockSeconds > 0 ? new Date(Date.now() + lockSeconds * 1_000) : null;
+  const latestRow =
+    typeof database.user.findUnique === 'function'
+      ? await database.user.findUnique({
+          where: { id: user.id },
+          select: { locked_until: true },
+        })
+      : null;
+  const existingLock = [
+    user.lockedUntil ?? null,
+    latestRow?.locked_until ?? null,
+  ].reduce<Date | null>((acc, cur) => {
+    if (!cur) return acc;
+    if (!acc) return cur;
+    return cur.getTime() > acc.getTime() ? cur : acc;
+  }, null);
+  // CONFLICT-RESOLVED: Giữ nguyên mốc khóa quản trị viên dài hạn thay vì ghi đè bằng null hoặc thời hạn khóa tự động ngắn hơn (MED-02).
+  const effectiveLockUntil =
+    existingLock && (!candidateLockUntil || existingLock.getTime() > candidateLockUntil.getTime())
+      ? existingLock
+      : candidateLockUntil;
+
+  await database.user.update({
+    where: { id: user.id },
+    data: {
+      failed_login_count: { increment: 1 },
+      ...(effectiveLockUntil !== null ? { locked_until: effectiveLockUntil } : {}),
+    },
+  });
 }
 
 /**

@@ -1,3 +1,8 @@
+/**
+ * @module WatermarksController
+ * Thuật toán: Điều phối API quản trị cấu hình thủy vân pháp y và truy vết nguồn rò rỉ tài liệu (UC28)
+ * hỗ trợ cả mã đầy đủ 48-hex lẫn tiền tố hiển thị 12-hex với bảo vệ CSRF và kiểm tra quyền nguyên tử.
+ */
 import {
   Controller,
   Get,

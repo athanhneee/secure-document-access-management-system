@@ -49,9 +49,10 @@ const FORBIDDEN_ATTRIBUTE_KEYS = new Set([
  */
 export class OpenTelemetryTracer {
   private static instance: OpenTelemetryTracer;
-  // shortcut: 1,000 recent spans (~1 MB) ring buffer for diagnostics, export via OTLP/gRPC to Tempo or Jaeger above 500 req/s
-  private readonly recentSpans: Span[] = [];
   private readonly maxRecentSpans = 1000;
+  private readonly ringBuffer: (Span | undefined)[] = new Array(1000);
+  private writeIndex = 0;
+  private totalRecorded = 0;
 
   static getInstance(): OpenTelemetryTracer {
     if (!this.instance) {
@@ -234,21 +235,24 @@ export class OpenTelemetryTracer {
   }
 
   /**
-   * Thuật toán: Bộ đệm Trượt Giới hạn Dung lượng theo Thứ tự FIFO (Bounded FIFO Span Eviction)
-   * Mục đích: Lưu giữ các Span gần nhất phục vụ chẩn đoán nội bộ mà không gây rò rỉ bộ nhớ dài hạn.
-   * Cơ chế hoạt động:
-   *   - Khi mảng `recentSpans` đạt ngưỡng `maxRecentSpans` (1000 phần tử), loại bỏ phần tử cũ nhất
-   *     ở đầu hàng đợi (`shift()`) trước khi chèn Span mới vào cuối (`push()`).
+   * Thuật toán: Bộ đệm Vòng Tròn Độ Phức Tạp `O(1)` (Constant-Time Circular Ring Buffer)
+   * Mục đích: Ghi nhận tối đa `1000` Span chẩn đoán gần nhất trong `O(1)` không dịch mảng (`shift()`).
    */
   private recordSpan(span: Span): void {
-    if (this.recentSpans.length >= this.maxRecentSpans) {
-      this.recentSpans.shift();
-    }
-    this.recentSpans.push(span);
+    this.ringBuffer[this.writeIndex] = span;
+    this.writeIndex = (this.writeIndex + 1) % this.maxRecentSpans;
+    this.totalRecorded += 1;
   }
 
   getRecentSpans(): readonly Span[] {
-    return this.recentSpans;
+    if (this.totalRecorded === 0) return [];
+    if (this.totalRecorded < this.maxRecentSpans) {
+      return this.ringBuffer.slice(0, this.totalRecorded) as Span[];
+    }
+    return [
+      ...(this.ringBuffer.slice(this.writeIndex) as Span[]),
+      ...(this.ringBuffer.slice(0, this.writeIndex) as Span[]),
+    ];
   }
 }
 

@@ -76,13 +76,14 @@ export class UsersService {
   }
 
   /**
-   * Algorithm: Department-Subtree Scoped User Listing
+   * Thuật toán: Liệt kê người dùng theo bao đóng cây con phòng ban có chặn trần kết quả (`take: 200`).
    */
   async list(principal: AuthPrincipal) {
     const visible = await this.authorization.visibleDepartmentIds(principal, 'USER', 'MANAGE');
     const users = await this.database.user.findMany({
       where: visible === null ? {} : { department_id: { in: visible } },
       orderBy: [{ full_name: 'asc' }, { id: 'asc' }],
+      take: 200,
       select: {
         id: true,
         username: true,

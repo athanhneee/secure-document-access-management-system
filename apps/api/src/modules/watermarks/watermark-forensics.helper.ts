@@ -1,7 +1,15 @@
 /**
- * Module: WatermarkForensicsHelper — Truy vết ngược nguồn gốc rò rỉ tài liệu từ mã `watermark_token` (Forensic Leak Attribution Engine - UC28).
+ * @module WatermarkForensicsHelper
+ * Thuật toán: Truy vết ngược nguồn gốc rò rỉ tài liệu từ cả mã đầy đủ `WM-<48-hex>` (khớp chính xác)
+ * lẫn tiền tố hiển thị 15 ký tự `WM-<12-hex>` (`startsWith` giới hạn `take: 2`, báo xung đột `AMBIGUOUS_WATERMARK_TOKEN`
+ * nếu trùng 2 bản ghi) kèm kiểm soát phạm vi phòng ban và ghi nhật ký `WATERMARK_TRACE_PERFORMED`.
  */
-import { ForbiddenException, NotFoundException, type Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  type Logger,
+} from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AuditWriterService } from '../audit/audit-writer.service.js';
@@ -46,12 +54,39 @@ export interface WatermarkVerificationResult {
   };
 }
 
+const SHORT_WATERMARK_TOKEN_REGEX = /^WM-[0-9a-f]{12}$/iu;
+
+const FORENSIC_INSTANCE_INCLUDE = {
+  users: {
+    select: { id: true, username: true, full_name: true, employee_code: true, email: true },
+  },
+  access_sessions: { select: { id: true, started_at: true, ip_address: true, user_agent: true } },
+  document_versions: {
+    select: {
+      version_no: true,
+      sha256_hash: true,
+      document: {
+        select: {
+          id: true,
+          title: true,
+          document_code: true,
+          department_id: true,
+          classification_history: {
+            where: { effective_to: null },
+            take: 1,
+            select: { classification_levels: { select: { code: true, name: true, rank: true } } },
+          },
+        },
+      },
+    },
+  },
+  watermark_configs: {
+    select: { name: true, opacity_percent: true, font_size: true, include_qr_code: true },
+  },
+} as const;
+
 /**
- * Thuật toán: Đối soát sổ cái thủy vân & dựng hồ sơ quy kết trách nhiệm rò rỉ (Forensic Watermark Token Trace & Audit Attribution)
- * Mục đích: Xác minh mã thủy vân từ bản tài liệu nghi lộ lọt để truy ra người nhận, phiên truy cập, địa chỉ IP, mức độ mật thực tế và mã băm gốc/dẫn xuất.
- * Cơ chế hoạt động:
- *   - Tra cứu khóa duy nhất `watermark_token` trong `watermarkInstance` kết hợp nạp quan hệ `users`, `access_sessions`, `document_versions.document` (kèm `classification_history` hiện hành) và `watermark_configs`.
- *   - Ghi nhật ký kiểm toán bất biến `WATERMARK_TRACE_PERFORMED` vào phân vùng `ACCESS_SESSION` và trả cờ xác thực tường minh `verified: true` phục vụ giao diện Fail-Closed.
+ * Thuật toán: Đối soát sổ cái thủy vân hỗ trợ đồng thời mã đầy đủ `WM-<48-hex>` và tiền tố ngắn `WM-<12-hex>`.
  */
 export async function traceWatermarkToken(
   database: PrismaClient,
@@ -67,60 +102,38 @@ export async function traceWatermarkToken(
       message: 'Authenticated principal is required for watermark forensic attribution.',
     });
   }
-  logger.log(`Verifying watermark token: ${token.slice(0, 11)}...`);
-  const instance = await database.watermarkInstance.findUnique({
-    where: { watermark_token: token },
-    include: {
-      users: {
-        select: {
-          id: true,
-          username: true,
-          full_name: true,
-          employee_code: true,
-          email: true,
-        },
-      },
-      access_sessions: {
-        select: {
-          id: true,
-          started_at: true,
-          ip_address: true,
-          user_agent: true,
-        },
-      },
-      document_versions: {
-        select: {
-          version_no: true,
-          sha256_hash: true,
-          document: {
-            select: {
-              id: true,
-              title: true,
-              document_code: true,
-              department_id: true,
-              classification_history: {
-                where: { effective_to: null },
-                take: 1,
-                select: {
-                  classification_levels: {
-                    select: { code: true, name: true, rank: true },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      watermark_configs: {
-        select: {
-          name: true,
-          opacity_percent: true,
-          font_size: true,
-          include_qr_code: true,
-        },
-      },
-    },
-  });
+  const normalizedToken = token.trim();
+  logger.log(`Verifying watermark token: ${normalizedToken.slice(0, 11)}...`);
+
+  const findExactInstance = () =>
+    database.watermarkInstance.findUnique({
+      where: { watermark_token: normalizedToken },
+      include: FORENSIC_INSTANCE_INCLUDE,
+    });
+  type ForensicInstanceRecord = Awaited<ReturnType<typeof findExactInstance>>;
+  let instance: ForensicInstanceRecord = null;
+  if (
+    normalizedToken.length === 15 &&
+    SHORT_WATERMARK_TOKEN_REGEX.test(normalizedToken) &&
+    typeof database.watermarkInstance?.findMany === 'function'
+  ) {
+    const matches = await database.watermarkInstance.findMany({
+      where: { watermark_token: { startsWith: normalizedToken } },
+      take: 2,
+      include: FORENSIC_INSTANCE_INCLUDE,
+    });
+    if (matches.length > 1) {
+      throw new ConflictException({
+        code: 'AMBIGUOUS_WATERMARK_TOKEN',
+        errorCode: 'AMBIGUOUS_WATERMARK_TOKEN',
+        message:
+          'Multiple watermark instances match this short token prefix; please scan or provide the full QR watermark token.',
+      });
+    }
+    instance = matches[0] ?? null;
+  } else {
+    instance = await findExactInstance();
+  }
 
   if (!instance) {
     throw new NotFoundException({
@@ -129,15 +142,42 @@ export async function traceWatermarkToken(
     });
   }
 
-  const docWithClass = instance.document_versions.document as {
-    id: string;
-    title: string;
-    document_code: string | null;
-    department_id?: bigint;
-    classification_history?: Array<{
-      classification_levels?: { code?: string; name?: string; rank?: number } | null;
-    }>;
+  const typedInstance = instance as NonNullable<typeof instance> & {
+    users: {
+      id: bigint;
+      username: string;
+      full_name: string | null;
+      employee_code: string | null;
+      email: string;
+    };
+    access_sessions: {
+      id: string;
+      started_at: Date;
+      ip_address: string;
+      user_agent: string | null;
+    };
+    document_versions: {
+      version_no: number;
+      sha256_hash: string;
+      document: {
+        id: string;
+        title: string;
+        document_code: string | null;
+        department_id?: bigint;
+        classification_history?: Array<{
+          classification_levels?: { code?: string; name?: string; rank?: number } | null;
+        }>;
+      };
+    };
+    watermark_configs: {
+      name: string;
+      opacity_percent: number;
+      font_size: number;
+      include_qr_code: boolean;
+    };
   };
+
+  const docWithClass = typedInstance.document_versions.document;
   const activeLevel = docWithClass.classification_history?.[0]?.classification_levels;
 
   // CONFLICT-RESOLVED: Giới hạn phạm vi phòng ban và chặn cán bộ cấp phòng ban truy vết thủy vân liên phòng ban hoặc tài liệu `TOP_SECRET` (HIGH-06).
@@ -167,15 +207,16 @@ export async function traceWatermarkToken(
       actorUsername: actor.username,
       action: 'WATERMARK_TRACE_PERFORMED',
       objectType: 'WATERMARK_INSTANCE',
-      objectId: instance.id,
-      documentId: instance.document_versions.document.id,
-      accessSessionId: instance.access_sessions.id,
+      objectId: typedInstance.id,
+      documentId: docWithClass.id,
+      accessSessionId: typedInstance.access_sessions.id,
       outcome: 'SUCCESS',
       chainPartition: 'ACCESS_SESSION',
       details: {
-        watermarkToken: token,
-        tracedUserId: instance.users.id.toString(),
-        tracedUsername: instance.users.username,
+        watermarkToken: typedInstance.watermark_token,
+        queriedToken: normalizedToken,
+        tracedUserId: typedInstance.users.id.toString(),
+        tracedUsername: typedInstance.users.username,
       },
     });
   }
@@ -184,37 +225,37 @@ export async function traceWatermarkToken(
 
   return {
     verified: true,
-    watermarkToken: instance.watermark_token,
-    renderedText: instance.rendered_text,
-    outputSha256Hash: instance.output_sha256_hash,
-    generatedAt: instance.generated_at.toISOString(),
+    watermarkToken: typedInstance.watermark_token,
+    renderedText: typedInstance.rendered_text,
+    outputSha256Hash: typedInstance.output_sha256_hash,
+    generatedAt: typedInstance.generated_at.toISOString(),
     classificationName,
     user: {
-      id: instance.users.id.toString(),
-      username: instance.users.username,
-      fullName: instance.users.full_name,
-      employeeCode: instance.users.employee_code,
-      email: instance.users.email,
+      id: typedInstance.users.id.toString(),
+      username: typedInstance.users.username,
+      fullName: typedInstance.users.full_name,
+      employeeCode: typedInstance.users.employee_code,
+      email: typedInstance.users.email,
     },
     session: {
-      id: instance.access_sessions.id,
-      startedAt: instance.access_sessions.started_at.toISOString(),
-      ipAddress: instance.access_sessions.ip_address,
-      userAgent: instance.access_sessions.user_agent,
+      id: typedInstance.access_sessions.id,
+      startedAt: typedInstance.access_sessions.started_at.toISOString(),
+      ipAddress: typedInstance.access_sessions.ip_address,
+      userAgent: typedInstance.access_sessions.user_agent,
     },
     document: {
       id: docWithClass.id,
       title: docWithClass.title,
       documentCode: docWithClass.document_code,
       classificationName,
-      versionNo: instance.document_versions.version_no,
-      originalSha256Hash: instance.document_versions.sha256_hash,
+      versionNo: typedInstance.document_versions.version_no,
+      originalSha256Hash: typedInstance.document_versions.sha256_hash,
     },
     config: {
-      name: instance.watermark_configs.name,
-      opacityPercent: instance.watermark_configs.opacity_percent,
-      fontSize: instance.watermark_configs.font_size,
-      includeQrCode: instance.watermark_configs.include_qr_code,
+      name: typedInstance.watermark_configs.name,
+      opacityPercent: typedInstance.watermark_configs.opacity_percent,
+      fontSize: typedInstance.watermark_configs.font_size,
+      includeQrCode: typedInstance.watermark_configs.include_qr_code,
     },
   };
 }

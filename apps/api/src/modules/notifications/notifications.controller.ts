@@ -1,3 +1,8 @@
+/**
+ * @module NotificationsController
+ * Thuật toán: Điều phối API tra cứu thông báo phân trang đọc trước (`pageSize + 1`)
+ * và đánh dấu đã đọc lũy đẳng có kiểm tra chủ sở hữu chống IDOR kèm bảo vệ CSRF.
+ */
 import {
   Controller,
   Get,

@@ -46,8 +46,14 @@ const obligationOrder: Readonly<Record<PolicyObligation['type'], number>> = {
  *   5. Kết hợp kết quả theo chuẩn XACML DENY_OVERRIDES: bất kỳ luật DENY nào khớp sẽ thắng tuyệt đối;
  *      nếu không có luật PERMIT nào khớp thì rơi về DEFAULT_DENY; ngược lại trả về PERMIT kèm nghĩa vụ đã gộp.
  */
-export function evaluatePolicy(policy: CompiledPolicy, input: PolicyEvaluationInput): PdpResult {
-  if (validatePolicy(policy, CONTEXT_ATTRIBUTES).length > 0) return deny(policy, 'INVALID_POLICY');
+export function evaluatePolicy(
+  policy: CompiledPolicy,
+  input: PolicyEvaluationInput,
+  options?: { skipValidation?: boolean },
+): PdpResult {
+  if (!options?.skipValidation && validatePolicy(policy, CONTEXT_ATTRIBUTES).length > 0) {
+    return deny(policy, 'INVALID_POLICY');
+  }
   const attributes = flattenContext(input);
   if (policy.requiredAttributes.some((key) => isMissingAttribute(attributes[key]))) {
     return deny(policy, 'MISSING_REQUIRED_ATTRIBUTE');

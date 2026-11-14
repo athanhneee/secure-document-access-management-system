@@ -1,3 +1,8 @@
+/**
+ * @module AuditController
+ * Thuật toán: Điều phối API truy vấn phân trang ổn định, trích xuất báo cáo chống bộ đệm (`Cache-Control: no-store`),
+ * tạo điểm neo chữ ký và thẩm định toàn vẹn chuỗi băm nhật ký kiểm toán.
+ */
 import {
   BadRequestException,
   Body,

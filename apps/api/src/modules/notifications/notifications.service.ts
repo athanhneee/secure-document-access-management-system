@@ -18,6 +18,8 @@ export interface SendNotificationOptions {
   relatedObjectId?: string;
   channel?: 'IN_APP' | 'EMAIL' | 'BOTH';
   deduplicationKey?: string;
+  eventId?: string;
+  nowMs?: number;
   payload?: Record<string, unknown>;
 }
 
@@ -54,9 +56,11 @@ export class NotificationsService {
    */
   async sendNotification(options: SendNotificationOptions): Promise<SendNotificationResult> {
     const channel = options.channel ?? 'BOTH';
+    const fiveMinBucket = Math.floor((options.nowMs ?? Date.now()) / (5 * 60_000));
+    const bucketOrEventId = options.eventId ?? `b${fiveMinBucket}`;
     const dedupKey =
       options.deduplicationKey ??
-      `${options.notificationType}:${options.recipientId}:${options.relatedObjectType ?? 'none'}:${options.relatedObjectId ?? 'none'}`;
+      `${options.notificationType}:${options.recipientId}:${options.relatedObjectType ?? 'none'}:${options.relatedObjectId ?? 'none'}:${bucketOrEventId}`;
 
     let notificationId: string | undefined;
     let outboxId: string | undefined;

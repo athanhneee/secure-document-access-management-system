@@ -1,16 +1,20 @@
 /**
  * @module AuditVerifierService
- * Algorithm: Cursor-Batched RFC 8785 HMAC-SHA256 Hash-Chain & Checkpoint Anchor Verifier.
+ * Thuật toán: Thẩm định toàn vẹn chuỗi băm RFC 8785 HMAC-SHA256 theo lô con trỏ có giới hạn (`take: 1000`),
+ * tự động nối tiếp từ điểm neo `AuditAnchor` hợp lệ gần nhất khi không truyền `fromSequence` và nhường vòng lặp
+ * sự kiện (`setImmediate`) giữa các lô để không bao giờ làm nghẽn luồng HTTP.
  */
-import { createHmac } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import { AuditWriterService } from './audit-writer.service.js';
-import { canonicalizeJson } from './audit-canonicalizer.js';
-import { safeTimingEqualString } from './audit-chain-helper.js';
 import { fetchPartitionAnchors, verifyPartitionAnchors } from './audit-anchor-verifier.js';
 import { raiseAuditIntegrityAlert } from './audit-alert-escalator.js';
+import {
+  resolveVerifiedAnchorCheckpoint,
+  verifyAuditLogRow,
+  type VerifiableAuditLogRow,
+} from './audit-verifier-batch.helper.js';
 
 export interface AuditViolation {
   code: string;
@@ -50,12 +54,8 @@ export class AuditVerifierService {
   }
 
   /**
-   * Algorithm / Thuật toán: Thẩm định toàn vẹn chuỗi băm phân lô con trỏ & đối chiếu điểm neo chữ ký (Cursor-Batched Hash-Chain & Anchor Verification).
-   * Cơ chế hoạt động:
-   *   1. Duyệt tuần tự theo lô 1.000 bản ghi bằng con trỏ `chain_sequence > cursorSequence` (bộ nhớ lô cố định).
-   *   2. Kiểm tra tính liên tục số thứ tự (`AUDIT_SEQUENCE_GAP`) và liên kết mắt xích `previous_hash === prior.entry_hash` (`AUDIT_CHAIN_BROKEN`).
-   *   3. Tái tạo JSON chuẩn tắc RFC 8785 theo `hmac_key_version`, tính lại `HMAC-SHA256` phát hiện sửa đổi (`AUDIT_LOG_TAMPERED`).
-   *   4. Đối chiếu chéo với bảng điểm neo `audit_anchors` và phát cảnh báo `CRITICAL` nếu phát hiện vi phạm.
+   * Thuật toán: Thẩm định chuỗi băm phân lô con trỏ (`take: 1000`) kết hợp nối tiếp từ điểm neo `VALID` mới nhất
+   * và nhường vòng lặp sự kiện `setImmediate` giữa các lô.
    */
   async verifyPartition(
     partition: string,
@@ -63,9 +63,8 @@ export class AuditVerifierService {
   ): Promise<PartitionVerificationResult> {
     const violations: AuditViolation[] = [];
     const VERIFY_BATCH_SIZE = 1000;
-    // Pre-fetch checkpoint anchors first so we retain ONLY anchored sequences in RAM (O(|anchors|) instead of O(N_logs) OOM).
+    const getKey = (version: number) => this.writerService.getHmacKey(version);
     const preloadedAnchors = await fetchPartitionAnchors(this.database, partition, options);
-    const anchorSequences = new Set<bigint>(preloadedAnchors.map((a) => a.anchor_sequence));
     const logHashBySequence = new Map<bigint, { id: bigint; entry_hash: string }>();
     let totalChecked = 0;
 
@@ -73,14 +72,39 @@ export class AuditVerifierService {
     // CONFLICT-RESOLVED: Khởi tạo expectedSequence = 1n mặc định thay vì null để chặn tấn công cắt cụt đầu chuỗi (Head-Truncation 1..K).
     let expectedSequence: bigint =
       options?.fromSequence !== undefined && options.fromSequence >= 1n ? options.fromSequence : 1n;
+    let cursorSequence: bigint | undefined =
+      options?.fromSequence !== undefined && options.fromSequence >= 1n
+        ? options.fromSequence - 1n
+        : undefined;
+    let anchorsToVerify = preloadedAnchors;
+    let resumedFromCheckpoint = false;
 
-    if (options?.fromSequence && options.fromSequence > 1n) {
+    if (options?.fromSequence === undefined && preloadedAnchors.length > 0) {
+      const checkpoint = await resolveVerifiedAnchorCheckpoint({
+        database: this.database,
+        partition,
+        preloadedAnchors,
+        getHmacKey: getKey,
+        toSequence: options?.toSequence,
+      });
+      if (checkpoint) {
+        resumedFromCheckpoint = true;
+        totalChecked = Number(checkpoint.anchor.anchor_sequence);
+        previousHash = checkpoint.entryHash;
+        expectedSequence = checkpoint.anchor.anchor_sequence + 1n;
+        cursorSequence = checkpoint.anchor.anchor_sequence;
+        logHashBySequence.set(checkpoint.anchor.anchor_sequence, {
+          id: checkpoint.logId,
+          entry_hash: checkpoint.entryHash,
+        });
+        anchorsToVerify = preloadedAnchors.filter(
+          (a) => a.anchor_sequence >= checkpoint.anchor.anchor_sequence,
+        );
+      }
+    } else if (options?.fromSequence && options.fromSequence > 1n) {
       const priorSequence = options.fromSequence - 1n;
       const priorLog = await this.database.auditLog.findFirst({
-        where: {
-          chain_partition: partition,
-          chain_sequence: priorSequence,
-        },
+        where: { chain_partition: partition, chain_sequence: priorSequence },
       });
       if (priorLog) {
         previousHash = priorLog.entry_hash;
@@ -96,10 +120,9 @@ export class AuditVerifierService {
       }
     }
 
-    let cursorSequence: bigint | undefined =
-      options?.fromSequence !== undefined && options.fromSequence >= 1n
-        ? options.fromSequence - 1n
-        : undefined;
+    const anchorSequences = new Set<bigint>(anchorsToVerify.map((a) => a.anchor_sequence));
+    const resumedOrExplicitStart =
+      resumedFromCheckpoint || Boolean(options?.fromSequence && options.fromSequence > 1n);
 
     while (true) {
       const batchWhere: {
@@ -112,11 +135,11 @@ export class AuditVerifierService {
         if (options?.toSequence !== undefined) batchWhere.chain_sequence.lte = options.toSequence;
       }
 
-      const logs = await this.database.auditLog.findMany({
+      const logs = (await this.database.auditLog.findMany({
         where: batchWhere,
         orderBy: { chain_sequence: 'asc' },
         take: VERIFY_BATCH_SIZE,
-      });
+      })) as VerifiableAuditLogRow[];
 
       if (logs.length === 0) break;
 
@@ -125,108 +148,31 @@ export class AuditVerifierService {
         if (anchorSequences.has(log.chain_sequence)) {
           logHashBySequence.set(log.chain_sequence, { id: log.id, entry_hash: log.entry_hash });
         }
-
-        if (log.chain_sequence !== expectedSequence) {
-          violations.push({
-            code: AppErrorCode.AUDIT_SEQUENCE_GAP,
-            partition,
-            sequence: log.chain_sequence,
-            logId: log.id,
-            expected: expectedSequence.toString(),
-            actual: log.chain_sequence.toString(),
-            message: `Sequence gap detected in partition ${partition}: expected ${expectedSequence}, found ${log.chain_sequence}`,
-          });
-        }
-
-        if (log.chain_sequence === 1n) {
-          if (log.previous_hash !== null) {
-            violations.push({
-              code: AppErrorCode.AUDIT_CHAIN_BROKEN,
-              partition,
-              sequence: log.chain_sequence,
-              logId: log.id,
-              expected: 'null',
-              actual: log.previous_hash,
-              message: `First entry in partition ${partition} must have null previous_hash`,
-            });
-          }
-        } else if (previousHash === null) {
-          if (!options?.fromSequence || options.fromSequence <= 1n) {
-            violations.push({
-              code: AppErrorCode.AUDIT_CHAIN_BROKEN,
-              partition,
-              sequence: log.chain_sequence,
-              logId: log.id,
-              expected: 'GENESIS_SEQUENCE_1',
-              actual: log.previous_hash ?? 'null',
-              message: `Missing genesis head before sequence ${log.chain_sequence} in partition ${partition}`,
-            });
-          }
-        } else if (!safeTimingEqualString(log.previous_hash, previousHash)) {
-          violations.push({
-            code: AppErrorCode.AUDIT_CHAIN_BROKEN,
-            partition,
-            sequence: log.chain_sequence,
-            logId: log.id,
-            expected: previousHash,
-            actual: log.previous_hash ?? 'null',
-            message: `Hash chain broken in partition ${partition} at sequence ${log.chain_sequence}`,
-          });
-        }
-
-        const hmacKey = this.writerService.getHmacKey(log.hmac_key_version);
-        const canonicalString = canonicalizeJson({
-          action: log.action,
-          actorUserId: log.actor_user_id ? log.actor_user_id.toString() : null,
-          actorUsername: log.actor_username,
-          chainAlgorithm: log.chain_algorithm,
-          chainPartition: log.chain_partition,
-          chainSequence: log.chain_sequence.toString(),
-          correlationId: log.correlation_id,
-          details: log.details as Record<string, unknown>,
-          documentId: log.document_id,
-          accessSessionId: log.access_session_id,
-          ipAddress: log.ip_address,
-          objectType: log.object_type,
-          objectId: log.object_id,
-          occurredAt: log.occurred_at.toISOString(),
-          outcome: log.outcome,
-          previousHash: log.previous_hash,
-          reasonCode: log.reason_code,
-          userAgent: log.user_agent,
+        verifyAuditLogRow({
+          log,
+          partition,
+          expectedSequence,
+          previousHash,
+          resumedOrExplicitStart,
+          getHmacKey: getKey,
+          violations,
         });
-        const computedHash = createHmac('sha256', hmacKey)
-          .update(canonicalString, 'utf8')
-          .digest('hex');
-
-        if (!safeTimingEqualString(computedHash, log.entry_hash)) {
-          // CONFLICT-RESOLVED: Tuyệt đối không trả về computedHash để triệt tiêu HMAC Signing Oracle (CRIT-02).
-          violations.push({
-            code: AppErrorCode.AUDIT_LOG_TAMPERED,
-            partition,
-            sequence: log.chain_sequence,
-            logId: log.id,
-            expected: '[REDACTED_HMAC]',
-            actual: '[TAMPERED_ENTRY_HASH]',
-            message: `HMAC verification failed for partition ${partition} at sequence ${log.chain_sequence}: data was tampered`,
-          });
-        }
-
         previousHash = log.entry_hash;
         expectedSequence = log.chain_sequence + 1n;
         cursorSequence = log.chain_sequence;
       }
 
       if (logs.length < VERIFY_BATCH_SIZE) break;
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
     const anchorCheck = await verifyPartitionAnchors(
       this.database,
       partition,
       logHashBySequence,
-      (v) => this.writerService.getHmacKey(v),
+      getKey,
       options,
-      preloadedAnchors,
+      anchorsToVerify,
     );
     violations.push(...anchorCheck.violations);
 
@@ -246,8 +192,7 @@ export class AuditVerifierService {
   }
 
   /**
-   * Algorithm / Thuật toán: Quét kiểm chứng tuần tự hợp nhất danh sách phân vùng từ cả `audit_logs` và `audit_anchors`
-   * nhằm phát hiện cả kịch bản xóa trắng toàn bộ nhật ký của một phân vùng đã có điểm neo.
+   * Thuật toán: Quét kiểm chứng tuần tự hợp nhất danh sách phân vùng từ cả `audit_logs` và `audit_anchors`.
    */
   async verifyAllPartitions(): Promise<Record<string, PartitionVerificationResult>> {
     const distinctLogPartitions = await this.database.auditLog.findMany({

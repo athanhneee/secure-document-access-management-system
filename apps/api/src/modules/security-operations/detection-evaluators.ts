@@ -56,6 +56,7 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, document_id: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
+        take: 1000,
       });
       for (const [uid, userLogs] of groupAuditLogsByActor(logs).entries()) {
         if (userLogs.length >= rule.threshold) {
@@ -84,6 +85,7 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
+        take: 1000,
       });
       for (const [uid, userLogs] of groupAuditLogsByActor(logs).entries()) {
         if (userLogs.length >= rule.threshold) {
@@ -111,6 +113,7 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, document_id: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
+        take: 1000,
       });
       const offHoursLogs = logs.filter((log) =>
         isOffHoursTimestampUtc(log.occurred_at, rule.parameters),
@@ -138,6 +141,7 @@ export async function evaluateSlidingWindowRule(
         where: { occurred_at: { gte: windowStart } },
         select: { id: true, actor_user_id: true, action: true, details: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
+        take: 1000,
       });
       const untrustedLogs = logs.filter((log) => isUntrustedAuditEvent(log.action, log.details));
       for (const [uid, userLogs] of groupAuditLogsByActor(untrustedLogs).entries()) {
@@ -176,6 +180,7 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
+        take: 1000,
       });
       for (const [uid, userLogs] of groupAuditLogsByActor(logs).entries()) {
         if (userLogs.length >= rule.threshold) {
@@ -213,6 +218,7 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
+        take: 1000,
       });
       if (logs.length >= rule.threshold) {
         results.push(

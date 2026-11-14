@@ -62,8 +62,8 @@ export async function executeForgotPassword(
   const startedAt = Date.now();
   const normalized = identifier.normalize('NFKC').trim().toLowerCase();
   const rateKey = `reset:${normalized}`;
-  deps.rateLimit.assertAllowed(context.ip, rateKey);
-  deps.rateLimit.recordFailure(context.ip, rateKey);
+  await deps.rateLimit.assertAllowed(context.ip, rateKey);
+  await deps.rateLimit.recordFailure(context.ip, rateKey);
   await deps.passwords.burnEquivalentWork(normalized);
   const user = await deps.repository.findUserByIdentifier(normalized);
   if (user?.status === 'ACTIVE') {

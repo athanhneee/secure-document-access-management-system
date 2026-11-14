@@ -17,6 +17,7 @@ export interface AuditAnchorRow {
   entry_hash: string;
   signature: string;
   signer_key_id?: string | null;
+  status?: string | null;
 }
 
 /**

@@ -1,3 +1,8 @@
+/**
+ * @module RbacController
+ * Thuật toán: Điều phối API quản trị RBAC theo mô hình kiểm tra quyền nguyên tử (`@RequirePermission`)
+ * kết hợp xác thực chống giả mạo yêu cầu liên trang (`CsrfService.assertRequest`) và chuẩn hóa lược đồ Zod nghiêm ngặt.
+ */
 import {
   Body,
   Controller,

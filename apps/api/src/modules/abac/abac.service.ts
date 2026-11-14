@@ -1,14 +1,15 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+/**
+ * @module AbacService
+ * Thuật toán: Dịch vụ Quyết định Chính sách ABAC (PDP) có bộ đệm phiên bản + bộ đệm Epoch `2_000ms`,
+ * bỏ qua kiểm định tĩnh dư thừa khi đánh giá cây AST đã biên dịch, hỗ trợ mô phỏng điểm thời gian và kích hoạt hai pha `SERIALIZABLE`.
+ */
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { getDatabaseClient, withSerializableTransaction } from '@sda/database';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { canSimulatePolicy } from '../rbac/permission-matrix.js';
 import { AbacAuditService } from './abac-audit.service.js';
 import {
+  executeActivateAbacRule,
   executeUpsertAbacPolicy,
   serializeAbacPolicyRow,
   type RawPolicyForSerialize,
@@ -96,36 +97,41 @@ export class AbacService {
   }
 
   /**
-   * Thuật toán: Đánh giá chính sách ABAC có bộ nhớ đệm định danh theo phiên bản (Version-Keyed Read-Through PDP Evaluation).
-   * Cơ chế hoạt động:
-   *   1. Đọc số hiệu phiên bản chính sách đơn điệu hiện tại từ PostgreSQL sequence (`abac_policy_version_seq`).
-   *   2. Tra cứu bản biên dịch trong Redis theo khóa phiên bản; nếu trúng và hợp lệ thì đánh giá ngay trên RAM.
-   *   3. Nếu trượt cache hoặc bản cache hỏng: tải nguồn từ DB, biên dịch cây DNF AST, ghi lại cache và đánh giá.
-   *   4. Nếu quá trình biên dịch phát hiện lỗi cấu trúc, tự động rơi về quyết định từ chối an toàn `INVALID_POLICY` (Fail-Closed).
+   * Thuật toán: Đánh giá chính sách ABAC có bộ đệm Epoch `2_000ms` và bỏ qua `validatePolicy` dư thừa trên cây AST đã biên dịch.
    */
   async evaluate(input: PolicyEvaluationInput): Promise<PdpResult> {
     const start = performance.now();
     let isCached = false;
-    let result: PdpResult;
+    let result: PdpResult | undefined;
 
-    const version = await this.repository.currentPolicyVersion();
+    let version =
+      typeof this.cache.getCachedPolicyEpoch === 'function'
+        ? await this.cache.getCachedPolicyEpoch()
+        : null;
+    if (version === null) {
+      version = await this.repository.currentPolicyVersion();
+      if (typeof this.cache.setCachedPolicyEpoch === 'function') {
+        await this.cache.setCachedPolicyEpoch(version);
+      }
+    }
+
     const versionText = version.toString();
     const cached = await this.cache.get(versionText);
     if (cached) {
       try {
-        result = evaluatePolicy(cached, input);
+        result = evaluatePolicy(cached, input, { skipValidation: true });
         isCached = true;
       } catch {
         await this.cache.invalidate(versionText);
       }
     }
 
-    if (!result!) {
+    if (!result) {
       try {
         const source = await this.repository.loadPolicySource();
         const compiled = compilePolicy(version, source.definitions, source.rules);
         await this.cache.put(compiled);
-        result = evaluatePolicy(compiled, input);
+        result = evaluatePolicy(compiled, input, { skipValidation: true });
       } catch (error) {
         if (!(error instanceof PolicyCompilationError)) throw error;
         result = {
@@ -150,9 +156,7 @@ export class AbacService {
   }
 
   /**
-   * Thuật toán: Mô phỏng quyết định chính sách thời điểm bất kỳ có ghi vết kiểm toán tuần tự hóa (Audited Point-in-Time Policy Simulation).
-   * Cơ chế hoạt động: Kiểm tra ma trận quyền mô phỏng, tái dựng ngữ cảnh thuộc tính tại mốc thời gian yêu cầu,
-   * chạy bộ đánh giá PDP và ghi nhận bản ghi kiểm toán bất biến trong giao dịch mức cô lập `SERIALIZABLE`.
+   * Thuật toán: Mô phỏng quyết định chính sách thời điểm bất kỳ có ghi vết kiểm toán tuần tự hóa.
    */
   async simulate(
     principal: AuthPrincipal,
@@ -199,89 +203,21 @@ export class AbacService {
   }
 
   /**
-   * Thuật toán: Kích hoạt luật chính sách kiểm chứng hai pha chống tranh chấp (Two-Phase Validated SERIALIZABLE Activation).
-   * Cơ chế hoạt động:
-   *   1. Pha kiểm tra sơ bộ (Pre-flight): giả lập gộp luật ứng viên vào tập luật đang hoạt động và biên dịch thử.
-   *   2. Pha giao dịch `SERIALIZABLE`: đọc lại tập luật dưới khóa cô lập tuần tự hóa, biên dịch xác nhận lần hai
-   *      để triệt tiêu xung đột ghi đồng thời (write skew), cập nhật cờ kích hoạt, ghi kiểm toán và xóa cache phiên bản cũ.
+   * Thuật toán: Kích hoạt luật chính sách kiểm chứng hai pha `SERIALIZABLE` và làm mới Epoch bộ nhớ đệm.
    */
   async activateRule(
     principal: AuthPrincipal,
     ruleId: bigint,
     context: RequestContext,
   ): Promise<{ id: string; policyVersion: string }> {
-    const oldVersion = await this.repository.currentPolicyVersion();
-    const source = await this.repository.loadPolicySource({ includeInactiveRuleId: ruleId });
-    if (!source.rules.some((rule) => rule.id === ruleId)) {
-      throw new NotFoundException('Policy rule was not found.');
-    }
-    try {
-      compilePolicy(oldVersion, source.definitions, source.rules);
-    } catch (error) {
-      if (error instanceof PolicyCompilationError) {
-        throw new BadRequestException({
-          errorCode: 'INVALID_POLICY',
-          message: 'Policy cannot be activated.',
-          issues: error.issueCodes,
-        });
-      }
-      throw error;
-    }
-    await withSerializableTransaction(
-      async (transaction) => {
-        const before = await transaction.policyRule.findUnique({
-          where: { id: ruleId },
-          select: { is_active: true, version: true },
-        });
-        if (!before) throw new NotFoundException('Policy rule was not found.');
-        if (
-          typeof transaction.attributeDefinition?.findMany === 'function' &&
-          typeof transaction.policyRule?.findMany === 'function'
-        ) {
-          const lockedSource = await this.repository.loadPolicySource({
-            includeInactiveRuleId: ruleId,
-            client: transaction,
-          });
-          try {
-            compilePolicy(oldVersion, lockedSource.definitions, lockedSource.rules);
-          } catch (error) {
-            if (error instanceof PolicyCompilationError) {
-              throw new BadRequestException({
-                errorCode: 'INVALID_POLICY',
-                message: 'Policy cannot be activated.',
-                issues: error.issueCodes,
-              });
-            }
-            throw error;
-          }
-        }
-        const after = await transaction.policyRule.update({
-          where: { id: ruleId },
-          data: { is_active: true },
-          select: { is_active: true, version: true },
-        });
-        await this.audit.record(
-          transaction,
-          {
-            action: 'POLICY_ACTIVATED',
-            objectType: 'POLICY',
-            objectId: ruleId.toString(),
-            outcome: 'SUCCESS',
-            details: {
-              priorActive: before.is_active,
-              active: after.is_active,
-              priorVersion: before.version.toString(),
-              version: after.version.toString(),
-            },
-          },
-          principal,
-          context,
-        );
-      },
-      { client: this.database },
-    );
-    await this.cache.invalidate(oldVersion.toString());
-    const policyVersion = await this.repository.currentPolicyVersion();
-    return { id: ruleId.toString(), policyVersion: policyVersion.toString() };
+    return executeActivateAbacRule({
+      ruleId,
+      principal,
+      context,
+      database: this.database,
+      repository: this.repository,
+      cache: this.cache,
+      audit: this.audit,
+    });
   }
 }

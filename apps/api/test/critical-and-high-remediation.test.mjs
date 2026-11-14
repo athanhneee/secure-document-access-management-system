@@ -90,7 +90,10 @@ test('[CRIT-01 & CRIT-02] AuditVerifierService detects head-truncation & missing
       findFirst: async () => null, // priorLog deleted!
       findMany: async ({ where }) => (where?.chain_sequence?.gt === 3n ? [] : [truncatedLog]),
     },
-    auditAnchor: { findMany: async () => [] },
+    auditAnchor: {
+      findFirst: async () => null,
+      findMany: async () => [],
+    },
     securityAlert: {
       findFirst: async () => null,
       create: async ({ data }) => {
@@ -163,18 +166,13 @@ test('[CRIT-05] OOXML security scanner blocks UTF-16LE XXE, UTF-16BE .rels SSRF,
 });
 
 test('[CRIT-07] Web preview hooks & modals fail closed on invalid %PDF- stream with zero fabricated state headers', async () => {
-  const files = await Promise.all([
-    readFile(new URL('../../web/app/owner/hooks/use-owner-delivery.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../web/app/reader/hooks/use-reader-viewer.ts', import.meta.url), 'utf8'),
-    readFile(
-      new URL('../../web/app/owner/modals/forensic-preview-modal.tsx', import.meta.url),
-      'utf8',
-    ),
-    readFile(
-      new URL('../../web/app/reader/modals/document-viewer-modal.tsx', import.meta.url),
-      'utf8',
-    ),
-  ]);
+  const rels = [
+    '../../web/app/owner/hooks/use-owner-delivery.ts',
+    '../../web/app/reader/hooks/use-reader-viewer.ts',
+    '../../web/app/owner/modals/forensic-preview-modal.tsx',
+    '../../web/app/reader/modals/document-viewer-modal.tsx',
+  ];
+  const files = await Promise.all(rels.map((p) => readFile(new URL(p, import.meta.url), 'utf8')));
   for (const content of files) {
     assert.equal(content.includes('CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM'), false);
     assert.equal(content.includes('14/QC-BCĐ'), false);
@@ -238,27 +236,21 @@ test('[HIGH-01..12] Custom Role SoD, Default-Deny Guard, AES-GCM AAD, TOTP anti-
     period: 30,
     secret: OTPAuth.Secret.fromBase32(secret),
   }).generate();
-  assert.equal(mfa.verifyTotp(encryptedSecret, code), true);
-  assert.equal(mfa.verifyTotp(encryptedSecret, code), false);
+  assert.equal(await mfa.verifyTotp(encryptedSecret, code), true);
+  assert.equal(await mfa.verifyTotp(encryptedSecret, code), false);
 
   const nowMs = Date.now();
   const limiter = new LoginRateLimitService();
-  for (let i = 0; i < 6; i++) limiter.recordFailure('203.0.113.9', 'victim@corp.test', nowMs);
+  for (let i = 0; i < 6; i++) await limiter.recordFailure('203.0.113.9', 'victim@corp.test', nowMs);
   for (let i = 0; i < 10_005; i++) {
-    limiter.recordFailure('127.0.0.1', `bot-${i}@corp.test`, nowMs + 10);
+    await limiter.recordFailure('127.0.0.1', `bot-${i}@corp.test`, nowMs + 10);
   }
-  assert.throws(
+  await assert.rejects(
     () => limiter.assertAllowed('198.51.100.20', 'victim@corp.test', nowMs + 50),
     (err) => err instanceof HttpException && err.getStatus() === 429,
   );
 
   // HIGH-11: Strict CIDR_MATCH validation rejects malformed CIDR
-  const badCidrCondition = {
-    id: 'c1',
-    attribute: 'environment.ip',
-    operator: 'CIDR_MATCH',
-    expected: '999.1.1.1/99',
-  };
   const issues = validatePolicy(
     {
       version: 1n,
@@ -269,7 +261,19 @@ test('[HIGH-01..12] Custom Role SoD, Default-Deny Guard, AES-GCM AAD, TOTP anti-
           effect: 'DENY',
           combiningAlgorithm: 'DENY_OVERRIDES',
           obligations: [],
-          groups: [{ id: 1, conditions: [badCidrCondition] }],
+          groups: [
+            {
+              id: 1,
+              conditions: [
+                {
+                  id: 'c1',
+                  attribute: 'environment.ip',
+                  operator: 'CIDR_MATCH',
+                  expected: '999.1.1.1/99',
+                },
+              ],
+            },
+          ],
         },
       ],
     },

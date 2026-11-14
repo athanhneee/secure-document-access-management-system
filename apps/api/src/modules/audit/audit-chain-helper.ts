@@ -1,12 +1,12 @@
 /**
  * @module AuditChainHelper
  * Trợ giúp nối chuỗi băm kiểm toán chống giả mạo theo phân vùng (Partitioned Tamper-Evident Hash Chain).
- * Kết hợp khóa tư vấn mức giao dịch PostgreSQL (`pg_advisory_xact_lock`), chuẩn hóa JSON tất định RFC 8785 (JCS)
- * và chữ ký thông điệp HMAC-SHA256.
+ * Kết hợp khóa tư vấn mức giao dịch PostgreSQL (`pg_advisory_xact_lock`), chuẩn hóa JSON tất định RFC 8785 (JCS),
+ * chữ ký thông điệp HMAC-SHA256 và cơ chế thử lại xung đột tuần tự hóa có trễ lũy tiến kèm nhiễu ngẫu nhiên.
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { buildAuditKeyRing, type AuditKeyRing } from '@sda/contracts';
-import type { Prisma } from '@sda/database';
+import { DatabaseConflictError, type Prisma } from '@sda/database';
 import type { AppConfigService } from '../../config/config.service.js';
 import type { RequestContext } from '../auth/auth.types.js';
 import { canonicalizeJson } from './audit-canonicalizer.js';
@@ -34,6 +34,7 @@ function safeConfigKey(
 
 /**
  * Thuật toán: Phân giải thứ tự ưu tiên khóa gốc HMAC kiểm toán (Hierarchical Primary Key Resolution).
+ * Tuyệt đối từ chối khóa mặc định trên cả môi trường `production` lẫn `staging`.
  */
 export function resolvePrimaryAuditHmacKey(config: AppConfigService): string {
   const configured =
@@ -42,16 +43,16 @@ export function resolvePrimaryAuditHmacKey(config: AppConfigService): string {
     safeConfigKey(config, 'AUTH_AUDIT_HMAC_KEY');
   if (configured) return configured;
 
-  // CONFLICT-RESOLVED: Tuyệt đối từ chối khóa HMAC kiểm toán mặc định gắn cứng khi chạy ở môi trường Production (HIGH-09).
+  // CONFLICT-RESOLVED: Tuyệt đối từ chối khóa HMAC kiểm toán mặc định gắn cứng khi chạy ở môi trường Production/Staging (HIGH-09).
   let nodeEnv: string | undefined;
   try {
     nodeEnv = config.get('NODE_ENV');
   } catch {
     nodeEnv = process.env['NODE_ENV'];
   }
-  if (nodeEnv === 'production') {
+  if (nodeEnv === 'production' || nodeEnv === 'staging') {
     throw new Error(
-      'AUDIT_INTEGRITY_KEY (or DOCUMENT_AUDIT_HMAC_KEY / AUTH_AUDIT_HMAC_KEY) must be configured in production.',
+      'AUDIT_INTEGRITY_KEY (or DOCUMENT_AUDIT_HMAC_KEY / AUTH_AUDIT_HMAC_KEY) must be configured in production and staging.',
     );
   }
   return 'local-only-audit-integrity-hmac-key-0000000000000000';
@@ -59,13 +60,12 @@ export function resolvePrimaryAuditHmacKey(config: AppConfigService): string {
 
 /**
  * Thuật toán: Khởi tạo vòng khóa xoay vòng HMAC kiểm toán (Versioned Audit Key-Ring Resolution).
- * Kết hợp khóa gốc phiên bản 1 với bản đồ xoay vòng `AUDIT_KEY_ROTATION_JSON` từ `@sda/contracts`.
  */
 export function resolveAuditKeyRing(
   config: AppConfigService,
   onParseWarning?: (error: unknown) => void,
 ): AuditKeyRing {
-  // CONFLICT-RESOLVED: Bổ sung hỗ trợ xoay vòng khóa AUDIT_KEY_ROTATION_JSON vào audit-chain-helper.ts đồng bộ với AuditWriterService thay vì chỉ đọc khóa tĩnh phiên bản 1.
+  // CONFLICT-RESOLVED: Bổ sung hỗ trợ xoay vòng khóa AUDIT_KEY_ROTATION_JSON vào audit-chain-helper.ts đồng bộ với AuditWriterService.
   const primaryKey = resolvePrimaryAuditHmacKey(config);
   const rotationJson = safeConfigKey(config, 'AUDIT_KEY_ROTATION_JSON');
   return buildAuditKeyRing(primaryKey, rotationJson, onParseWarning);
@@ -82,30 +82,55 @@ export function resolveActiveAuditKey(config: AppConfigService): {
   return { hmacKey: ring.activeKey, keyVersion: ring.activeVersion };
 }
 
-/**
- * Thuật toán: Phân giải khóa HMAC kiểm toán đang kích hoạt (Active Rotated Key Resolution).
- */
 export function resolveAuditHmacKey(config: AppConfigService): string {
   return resolveAuditKeyRing(config).activeKey;
 }
 
 /**
+ * Thuật toán: Nhận diện xung đột tuần tự hóa hoặc khóa chết tạm thời từ PostgreSQL/Prisma (`40001`, `40P01`, `P2034`).
+ */
+export function isTransientAuditTxConflict(error: unknown): boolean {
+  if (error instanceof DatabaseConflictError) return true;
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : '';
+  return code === 'P2034' || code === '40001' || code === '40P01';
+}
+
+/**
+ * Thuật toán: Thử lại có giới hạn với trễ lũy tiến kèm nhiễu ngẫu nhiên (Exponential Backoff with Jitter Retry)
+ * cho các thao tác ghi kiểm toán gặp xung đột giao dịch tạm thời (`40001` / `40P01` / `P2034`).
+ */
+export async function executeAuditWithRetry<T>(
+  operation: () => Promise<T>,
+  maxAttempts = 3,
+): Promise<T> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error: unknown) {
+      if (attempt >= maxAttempts || !isTransientAuditTxConflict(error)) {
+        throw error;
+      }
+      const delayMs = 15 * 2 ** (attempt - 1) + Math.floor(Math.random() * 10);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw new Error('Unreachable audit retry exhaustion');
+}
+
+/**
  * Thuật toán: So sánh chuỗi thời gian hằng số chống tấn công kênh kề (Constant-Time String Equality).
- * Cơ chế hoạt động: Chuyển hai chuỗi sang bộ đệm UTF-8, đối chiếu chiều dài byte và gọi `timingSafeEqual`
- * để ngăn kẻ tấn công suy đoán từng ký tự mã băm HMAC qua độ trễ phản hồi.
  */
 export function safeTimingEqualString(
   left: string | null | undefined,
   right: string | null | undefined,
 ): boolean {
-  if (typeof left !== 'string' || typeof right !== 'string') {
-    return false;
-  }
+  if (typeof left !== 'string' || typeof right !== 'string') return false;
   const leftBuf = Buffer.from(left, 'utf8');
   const rightBuf = Buffer.from(right, 'utf8');
-  if (leftBuf.length !== rightBuf.length) {
-    return false;
-  }
+  if (leftBuf.length !== rightBuf.length) return false;
   return timingSafeEqual(leftBuf, rightBuf);
 }
 
@@ -130,13 +155,6 @@ export interface ChainedAuditAppendInput {
 
 /**
  * Thuật toán: Ghi nối tiếp nhật ký kiểm toán chuỗi băm tuần tự hóa theo phân vùng (`pg_advisory_xact_lock` + RFC 8785 HMAC-SHA256).
- * Cơ chế hoạt động:
- *   1. Chiếm khóa tư vấn mức giao dịch `pg_advisory_xact_lock(hashtext(partition))` để tuần tự hóa tuyệt đối
- *      mọi thao tác chèn đồng thời trên cùng một phân vùng chuỗi mà không chặn các phân vùng khác.
- *   2. Đọc bản ghi đỉnh chuỗi (`ORDER BY chain_sequence DESC LIMIT 1`) để xác định `sequence = prior + 1` và `previousHash`.
- *   3. Làm sạch & che dấu dữ liệu nhạy cảm trên `details`, `reasonCode`, `userAgent` và `ip`.
- *   4. Chuẩn hóa payload theo RFC 8785 (JSON Canonicalization Scheme) và tính `entryHash = HMAC-SHA256(hmacKey, canonicalString)`.
- *   5. Ghi bản ghi bất biến kèm liên kết ngược `previous_hash` xuống bảng `audit_logs`.
  */
 export async function appendChainedAuditLog(
   tx: Prisma.TransactionClient,

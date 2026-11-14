@@ -1,6 +1,7 @@
 /**
  * @module AuthController
- * Algorithm: Cookie-Bound Authentication, Session Management, TOTP/WebAuthn Step-Up MFA & CSRF-Protected HTTP Controller.
+ * Thuật toán: Điều phối HTTP xác thực gắn cookie, quản lý phiên đăng nhập, xác thực đa yếu tố nâng bậc TOTP/WebAuthn
+ * và kiểm chứng CSRF bắt buộc trên mọi thao tác thay đổi trạng thái.
  */
 import {
   BadRequestException,

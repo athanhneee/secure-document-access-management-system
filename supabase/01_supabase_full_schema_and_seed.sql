@@ -940,8 +940,20 @@ CREATE INDEX IF NOT EXISTS idx_outbox_pending
   ON public.notification_outbox(status, next_retry_at);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_user_status
   ON public.async_export_jobs(requester_user_id, status);
+CREATE INDEX IF NOT EXISTS idx_export_jobs_status_created
+  ON public.async_export_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_expires
   ON public.async_export_jobs(expires_at);
+CREATE INDEX IF NOT EXISTS idx_watermark_instances_session
+  ON public.watermark_instances(access_session_id);
+CREATE INDEX IF NOT EXISTS idx_system_health_captured_at
+  ON public.system_health_snapshots(captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incident_reports_alert_status
+  ON public.incident_reports(alert_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incident_actions_report
+  ON public.incident_actions(incident_report_id);
+CREATE INDEX IF NOT EXISTS idx_access_sessions_status_started
+  ON public.access_sessions(status, started_at DESC);
 
 -- =============================================================================
 -- PHẦN 6: 9 HÀM PL/pgSQL (PINNED SEARCH_PATH) & 19 TRIGGER TOÀN VẸN DỮ LIỆU
@@ -1412,8 +1424,8 @@ BEGIN
     EXECUTE format('DROP POLICY IF EXISTS p_zero_trust_backend_allow ON public.%I', tbl);
     EXECUTE format(
       'CREATE POLICY p_zero_trust_backend_allow ON public.%I AS PERMISSIVE FOR ALL TO PUBLIC '
-      || 'USING ((current_user IN (''postgres'', ''service_role'', ''supabase_admin'', ''sda'', ''sda_local'', ''sda_app'', ''prisma'') OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND (r.rolsuper OR r.rolbypassrls))) AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated'')) '
-      || 'WITH CHECK ((current_user IN (''postgres'', ''service_role'', ''supabase_admin'', ''sda'', ''sda_local'', ''sda_app'', ''prisma'') OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND (r.rolsuper OR r.rolbypassrls))) AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated''))',
+      || 'USING ((current_user IN (''postgres'', ''service_role'', ''supabase_admin'', ''sda'', ''sda_local'', ''sda_app'', ''prisma'') OR current_user = nullif(current_setting(''app.trusted_db_role'', true), '''') OR (current_user NOT IN (''anon'', ''authenticated'', ''authenticator'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') = '''' AND coalesce(current_setting(''request.jwt.claims'', true), '''') = '''') OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND (r.rolsuper OR r.rolbypassrls))) AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''app.current_user_id'', true), '''') IS NOT NULL) '
+      || 'WITH CHECK ((current_user IN (''postgres'', ''service_role'', ''supabase_admin'', ''sda'', ''sda_local'', ''sda_app'', ''prisma'') OR current_user = nullif(current_setting(''app.trusted_db_role'', true), '''') OR (current_user NOT IN (''anon'', ''authenticated'', ''authenticator'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') = '''' AND coalesce(current_setting(''request.jwt.claims'', true), '''') = '''') OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND (r.rolsuper OR r.rolbypassrls))) AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''app.current_user_id'', true), '''') IS NOT NULL)',
       tbl
     );
 
@@ -1457,7 +1469,7 @@ INSERT INTO public._prisma_migrations (id, checksum, finished_at, migration_name
 SELECT v.id, v.checksum, now(), v.migration_name, now(), 1
 FROM (
   VALUES
-    -- CONFLICT-RESOLVED: Synchronized SHA-256 checksums across all 12 Prisma migration files
+    -- CONFLICT-RESOLVED: Synchronized SHA-256 checksums across all 13 Prisma migration files
     ('00000000-0000-4000-8000-000000000001', '888f80f07b278005583e833af6a81983bd14ced9314ca04d0ca37749abe4fa07', '20260917160000_initial_secure_schema'),
     ('00000000-0000-4000-8000-000000000002', '62afc2f3ebe6bbc85c8b92b676091ff4ae62255906b9b6fb71845b143e9a9629', '20260919120000_hardened_authentication'),
     ('00000000-0000-4000-8000-000000000003', '704e601658fb17e709e81f31abfae3e938faf4b869ee29c17b608a7adc7181ec', '20260919180000_scoped_rbac_administration'),
@@ -1469,7 +1481,8 @@ FROM (
     ('00000000-0000-4000-8000-000000000009', '442f6b5eb9efb20b8b132d934f3dbc2ecafde4843dc7bf0721077b9e8a152e6d', '20261031120000_supabase_rls_and_mfa_webauthn'),
     ('00000000-0000-4000-8000-000000000010', '6a366ad5437851cb216414080c6b56789741bf408ce190f6ebd2c89249cdf43c', '20261105133000_rls_policies_and_audit_truncate_guard'),
     ('00000000-0000-4000-8000-000000000011', '52f89c902eb0daf6955ae415e43491e9a663a4a3c0a98aacad78125a2015523d', '20261105160000_prisma_migrations_rls_hardening'),
-    ('00000000-0000-4000-8000-000000000012', 'e304141e09963409f64aad5c5196b4011db31ceb9dd8fc2ebc3d03f64e59f34f', '20261105210000_harden_rls_allowlist_and_role_grant_trigger')
+    ('00000000-0000-4000-8000-000000000012', 'e304141e09963409f64aad5c5196b4011db31ceb9dd8fc2ebc3d03f64e59f34f', '20261105210000_harden_rls_allowlist_and_role_grant_trigger'),
+    ('00000000-0000-4000-8000-000000000013', 'f818321b43e8d8d4b2718642f1e4684f7749c9db92ca24fa5f39cf1b278a54c3', '20261113120000_performance_indexes_and_rls_role_flexibility')
 ) AS v(id, checksum, migration_name)
 WHERE NOT EXISTS (
   SELECT 1 FROM public._prisma_migrations pm WHERE pm.migration_name = v.migration_name
@@ -1873,6 +1886,11 @@ DECLARE
   v_role_id BIGINT;
   v_option_id BIGINT;
 BEGIN
+  -- Chặn tự động chèn tài khoản *.demo khi chạy trên môi trường Production (`SET LOCAL app.environment = 'production'`)
+  IF coalesce(current_setting('app.environment', true), 'development') = 'production' THEN
+    RETURN;
+  END IF;
+
   SELECT id INTO v_seed_id FROM public.users WHERE username = 'system.seed';
   SELECT id INTO v_hq_id FROM public.departments WHERE code = 'HEAD_OFFICE';
   SELECT id INTO v_sec_id FROM public.departments WHERE code = 'INFORMATION_SECURITY';
@@ -1941,7 +1959,7 @@ COMMIT;
 -- PHẦN 10: TRUY VẤN TỰ KIỂM CHỨNG SAU KHI CHẠY (VERIFICATION SUMMARY)
 -- Kết quả kỳ vọng trên Supabase SQL Editor:
 --   business_tables = 39 | rls_locked_tables = 40 | rls_policies = 80 | enum_types = 18 | triggers = 21
---   roles = 5 | permissions = 34 | classifications = 4 | watermark_configs = 3 | detection_rules = 6 | synced_migrations = 12
+--   roles = 5 | permissions = 34 | classifications = 4 | watermark_configs = 3 | detection_rules = 6 | synced_migrations = 13
 -- =============================================================================
 
 -- Thuật toán: Truy vấn tổng hợp đối soát danh mục hệ thống PostgreSQL (`pg_tables`, `pg_policies`, `pg_type`, `pg_trigger`) và số lượng bản ghi nền tảng

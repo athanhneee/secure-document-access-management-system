@@ -143,5 +143,6 @@ model WatermarkInstance {
   users               User            @relation(fields: [user_id], references: [id], onUpdate: NoAction)
   watermark_configs   WatermarkConfig @relation(fields: [watermark_config_id], references: [id], onUpdate: NoAction)
 
+  @@index([access_session_id], map: "idx_watermark_instances_session")
   @@map("watermark_instances")
 }

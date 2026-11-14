@@ -9,6 +9,7 @@ export const ClassificationRank = {
   TOP_SECRET: 4,
 } as const;
 
+export type ClassificationCode = keyof typeof ClassificationRank;
 export type ClassificationRank = (typeof ClassificationRank)[keyof typeof ClassificationRank];
 
 /**

@@ -120,6 +120,10 @@ export function buildPgPoolConfig(connectionString?: string): ResolvedPgConfig {
   return schema ? { poolConfig, schema } : { poolConfig };
 }
 
+/**
+ * Giải thuật khởi tạo thực thể PrismaClient gắn bộ chuyển đổi kết nối `node-postgres` (`createDatabaseClient`):
+ * - Giải quyết cấu hình Pool TLS/mạng an toàn từ `buildPgPoolConfig`, gắn `PrismaPg` adapter và giới hạn thời gian chờ (`maxWait: 5s`) cùng thời gian sống giao dịch (`timeout: 15s`) chống treo kết nối.
+ */
 export function createDatabaseClient(connectionString?: string): PrismaClient {
   const { poolConfig, schema } = buildPgPoolConfig(connectionString);
   const adapter = new PrismaPg(poolConfig, schema ? { schema } : undefined);
@@ -132,7 +136,11 @@ export function createDatabaseClient(connectionString?: string): PrismaClient {
   });
 }
 
-/** Reuses one pool during development hot reload and one instance per production process. */
+/**
+ * Giải thuật quản lý vòng đời đơn thể kết nối CSDL (`getDatabaseClient`):
+ * - Trên `production`: duy trì đúng một thực thể `processClient` trên mỗi tiến trình để giới hạn tổng số kết nối vật lý.
+ * - Trên môi trường phát triển: lưu trên `globalThis` nhằm tránh rò rỉ kết nối khi tải nóng mô-đun (HMR).
+ */
 export function getDatabaseClient(): PrismaClient {
   if (process.env['NODE_ENV'] === 'production') {
     processClient ??= createDatabaseClient();
@@ -143,6 +151,10 @@ export function getDatabaseClient(): PrismaClient {
   return prismaGlobal.__secureDocumentPrismaClient;
 }
 
+/**
+ * Giải thuật đóng sạch hồ kết nối CSDL (`disconnectDatabase`):
+ * - Thu hồi tham chiếu đơn thể ở cả phạm vi tiến trình và `globalThis` trước khi gọi `$disconnect()` để giải phóng hoàn toàn các socket TCP nhàn rỗi.
+ */
 export async function disconnectDatabase(): Promise<void> {
   const client = processClient ?? prismaGlobal.__secureDocumentPrismaClient;
   processClient = undefined;

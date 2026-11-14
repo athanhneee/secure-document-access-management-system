@@ -1,15 +1,15 @@
 # Hướng dẫn Triển khai Cơ sở dữ liệu trên Supabase PostgreSQL
 
-Thư mục này chứa bộ mã SQL hoàn chỉnh được viết lại từ toàn bộ 11 bản migration và dữ liệu khởi tạo chuẩn của dự án **Secure Document Access System**, tối ưu hóa chuyên biệt cho **Supabase PostgreSQL** và đồng bộ 100% với **Prisma 7 (`@sda/database`)**.
+Thư mục này chứa bộ mã SQL hoàn chỉnh được viết lại từ toàn bộ 13 bản migration và dữ liệu khởi tạo chuẩn của dự án **Secure Document Access System**, tối ưu hóa chuyên biệt cho **Supabase PostgreSQL** và đồng bộ 100% với **Prisma 7 (`@sda/database`)**.
 
 ---
 
 ## 1. Cấu trúc tệp SQL
 
-| Tệp                                    | Mục đích                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `00_reset_clean.sql`                   | _(Tùy chọn — chỉ dùng trên Dev/Staging)_ Dọn sạch toàn bộ 39 bảng nghiệp vụ, `_prisma_migrations`, 9 hàm PL/pgSQL, sequence và 18 kiểu ENUM trong schema `public` mà không ảnh hưởng đến các schema hệ thống của Supabase (`auth`, `storage`, `realtime`, `vault`, `extensions`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `01_supabase_full_schema_and_seed.sql` | **Kịch bản chính (All-in-One, Idempotent)**: Tạo đầy đủ extensions (`pgcrypto`, `pg_trgm`), 18 ENUM, sequence `abac_policy_version_seq`, 39 bảng nghiệp vụ + `_prisma_migrations`, khóa ngoại vòng `fk_documents_current_version`, toàn bộ chỉ mục B-Tree/GIN/Partial Unique, 9 hàm PL/pgSQL gắn cứng `search_path = public, extensions`, 21 trigger bất biến/toàn vẹn (gồm cả chặn `TRUNCATE` kiểm toán), cưỡng chế **`FORCE ROW LEVEL SECURITY` + 80 chính sách tường minh** chặn PostgREST (`anon`, `authenticated`) & giới hạn quyền tối thiểu `service_role`, đồng bộ SHA-256 checksum 11 migration của Prisma, và nạp dữ liệu nền tảng (phòng ban, danh mục, 4 độ mật, 5 vai trò, 34 quyền SoD, 15 thuộc tính ABAC, chính sách cơ sở, cấu hình đóng dấu mặc định, 6 quy tắc SOC). |
+| Tệp                                    | Mục đích                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `00_reset_clean.sql`                   | _(Tùy chọn — chỉ dùng trên Dev/Staging)_ Dọn sạch toàn bộ 39 bảng nghiệp vụ, `_prisma_migrations`, 9 hàm PL/pgSQL, sequence và 18 kiểu ENUM trong schema `public` mà không ảnh hưởng đến các schema hệ thống của Supabase (`auth`, `storage`, `realtime`, `vault`, `extensions`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `01_supabase_full_schema_and_seed.sql` | **Kịch bản chính (All-in-One, Idempotent)**: Tạo đầy đủ extensions (`pgcrypto`, `pg_trgm`), 18 ENUM, sequence `abac_policy_version_seq`, 39 bảng nghiệp vụ + `_prisma_migrations`, khóa ngoại vòng `fk_documents_current_version`, toàn bộ chỉ mục B-Tree/GIN/Partial Unique, 9 hàm PL/pgSQL gắn cứng `search_path = public, extensions`, 21 trigger bất biến/toàn vẹn (gồm cả chặn `TRUNCATE` kiểm toán), cưỡng chế **`FORCE ROW LEVEL SECURITY` + 80 chính sách tường minh** chặn PostgREST (`anon`, `authenticated`, `authenticator`) & hỗ trợ linh hoạt tài khoản ứng dụng quyền tối thiểu, đồng bộ SHA-256 checksum 13 migration của Prisma, và nạp dữ liệu nền tảng (phòng ban, danh mục, 4 độ mật, 5 vai trò, 34 quyền SoD, 15 thuộc tính ABAC, chính sách cơ sở, cấu hình đóng dấu mặc định, 6 quy tắc SOC). |
 
 ---
 
@@ -29,7 +29,7 @@ Thư mục này chứa bộ mã SQL hoàn chỉnh được viết lại từ to�
    - `classifications`: `4`
    - `watermark_configs`: `3`
    - `detection_rules`: `6`
-   - `synced_migrations`: `11`
+   - `synced_migrations`: `13`
 5. Mở **Database -> Security Advisor** trên Supabase Dashboard để xác nhận **0 cảnh báo Critical** về RLS hoặc `function_search_path_mutable`.
 
 ---
@@ -49,7 +49,7 @@ DATABASE_SSL_REJECT_UNAUTHORIZED=true
 DATABASE_CA_CERT=/etc/ssl/certs/prod-ca-2021.crt
 ```
 
-> **Cảnh báo Bảo mật TLS (Chống CWE-295 Man-in-the-Middle)**: Tải chứng chỉ gốc **Supabase Root CA (`prod-ca-2021.crt`)** tại mục **Project Settings -> Database -> SSL Configuration** trên Supabase Dashboard và trỏ biến `DATABASE_CA_CERT` (hoặc `NODE_EXTRA_CA_CERTS`) tới đường dẫn tệp chứng chỉ này. **Tuyệt đối không tắt cờ kiểm định chứng chỉ `DATABASE_SSL_REJECT_UNAUTHORIZED` (luôn giữ `true`) hay dùng `sslmode=no-verify`** trên Staging/Production (`packages/database/src/client.ts` và `EnvSchema` sẽ chặn khởi chạy fail-fast khi `NODE_ENV=production`).
+> **Cảnh báo Bảo mật TLS (Chống CWE-295 Man-in-the-Middle)**: Tải chứng chỉ gốc **Supabase Root CA (`prod-ca-2021.crt`)** tại mục **Project Settings -> Database -> SSL Configuration** trên Supabase Dashboard và trỏ biến `DATABASE_CA_CERT` (hoặc `NODE_EXTRA_CA_CERTS`) tới đường dẫn tệp chứng chỉ này. **Tuyệt đối không tắt cờ kiểm định chứng chỉ `DATABASE_SSL_REJECT_UNAUTHORIZED` (luôn giữ `true`) hay dùng `sslmode=no-verify`** trên Staging/Production (`packages/database/src/client.ts` và `EnvSchema` sẽ chặn khởi chạy fail-fast khi `NODE_ENV=production` hoặc `NODE_ENV=staging`).
 
 Sau khi cập nhật `.local/dev.env` (hoặc biến môi trường triển khai), bạn có thể kiểm tra đồng bộ Prisma bằng lệnh:
 
@@ -57,7 +57,7 @@ Sau khi cập nhật `.local/dev.env` (hoặc biến môi trường triển khai
 pnpm --filter @sda/database exec prisma migrate status --config prisma.config.ts
 ```
 
-Kết quả sẽ báo `Database schema is up to date!` nhờ bảng `_prisma_migrations` đã được đồng bộ sẵn 11 mã băm SHA-256.
+Kết quả sẽ báo `Database schema is up to date!` nhờ bảng `_prisma_migrations` đã được đồng bộ sẵn 13 mã băm SHA-256.
 
 ---
 

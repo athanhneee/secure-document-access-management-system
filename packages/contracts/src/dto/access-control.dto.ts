@@ -154,8 +154,31 @@ export type DownloadTicketParamInput = z.infer<typeof DownloadTicketParamSchema>
 
 export const WatermarkTokenParamSchema = z
   .object({
-    token: z.string().regex(/^WM-[0-9a-f]{16,64}$/i, 'Invalid watermark token format'),
+    token: z.string().regex(/^WM-[0-9a-f]{12,64}$/i, 'Invalid watermark token format'),
   })
   .strict();
 
 export type WatermarkTokenParamInput = z.infer<typeof WatermarkTokenParamSchema>;
+
+export const ListAccessSessionsSchema = z
+  .object({
+    status: z.enum(['ACTIVE', 'EXPIRED', 'REVOKED', 'TERMINATED', 'COMPLETED']).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    page: z.coerce.number().int().min(1).default(1),
+  })
+  .strict();
+
+export type ListAccessSessionsInput = z.infer<typeof ListAccessSessionsSchema>;
+
+export const TerminateAccessSessionSchema = z
+  .object({
+    reason: z
+      .string()
+      .trim()
+      .min(5, 'Termination reason must be at least 5 characters.')
+      .max(500)
+      .optional(),
+  })
+  .strict();
+
+export type TerminateAccessSessionInput = z.infer<typeof TerminateAccessSessionSchema>;

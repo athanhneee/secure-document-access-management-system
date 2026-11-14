@@ -76,6 +76,7 @@ model IncidentAction {
   users              User?          @relation(fields: [assigned_to], references: [id], onUpdate: NoAction)
   incident_reports   IncidentReport @relation(fields: [incident_report_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
+  @@index([incident_report_id], map: "idx_incident_actions_report")
   @@map("incident_actions")
 }
 
@@ -101,6 +102,7 @@ model IncidentReport {
   users_incident_reports_submitted_to_adminTousers User?            @relation("incident_reports_submitted_to_adminTousers", fields: [submitted_to_admin], references: [id], onUpdate: NoAction)
   users_incident_reports_submitted_to_ownerTousers User?            @relation("incident_reports_submitted_to_ownerTousers", fields: [submitted_to_owner], references: [id], onUpdate: NoAction)
 
+  @@index([alert_id, status, created_at(sort: Desc)], map: "idx_incident_reports_alert_status")
   @@map("incident_reports")
 }
 
@@ -199,6 +201,7 @@ model SystemHealthSnapshot {
   error_count         Int      @default(0)
   details             Json     @default("{}")
 
+  @@index([captured_at(sort: Desc)], map: "idx_system_health_captured_at")
   @@map("system_health_snapshots")
 }
 
@@ -221,6 +224,7 @@ model AsyncExportJob {
   users             User      @relation(fields: [requester_user_id], references: [id], onUpdate: NoAction)
 
   @@index([requester_user_id, status], map: "idx_export_jobs_user_status")
+  @@index([status, created_at], map: "idx_export_jobs_status_created")
   @@index([expires_at], map: "idx_export_jobs_expires")
   @@map("async_export_jobs")
 }

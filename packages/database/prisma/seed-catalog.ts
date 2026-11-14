@@ -143,3 +143,106 @@ export const demoUsers = [
   ['owner.demo', 'owner.demo@local.invalid', 'Chủ tài liệu demo', 'DOCUMENT_OWNER', 'SECRET'],
   ['reader.demo', 'reader.demo@local.invalid', 'Người đọc demo', 'DOCUMENT_READER', 'INTERNAL'],
 ] as const;
+
+export const childDepartments = [
+  ['INFORMATION_SECURITY', 'Phòng An toàn thông tin'],
+  ['LEGAL_COMPLIANCE', 'Ban Pháp chế & Tuân thủ'],
+  ['FINANCE_TREASURY', 'Phòng Tài chính - Kế toán'],
+  ['RND_ENGINEERING', 'Khối Công nghệ & Kỹ thuật'],
+] as const;
+
+export const businessCategoriesCatalog = [
+  [
+    'GENERAL_OPERATIONS',
+    'Nghiệp vụ chung',
+    'HEAD_OFFICE',
+    'Văn bản điều hành và quy trình nội bộ chung',
+  ],
+  [
+    'SECURITY_OPERATIONS',
+    'An toàn thông tin',
+    'INFORMATION_SECURITY',
+    'Chính sách bảo mật, báo cáo SOC và biên bản điều tra sự cố',
+  ],
+  [
+    'LEGAL_CONTRACTS',
+    'Hồ sơ Pháp lý & Hợp đồng',
+    'LEGAL_COMPLIANCE',
+    'Hợp đồng chiến lược, biên bản thỏa thuận bảo mật NDA',
+  ],
+  [
+    'FINANCIAL_REPORTS',
+    'Báo cáo Tài chính & Ngân sách',
+    'FINANCE_TREASURY',
+    'Báo cáo kiểm toán tài chính, dự toán ngân sách trọng yếu',
+  ],
+] as const;
+
+export const tierWatermarkConfigs = [
+  [
+    'SECRET',
+    'Đóng dấu Tối mật (SECRET)',
+    'SECRET - DO NOT DISTRIBUTE | {username} ({employeeCode}) | {documentCode} | {timestamp} | {shortToken}',
+    32,
+    13,
+    '#991B1B',
+  ],
+  [
+    'TOP_SECRET',
+    'Đóng dấu Tuyệt mật (TOP SECRET)',
+    'TOP SECRET - FORENSIC TRACKED | {username} ({employeeCode}) | {documentCode} | {timestamp} | {shortToken}',
+    38,
+    14,
+    '#7F1D1D',
+  ],
+] as const;
+
+export const baselineAbacPolicies = [
+  {
+    code: 'POL-DENY-HIGH-RISK-SESSION',
+    name: 'Từ chối truy cập khi điểm rủi ro phiên vượt ngưỡng an toàn',
+    description: 'Chặn mọi hành động trên tài liệu nếu điểm rủi ro môi trường >= 80',
+    effect: 'DENY' as const,
+    priority: 10,
+    target_resource: 'DOCUMENT',
+    target_action: null,
+    combining_algorithm: 'DENY_OVERRIDES' as const,
+    obligations: ['AUDIT_ELEVATED'],
+    conditions: [
+      {
+        context_key: 'environment.riskScore',
+        operator: 'GTE' as const,
+        expected_value: 80,
+        condition_group: 1,
+        sequence_no: 1,
+      },
+    ],
+  },
+  {
+    code: 'POL-DENY-TOP-SECRET-WITHOUT-MFA',
+    name: 'Bắt buộc xác thực đa yếu tố (MFA) đối với tài liệu Tuyệt mật',
+    description: 'Chặn xem/tải tài liệu hạng 4 (TOP_SECRET) khi phiên chưa hoàn tất xác thực MFA',
+    effect: 'DENY' as const,
+    priority: 20,
+    target_resource: 'DOCUMENT',
+    target_action: 'VIEW',
+    combining_algorithm: 'DENY_OVERRIDES' as const,
+    obligations: ['REQUIRE_MFA'],
+    conditions: [
+      {
+        context_key: 'resource.classificationRank',
+        operator: 'GTE' as const,
+        expected_value: 4,
+        condition_group: 1,
+        sequence_no: 1,
+      },
+      {
+        context_key: 'environment.mfa',
+        operator: 'EQ' as const,
+        expected_value: false,
+        condition_group: 1,
+        sequence_no: 2,
+      },
+    ],
+  },
+] as const;

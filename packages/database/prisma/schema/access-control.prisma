@@ -111,5 +111,6 @@ model AccessSession {
   watermark_instances WatermarkInstance[]
 
   @@index([user_id, status, last_activity_at(sort: Desc)], map: "idx_sessions_user_active")
+  @@index([status, started_at(sort: Desc)], map: "idx_access_sessions_status_started")
   @@map("access_sessions")
 }

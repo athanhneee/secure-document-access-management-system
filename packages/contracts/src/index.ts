@@ -10,3 +10,4 @@ export * from './audit-keyring.js';
 export * from './canonical-json.js';
 export * from './health.js';
 export * from './dto.js';
+export * from './ui-models.js';

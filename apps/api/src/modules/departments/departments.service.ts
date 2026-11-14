@@ -159,24 +159,31 @@ export class DepartmentsService {
     },
     context: RequestContext,
   ) {
+    // CONFLICT-RESOLVED: Chuyển kiểm tra phân quyền ra trước khi mở withSerializableTransaction để không truy vấn pool gốc bên trong giao dịch SERIALIZABLE (chống Self-Deadlock).
+    const canManageTarget = await this.authorization.hasPermission(
+      principal,
+      'DEPARTMENT',
+      'MANAGE',
+      { targetDepartmentId: id },
+    );
+    if (!canManageTarget) {
+      throw new NotFoundException('Department not found.');
+    }
+    if (input.parentId !== null && input.parentId !== undefined && input.parentId !== id) {
+      await this.authorization.assertPermission(principal, 'DEPARTMENT', 'MANAGE', {
+        targetDepartmentId: input.parentId,
+      });
+    }
     const department = await withSerializableTransaction(
       async (transaction) => {
         const before = await transaction.department.findUnique({ where: { id } });
-        if (
-          !before ||
-          !(await this.authorization.hasPermission(principal, 'DEPARTMENT', 'MANAGE', {
-            targetDepartmentId: id,
-          }))
-        ) {
+        if (!before) {
           throw new NotFoundException('Department not found.');
         }
         if (input.parentId === id) {
           throw new ConflictException('Department cannot be its own parent.');
         }
         if (input.parentId !== null && input.parentId !== undefined) {
-          await this.authorization.assertPermission(principal, 'DEPARTMENT', 'MANAGE', {
-            targetDepartmentId: input.parentId,
-          });
           const parent = await transaction.department.findFirst({
             where: { id: input.parentId, is_active: true },
           });
@@ -228,15 +235,20 @@ export class DepartmentsService {
     expectedVersion: number,
     context: RequestContext,
   ) {
+    // CONFLICT-RESOLVED: Chuyển kiểm tra phân quyền ra trước khi mở withSerializableTransaction để không giữ khóa SERIALIZABLE khi đọc pool gốc.
+    const canManageTarget = await this.authorization.hasPermission(
+      principal,
+      'DEPARTMENT',
+      'MANAGE',
+      { targetDepartmentId: id },
+    );
+    if (!canManageTarget) {
+      throw new NotFoundException('Department not found.');
+    }
     const department = await withSerializableTransaction(
       async (transaction) => {
         const before = await transaction.department.findUnique({ where: { id } });
-        if (
-          !before ||
-          !(await this.authorization.hasPermission(principal, 'DEPARTMENT', 'MANAGE', {
-            targetDepartmentId: id,
-          }))
-        ) {
+        if (!before) {
           throw new NotFoundException('Department not found.');
         }
         const now = new Date();

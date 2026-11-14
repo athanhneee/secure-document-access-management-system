@@ -1,13 +1,14 @@
 /**
- * Module: Gotenberg LibreOffice Client & Sanitized Fallback PDF Renderer
- * Thuật toán: Chuyển Đổi Tài Liệu Office Qua Gotenberg Có Kiểm Tra `%PDF` Hoặc Phân Trang Văn Bản Thuần A4 An Toàn Bằng `pdf-lib`.
+ * @module OfficeFallbackPdf
+ * Thuật toán: Kết xuất tài liệu Office sang PDF qua máy khách HTTP Gotenberg có cắt ngưỡng thời gian (`AbortController`)
+ * và kiểm tra chữ ký ma thuật `%PDF`, kết hợp bộ dựng PDF A4 phân trang văn bản thuần WinAnsi an toàn bằng `pdf-lib`.
  */
 import type { Logger } from '@nestjs/common';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 /**
- * Algorithm: Bounded-Timeout Gotenberg Headless Conversion
- * Submits multipart binary to `/forms/libreoffice/convert` with `AbortController` and verifies `%PDF` magic bytes.
+ * Thuật toán: Gửi biểu mẫu đa phần (`multipart/form-data`) tới `/forms/libreoffice/convert` của Gotenberg
+ * kèm `AbortController` giới hạn tối đa `min(timeoutMs, 8000)` ms và xác thực 4 byte đầu `%PDF`.
  */
 export async function convertWithGotenberg(
   gotenbergUrl: string,
@@ -67,8 +68,8 @@ export async function convertWithGotenberg(
 }
 
 /**
- * Algorithm: Safe WinAnsi A4 Text-to-PDF Pagination
- * Folds Unicode diacritics to WinAnsi-compatible characters and lays out up to `maxPages` (42 lines/page).
+ * Thuật toán: Phân trang văn bản thuần đã khử mã độc lên khổ giấy A4 (`595.28 x 841.89` pt, tối đa `42` dòng/trang,
+ * trần `maxPages` trang) kèm gấp dấu tiếng Việt sang bảng mã WinAnsi an toàn cho phông chuẩn `Helvetica`.
  */
 export async function renderSanitizedTextToPdf(
   title: string,
@@ -155,6 +156,9 @@ export async function renderSanitizedTextToPdf(
   return Buffer.from(await pdfDoc.save());
 }
 
+/**
+ * Thuật toán: Chuẩn hóa chuỗi Unicode NFD sang tập ký tự WinAnsi (`0x20..0x7E`, `0xA0..0xFF`) tránh lỗi mã hóa phông PDF.
+ */
 function toWinAnsiSafeText(input: string): string {
   return input
     .replace(/Đ/gu, 'D')

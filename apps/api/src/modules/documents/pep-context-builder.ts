@@ -1,7 +1,8 @@
 /**
- * Module: PEP Policy Information Point (PIP) Context Builder & Deny Audit Helper
- * Algorithm: Resolves subject ABAC attributes (`CLEARANCE_LEVEL`, `PROJECT`, department, status),
- *   matches caller IP against trusted CIDR blocks, checks SoD role exclusions, and records fail-closed deny audits.
+ * @module PepContextBuilder
+ * Thuật toán: Tổng hợp ngữ cảnh Điểm Thông tin Chính sách (PIP) tại cổng thực thi PEP — nạp thuộc tính chủ thể
+ * (`CLEARANCE_LEVEL`, `EMPLOYMENT_STATUS` từ từ điển ABAC kèm fallback `user.status`, `PROJECT`, phòng ban),
+ * đối chiếu IP với dải mạng tin cậy CIDR, cưỡng chế Phân tách Nhiệm vụ (SoD) và ghi nhật ký từ chối fail-closed.
  */
 import type { Logger } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
@@ -89,8 +90,9 @@ export function resolvePepTrustedNetwork(
 }
 
 /**
- * Algorithm: PIP Subject Attribute Hydration
- * Loads user department, employment status, highest active `CLEARANCE_LEVEL` rank (`is_active: true`), and sorted active `PROJECT` codes.
+ * Thuật toán: Tổng hợp thuộc tính chủ thể PIP (`CLEARANCE_LEVEL`, `EMPLOYMENT_STATUS`, `PROJECT`, phòng ban).
+ * Nạp đồng thời `PROJECT` và `EMPLOYMENT_STATUS` còn hiệu lực (`is_active: true`) trong một truy vấn `findMany` duy nhất;
+ * nếu có gán `EMPLOYMENT_STATUS` tường minh thì ưu tiên `value_code ?? value_text`, ngược lại giữ fallback `user?.status ?? null`.
  */
 export async function buildPepSubjectAttributes(
   database: PrismaClient,
@@ -128,11 +130,12 @@ export async function buildPepSubjectAttributes(
       : (clearance?.attribute_options?.numeric_rank ?? null);
 
   let projects: string[] = [];
+  let explicitEmploymentStatus: string | null = null;
   if (typeof database?.userAttributeAssignment?.findMany === 'function') {
-    const projectAssignments = await database.userAttributeAssignment.findMany({
+    const attrAssignments = await database.userAttributeAssignment.findMany({
       where: {
         user_id: userId,
-        attribute_definitions: { code: 'PROJECT', is_active: true },
+        attribute_definitions: { code: { in: ['PROJECT', 'EMPLOYMENT_STATUS'] }, is_active: true },
         valid_from: { lte: now },
         AND: [
           { OR: [{ valid_to: null }, { valid_to: { gt: now } }] },
@@ -140,31 +143,40 @@ export async function buildPepSubjectAttributes(
           { OR: [{ option_id: null }, { attribute_options: { is_active: true } }] },
         ],
       },
-      include: { attribute_options: true },
+      include: {
+        attribute_definitions: { select: { code: true, is_active: true } },
+        attribute_options: true,
+      },
     });
-    projects = projectAssignments
-      .filter(
-        (a) =>
-          (a as { attribute_options?: { is_active?: boolean } | null }).attribute_options
-            ?.is_active !== false,
-      )
-      .map(
-        (a) =>
-          (
-            a as {
-              attribute_options?: { value_code?: string } | null;
-              value_text?: string | null;
-            }
-          ).attribute_options?.value_code ?? (a as { value_text?: string | null }).value_text,
-      )
-      .filter((v): v is string => typeof v === 'string' && v.length > 0)
-      .sort();
+    const projectValues: string[] = [];
+    for (const raw of attrAssignments) {
+      const row = raw as {
+        attribute_definitions?: { code?: string; is_active?: boolean } | null;
+        attribute_options?: { value_code?: string; is_active?: boolean } | null;
+        value_text?: string | null;
+      };
+      if (
+        row.attribute_definitions?.is_active === false ||
+        row.attribute_options?.is_active === false
+      ) {
+        continue;
+      }
+      const val = row.attribute_options?.value_code ?? row.value_text;
+      if (typeof val !== 'string' || val.length === 0) continue;
+      if (row.attribute_definitions?.code === 'EMPLOYMENT_STATUS') {
+        explicitEmploymentStatus = val;
+      } else {
+        projectValues.push(val);
+      }
+    }
+    projects = projectValues.sort();
   }
 
   return {
     clearanceRank: activeClearanceRank,
     departmentId: user?.department_id?.toString() ?? null,
-    employmentStatus: user?.status ?? null,
+    // CONFLICT-RESOLVED: Đồng bộ subject.employmentStatus giữa PIP và Từ điển ABAC (EMPLOYMENT_STATUS), giữ fallback user.status cho tương thích ngược.
+    employmentStatus: explicitEmploymentStatus ?? user?.status ?? null,
     projects,
   };
 }

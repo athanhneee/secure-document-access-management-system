@@ -1,3 +1,8 @@
+/**
+ * Module: Điểm xuất trung tâm (`@sda/database`) cho kết nối Prisma/PostgreSQL TLS Pool, giao dịch cô lập `SERIALIZABLE` tự động thử lại,
+ * bộ ánh xạ lỗi cơ sở dữ liệu an toàn và hằng số kiểm định tổng số bảng nghiệp vụ (`businessTableCount = 39`).
+ * Thuật toán: Tái xuất có kiểm soát bề mặt API tầng dữ liệu (Controlled Persistence Facade) nhằm ẩn chi tiết kết nối vật lý `pg.Pool` và adapter nội bộ.
+ */
 export {
   buildPgPoolConfig,
   createDatabaseClient,
@@ -23,7 +28,7 @@ export type * from './generated/prisma/models.js';
 export { Prisma } from './generated/prisma/client.js';
 
 /**
- * Total business tables defined across `prisma/schema/*.prisma` (31 baseline domain tables
- * + 8 hardened auth/MFA, audit-anchor, SOC detection, outbox, and async-export tables).
+ * Tổng số bảng nghiệp vụ định nghĩa trong `prisma/schema/*.prisma` (31 bảng miền cốt lõi + 8 bảng mở rộng cho xác thực/MFA,
+ * điểm neo kiểm toán, phát hiện SOC, hộp thư đi và hàng đợi xuất báo cáo bất đồng bộ).
  */
 export const businessTableCount = 39;

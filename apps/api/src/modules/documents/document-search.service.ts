@@ -49,8 +49,9 @@ export class DocumentSearchService {
   }
 
   /**
-   * Algorithm: Authorization-Scoped Hybrid Document Search
-   * Evaluates 4-branch visibility + clearance rank in SQL, fetches `pageSize + 1` rows, and audits SHA-256 query hash.
+   * Thuật toán: Tìm kiếm lai FTS + Trigram có giới hạn phạm vi phân quyền 4 nhánh và trần độ mật Bell-LaPadula.
+   * Nối thêm bảng `business_categories` từ `classification_history` hiện hành (`effective_to IS NULL`) để trả đầy đủ
+   * `businessCategoryId`, `businessCategoryCode`, `businessCategoryName` cho bảng quản lý `/owner`.
    */
   async searchDocuments(
     input: SearchDocumentsInput,
@@ -103,6 +104,9 @@ export class DocumentSearchService {
         classification_level_name: string | null;
         classification_level_code: string | null;
         classification_allow_download?: boolean | null;
+        business_category_id?: string | bigint | number | null;
+        business_category_code?: string | null;
+        business_category_name?: string | null;
         created_at: Date;
         updated_at: Date;
       }>
@@ -118,6 +122,9 @@ export class DocumentSearchService {
           cl."name" AS "classification_level_name",
           cl."code" AS "classification_level_code",
           cl."allow_download" AS "classification_allow_download",
+          dch."business_category_id"::text AS "business_category_id",
+          bc."code" AS "business_category_code",
+          bc."name" AS "business_category_name",
           d."created_at",
           d."updated_at"
         FROM documents d
@@ -126,6 +133,8 @@ export class DocumentSearchService {
           ON dch.document_id = d.id AND dch.effective_to IS NULL
         LEFT JOIN classification_levels cl
           ON cl.id = dch.classification_level_id
+        LEFT JOIN business_categories bc
+          ON bc.id = dch.business_category_id
         ${whereClause}
         ORDER BY ${sortColumn} ${orderDir}, d."id" ASC
         LIMIT ${limit}
@@ -143,6 +152,12 @@ export class DocumentSearchService {
       departmentName: row.department_name,
       classificationLevelName: row.classification_level_name,
       classificationLevelCode: row.classification_level_code,
+      businessCategoryId:
+        row.business_category_id !== undefined && row.business_category_id !== null
+          ? String(row.business_category_id)
+          : null,
+      businessCategoryCode: row.business_category_code ?? null,
+      businessCategoryName: row.business_category_name ?? null,
       allowDownload: resolveFailClosedAllowDownload(
         row.classification_allow_download,
         row.classification_level_code,
@@ -172,7 +187,7 @@ export class DocumentSearchService {
   }
 
   /**
-   * Algorithm: Hash-Joined User & Role Granted Documents Listing
+   * Thuật toán: Truy vấn danh sách tài liệu được cấp quyền trực tiếp theo `USER` hoặc gián tiếp theo `ROLE` hiệu lực.
    */
   async getMyGrantedDocuments(
     input: MyGrantedDocumentsInput,

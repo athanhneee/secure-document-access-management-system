@@ -1,6 +1,7 @@
 /**
  * @module RedlockNodeHelper
- * Algorithm: Single-Node Bounded-Timeout Redis NX/PX Lock Acquisition & Atomic Token-Verified Lua Release/Extend.
+ * Thuật toán: Chiếm khóa phân tán nguyên tử `SET NX PX` có cắt ngưỡng thời gian chờ trên từng nút Redis độc lập,
+ * kết hợp kịch bản Lua Compare-And-Swap (`UNLOCK_LUA_SCRIPT` / `EXTEND_LUA_SCRIPT`) đối chiếu token sở hữu trên đa số nút (`>= quorum`).
  */
 import type { Logger } from '@nestjs/common';
 import { Redis } from 'ioredis';
@@ -26,7 +27,7 @@ export interface RedlockExecutionOptions extends RedlockAcquireOptions {
 }
 
 /**
- * Atomic Lua CAS script for safe unlock: deletes key ONLY when current value matches caller's random token.
+ * Thuật toán Lua CAS mở khóa an toàn: chỉ xóa khóa `KEYS[1]` khi giá trị hiện tại trùng khớp token ngẫu nhiên `ARGV[1]` của chủ khóa.
  */
 export const UNLOCK_LUA_SCRIPT = `
 if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -37,7 +38,7 @@ end
 `;
 
 /**
- * Atomic Lua CAS script for safe lock extension / heartbeat: refreshes PEXPIRE ONLY when value matches token.
+ * Thuật toán Lua CAS gia hạn khóa (Heartbeat): chỉ làm mới `PEXPIRE` khi giá trị hiện tại trùng khớp token `ARGV[1]`.
  */
 export const EXTEND_LUA_SCRIPT = `
 if redis.call("get", KEYS[1]) == ARGV[1] then

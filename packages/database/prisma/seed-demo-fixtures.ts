@@ -1,3 +1,10 @@
+/**
+ * Module: Khởi Tạo Danh Tính Mẫu Phi Sản Xuất Không Thể Xác Thực (`Zero-Static-Secret Demo Fixtures`)
+ * Thuật toán: Cấp Phát Lũy Đẳng Tài Khoản Mẫu Vô Hiệu Hóa & Gán Quyền/Cấp Thẩm Tra Có Hiệu Lực Thời Gian (`Idempotent Temporal Seed Provisioning`).
+ *   1. Duyệt danh sách `demoUsers`, định tuyến phòng ban theo nguyên tắc Phân Tách Trách Nhiệm (SoD): `SECURITY_OFFICER` và `AUDITOR` thuộc phòng An ninh, các vai trò còn lại thuộc Trụ sở chính.
+ *   2. Thực thi `upsert` tài khoản ở trạng thái `DISABLED` với chuỗi `disabledPasswordHash` không thể khớp Argon2id để ngăn chặn đăng nhập bằng mật khẩu tĩnh.
+ *   3. Kiểm tra bản ghi đang hiệu lực (`valid_to IS NULL`) trước khi chèn `user_roles` và `user_attribute_assignments` nhằm đảm bảo tính lũy đẳng tuyệt đối khi chạy lại `pnpm db:seed`.
+ */
 import type { Prisma } from '../src/index.js';
 import { demoUsers, disabledPasswordHash, fixedSeedTime } from './seed-catalog.js';
 
@@ -12,9 +19,8 @@ export interface SeedDemoFixturesInput {
 }
 
 /**
- * Algorithm: Idempotent non-authenticatable demo fixture provisioning (non-production only).
- * Upserts disabled demo users with invalid password hashes and attaches missing active role and
- * clearance attribute assignments without creating duplicate temporal rows on repeated seed runs.
+ * Thuật toán: Khởi tạo lũy đẳng các tài khoản mẫu bị khóa xác thực mặc định (chỉ chạy ngoài môi trường `production`),
+ * liên kết vai trò hệ thống và thuộc tính cấp độ mật (`CLEARANCE_LEVEL`) không sinh dòng trùng lặp theo thời gian.
  */
 export async function seedNonProductionDemoFixtures(input: SeedDemoFixturesInput): Promise<void> {
   const {

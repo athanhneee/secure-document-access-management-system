@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthorizationCache } from '../dist/modules/rbac/authorization-cache.js';
 import { AuthorizationGuard } from '../dist/modules/rbac/authorization.guard.js';
@@ -15,6 +15,7 @@ import {
   PRIVILEGED_ROLE_MFA_REVOKE_REASON,
 } from '../dist/modules/rbac/rbac-assignments.helper.js';
 import { REQUIRED_PERMISSION_METADATA } from '../dist/modules/rbac/require-permission.js';
+import { createSysAdminDelegationHarness } from './helpers/rbac-sysadmin-fixture.helper.mjs';
 
 test('authorization cache expires at role valid_to and invalidates immediately', async () => {
   const cache = new AuthorizationCache();
@@ -183,4 +184,58 @@ test('controllers declare resource/action permissions and contain no role string
     assert.match(source, /@RequirePermission\(/u);
     assert.doesNotMatch(source, /roles\.includes|SYSTEM_ADMIN|SECURITY_OFFICER|AUDITOR/u);
   }
+});
+
+/**
+ * Thuật toán kiểm thử: `SYSTEM_ADMIN` toàn cục có `ROLE_MANAGE` toàn cục gán được `DOCUMENT_READER` cho nhân sự khác,
+ * bị chặn `403` nếu tự gán cho chính mình, bị chặn `409` nếu mục tiêu vi phạm Phân tách Nhiệm vụ (SoD),
+ * và quản trị viên cấp thấp không phải `SYSTEM_ADMIN` vẫn bị chặn bởi trần ủy quyền `assertCanDelegate`.
+ */
+test('SYSTEM_ADMIN assigns DOCUMENT_READER to another user, blocks self-assign and SoD conflicts, and enforces subset ceiling on custom admin', async () => {
+  const { mockDb, strictAuthz, audit, setOverlappingRoles, sysAdmin, customAdmin, ctx, input } =
+    createSysAdminDelegationHarness();
+
+  const assigned = await executeAssignUserRole(
+    strictAuthz,
+    audit,
+    sysAdmin,
+    88n,
+    input,
+    ctx,
+    mockDb,
+  );
+  assert.equal(assigned.id, '901');
+
+  await assert.rejects(
+    () => executeAssignUserRole(strictAuthz, audit, sysAdmin, 1n, input, ctx, mockDb),
+    (err) => err instanceof ForbiddenException,
+  );
+
+  setOverlappingRoles([
+    {
+      roles: {
+        code: 'AUDITOR',
+        role_permissions: [
+          {
+            permissions: {
+              id: 301n,
+              code: 'AUDIT_LOG_VIEW',
+              resource_type: 'AUDIT_LOG',
+              action: 'VIEW',
+            },
+          },
+        ],
+      },
+    },
+  ]);
+  await assert.rejects(
+    () => executeAssignUserRole(strictAuthz, audit, sysAdmin, 88n, input, ctx, mockDb),
+    (err) => err instanceof ConflictException,
+  );
+
+  setOverlappingRoles([]);
+  await assert.rejects(
+    () => executeAssignUserRole(strictAuthz, audit, customAdmin, 88n, input, ctx, mockDb),
+    (err) => err instanceof ForbiddenException,
+  );
 });

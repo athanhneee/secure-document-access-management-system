@@ -12,8 +12,30 @@ export const ZERO_WIDTH_AND_FORMAT_CHARS_RE =
   /\u034F|[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/gu;
 
 const BASE64_CANDIDATE_RE = /[A-Za-z0-9+/_-]{24,}={0,2}/gu;
+const PDF_UTF16BE_HEX_STRING_RE = /<FEFF([0-9A-Fa-f]{4}){4,512}>/gu;
 const MAX_BASE64_CANDIDATES = 64;
 const MAX_BASE64_DECODED_BYTES = 1024 * 1024;
+
+/**
+ * Thuật toán: Giải mã chuỗi hex UTF-16BE trong từ điển metadata PDF (`<FEFF0057004D...>`) sang chuỗi Unicode thuần.
+ */
+export function extractPdfUtf16BeHexSurfaces(rawText: string): string[] {
+  if (!rawText.includes('<FEFF') && !rawText.includes('<feff')) return [];
+  const results: string[] = [];
+  PDF_UTF16BE_HEX_STRING_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PDF_UTF16BE_HEX_STRING_RE.exec(rawText)) !== null && results.length < 32) {
+    const hexBody = match[0].slice(5, -1);
+    const rawBuf = Buffer.from(hexBody, 'hex');
+    const swapped = Buffer.allocUnsafe(rawBuf.length);
+    for (let i = 0; i + 1 < rawBuf.length; i += 2) {
+      swapped[i] = rawBuf[i + 1]!;
+      swapped[i + 1] = rawBuf[i]!;
+    }
+    results.push(swapped.toString('utf16le'));
+  }
+  return results;
+}
 
 export function normalizeDlpText(raw: string): string {
   return raw.normalize('NFKC').replace(ZERO_WIDTH_AND_FORMAT_CHARS_RE, '');
@@ -137,7 +159,9 @@ export function buildNormalizedDlpSurfaces(
   }
 
   if (bodyBuffer.length > 0) {
-    rawTexts.push(bodyBuffer.toString('utf8'));
+    const utf8Body = bodyBuffer.toString('utf8');
+    rawTexts.push(utf8Body);
+    rawTexts.push(...extractPdfUtf16BeHexSurfaces(utf8Body));
     rawTexts.push(...extractUtf16Surfaces(bodyBuffer));
   }
   rawTexts.push(...extraArchiveTexts);

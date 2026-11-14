@@ -1,7 +1,8 @@
 /**
- * Module: SOC Incident Response Lifecycle & Remediation Action Service
- * Algorithm: Enforces auditor SoD exclusions, finite-state workflow transitions (`DRAFT -> SUBMITTED -> CLOSED`),
- *   lookahead `N+1` pagination, and chained `SECURITY_OPERATIONS` audit trails.
+ * @module IncidentsService
+ * Thuật toán: Quản lý vòng đời ứng cứu sự cố an ninh SOC — cưỡng chế Phân tách Nhiệm vụ (SoD) đối với kiểm toán viên,
+ * kiểm soát phạm vi phòng ban, chuyển trạng thái hữu hạn (`DRAFT -> SUBMITTED -> CLOSED`), phân trang nhìn trước `pageSize + 1`
+ * và ghi nhật ký chuỗi băm trên phân vùng `SECURITY_OPERATIONS`.
  */
 import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
@@ -63,6 +64,9 @@ export class IncidentsService {
     this.logger.log('IncidentsService initialized');
   }
 
+  /**
+   * Thuật toán: Khởi tạo biên bản sự cố an ninh ở trạng thái `DRAFT` có kiểm tra phạm vi phòng ban của cảnh báo gốc.
+   */
   async createIncidentReport(
     input: CreateIncidentReportInput,
     actor: AuthPrincipal,
@@ -81,7 +85,7 @@ export class IncidentsService {
   }
 
   /**
-   * Algorithm: Lookahead N+1 Paginated Incident Report Listing
+   * Thuật toán: Liệt kê danh sách biên bản sự cố phân trang nhìn trước `pageSize + 1` có lọc theo phạm vi phòng ban.
    */
   async listIncidentReports(
     query: QueryIncidentReportsInput,
@@ -120,7 +124,7 @@ export class IncidentsService {
   }
 
   /**
-   * Algorithm: Incident Report & Chronological Remediation Action Hydration
+   * Thuật toán: Truy xuất chi tiết biên bản sự cố kèm danh sách hành động khắc phục sắp xếp tăng dần theo thời gian.
    */
   async getIncidentReportById(id: string, actor?: AuthPrincipal): Promise<IncidentReportDetail> {
     await assertIncidentInDepartmentScope(this.database, this.authorization, actor, id, 'VIEW');
@@ -147,6 +151,9 @@ export class IncidentsService {
     return mapIncidentReportToDetail(report);
   }
 
+  /**
+   * Thuật toán: Cập nhật nội dung phân tích nguyên nhân gốc rễ và mức độ ảnh hưởng của biên bản sự cố trong phạm vi quản lý.
+   */
   async updateIncidentReport(
     id: string,
     input: UpdateIncidentReportInput,
@@ -163,6 +170,9 @@ export class IncidentsService {
     return this.getIncidentReportById(updatedId, actor);
   }
 
+  /**
+   * Thuật toán: Đệ trình biên bản sự cố (`DRAFT -> SUBMITTED`) sau khi hoàn tất phân tích sơ bộ.
+   */
   async submitIncidentReport(
     id: string,
     input: SubmitIncidentReportInput,
@@ -179,6 +189,9 @@ export class IncidentsService {
     return this.getIncidentReportById(updatedId, actor);
   }
 
+  /**
+   * Thuật toán: Đóng biên bản sự cố (`SUBMITTED -> CLOSED`) có xác minh điều kiện hoàn tất các hành động khắc phục.
+   */
   async closeIncidentReport(
     id: string,
     input: CloseIncidentReportInput,
@@ -195,6 +208,9 @@ export class IncidentsService {
     return this.getIncidentReportById(updatedId, actor);
   }
 
+  /**
+   * Thuật toán: Bổ sung đầu việc hành động khắc phục (`IncidentAction`) gắn với biên bản sự cố.
+   */
   async addIncidentAction(
     incidentReportId: string,
     input: CreateIncidentActionInput,
@@ -216,6 +232,9 @@ export class IncidentsService {
     );
   }
 
+  /**
+   * Thuật toán: Đánh dấu hoàn thành hành động khắc phục có đối chiếu chéo `expectedIncidentId` chống tham chiếu chéo IDOR.
+   */
   async completeIncidentAction(
     actionId: bigint,
     input: CompleteIncidentActionInput,

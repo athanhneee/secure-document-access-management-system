@@ -26,6 +26,61 @@ import {
 import { JsonLoggerService } from '../logger/json-logger.service.js';
 
 const SAFE_CORRELATION_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+const INTERNAL_LEAK_RE =
+  /\b(SELECT\s+.+\s+FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b|node_modules[\\/]|@prisma\/client|\bat\s+\S+\s+\([^)]+:\d+:\d+\)/iu;
+
+/**
+ * Thuật toán: Kiểm định thông điệp lỗi 4xx an toàn trước khi trả cho client (chặn lộ truy vấn SQL, đường dẫn thư viện và stack frame).
+ */
+function isSafeClientMessage(msg: string): boolean {
+  const trimmed = msg.trim();
+  return trimmed.length > 0 && !INTERNAL_LEAK_RE.test(trimmed);
+}
+
+/**
+ * Thuật toán: Trả thông điệp mặc định theo mã HTTP 4xx để không bao giờ ghi đè lỗi đầu vào của client thành thông báo lỗi 500 nội bộ.
+ */
+function fallbackClientMessage(statusCode: number): string {
+  switch (statusCode) {
+    case HttpStatus.BAD_REQUEST:
+      return 'Validation failed for one or more fields.';
+    case HttpStatus.UNAUTHORIZED:
+      return 'Authentication is required.';
+    case HttpStatus.FORBIDDEN:
+      return 'Access to the requested resource is forbidden.';
+    case HttpStatus.NOT_FOUND:
+      return 'Requested resource was not found.';
+    case HttpStatus.CONFLICT:
+      return 'Resource conflict detected.';
+    case HttpStatus.TOO_MANY_REQUESTS:
+      return 'Too many requests. Please try again later.';
+    default:
+      return 'Request could not be processed.';
+  }
+}
+
+/**
+ * Thuật toán: Trích xuất thông điệp lỗi đầu tiên từ cấu trúc `ZodError.flatten()` (`formErrors` / `fieldErrors`).
+ */
+function extractFlattenedValidationMessage(resObj: Record<string, unknown>): string | undefined {
+  if (Array.isArray(resObj['formErrors'])) {
+    const firstFormErr = resObj['formErrors'].find(
+      (item): item is string => typeof item === 'string' && isSafeClientMessage(item),
+    );
+    if (firstFormErr) return firstFormErr;
+  }
+  const fieldErrors = resObj['fieldErrors'];
+  if (typeof fieldErrors === 'object' && fieldErrors !== null) {
+    for (const [field, rawList] of Object.entries(fieldErrors as Record<string, unknown>)) {
+      if (!Array.isArray(rawList)) continue;
+      const firstErr = rawList.find(
+        (item): item is string => typeof item === 'string' && isSafeClientMessage(item),
+      );
+      if (firstErr) return `${field}: ${firstErr}`;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Thuật toán: Trích xuất mã lỗi Prisma/SQLSTATE lồng nhau để phân biệt vi phạm khóa duy nhất (`P2002`/`23505`) với lỗi ràng buộc dữ liệu khác.
@@ -82,23 +137,59 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       statusCode = exception.getStatus();
       const response = exception.getResponse();
+      let candidateMessage: string | undefined;
 
       if (typeof response === 'string') {
-        message = response;
+        candidateMessage = response;
       } else if (typeof response === 'object' && response !== null) {
         const resObj = response as Record<string, unknown>;
         if (typeof resObj['errorCode'] === 'string') {
           errorCode = resObj['errorCode'];
         }
-        if (typeof resObj['message'] === 'string') {
-          message = resObj['message'];
+        if (typeof resObj['message'] === 'string' && resObj['message'].trim().length > 0) {
+          candidateMessage = resObj['message'];
         } else if (Array.isArray(resObj['message'])) {
-          message = 'Validation failed for one or more fields.';
+          candidateMessage = 'Validation failed for one or more fields.';
           details = resObj['message'];
         }
         if (resObj['details'] !== undefined) {
           details = resObj['details'];
+        } else if (
+          Array.isArray(resObj['formErrors']) ||
+          (typeof resObj['fieldErrors'] === 'object' && resObj['fieldErrors'] !== null)
+        ) {
+          details = {
+            ...(Array.isArray(resObj['formErrors']) ? { formErrors: resObj['formErrors'] } : {}),
+            ...(typeof resObj['fieldErrors'] === 'object' && resObj['fieldErrors'] !== null
+              ? { fieldErrors: resObj['fieldErrors'] }
+              : {}),
+          };
+          candidateMessage ??= extractFlattenedValidationMessage(resObj);
         }
+      }
+
+      if (
+        !candidateMessage &&
+        statusCode < HttpStatus.INTERNAL_SERVER_ERROR &&
+        !/^(Http|Bad Request|Unauthorized|Forbidden|Not Found|Conflict) Exception$/i.test(
+          exception.message,
+        )
+      ) {
+        candidateMessage = exception.message;
+      }
+
+      // CONFLICT-RESOLVED: Giữ nguyên thông điệp lỗi 4xx an toàn (không chứa SQL/stacktrace) thay vì bị ghi đè thành thông báo lỗi 500 nội bộ.
+      if (statusCode < HttpStatus.INTERNAL_SERVER_ERROR) {
+        message =
+          candidateMessage && isSafeClientMessage(candidateMessage)
+            ? candidateMessage
+            : fallbackClientMessage(statusCode);
+      } else if (
+        statusCode === HttpStatus.SERVICE_UNAVAILABLE &&
+        candidateMessage &&
+        isSafeClientMessage(candidateMessage)
+      ) {
+        message = candidateMessage;
       }
 
       // Default errorCode based on standard HTTP status codes if not explicitly set

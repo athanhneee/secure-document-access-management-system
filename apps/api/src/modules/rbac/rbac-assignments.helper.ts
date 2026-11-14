@@ -24,6 +24,45 @@ type PrismaClient = ReturnType<typeof getDatabaseClient>;
 type RoleLookupClient = Pick<PrismaClient, 'userRole'>;
 
 /**
+ * Thuật toán: Xác định quản trị viên hệ thống tối cao (`SYSTEM_ADMIN` toàn cục kèm quyền `ROLE_MANAGE` toàn cục).
+ * Chỉ khi người thực hiện nắm giữ đồng thời vai trò `SYSTEM_ADMIN` đang hiệu lực và quyền `ROLE_MANAGE` ở phạm vi
+ * `scopeDepartmentId === null`, hệ thống mới cho phép cấp phát/thu hồi vai trò nghiệp vụ hoặc đặc quyền cho nhân sự
+ * khác mà không bị chặn bởi tập con `targetRolePermissions ⊆ actorPermissions` (do SoD đã gỡ `DOCUMENT_*` khỏi `SYSTEM_ADMIN`).
+ */
+async function isGlobalSystemAdminRoleManager(
+  authorization: AuthorizationService,
+  principal: AuthPrincipal,
+): Promise<boolean> {
+  if (typeof authorization.effectiveGrants === 'function') {
+    const grants = await authorization.effectiveGrants(principal.userId);
+    const hasGlobalSystemAdminRole = grants.some(
+      (grant) => grant.roleCode === 'SYSTEM_ADMIN' && grant.scopeDepartmentId === null,
+    );
+    const hasGlobalRoleManage = grants.some(
+      (grant) =>
+        grant.scopeDepartmentId === null &&
+        (grant.code === 'ROLE_MANAGE' || (grant.resource === 'ROLE' && grant.action === 'MANAGE')),
+    );
+    return hasGlobalSystemAdminRole && hasGlobalRoleManage;
+  }
+  if (!principal.roles.includes('SYSTEM_ADMIN')) {
+    return false;
+  }
+  if (typeof authorization.hasPermission === 'function') {
+    return authorization.hasPermission(principal, 'ROLE', 'MANAGE', { requireGlobal: true });
+  }
+  if (typeof authorization.assertPermission === 'function') {
+    try {
+      await authorization.assertPermission(principal, 'ROLE', 'MANAGE', { requireGlobal: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
  * Thuật toán: Gán vai trò có kiểm tra Phân tách Nhiệm vụ (SoD), phạm vi phòng ban và cưỡng chế thu hồi phiên thiếu MFA.
  */
 export async function executeAssignUserRole(
@@ -43,6 +82,7 @@ export async function executeAssignUserRole(
   if (principal.userId === userId) {
     throw new ForbiddenException('Administrators cannot assign roles to themselves.');
   }
+  const bypassDelegationSubset = await isGlobalSystemAdminRoleManager(authorization, principal);
   const id = await withSerializableTransaction(
     async (transaction) => {
       const [user, role] = await Promise.all([
@@ -73,11 +113,14 @@ export async function executeAssignUserRole(
           throw new ForbiddenException('Role scope must contain the target user department.');
         }
       }
-      await authorization.assertCanDelegate(
-        principal,
-        role.role_permissions.map((mapping) => mapping.permission_id),
-        input.scopeDepartmentId,
-      );
+      // CONFLICT-RESOLVED: Cho phép SYSTEM_ADMIN toàn cục có ROLE_MANAGE toàn cục cấp phát vai trò cho nhân sự khác (bởi SoD đã tách quyền nghiệp vụ khỏi SYSTEM_ADMIN), đồng thời giữ nguyên kiểm tra trần ủy quyền tập con cho mọi quản trị viên cấp thấp/custom role.
+      if (!bypassDelegationSubset) {
+        await authorization.assertCanDelegate(
+          principal,
+          role.role_permissions.map((mapping) => mapping.permission_id),
+          input.scopeDepartmentId,
+        );
+      }
       // CONFLICT-RESOLVED: Kiểm tra xung đột Phân tách Nhiệm vụ (SoD) theo cả mã vai trò lẫn tập quyền thực tế trên khoảng thời gian chồng lấp (HIGH-01).
       const overlappingAssignments = await transaction.userRole.findMany({
         where: {
@@ -157,6 +200,7 @@ export async function executeRevokeUserRole(
   if (principal.userId === userId) {
     throw new ForbiddenException('Administrators cannot revoke their own roles.');
   }
+  const bypassDelegationSubset = await isGlobalSystemAdminRoleManager(authorization, principal);
   await withSerializableTransaction(
     async (transaction) => {
       const assignment = await transaction.userRole.findFirst({
@@ -171,7 +215,7 @@ export async function executeRevokeUserRole(
       await authorization.assertPermission(principal, 'USER', 'MANAGE', {
         targetDepartmentId: assignment.scope_department_id,
       });
-      if (assignment.roles?.role_permissions) {
+      if (!bypassDelegationSubset && assignment.roles?.role_permissions) {
         await authorization.assertCanDelegate(
           principal,
           assignment.roles.role_permissions.map((mapping) => mapping.permission_id),
@@ -183,26 +227,16 @@ export async function executeRevokeUserRole(
         throw new ConflictException('Role assignment is already inactive.');
       }
       // CONFLICT-RESOLVED: Xóa trực tiếp bản ghi gán vai trò chưa đến giờ hiệu lực (`valid_from >= now`) để không vi phạm ràng buộc SQL `CHECK (valid_to IS NULL OR valid_to > valid_from)` (HIGH-12)
+      let afterSnapshot: ReturnType<typeof auditAssignmentSnapshot> | null = null;
       if (assignment.valid_from >= now) {
         await transaction.userRole.delete({ where: { id: assignmentId } });
-        await audit.record(
-          transaction,
-          {
-            action: 'USER_ROLE_REVOKED',
-            objectType: 'USER_ROLE',
-            objectId: assignmentId.toString(),
-            before: auditAssignmentSnapshot(assignment),
-            after: null,
-          },
-          principal,
-          context,
-        );
-        return;
+      } else {
+        const after = await transaction.userRole.update({
+          where: { id: assignmentId },
+          data: { valid_to: now },
+        });
+        afterSnapshot = auditAssignmentSnapshot(after);
       }
-      const after = await transaction.userRole.update({
-        where: { id: assignmentId },
-        data: { valid_to: now },
-      });
       await audit.record(
         transaction,
         {
@@ -210,7 +244,7 @@ export async function executeRevokeUserRole(
           objectType: 'USER_ROLE',
           objectId: assignmentId.toString(),
           before: auditAssignmentSnapshot(assignment),
-          after: auditAssignmentSnapshot(after),
+          after: afterSnapshot,
         },
         principal,
         context,

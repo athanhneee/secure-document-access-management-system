@@ -74,7 +74,7 @@ export function toWinAnsiSafeText(text: string): string {
 }
 
 /**
- * Algorithm: Hexadecimal RGB Color Normalization (`#RRGGBB` -> `[0, 1]^3`).
+ * Thuật toán: Chuẩn hóa mã màu thập lục phân `#RRGGBB` sang không gian màu thực `[0, 1]^3` cho `pdf-lib`.
  */
 export function parseHexColor(hex: string): { r: number; g: number; b: number } {
   const clean = hex.replace('#', '');
@@ -88,9 +88,9 @@ export function parseHexColor(hex: string): { r: number; g: number; b: number } 
 }
 
 /**
- * Algorithm: Forensic Identity Template Interpolation with Attribution Guardrail.
- * Replaces placeholders (`{fullName}`, `{employeeCode}`, `{documentCode}`, `{utcTimestamp}`, `{shortToken}`)
- * and enforces fallback composite attribution if the template omits user identity placeholders.
+ * Thuật toán: Nội suy mẫu định danh pháp chứng kèm chốt chặn bảo toàn danh tính người nhận.
+ * Thay thế các biến giữ chỗ (`{fullName}`, `{employeeCode}`, `{documentCode}`, `{utcTimestamp}`, `{shortToken}`)
+ * với `{shortToken}` giữ nguyên tiền tố chuẩn `WM-<12hex>` (15 ký tự), và tự động áp mẫu đầy đủ nếu mẫu thiếu định danh người dùng.
  */
 export function formatForensicWatermarkText(
   template: string,
@@ -104,7 +104,8 @@ export function formatForensicWatermarkText(
   const documentCode = document.documentCode?.trim() || document.id.slice(0, 8);
   const utcTimestamp = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
   const classification = document.classificationName || 'CONFIDENTIAL';
-  const shortToken = token.replace(/^WM-/, '').slice(0, 12);
+  // CONFLICT-RESOLVED: Giữ nguyên tiền tố WM- trên {shortToken} (WM-<12hex>, 15 ký tự) để đồng bộ với Live Canvas Preview trên /admin và bộ truy vết UC28.
+  const shortToken = `WM-${token.replace(/^WM-/i, '').slice(0, 12)}`;
 
   let text = template
     .replace(/\{\{(\w+)\}\}/g, '{$1}')
@@ -128,7 +129,7 @@ export function formatForensicWatermarkText(
 }
 
 /**
- * Algorithm: Error-Correction-Level-M PNG QR Code Encoding.
+ * Thuật toán: Sinh ảnh mã vạch hai chiều QR định dạng PNG với mức sửa lỗi `M` (khôi phục tối đa 15% dữ liệu hỏng).
  */
 export async function renderQrCodePngBuffer(payload: string): Promise<Buffer> {
   return QRCode.toBuffer(payload, {

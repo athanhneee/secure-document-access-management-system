@@ -1,12 +1,10 @@
 /**
  * @module GrantPipHelper
- * Thuật toán: Tổng hợp thuộc tính Điểm Thông tin Chính sách (PIP) cho chủ thể cá nhân, chủ thể vai trò
- * theo phép giao bảo thủ (`Lattice Meet`) dùng 3 truy vấn lô `in: holderIds` (loại bỏ hoàn toàn lỗi `3 * N` N+1)
- * và nhận diện mạng nội bộ tin cậy CIDR.
+ * Thuật toán: Tổng hợp thuộc tính Điểm Thông tin Chính sách (PIP) cho chủ thể cá nhân và chủ thể vai trò
+ * theo phép giao bảo thủ (`Lattice Meet`) dùng 3 truy vấn lô `in: holderIds` (loại bỏ hoàn toàn lỗi `3 * N` N+1),
+ * đồng bộ `EMPLOYMENT_STATUS` từ từ điển ABAC kèm fallback `user.status`.
  */
 import type { getDatabaseClient } from '@sda/database';
-import type { AppConfigService } from '../../config/config.service.js';
-import { cidrMatch } from '../abac/policy-engine.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -63,6 +61,8 @@ export async function fetchUserClearanceRank(
 
 /**
  * Thuật toán: Tổng hợp vector thuộc tính chủ thể cho động cơ đánh giá ABAC (`PIP Subject Attribute Builder`).
+ * Truy vấn đồng thời `PROJECT` và `EMPLOYMENT_STATUS` đang hiệu lực (`is_active: true`), ưu tiên `EMPLOYMENT_STATUS`
+ * từ từ điển ABAC (`value_code ?? value_text`) và giữ fallback `user?.status ?? null`.
  */
 export async function buildGrantSubjectAttributes(
   database: PrismaClient,
@@ -75,36 +75,53 @@ export async function buildGrantSubjectAttributes(
   });
   const clearanceRank = await fetchUserClearanceRank(database, userId, now);
   let projects: string[] = [];
+  let explicitEmploymentStatus: string | null = null;
   if (typeof database.userAttributeAssignment?.findMany === 'function') {
     const rows = (await database.userAttributeAssignment.findMany({
       where: {
         user_id: userId,
-        attribute_definitions: { code: 'PROJECT', is_active: true },
+        attribute_definitions: { code: { in: ['PROJECT', 'EMPLOYMENT_STATUS'] }, is_active: true },
         valid_from: { lte: now },
         AND: [
           { OR: [{ valid_to: null }, { valid_to: { gt: now } }] },
           { OR: [{ option_id: null }, { attribute_options: { is_active: true } }] },
         ],
       },
-      include: { attribute_options: true },
+      include: {
+        attribute_definitions: { select: { code: true, is_active: true } },
+        attribute_options: true,
+      },
     })) as RawAttrRow[];
-    projects = rows
-      .filter((a) => a.attribute_options?.is_active !== false)
-      .map((a) => a.attribute_options?.value_code ?? a.value_text)
-      .filter((v): v is string => typeof v === 'string' && v.length > 0)
-      .sort();
+    const projectValues: string[] = [];
+    for (const row of rows) {
+      if (
+        row.attribute_definitions?.is_active === false ||
+        row.attribute_options?.is_active === false
+      ) {
+        continue;
+      }
+      const val = row.attribute_options?.value_code ?? row.value_text;
+      if (typeof val !== 'string' || val.length === 0) continue;
+      if (row.attribute_definitions?.code === 'EMPLOYMENT_STATUS') {
+        explicitEmploymentStatus = val;
+      } else {
+        projectValues.push(val);
+      }
+    }
+    projects = projectValues.sort();
   }
   return {
     clearanceRank,
     departmentId: user?.department_id?.toString() ?? null,
-    employmentStatus: user?.status ?? null,
+    // CONFLICT-RESOLVED: Đồng bộ subject.employmentStatus giữa PIP cấp phát quyền và Từ điển ABAC, giữ fallback user.status.
+    employmentStatus: explicitEmploymentStatus ?? user?.status ?? null,
     projects,
   };
 }
 
 /**
  * Thuật toán: Tổng hợp thuộc tính chủ thể bảo thủ (`Lattice Meet`) cho cấp quyền theo vai trò `ROLE` bằng 3 truy vấn lô (`in: holderIds`).
- * Nạp đồng loạt người dùng, vai trò hiệu lực và thuộc tính `CLEARANCE_LEVEL` / `PROJECT` trong `O(1)` lượt truy vấn SQL.
+ * Nạp đồng loạt người dùng, vai trò hiệu lực và thuộc tính `CLEARANCE_LEVEL` / `PROJECT` / `EMPLOYMENT_STATUS` trong `O(1)` lượt truy vấn SQL.
  */
 export async function buildRoleGrantSubjectAttributes(
   database: PrismaClient,
@@ -162,7 +179,10 @@ export async function buildRoleGrantSubjectAttributes(
           user_id: { in: holderIds },
           valid_from: { lte: now },
           OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-          attribute_definitions: { code: { in: ['CLEARANCE_LEVEL', 'PROJECT'] }, is_active: true },
+          attribute_definitions: {
+            code: { in: ['CLEARANCE_LEVEL', 'PROJECT', 'EMPLOYMENT_STATUS'] },
+            is_active: true,
+          },
         },
         include: {
           attribute_definitions: { select: { code: true, is_active: true } },
@@ -174,6 +194,7 @@ export async function buildRoleGrantSubjectAttributes(
     const confirmedHolderKeys = new Set(activeRoleRows.map((r) => r.user_id.toString()));
     const userById = new Map(users.map((u) => [u.id.toString(), u]));
     const clearanceByUser = new Map<string, number>();
+    const employmentStatusByUser = new Map<string, string>();
     const projectsByUser = new Map<string, Set<string>>();
 
     for (const row of attrRows as RawAttrRow[]) {
@@ -185,6 +206,11 @@ export async function buildRoleGrantSubjectAttributes(
         const prev = clearanceByUser.get(uid);
         if (prev === undefined || opt.numeric_rank > prev)
           clearanceByUser.set(uid, opt.numeric_rank);
+      } else if (def?.code === 'EMPLOYMENT_STATUS') {
+        const statusVal = opt?.value_code ?? row.value_text;
+        if (typeof statusVal === 'string' && statusVal.length > 0) {
+          employmentStatusByUser.set(uid, statusVal);
+        }
       } else if (def?.code === 'PROJECT') {
         const code = opt?.value_code ?? row.value_text;
         if (typeof code === 'string' && code.length > 0) {
@@ -204,7 +230,7 @@ export async function buildRoleGrantSubjectAttributes(
       return {
         clearanceRank: clearanceByUser.get(key) ?? null,
         departmentId: user?.department_id?.toString() ?? null,
-        employmentStatus: user?.status ?? null,
+        employmentStatus: employmentStatusByUser.get(key) ?? user?.status ?? null,
         projects: [...(projectsByUser.get(key) ?? [])].sort(),
       };
     });
@@ -220,7 +246,16 @@ export async function buildRoleGrantSubjectAttributes(
   );
   const firstDept = holderProfiles[0]?.departmentId ?? null;
   const sharedDept = holderProfiles.every((p) => p.departmentId === firstDept) ? firstDept : null;
-  const allActive = holderProfiles.every((p) => p.employmentStatus === 'ACTIVE');
+  const firstEmploymentStatus = holderProfiles[0]?.employmentStatus ?? null;
+  const sharedEmploymentStatus =
+    firstEmploymentStatus !== null &&
+    holderProfiles.every((p) => p.employmentStatus === firstEmploymentStatus)
+      ? firstEmploymentStatus
+      : holderProfiles.every(
+            (p) => p.employmentStatus === 'ACTIVE' || p.employmentStatus === 'ACTIVE_STAFF',
+          )
+        ? 'ACTIVE'
+        : null;
   const sharedProjects = holderProfiles
     .slice(1)
     .reduce(
@@ -231,7 +266,7 @@ export async function buildRoleGrantSubjectAttributes(
   return {
     clearanceRank: Number.isFinite(minClearance) ? minClearance : 0,
     departmentId: sharedDept,
-    employmentStatus: allActive ? 'ACTIVE' : null,
+    employmentStatus: sharedEmploymentStatus,
     projects: sharedProjects,
     holderCount: holderIds.length,
   };
@@ -261,21 +296,4 @@ export function buildGrantResourceAttributes(
     category: classification?.business_categories?.code ?? null,
     status: document.status,
   };
-}
-
-/**
- * Thuật toán: Kiểm tra IP nguồn của yêu cầu có thuộc danh sách dải mạng nội bộ tin cậy `ABAC_TRUSTED_NETWORK_CIDRS`.
- */
-export function isTrustedClientNetwork(
-  config: AppConfigService | undefined,
-  clientIp: string,
-): boolean {
-  const rawTrustedCidrs =
-    typeof config?.get === 'function' ? config.get('ABAC_TRUSTED_NETWORK_CIDRS') : undefined;
-  if (typeof rawTrustedCidrs !== 'string' || rawTrustedCidrs.length === 0) return false;
-  return rawTrustedCidrs
-    .split(',')
-    .map((c) => c.trim())
-    .filter(Boolean)
-    .some((cidr) => cidrMatch(clientIp, cidr));
 }

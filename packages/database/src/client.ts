@@ -85,10 +85,14 @@ export function buildPgPoolConfig(connectionString?: string): ResolvedPgConfig {
   const configuredMax = Number(process.env['DATABASE_POOL_MAX'] ?? '10');
   const max = Number.isFinite(configuredMax) && configuredMax > 0 ? Math.floor(configuredMax) : 10;
 
+  // CONFLICT-RESOLVED: Bật TCP Keep-Alive và `query_timeout` trên `pg.PoolConfig` chống treo socket nửa mở (half-open TCP stall) qua L4 Proxy đám mây (Railway/AWS).
   const poolConfig: pg.PoolConfig = {
     max,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
+    query_timeout: 45_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
   };
 
   const ca = resolveCustomCaCertificate(process.env['DATABASE_CA_CERT']);

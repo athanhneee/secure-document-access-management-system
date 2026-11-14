@@ -1,3 +1,9 @@
+/**
+ * @module SecurityAlertsService
+ * Thuật toán: Quản lý cảnh báo an ninh SOC — truy vấn phân trang nhìn trước `pageSize + 1` theo phạm vi phòng ban,
+ * kiểm chứng chuyển đổi máy trạng thái hữu hạn (`OPEN <-> INVESTIGATING -> RESOLVED | FALSE_POSITIVE`),
+ * tự động chuyển sang `INVESTIGATING` khi phân công cán bộ xử lý hoặc ghi chú điều tra và ghi nhật ký chuỗi băm.
+ */
 import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import {
@@ -42,7 +48,7 @@ export class SecurityAlertsService {
   }
 
   /**
-   * Algorithm: Lookahead Paginated Security Alert Query (`pageSize + 1` slice).
+   * Thuật toán: Truy vấn danh sách cảnh báo an ninh phân trang nhìn trước (`pageSize + 1`) có giới hạn phạm vi phòng ban.
    */
   async listAlerts(
     query: QuerySecurityAlertsInput,
@@ -85,6 +91,9 @@ export class SecurityAlertsService {
     };
   }
 
+  /**
+   * Thuật toán: Nạp chi tiết cảnh báo an ninh kèm tối đa 50 nhật ký kiểm toán liên kết và danh sách biên bản sự cố.
+   */
   async getAlertById(id: string, actor?: AuthPrincipal): Promise<AlertDetail> {
     await assertAlertInDepartmentScope(this.database, this.authorization, actor, id, 'VIEW');
     const alert = await this.database.securityAlert.findUnique({
@@ -134,7 +143,7 @@ export class SecurityAlertsService {
   }
 
   /**
-   * Algorithm: State-Machine Validated Security Alert Status Mutation.
+   * Thuật toán: Cập nhật trạng thái cảnh báo theo đồ thị chuyển trạng thái hợp lệ và bắt buộc ghi chú khi đóng cảnh báo.
    */
   async updateAlertStatus(
     id: string,
@@ -175,7 +184,7 @@ export class SecurityAlertsService {
   }
 
   /**
-   * Algorithm: Auto-Triage Security Alert Assignment (`OPEN` -> `INVESTIGATING`).
+   * Thuật toán: Phân công cán bộ SOC phụ trách cảnh báo và tự động nâng trạng thái từ `OPEN` sang `INVESTIGATING`.
    */
   async assignAlert(
     id: string,
@@ -220,7 +229,7 @@ export class SecurityAlertsService {
   }
 
   /**
-   * Algorithm: Append-Only Timestamped Investigation Note Accrual.
+   * Thuật toán: Ghi nối tiếp dòng nhật ký điều tra có gắn dấu thời gian ISO-8601 vào mô tả cảnh báo (`Append-Only Note`).
    */
   async addAlertNote(id: string, note: string, actor: AuthPrincipal): Promise<AlertDetail> {
     await assertAlertInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
@@ -251,6 +260,9 @@ export class SecurityAlertsService {
     return this.getAlertById(id, actor);
   }
 
+  /**
+   * Thuật toán: Tải bản ghi cảnh báo bắt buộc tồn tại trước khi cập nhật trạng thái hoặc phân công.
+   */
   private async requireAlert(id: string) {
     const alert = await this.database.securityAlert.findUnique({ where: { id } });
     if (!alert) {

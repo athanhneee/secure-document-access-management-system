@@ -241,6 +241,18 @@ export class AbacRepository {
         }
       }
     }
+    let explicitEmploymentStatus: string | null = null;
+    for (const assignment of activeAssignments) {
+      if (
+        assignment.attribute_definitions.code === 'EMPLOYMENT_STATUS' &&
+        assignment.attribute_options?.is_active !== false
+      ) {
+        const val = assignment.attribute_options?.value_code ?? assignment.value_text;
+        if (typeof val === 'string' && val.length > 0) {
+          explicitEmploymentStatus = val;
+        }
+      }
+    }
     const projects = activeAssignments
       .filter(
         (assignment) =>
@@ -256,7 +268,8 @@ export class AbacRepository {
       subject: {
         clearanceRank: highestClearanceRank,
         departmentId: user.department_id?.toString() ?? null,
-        employmentStatus: user.status,
+        // CONFLICT-RESOLVED: Ưu tiên thuộc tính từ điển ABAC EMPLOYMENT_STATUS đang hiệu lực, giữ fallback user.status để tương thích ngược.
+        employmentStatus: explicitEmploymentStatus ?? user.status,
         projects,
       },
       resource: {

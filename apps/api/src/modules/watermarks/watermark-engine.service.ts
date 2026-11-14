@@ -1,7 +1,8 @@
 /**
- * Module: Multi-Layer Forensic PDF Watermark Engine Service
- * Algorithm: Overlays diagonal repeating attribution text, top/bottom security banners, and QR codes
- *   across PDF pages (`pdf-lib`), enforces fail-closed denial on mandated watermark errors, and extracts 1-indexed pages.
+ * @module WatermarkEngineService
+ * Thuật toán: Động cơ đóng dấu thủy vân pháp chứng đa lớp trên tài liệu PDF (`pdf-lib`) — làm phẳng trường biểu mẫu tương tác,
+ * phủ lưới văn bản định danh nghiêng lặp lại, dải cảnh báo đầu/cuối trang, mã QR góc phải dưới và nhúng `watermarkToken`
+ * (`WM-<48hex>`) vào metadata/catalog PDF không nén để cổng ICAP DLP phát hiện rò rỉ mạng 100%, kèm chốt chặn fail-closed.
  */
 import {
   BadRequestException,
@@ -11,7 +12,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import crypto, { randomUUID } from 'node:crypto';
-import { degrees, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { degrees, PDFDocument, PDFName, PDFString, rgb, StandardFonts } from 'pdf-lib';
 import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import {
@@ -45,14 +46,14 @@ export class WatermarkEngineService {
   }
 
   /**
-   * Algorithm: 192-Bit CSPRNG Watermark Token Generation (`WM-<48-hex>`)
+   * Thuật toán: Sinh mã định danh thủy vân ngẫu nhiên mật mã 192-bit (`WM-<48-hex>`).
    */
   generateWatermarkToken(): string {
     return generateCryptographicWatermarkToken();
   }
 
   /**
-   * Algorithm: Forensic Attribution Template Interpolation
+   * Thuật toán: Nội suy chuỗi văn bản định danh người nhận, mã tài liệu, dấu thời gian UTC và mã rút gọn `WM-<12-hex>`.
    */
   formatWatermarkText(
     template: string,
@@ -65,16 +66,16 @@ export class WatermarkEngineService {
   }
 
   /**
-   * Algorithm: Error-Correction-M QR Code PNG Generation
+   * Thuật toán: Tạo bộ đệm ảnh PNG chứa mã vạch QR mức sửa lỗi `M` phục vụ đóng dấu góc trang.
    */
   async generateQrCodeBuffer(payload: string): Promise<Buffer> {
     return renderQrCodePngBuffer(payload);
   }
 
   /**
-   * Algorithm: Multi-Layer PDF Forensic Watermark Overlay with Fail-Closed Guard
-   * Renders diagonal text lattice, top/bottom banners, and corner verification QR code onto every page;
-   * throws `ForbiddenException(WATERMARK_GENERATION_FAILED)` if rendering fails on a watermark-mandated document.
+   * Thuật toán: Phủ thủy vân pháp chứng đa lớp lên toàn bộ trang PDF kết hợp nhúng siêu dữ liệu ASCII không nén cho ICAP DLP.
+   * Thực hiện làm phẳng trường biểu mẫu AcroForm, vẽ lưới chữ chéo, dải cảnh báo đầu/cuối trang, mã QR góc phải dưới,
+   * gắn `watermarkToken` vào `Keywords`/`Subject`/`Catalog` và xuất với `useObjectStreams: false`; từ chối fail-closed nếu lỗi.
    */
   async applyWatermarkToPdf(
     pdfBuffer: Buffer,
@@ -170,7 +171,15 @@ export class WatermarkEngineService {
         }
       }
 
-      const watermarkedBuffer = Buffer.from(await pdfDoc.save());
+      // CONFLICT-RESOLVED: Nhúng watermarkToken (WM-<48hex>) vào Keywords, Subject và từ điển Catalog không nén (useObjectStreams: false) để luồng byte PDF luôn chứa chuỗi ASCII WM-<48hex> cho ICAP DLP phát hiện 100%.
+      pdfDoc.setKeywords([watermarkToken]);
+      pdfDoc.setSubject(`ForensicWatermark:${watermarkToken}`);
+      pdfDoc.catalog.set(
+        PDFName.of('ForensicWatermark'),
+        PDFString.of(`ForensicWatermark:${watermarkToken}`),
+      );
+
+      const watermarkedBuffer = Buffer.from(await pdfDoc.save({ useObjectStreams: false }));
       const outputSha256Hash = crypto.createHash('sha256').update(watermarkedBuffer).digest('hex');
 
       await this.recordMetric((performance.now() - start) / 1000, true);
@@ -189,7 +198,7 @@ export class WatermarkEngineService {
   }
 
   /**
-   * Algorithm: 1-Indexed Single-Page PDF Sub-Document Extraction
+   * Thuật toán: Trích xuất một trang đơn lẻ theo chỉ số bắt đầu từ `1` thành tài liệu PDF con độc lập phục vụ xem trước từng trang.
    */
   async extractPdfPage(pdfBuffer: Buffer, pageNumber: number): Promise<Buffer> {
     const srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
@@ -209,6 +218,9 @@ export class WatermarkEngineService {
     return Buffer.from(await subDoc.save());
   }
 
+  /**
+   * Thuật toán: Ghi nhận bản ghi đối chiếu pháp chứng `watermark_instances` gắn với phiên truy cập, phiên bản tài liệu và băm đầu ra SHA-256.
+   */
   async recordWatermarkInstance(params: {
     watermarkConfigId: bigint;
     accessSessionId: string;
@@ -234,10 +246,16 @@ export class WatermarkEngineService {
     });
   }
 
+  /**
+   * Thuật toán: Phân giải cấu hình thủy vân hiệu lực theo thứ bậc độ mật hoặc cấu hình mặc định hệ thống.
+   */
   async getWatermarkConfig(classificationLevelId?: bigint | null): Promise<WatermarkConfigData> {
     return resolveWatermarkConfig(this.database, classificationLevelId);
   }
 
+  /**
+   * Thuật toán: Ghi nhận số liệu độ trễ và tỷ lệ thành công kết xuất thủy vân sang Prometheus `MetricsService`.
+   */
   private async recordMetric(
     durationSeconds: number,
     success: boolean,

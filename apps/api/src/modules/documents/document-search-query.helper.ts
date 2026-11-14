@@ -1,8 +1,8 @@
 /**
- * Module: Document Search SQL Query Builder & Mapper Helper
- * Algorithm: Parameterized 4-branch visibility predicate with Bell-LaPadula clearance rank cap,
- *   hybrid PostgreSQL FTS (`to_tsvector`/`plainto_tsquery`) + trigram (`similarity`) matching,
- *   and `LIMIT pageSize + 1` lookahead pagination without disclosing hidden counts.
+ * @module DocumentSearchQueryHelper
+ * Thuật toán: Xây dựng mệnh đề truy vấn tìm kiếm tài liệu tham số hóa 4 nhánh hiển thị (chủ sở hữu, quyền `DISCOVER`
+ * phòng ban, cấp quyền `USER`, cấp quyền `ROLE`) kết hợp trần độ mật Bell-LaPadula, tìm kiếm lai FTS + Trigram
+ * và phân trang nhìn trước `LIMIT pageSize + 1` chống lộ tổng số bản ghi ẩn.
  */
 import { BadRequestException } from '@nestjs/common';
 import { type getDatabaseClient, Prisma } from '@sda/database';
@@ -17,6 +17,9 @@ export interface SearchResultItem {
   departmentName: string;
   classificationLevelName: string | null;
   classificationLevelCode: string | null;
+  businessCategoryId: string | null;
+  businessCategoryCode: string | null;
+  businessCategoryName: string | null;
   allowDownload: boolean;
   createdAt: string;
   updatedAt: string;
@@ -57,8 +60,7 @@ export interface GrantedDocumentsResult {
 const FORBIDDEN_PATTERN = /[*?[\]{}\\^$|]/g;
 
 /**
- * Algorithm: Search Query Sanitization & Wildcard Stripping
- * Enforces 200-character ceiling and strips regex/wildcard metacharacters.
+ * Thuật toán: Làm sạch từ khóa tìm kiếm, chặn vượt quá 200 ký tự và loại bỏ ký tự đại diện biểu thức chính quy.
  */
 export function sanitizeSearchQuery(query: string | undefined): string | undefined {
   if (!query) return undefined;
@@ -125,8 +127,7 @@ export function resolveFailClosedAllowDownload(
 }
 
 /**
- * Algorithm: Subject Bell-LaPadula Clearance Lookup
- * Resolves the highest active `CLEARANCE_LEVEL` numeric rank for `userId` (defaults Fail-Closed to `0` when missing).
+ * Thuật toán: Truy vấn thứ bậc độ mật Bell-LaPadula (`CLEARANCE_LEVEL`) cao nhất còn hiệu lực của chủ thể (mặc định Fail-Closed bằng `0`).
  */
 export async function queryUserClearanceRank(
   database: ReturnType<typeof getDatabaseClient>,
@@ -161,8 +162,8 @@ export async function queryUserClearanceRank(
 }
 
 /**
- * Algorithm: 4-Branch Disjunctive Visibility & Hybrid FTS/Trigram WHERE Builder
- * Combines owner, department `DISCOVER`, direct `USER` grant, and `ROLE` grant clauses with Bell-LaPadula rank filter.
+ * Thuật toán: Tổng hợp mệnh đề `WHERE` hiển thị 4 nhánh (chủ sở hữu, quyền `DISCOVER` phòng ban, cấp quyền `USER`, cấp quyền `ROLE`)
+ * kết hợp bộ lọc trần độ mật Bell-LaPadula và tìm kiếm lai FTS / Trigram.
  */
 export function buildSearchWhereClause(params: {
   userId: bigint;

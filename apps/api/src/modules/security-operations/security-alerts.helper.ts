@@ -1,3 +1,8 @@
+/**
+ * @module SecurityAlertsHelper
+ * Thuật toán: Xây dựng vị từ lọc cảnh báo đa tiêu chí, kiểm chứng máy trạng thái hữu hạn của cảnh báo SOC
+ * (`VALID_ALERT_TRANSITIONS`), cưỡng chế ghi chú giải trình tối thiểu 5 ký tự khi đóng cảnh báo và ánh xạ DTO chi tiết.
+ */
 import { BadRequestException } from '@nestjs/common';
 import type { Prisma, alert_status, severity_level } from '@sda/database';
 import {
@@ -55,7 +60,7 @@ const VALID_ALERT_TRANSITIONS: Record<alert_status, alert_status[]> = {
 };
 
 /**
- * Algorithm: Multi-Predicate Security Alert Filter Construction.
+ * Thuật toán: Tổng hợp bộ lọc Prisma `SecurityAlertWhereInput` từ tập tham số truy vấn trạng thái, mức độ và khoảng thời gian.
  */
 export function buildSecurityAlertsWhere(
   query: QuerySecurityAlertsInput,
@@ -78,9 +83,8 @@ export function buildSecurityAlertsWhere(
 }
 
 /**
- * Algorithm: Finite-State Alert Transition & Mandatory Resolution Note Validation.
- * Enforces allowed directed edges on `alert_status` and requires ≥5-char `resolutionNote`
- * whenever transitioning into `RESOLVED` or `FALSE_POSITIVE`.
+ * Thuật toán: Kiểm chứng cạnh chuyển đổi trạng thái hợp lệ trên đồ thị `VALID_ALERT_TRANSITIONS` và bắt buộc
+ * `resolutionNote` tối thiểu 5 ký tự khi chuyển sang `RESOLVED` hoặc `FALSE_POSITIVE`.
  */
 export function validateAlertStatusTransition(
   currentStatus: alert_status,
@@ -136,6 +140,9 @@ interface BaseAlertRow {
   _count?: { alert_audit_links: number } | null;
 }
 
+/**
+ * Thuật toán: Ánh xạ dòng bản ghi `security_alerts` cơ sở sang cấu trúc phản hồi `AlertDetail` chuẩn hóa.
+ */
 export function mapAlertBaseDetail(a: BaseAlertRow): AlertDetail {
   return {
     id: a.id,
@@ -169,6 +176,9 @@ export function mapAlertBaseDetail(a: BaseAlertRow): AlertDetail {
   };
 }
 
+/**
+ * Thuật toán: Mở rộng `AlertDetail` kèm danh sách nhật ký kiểm toán liên kết (`alert_audit_links`) và biên bản sự cố (`incident_reports`).
+ */
 export function mapAlertFullDetail(
   alert: BaseAlertRow & {
     alert_audit_links?: Array<{

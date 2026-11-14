@@ -1,6 +1,8 @@
 /**
- * Module: Safe Sandboxed Office-to-PDF Converter Service
- * Thuật toán: Quét An Ninh Gói OOXML Trước Chuyển Đổi Kết Hợp Chạy Đua Hạn Giờ (`Promise.race`) Qua Gotenberg Kèm Bộ Dựng PDF Dự Phòng.
+ * @module OfficeConverterService
+ * Thuật toán: Chuyển đổi tài liệu Office (`.docx`, `.xlsx`, `.pptx`) sang PDF an toàn trong môi trường cô lập —
+ * kiểm tra an ninh cấu trúc lưu trữ OOXML trước khi xử lý, chạy đua thời hạn cứng (`Promise.race` `timeoutMs`)
+ * qua dịch vụ Gotenberg/LibreOffice headless và tự động chuyển sang bộ dựng PDF văn bản thuần dự phòng khi cần.
  */
 import { GatewayTimeoutException, Injectable, Logger, Optional } from '@nestjs/common';
 import { AppErrorCode } from '@sda/contracts';
@@ -36,8 +38,8 @@ export class OfficeConverterService {
   }
 
   /**
-   * Algorithm: Deadline-Bounded Safe Office-to-PDF Conversion
-   * Races `performSafeConversion` against a hard `timeoutMs` timer raising `OFFICE_CONVERSION_TIMEOUT`.
+   * Thuật toán: Chuyển đổi tài liệu Office sang PDF có ràng buộc thời hạn cứng (`Promise.race`).
+   * Ném `GatewayTimeoutException(OFFICE_CONVERSION_TIMEOUT)` ngay khi thời gian xử lý vượt ngưỡng `timeoutMs`.
    */
   async convertOfficeToPdf(
     officeBuffer: Buffer,
@@ -62,6 +64,10 @@ export class OfficeConverterService {
     ]);
   }
 
+  /**
+   * Thuật toán: Thực thi tuần tự quy trình kiểm định an ninh gói nén OOXML, ưu tiên kết xuất qua Gotenberg
+   * và rơi về bộ phân trang văn bản thuần `renderSanitizedTextToPdf` nếu Gotenberg không khả dụng.
+   */
   private async performSafeConversion(
     officeBuffer: Buffer,
     filename: string,

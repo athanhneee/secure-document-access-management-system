@@ -1,8 +1,8 @@
 /**
  * @module WatermarkForensicsHelper
- * Thuật toán: Truy vết ngược nguồn gốc rò rỉ tài liệu từ cả mã đầy đủ `WM-<48-hex>` (khớp chính xác)
- * lẫn tiền tố hiển thị 15 ký tự `WM-<12-hex>` (`startsWith` giới hạn `take: 2`, báo xung đột `AMBIGUOUS_WATERMARK_TOKEN`
- * nếu trùng 2 bản ghi) kèm kiểm soát phạm vi phòng ban và ghi nhật ký `WATERMARK_TRACE_PERFORMED`.
+ * Thuật toán: Truy vết ngược nguồn gốc rò rỉ tài liệu hỗ trợ tiền tố `WM-<12..47-hex>` (độ dài 15..50 ký tự,
+ * tìm `startsWith` giới hạn `take: 2`, báo xung đột `AMBIGUOUS_WATERMARK_TOKEN` nếu trùng nhiều bản ghi) và khớp chính xác
+ * khi đủ 51 ký tự `WM-<48-hex>`, kèm ghi nhật ký `WATERMARK_TRACE_PERFORMED` cho cả kết quả `SUCCESS` lẫn `DENIED` (`404`).
  */
 import {
   ConflictException,
@@ -13,7 +13,7 @@ import {
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AuditWriterService } from '../audit/audit-writer.service.js';
-import type { AuthPrincipal } from '../auth/auth.types.js';
+import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -54,7 +54,8 @@ export interface WatermarkVerificationResult {
   };
 }
 
-const SHORT_WATERMARK_TOKEN_REGEX = /^WM-[0-9a-f]{12}$/iu;
+const PREFIX_WATERMARK_TOKEN_REGEX = /^WM-[0-9a-f]{12,47}$/iu;
+const HEX_WATERMARK_TOKEN_REGEX = /^WM-[0-9a-f]{12,64}$/iu;
 
 const FORENSIC_INSTANCE_INCLUDE = {
   users: {
@@ -86,7 +87,8 @@ const FORENSIC_INSTANCE_INCLUDE = {
 } as const;
 
 /**
- * Thuật toán: Đối soát sổ cái thủy vân hỗ trợ đồng thời mã đầy đủ `WM-<48-hex>` và tiền tố ngắn `WM-<12-hex>`.
+ * Thuật toán: Đối soát sổ cái thủy vân hỗ trợ tiền tố `WM-<12..47-hex>` (15..50 ký tự), khớp chính xác `WM-<48-hex>` (51 ký tự),
+ * và ghi nhật ký `WATERMARK_TRACE_PERFORMED` với `outcome: 'DENIED'` + `reasonCode: 'WATERMARK_TOKEN_NOT_FOUND'` khi trả `404`.
  */
 export async function traceWatermarkToken(
   database: PrismaClient,
@@ -95,6 +97,7 @@ export async function traceWatermarkToken(
   token: string,
   actor?: AuthPrincipal,
   authorization?: AuthorizationService,
+  context?: Partial<RequestContext>,
 ): Promise<WatermarkVerificationResult> {
   if (authorization && !actor) {
     throw new ForbiddenException({
@@ -102,8 +105,32 @@ export async function traceWatermarkToken(
       message: 'Authenticated principal is required for watermark forensic attribution.',
     });
   }
-  const normalizedToken = token.trim();
+  const rawTrimmed = token.trim();
+  const normalizedToken = HEX_WATERMARK_TOKEN_REGEX.test(rawTrimmed)
+    ? `WM-${rawTrimmed.slice(3).toLowerCase()}`
+    : rawTrimmed;
   logger.log(`Verifying watermark token: ${normalizedToken.slice(0, 11)}...`);
+
+  const recordNotFoundAudit = async (scopeMasked = false): Promise<void> => {
+    if (!auditWriter) return;
+    await auditWriter.writeLog(
+      {
+        actorUserId: actor?.userId ?? null,
+        actorUsername: actor?.username ?? null,
+        action: 'WATERMARK_TRACE_PERFORMED',
+        objectType: 'WATERMARK_INSTANCE',
+        objectId: null,
+        outcome: 'DENIED',
+        reasonCode: AppErrorCode.WATERMARK_TOKEN_NOT_FOUND,
+        chainPartition: 'ACCESS_SESSION',
+        details: {
+          queriedToken: normalizedToken,
+          ...(scopeMasked ? { scopeRestricted: true } : {}),
+        },
+      },
+      context,
+    );
+  };
 
   const findExactInstance = () =>
     database.watermarkInstance.findUnique({
@@ -112,9 +139,11 @@ export async function traceWatermarkToken(
     });
   type ForensicInstanceRecord = Awaited<ReturnType<typeof findExactInstance>>;
   let instance: ForensicInstanceRecord = null;
+  // CONFLICT-RESOLVED: Mở rộng truy vấn tiền tố startsWith cho mọi normalizedToken hợp lệ dài 15..50 ký tự (WM- + 12..47 hex), chỉ tìm khớp chính xác khi đủ 51 ký tự (WM- + 48 hex).
   if (
-    normalizedToken.length === 15 &&
-    SHORT_WATERMARK_TOKEN_REGEX.test(normalizedToken) &&
+    normalizedToken.length >= 15 &&
+    normalizedToken.length <= 50 &&
+    PREFIX_WATERMARK_TOKEN_REGEX.test(normalizedToken) &&
     typeof database.watermarkInstance?.findMany === 'function'
   ) {
     const matches = await database.watermarkInstance.findMany({
@@ -136,6 +165,7 @@ export async function traceWatermarkToken(
   }
 
   if (!instance) {
+    await recordNotFoundAudit(false);
     throw new NotFoundException({
       errorCode: AppErrorCode.WATERMARK_TOKEN_NOT_FOUND,
       message: 'Watermark token was not found in the reconciliation registry.',
@@ -193,6 +223,7 @@ export async function traceWatermarkToken(
         docWithClass.department_id !== undefined &&
         visibleDepts.includes(docWithClass.department_id);
       if (!inScope || isTopSecret) {
+        await recordNotFoundAudit(true);
         throw new NotFoundException({
           errorCode: AppErrorCode.WATERMARK_TOKEN_NOT_FOUND,
           message: 'Watermark token was not found in the reconciliation registry.',
@@ -202,23 +233,26 @@ export async function traceWatermarkToken(
   }
 
   if (auditWriter && actor) {
-    await auditWriter.writeLog({
-      actorUserId: actor.userId,
-      actorUsername: actor.username,
-      action: 'WATERMARK_TRACE_PERFORMED',
-      objectType: 'WATERMARK_INSTANCE',
-      objectId: typedInstance.id,
-      documentId: docWithClass.id,
-      accessSessionId: typedInstance.access_sessions.id,
-      outcome: 'SUCCESS',
-      chainPartition: 'ACCESS_SESSION',
-      details: {
-        watermarkToken: typedInstance.watermark_token,
-        queriedToken: normalizedToken,
-        tracedUserId: typedInstance.users.id.toString(),
-        tracedUsername: typedInstance.users.username,
+    await auditWriter.writeLog(
+      {
+        actorUserId: actor.userId,
+        actorUsername: actor.username,
+        action: 'WATERMARK_TRACE_PERFORMED',
+        objectType: 'WATERMARK_INSTANCE',
+        objectId: typedInstance.id,
+        documentId: docWithClass.id,
+        accessSessionId: typedInstance.access_sessions.id,
+        outcome: 'SUCCESS',
+        chainPartition: 'ACCESS_SESSION',
+        details: {
+          watermarkToken: typedInstance.watermark_token,
+          queriedToken: normalizedToken,
+          tracedUserId: typedInstance.users.id.toString(),
+          tracedUsername: typedInstance.users.username,
+        },
       },
-    });
+      context,
+    );
   }
 
   const classificationName = activeLevel?.code ?? activeLevel?.name ?? null;

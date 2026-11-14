@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
-import type { AuthPrincipal } from '../auth/auth.types.js';
+import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
 import {
   traceWatermarkToken,
@@ -238,6 +238,7 @@ export class WatermarksService {
   async verifyWatermarkToken(
     token: string,
     actor?: AuthPrincipal,
+    context?: Partial<RequestContext>,
   ): Promise<WatermarkVerificationResult> {
     return traceWatermarkToken(
       this.database,
@@ -246,6 +247,7 @@ export class WatermarksService {
       token,
       actor,
       this.authorization,
+      context,
     );
   }
 }

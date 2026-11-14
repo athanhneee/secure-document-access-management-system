@@ -16,6 +16,9 @@ const sharedRedactor = new AuditRedactionService();
 const UUID_V1_TO_V5_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * Thuật toán: Đọc an toàn biến môi trường cấu hình khóa HMAC kiểm toán, trả `undefined` nếu chưa khai báo.
+ */
 function safeConfigKey(
   config: AppConfigService,
   key:
@@ -80,10 +83,6 @@ export function resolveActiveAuditKey(config: AppConfigService): {
 } {
   const ring = resolveAuditKeyRing(config);
   return { hmacKey: ring.activeKey, keyVersion: ring.activeVersion };
-}
-
-export function resolveAuditHmacKey(config: AppConfigService): string {
-  return resolveAuditKeyRing(config).activeKey;
 }
 
 /**

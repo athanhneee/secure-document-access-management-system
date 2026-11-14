@@ -83,6 +83,10 @@ export class WatermarksController {
     );
   }
 
+  /**
+   * Thuật toán: Chuẩn hóa tham số mã thủy vân (tự động bù tiền tố `WM-` nếu truyền chuỗi hex thuần 12..48 ký tự)
+   * trước khi kiểm định lược đồ `WatermarkTokenParamSchema` và chuyển tiếp ngữ cảnh truy vết pháp chứng UC28.
+   */
   @Get('verify/:token')
   @RequirePermission('WATERMARK_INSTANCE', 'TRACE')
   @ApiOperation({
@@ -97,10 +101,22 @@ export class WatermarksController {
     @Req() request: FastifyRequest,
   ): Promise<WatermarkVerificationResult> {
     if (!request.auth) throw new UnauthorizedException('Authentication required.');
-    const parsed = WatermarkTokenParamSchema.safeParse({ token });
+    const trimmed = typeof token === 'string' ? token.trim() : '';
+    // CONFLICT-RESOLVED: Tự động chuẩn hóa chuỗi hex thuần 12..48 ký tự thành WM-<hex> chữ thường nhưng vẫn từ chối định dạng sai như 'WM-short' hoặc 'NOT-WM-ffff'.
+    const candidateToken = /^[a-fA-F0-9]{12,48}$/u.test(trimmed)
+      ? `WM-${trimmed.toLowerCase()}`
+      : trimmed;
+    const parsed = WatermarkTokenParamSchema.safeParse({ token: candidateToken });
     if (!parsed.success) {
       throw new BadRequestException(parsed.error.flatten());
     }
-    return this.watermarksService.verifyWatermarkToken(parsed.data.token, request.auth);
+    return this.watermarksService.verifyWatermarkToken(parsed.data.token, request.auth, {
+      ...(request.ip ? { ip: request.ip } : {}),
+      userAgent:
+        typeof request.headers?.['user-agent'] === 'string'
+          ? request.headers['user-agent']
+          : undefined,
+      ...(request.correlationId ? { correlationId: request.correlationId } : {}),
+    });
   }
 }

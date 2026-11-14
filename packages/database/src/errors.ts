@@ -1,3 +1,10 @@
+/**
+ * Module: Chuẩn Hóa & Phân Loại Lỗi Cơ Sở Dữ Liệu Không Rò Rỉ SQL (`@sda/database`)
+ * Thuật toán: Duyệt Cây Nguyên Nhân Giới Hạn Độ Sâu & Ánh Xạ Mã Lỗi SQLSTATE/Prisma An Toàn (`Bounded-Depth Error Taxonomy Mapper`).
+ *   - Trích xuất mã lỗi chuẩn (`code`, `sqlState`, `originalCode`) tối đa 3 tầng nhân quả (`cause`, `driverAdapterError`) để tránh vòng lặp tham chiếu.
+ *   - Phân tách lỗi xung đột giao dịch có thể thử lại (`P2034`, `40001` serialization failure, `40P01` deadlock) với lỗi ràng buộc toàn vẹn (`23xxx`, `P2002..P2004`), không tìm thấy (`P2025`) và mất kết nối (`57P01..57P03`).
+ *   - Tuyệt đối không phơi bày câu lệnh SQL gốc, tên bảng nội bộ hoặc thông điệp driver ra ngoài thông báo lỗi.
+ */
 import { Prisma } from './generated/prisma/client.js';
 
 export type SafeDatabaseErrorCode =
@@ -50,7 +57,7 @@ export class DatabaseUnavailableError extends DatabaseError {
 const retryableTransactionCodes = new Set(['P2034', '40001', '40P01']);
 
 /**
- * Thuật toán: Duyệt cây nguyên nhân lỗi giới hạn độ sâu `depth <= 3` để trích xuất mã lỗi Prisma / PostgreSQL SQLSTATE.
+ * Thuật toán: Duyệt đệ quy cây nguyên nhân lỗi giới hạn độ sâu `depth <= 3` để trích xuất mã lỗi Prisma hoặc PostgreSQL `SQLSTATE`.
  */
 function extractDatabaseCode(error: unknown, depth = 0): string | undefined {
   if (depth > 3 || typeof error !== 'object' || error === null) return undefined;
@@ -65,12 +72,16 @@ function extractDatabaseCode(error: unknown, depth = 0): string | undefined {
   return undefined;
 }
 
-/** Covers Prisma's portable conflict code and PostgreSQL serialization/deadlock SQLSTATEs. */
+/**
+ * Thuật toán: Kiểm tra nhanh `O(1)` xem lỗi giao dịch có thuộc tập xung đột tuần tự hóa / khóa chết cho phép thử lại (`P2034`, `40001`, `40P01`) hay không.
+ */
 export function isRetryableTransactionError(error: unknown): boolean {
   return retryableTransactionCodes.has(extractDatabaseCode(error) ?? '');
 }
 
-/** Distinguishes driver/Prisma failures from application exceptions thrown inside a transaction. */
+/**
+ * Thuật toán: Phân biệt lỗi tầng vận hành cơ sở dữ liệu (Prisma/PostgreSQL driver) với ngoại lệ nghiệp vụ do ứng dụng chủ động ném bên trong giao dịch.
+ */
 export function isDatabaseOperationError(error: unknown): boolean {
   if (error instanceof DatabaseError) return true;
   if (
@@ -86,8 +97,7 @@ export function isDatabaseOperationError(error: unknown): boolean {
 }
 
 /**
- * Maps only stable error codes; raw SQL, driver messages and metadata are never exposed.
- * Thuật toán: Ánh xạ phân loại mã lỗi SQLSTATE/Prisma sang miền lỗi an toàn không rò rỉ câu lệnh SQL gốc.
+ * Thuật toán: Ánh xạ tất định mã lỗi `SQLSTATE` / Prisma sang hệ phân loại `DatabaseError` chuẩn hóa mà không làm lộ siêu dữ liệu nhạy cảm của truy vấn.
  */
 export function mapDatabaseError(error: unknown): DatabaseError {
   if (error instanceof DatabaseError) return error;

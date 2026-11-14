@@ -1,6 +1,7 @@
 /**
  * @module AuthSessionsManagementHelper
- * Algorithm: Active Device Session Enumeration, Selective Peer-Session Revocation & Targeted Session Termination.
+ * Thuật toán: Liệt kê phiên thiết bị đang hoạt động kèm trạng thái xác thực MFA (`mfaVerified`),
+ * thu hồi chọn lọc các phiên song song khác và chấm dứt phiên chỉ định có kiểm định UUID.
  */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
@@ -21,10 +22,11 @@ export interface ActiveAuthSessionItem {
   lastSeenAt: string;
   expiresAt: string;
   isCurrent: boolean;
+  mfaVerified: boolean;
 }
 
 /**
- * Thuật toán: Liệt kê các phiên đăng nhập đang hoạt động chưa hết hạn của người dùng và đánh dấu phiên hiện tại (`isCurrent`).
+ * Thuật toán: Liệt kê các phiên đăng nhập đang hoạt động chưa hết hạn của người dùng kèm cờ `isCurrent` và `mfaVerified`.
  */
 export async function queryActiveUserSessions(
   database: PrismaClient,
@@ -48,6 +50,7 @@ export async function queryActiveUserSessions(
     lastSeenAt: row.last_seen_at.toISOString(),
     expiresAt: row.expires_at.toISOString(),
     isCurrent: row.id === currentSessionId,
+    mfaVerified: Boolean((row as { mfa_verified_at?: Date | null }).mfa_verified_at),
   }));
 }
 

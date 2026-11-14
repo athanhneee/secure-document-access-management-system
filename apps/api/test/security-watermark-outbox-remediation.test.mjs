@@ -12,6 +12,7 @@ import { PDFDocument } from 'pdf-lib';
 import { PolicyCache } from '../dist/modules/abac/policy-cache.js';
 import { NotificationsService } from '../dist/modules/notifications/notifications.service.js';
 import { WatermarkEngineService } from '../dist/modules/watermarks/watermark-engine.service.js';
+import { WatermarksController } from '../dist/modules/watermarks/watermarks.controller.js';
 import {
   assertHighClassificationWatermarkIntegrity,
   WatermarksService,
@@ -154,4 +155,71 @@ test('Watermarks shortToken trace, SECRET QR guard, PDF flatten, Notifications 5
   assert.equal(await policyCache.getCachedPolicyEpoch(), 12n);
   await policyCache.invalidate('12');
   assert.equal(await policyCache.getCachedPolicyEpoch(), null);
+
+  // Verify {shortToken} keeps WM-<12hex>, 16-hex prefix trace works, 404 writes DENIED WATERMARK_TRACE_PERFORMED audit,
+  // controller normalizes bare hex, and stamped PDF contains ASCII WM-<48hex> for ICAP DLP detection
+  assert.ok(stamped.watermarkedBuffer.toString('utf8').includes(fullToken));
+  const engineText = new WatermarkEngineService().formatWatermarkText(
+    '{username} | {shortToken}',
+    { id: 1n, username: 'u1' },
+    { id: randomUUID(), title: 'Doc', requireWatermark: true },
+    fullToken,
+  );
+  assert.ok(engineText.includes('WM-aabbccddeeff'));
+
+  const deniedAudits = [];
+  const wm404Svc = new WatermarksService(
+    {
+      watermarkInstance: {
+        findMany: async () => [],
+        findUnique: async () => null,
+      },
+    },
+    { writeLog: async (ev) => deniedAudits.push(ev) },
+  );
+  await assert.rejects(() =>
+    wm404Svc.verifyWatermarkToken('WM-aabbccddeeff0011', {
+      userId: 5n,
+      sessionId: 's-5',
+      username: 'sec.officer',
+      roles: ['SECURITY_OFFICER'],
+      mfa: true,
+    }),
+  );
+  assert.equal(deniedAudits.length, 1);
+  assert.equal(deniedAudits[0].action, 'WATERMARK_TRACE_PERFORMED');
+  assert.equal(deniedAudits[0].outcome, 'DENIED');
+  assert.equal(deniedAudits[0].reasonCode, 'WATERMARK_TOKEN_NOT_FOUND');
+
+  let receivedVerifyToken = null;
+  const wmCtrl = new WatermarksController(
+    {
+      verifyWatermarkToken: async (tok) => {
+        receivedVerifyToken = tok;
+        return { verified: true };
+      },
+    },
+    { assertRequest: () => {} },
+  );
+  await wmCtrl.verifyWatermarkToken('AABBCCDDEEFF0011', {
+    auth: { userId: 5n, sessionId: 's-5', username: 'sec', roles: ['SECURITY_OFFICER'], mfa: true },
+    ip: '127.0.0.1',
+    headers: {},
+  });
+  assert.equal(receivedVerifyToken, 'WM-aabbccddeeff0011');
+  await assert.rejects(
+    () =>
+      wmCtrl.verifyWatermarkToken('WM-short', {
+        auth: {
+          userId: 5n,
+          sessionId: 's-5',
+          username: 'sec',
+          roles: ['SECURITY_OFFICER'],
+          mfa: true,
+        },
+        ip: '127.0.0.1',
+        headers: {},
+      }),
+    BadRequestException,
+  );
 });

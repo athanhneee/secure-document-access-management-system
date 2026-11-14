@@ -1,6 +1,8 @@
 /**
- * Module: Document Ingestion Transactional Version Persistence Helper
- * Thuật toán: Cấp Phát Số Phiên Bản Tuần Tự Qua Khóa Kép (`Redlock` + `SELECT ... FOR UPDATE`) & Kiểm Định Độ Mật Chủ Sở Hữu.
+ * @module IngestionVersionHelper
+ * Thuật toán: Lưu trữ nguyên tử siêu dữ liệu phiên bản tài liệu qua cơ chế khóa kép (`Redlock` phân tán + khóa dòng
+ * PostgreSQL `SELECT ... FOR UPDATE`), cấp phát số phiên bản tuần tự `max(version_no) + 1`, kiểm định trần độ mật
+ * Bell-LaPadula của người tải lên và thực thi toàn bộ truy vấn bên trong giao dịch qua `tx` chống tự khóa chết Pool.
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -15,8 +17,8 @@ import type { IngestDocumentInput } from './ingestion-validation.helper.js';
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Algorithm: Dual-Lock Atomic Document Version Persistence
- * Acquires optional Redlock (`document:version:<id>`) and PostgreSQL `FOR UPDATE` row lock to compute `max(version_no) + 1`.
+ * Thuật toán: Ghi nhận phiên bản tài liệu đã quét sạch mã độc trong giao dịch nguyên tử khóa kép (`Redlock` + `FOR UPDATE`).
+ * Sử dụng nhất quán `tx` cho mọi thao tác đọc/ghi trong `$transaction` để loại bỏ nguy cơ cạn kiệt kết nối tự khóa chết (Self-Deadlock).
  */
 export async function persistCleanIngestedVersion(params: {
   database: PrismaClient;
@@ -133,11 +135,13 @@ export async function persistCleanIngestedVersion(params: {
             });
           }
         }
+        // CONFLICT-RESOLVED: Truy vấn qua client giao dịch tx thay vì pool gốc database bên trong $transaction để chống tự khóa chết Pool (Self-Deadlock).
+        const txClient = tx as unknown as PrismaClient;
         if (
           input.classificationLevelId &&
-          typeof database?.classificationLevel?.findUnique === 'function'
+          typeof txClient?.classificationLevel?.findUnique === 'function'
         ) {
-          const level = await database.classificationLevel.findUnique({
+          const level = await txClient.classificationLevel.findUnique({
             where: { id: input.classificationLevelId },
           });
           if (!level || !level.is_active) {
@@ -146,8 +150,8 @@ export async function persistCleanIngestedVersion(params: {
               message: 'Target classification level does not exist or is inactive.',
             });
           }
-          if (typeof database?.userAttributeAssignment?.findFirst === 'function') {
-            const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
+          if (typeof txClient?.userAttributeAssignment?.findFirst === 'function') {
+            const rank = await getUserClearanceRank(txClient, input.principal.userId, new Date());
             if (rank < level.rank) {
               throw new ForbiddenException({
                 errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
@@ -171,17 +175,18 @@ export async function persistCleanIngestedVersion(params: {
         });
         finalVersionNo = 1;
       } else {
+        const txClient = tx as unknown as PrismaClient;
         if (
-          typeof database?.documentClassificationHistory?.findFirst === 'function' &&
-          typeof database?.userAttributeAssignment?.findFirst === 'function'
+          typeof txClient?.documentClassificationHistory?.findFirst === 'function' &&
+          typeof txClient?.userAttributeAssignment?.findFirst === 'function'
         ) {
-          const currentClass = await database.documentClassificationHistory.findFirst({
+          const currentClass = await txClient.documentClassificationHistory.findFirst({
             where: { document_id: targetDocId, effective_to: null },
             include: { classification_levels: true },
           });
           const existingRank = currentClass?.classification_levels?.rank ?? 0;
           if (existingRank > 0) {
-            const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
+            const rank = await getUserClearanceRank(txClient, input.principal.userId, new Date());
             if (rank < existingRank) {
               throw new ForbiddenException({
                 errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,

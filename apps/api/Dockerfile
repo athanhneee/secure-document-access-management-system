@@ -1,4 +1,4 @@
-# ── Stage 1: Build & Dependencies ─────────────────────────────────────────────
+# ── Stage 1: Build & Isolated Production Deploy ──────────────────────────────
 FROM node:24.14.1-alpine3.23 AS builder
 
 WORKDIR /app
@@ -21,31 +21,48 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY apps/worker/package.json ./apps/worker/
 
-# Install all dependencies with hoisted linker for clean multi-stage copy
-RUN pnpm install --frozen-lockfile --config.node-linker=hoisted
+# Install workspace dependencies with strict lockfile verification
+RUN pnpm install --frozen-lockfile
 
-# Copy package sources
+# Copy only shared packages and API sources
 COPY packages/ ./packages/
 COPY apps/api/ ./apps/api/
 
-# Generate Prisma client and compile TypeScript
+# Generate Prisma client and compile TypeScript workspace chain
 RUN pnpm --filter @sda/database prisma:generate
 RUN pnpm --filter @sda/contracts build
 RUN pnpm --filter @sda/security build
 RUN pnpm --filter @sda/database build
 RUN pnpm --filter @sda/api build
 
-# Prune devDependencies for minimal production bundle
-RUN pnpm prune --prod --ignore-scripts --config.node-linker=hoisted && \
-    rm -rf /app/node_modules/@typescript /app/node_modules/typescript
+# Deploy ONLY @sda/api production runtime dependencies (excluding monorepo dev/web/test packages)
+RUN pnpm --filter @sda/api --prod deploy --legacy --ignore-scripts /prod/api && \
+    rm -rf /prod/api/dist && cp -R /app/apps/api/dist /prod/api/dist && \
+    if [ -d /prod/api/node_modules/@sda/contracts ]; then \
+      rm -rf /prod/api/node_modules/@sda/contracts/dist /prod/api/node_modules/@sda/contracts/src /prod/api/node_modules/@sda/contracts/test && \
+      cp -R /app/packages/contracts/dist /prod/api/node_modules/@sda/contracts/dist; \
+    fi && \
+    if [ -d /prod/api/node_modules/@sda/security ]; then \
+      rm -rf /prod/api/node_modules/@sda/security/dist /prod/api/node_modules/@sda/security/src /prod/api/node_modules/@sda/security/test && \
+      cp -R /app/packages/security/dist /prod/api/node_modules/@sda/security/dist; \
+    fi && \
+    if [ -d /prod/api/node_modules/@sda/database ]; then \
+      rm -rf /prod/api/node_modules/@sda/database/dist /prod/api/node_modules/@sda/database/test /prod/api/node_modules/@sda/database/prisma && \
+      cp -R /app/packages/database/dist /prod/api/node_modules/@sda/database/dist && \
+      if [ -d /app/packages/database/src/generated ]; then \
+        rm -rf /prod/api/node_modules/@sda/database/src && \
+        mkdir -p /prod/api/node_modules/@sda/database/src && \
+        cp -R /app/packages/database/src/generated /prod/api/node_modules/@sda/database/src/generated; \
+      fi; \
+    fi && \
+    rm -rf /prod/api/src /prod/api/test /prod/api/.turbo /prod/api/Dockerfile /prod/api/tsconfig*
 
 # ── Stage 2: Production Hardened Minimal Runner ──────────────────────────────
 FROM node:24.14.1-alpine3.23 AS runner
 
 WORKDIR /app
 
-# Security: Install dumb-init for proper PID 1 signal forwarding and pre-create shared export dir
-# CONFLICT-RESOLVED: Nâng cấp gói hệ thống Alpine (vá libcrypto3/libssl3) và gỡ bỏ npm/corepack/yarn khỏi ảnh runtime để vượt cổng quét lỗ hổng Trivy trên pipeline CD.
+# Upgrade Alpine packages (libcrypto3/libssl3) and strip npm/corepack/yarn from runtime image
 RUN apk upgrade --no-cache && \
     apk add --no-cache dumb-init wget && \
     rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn* && \
@@ -58,19 +75,9 @@ ENV NODE_ENV=production \
     PORT=3001 \
     HOST=0.0.0.0
 
-# Copy only built artifacts and production dependencies
-COPY --from=builder --chown=appuser:appgroup /app/package.json ./package.json
-COPY --from=builder --chown=appuser:appgroup /app/node_modules ./node_modules
-COPY --from=builder --chown=appuser:appgroup /app/packages/contracts/dist ./packages/contracts/dist
-COPY --from=builder --chown=appuser:appgroup /app/packages/contracts/package.json ./packages/contracts/package.json
-COPY --from=builder --chown=appuser:appgroup /app/packages/security/dist ./packages/security/dist
-COPY --from=builder --chown=appuser:appgroup /app/packages/security/package.json ./packages/security/package.json
-COPY --from=builder --chown=appuser:appgroup /app/packages/database/dist ./packages/database/dist
-COPY --from=builder --chown=appuser:appgroup /app/packages/database/package.json ./packages/database/package.json
-COPY --from=builder --chown=appuser:appgroup /app/apps/api/dist ./apps/api/dist
-COPY --from=builder --chown=appuser:appgroup /app/apps/api/package.json ./apps/api/package.json
+# Copy ONLY the isolated /prod/api deployment bundle
+COPY --from=builder --chown=appuser:appgroup /prod/api ./apps/api
 
-# Hardening: Run as non-root user
 USER 10001:10001
 
 EXPOSE 3001

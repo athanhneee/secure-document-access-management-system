@@ -1,4 +1,4 @@
-# ── Stage 1: Build & Dependencies ─────────────────────────────────────────────
+# ── Stage 1: Build Next.js Standalone Output ─────────────────────────────────
 FROM node:24.14.1-alpine3.23 AS builder
 
 WORKDIR /app
@@ -22,15 +22,15 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY apps/worker/package.json ./apps/worker/
 
-# Install dependencies with hoisted linker for clean multi-stage copy
-RUN pnpm install --frozen-lockfile --config.node-linker=hoisted
+# Install workspace dependencies with strict lockfile verification
+RUN pnpm install --frozen-lockfile
 
-# Copy package sources
+# Copy package and web sources
 COPY packages/ ./packages/
 COPY apps/web/ ./apps/web/
 RUN mkdir -p /app/apps/web/public
 
-# Build contracts and Next.js web application (same-origin /api/v1 proxied to internal API service)
+# Build contracts and Next.js standalone web bundle (same-origin /api/v1 proxied to internal API service)
 ARG NEXT_PUBLIC_API_BASE_URL=/api/v1
 ARG INTERNAL_API_ORIGIN=http://api:3001
 ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL} \
@@ -38,35 +38,26 @@ ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL} \
 RUN pnpm --filter @sda/contracts build
 RUN pnpm --filter @sda/web build
 
-# Prune devDependencies before copying into runner image
-RUN pnpm prune --prod --ignore-scripts --config.node-linker=hoisted && \
-    rm -rf /app/node_modules/@typescript /app/node_modules/typescript
-
-# ── Stage 2: Production Hardened Minimal Runner ──────────────────────────────
+# ── Stage 2: Production Hardened Standalone Runner ───────────────────────────
 FROM node:24.14.1-alpine3.23 AS runner
 
 WORKDIR /app
 
-# CONFLICT-RESOLVED: Nâng cấp gói hệ thống Alpine (vá libcrypto3/libssl3) và gỡ bỏ npm/corepack/yarn khỏi ảnh runtime để loại bỏ lỗ hổng phụ thuộc đóng gói sẵn khi quét Trivy CD.
+# Upgrade Alpine packages (libcrypto3/libssl3) and strip npm/corepack/yarn from runtime image
 RUN apk upgrade --no-cache && \
     apk add --no-cache dumb-init wget && \
     rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn*
 
-# Default INTERNAL_API_ORIGIN rewrites /api/v1/* to http://api:3001/api/v1/* out of the box
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
     INTERNAL_API_ORIGIN=http://api:3001
 
-COPY --from=builder --chown=node:node /app/package.json ./package.json
-COPY --from=builder --chown=node:node /app/node_modules ./node_modules
-COPY --from=builder --chown=node:node /app/packages/contracts/dist ./packages/contracts/dist
-COPY --from=builder --chown=node:node /app/packages/contracts/package.json ./packages/contracts/package.json
+# Copy ONLY Next.js standalone server output, static assets, and public directory
+COPY --from=builder --chown=node:node /app/apps/web/.next/standalone ./
+COPY --from=builder --chown=node:node /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder --chown=node:node /app/apps/web/public ./apps/web/public
-COPY --from=builder --chown=node:node /app/apps/web/.next ./apps/web/.next
-COPY --from=builder --chown=node:node /app/apps/web/next.config.ts ./apps/web/next.config.ts
-COPY --from=builder --chown=node:node /app/apps/web/package.json ./apps/web/package.json
 
 USER node
 
@@ -76,4 +67,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/ || exit 1
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
-CMD ["node", "node_modules/next/dist/bin/next", "start", "apps/web"]
+CMD ["node", "apps/web/server.js"]

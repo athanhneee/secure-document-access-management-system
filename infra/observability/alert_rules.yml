@@ -21,15 +21,15 @@ groups:
           summary: 'HTTP 5xx server error rate exceeds 1%'
           description: 'API is experiencing elevated server errors (current rate: {{ $value | humanizePercentage }}).'
 
-      # 3. Audit Trail Integrity Alert (Tampering detected!)
+      # 3. Audit Trail Integrity Alert (Tampering detected by either api OR worker!)
       - alert: AuditIntegrityCompromised
-        expr: increase(audit_verify_failures_total[5m]) > 0
+        expr: sum by (partition, job) (increase(sda_audit_integrity_compromised_total[5m])) > 0 or sum by (partition, job) (increase(audit_verify_failures_total[5m])) > 0
         for: 0s
         labels:
           severity: critical
         annotations:
           summary: 'CRITICAL: Audit log cryptographic verification failed'
-          description: 'A hash mismatch or sequence anomaly was detected in partition {{ $labels.partition }}. Immediate security investigation required.'
+          description: 'A hash mismatch or sequence anomaly was detected by {{ $labels.job }} in partition {{ $labels.partition }}. Immediate security investigation required.'
 
       # 4. Watermark Engine Failure Spike
       - alert: WatermarkFailureSpike
@@ -51,7 +51,17 @@ groups:
           summary: 'Export job queue backlog exceeds 50 items'
           description: 'Async export jobs are accumulating faster than workers can process.'
 
-      # 6. PDP Policy Evaluation Latency (> 50ms p95)
+      # 6. Worker Outbox Dead-Letter Alert
+      - alert: WorkerOutboxDeadLettered
+        expr: increase(sda_worker_outbox_dead_letter_total[5m]) > 0
+        for: 0s
+        labels:
+          severity: high
+        annotations:
+          summary: 'Notification outbox message moved to DEAD_LETTER queue'
+          description: 'One or more notification deliveries exhausted all retry attempts on @sda/worker.'
+
+      # 7. PDP Policy Evaluation Latency (> 50ms p95)
       - alert: HighPdpLatency
         expr: histogram_quantile(0.95, sum(rate(pdp_evaluation_duration_seconds_bucket[5m])) by (le)) > 0.05
         for: 3m
@@ -61,7 +71,7 @@ groups:
           summary: 'PDP access decision latency p95 > 50ms'
           description: 'ABAC engine evaluation latency is degrading (current p95: {{ $value | humanizeDuration }}).'
 
-      # 7. ClamAV Malware Quarantine Spike
+      # 8. ClamAV Malware Quarantine Spike
       - alert: InfectedUploadSpike
         expr: sum(rate(antivirus_scan_duration_seconds_count{result="INFECTED"}[10m])) > 0
         for: 0s

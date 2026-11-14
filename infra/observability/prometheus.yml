@@ -5,6 +5,10 @@ global:
 rule_files:
   - '/etc/prometheus/alert_rules.yml'
 
+# Production Bearer Token Convention (when METRICS_SCRAPE_TOKEN is enabled on api & worker):
+#   Mount the shared secret file at /etc/prometheus/secrets/metrics_scrape_token:ro (mode 0400)
+#   and enable `bearer_token_file: /etc/prometheus/secrets/metrics_scrape_token` (or `authorization.credentials_file`)
+#   under both `sda_api` and `sda_worker` scrape jobs below.
 scrape_configs:
   - job_name: prometheus
     static_configs:
@@ -14,8 +18,17 @@ scrape_configs:
     metrics_path: /api/v1/health/metrics
     scrape_interval: 10s
     scrape_timeout: 5s
+    # bearer_token_file: /etc/prometheus/secrets/metrics_scrape_token
     static_configs:
-      - targets: ['api:3001', 'host.docker.internal:3001']
+      - targets: ['api:4000', 'api:3001', 'host.docker.internal:4000', 'host.docker.internal:3001']
+
+  - job_name: sda_worker
+    metrics_path: /metrics
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    # bearer_token_file: /etc/prometheus/secrets/metrics_scrape_token
+    static_configs:
+      - targets: ['worker:9102', 'host.docker.internal:9102']
 
   - job_name: minio
     metrics_path: /minio/v2/metrics/cluster

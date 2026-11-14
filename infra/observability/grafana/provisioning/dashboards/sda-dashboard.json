@@ -195,7 +195,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(audit_verify_failures_total) or vector(0)",
+          "expr": "(sum(sda_audit_integrity_compromised_total) or vector(0)) + (sum(audit_verify_failures_total) or vector(0))",
           "legendFormat": "Violations"
         }
       ]

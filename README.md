@@ -21,17 +21,17 @@ Nền tảng quản trị, lưu trữ mã hóa và kiểm soát truy cập tài 
 
 ## 1. Tổng quan Công nghệ (Tech Stack)
 
-| Phân tầng               | Công nghệ & Phiên bản                                                                                      | Vai trò Kỹ thuật                                                                                       |
-| :---------------------- | :--------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------- |
-| **Runtime & Build**     | Node.js `>=24.14.0 <25` (ESM), TypeScript `7.0`, `pnpm@12.4.1`, Turborepo `2.10`                           | Quản lý workspace monorepo, kiểm tra kiểu dữ liệu nghiêm ngặt, điều phối build theo đồ thị phụ thuộc   |
-| **Backend API**         | NestJS `12.3`, Fastify `5.12`, Zod `4.6`, Swagger / OpenAPI                                                | Modular Monolith REST API (`/api/v1`), validation đầu vào nghiêm ngặt, Policy Decision/Enforcement     |
-| **Frontend Web**        | Next.js `16.4` (App Router), React `19.3`, Tailwind CSS `4.3`, `lucide-react`                              | 5 không gian làm việc biệt lập theo vai trò, trình dựng chính sách ABAC (DNF AST), xem tài liệu        |
-| **Background & DLP**    | Node.js Worker (`@sda/worker`), Native TCP Server (`RFC 3507`)                                             | 6 tiến trình nền định kỳ + máy chủ ICAP Network DLP lắng nghe cổng TCP `1344`                          |
-| **Cơ sở dữ liệu**       | PostgreSQL `18.6`, Prisma ORM `7.10` (`@prisma/adapter-pg`), PGlite `0.5` (WASM)                           | Lưu trữ dữ liệu quan hệ, giao dịch cô lập `SERIALIZABLE`, ràng buộc toàn vẹn cấp CSDL, kiểm thử cô lập |
-| **Bộ nhớ đệm & Khóa**   | Redis `8.2`, `ioredis` `6.0`, Custom Redlock + Lua Scripts                                                 | Lưu trữ phiên, bộ đệm quyền/chính sách, giới hạn tần suất (Rate Limit), khóa phân tán Quorum           |
-| **Lưu trữ & Xử lý Tệp** | S3-Compatible Object Storage (`pgsty/silo` local, `@aws-sdk/client-s3`), ClamAV `1.5`, Gotenberg `8.17`    | Lưu trữ đối tượng mã hóa, quét mã độc luồng TCP `INSTREAM`, chuyển đổi Office sang PDF, đóng dấu       |
-| **Mật mã & Xác thực**   | `node:crypto` (`AES-256-GCM`, `HKDF-SHA256`), `jose` (`EdDSA`/`Ed25519`), `argon2`, `@simplewebauthn` `14` | Mã hóa phong bì tài liệu, ký JWT bất đối xứng, băm mật khẩu Argon2id, xác thực TOTP & FIDO2            |
-| **Quan sát & Kiểm thử** | Prometheus `3.13`, Grafana `13.2`, Node Test Runner, Playwright `1.63`, Oxlint `1.82`                      | Thu thập metrics, cảnh báo vận hành, kiểm thử Unit / Integration / Infra / E2E                         |
+| Phân tầng               | Công nghệ & Phiên bản                                                                                      | Vai trò Kỹ thuật                                                                                            |
+| :---------------------- | :--------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------- |
+| **Runtime & Build**     | Node.js `>=24.14.0 <25` (ESM), TypeScript `7.0`, `pnpm@12.4.1`, Turborepo `2.10`                           | Quản lý workspace monorepo, kiểm tra kiểu dữ liệu nghiêm ngặt, điều phối build theo đồ thị phụ thuộc        |
+| **Backend API**         | NestJS `12.3`, Fastify `5.12`, Zod `4.6`, Swagger / OpenAPI                                                | Modular Monolith REST API (`/api/v1`), validation đầu vào nghiêm ngặt, Policy Decision/Enforcement          |
+| **Frontend Web**        | Next.js `16.4` (App Router), React `19.3`, Tailwind CSS `4.3`, `lucide-react`                              | 5 không gian làm việc biệt lập theo vai trò, trình dựng chính sách ABAC (DNF AST), xem tài liệu             |
+| **Background & DLP**    | Node.js Worker (`@sda/worker`), Native TCP Server (`RFC 3507`)                                             | 7 tiến trình nền định kỳ + máy chủ ICAP Network DLP lắng nghe cổng TCP `1344` + HTTP Health/Metrics `:9102` |
+| **Cơ sở dữ liệu**       | PostgreSQL `18.6`, Prisma ORM `7.10` (`@prisma/adapter-pg`), PGlite `0.5` (WASM)                           | Lưu trữ dữ liệu quan hệ, giao dịch cô lập `SERIALIZABLE`, ràng buộc toàn vẹn cấp CSDL, kiểm thử cô lập      |
+| **Bộ nhớ đệm & Khóa**   | Redis `8.2`, `ioredis` `6.0`, Custom Redlock + Lua Scripts                                                 | Lưu trữ phiên, bộ đệm quyền/chính sách, giới hạn tần suất (Rate Limit), khóa phân tán Quorum                |
+| **Lưu trữ & Xử lý Tệp** | S3-Compatible Object Storage (`pgsty/silo` local, `@aws-sdk/client-s3`), ClamAV `1.5`, Gotenberg `8.17`    | Lưu trữ đối tượng mã hóa, quét mã độc luồng TCP `INSTREAM`, chuyển đổi Office sang PDF, đóng dấu            |
+| **Mật mã & Xác thực**   | `node:crypto` (`AES-256-GCM`, `HKDF-SHA256`), `jose` (`EdDSA`/`Ed25519`), `argon2`, `@simplewebauthn` `14` | Mã hóa phong bì tài liệu, ký JWT bất đối xứng, băm mật khẩu Argon2id, xác thực TOTP & FIDO2                 |
+| **Quan sát & Kiểm thử** | Prometheus `3.13`, Grafana `13.2`, Node Test Runner, Playwright `1.63`, Oxlint `1.82`                      | Thu thập metrics, cảnh báo vận hành, kiểm thử Unit / Integration / Infra / E2E                              |
 
 ---
 
@@ -56,8 +56,8 @@ flowchart TB
     end
 
     subgraph WorkerLayer["apps/worker — Background Jobs & DLP Server (No Redis/S3/ClamAV Deps)"]
-        Jobs["Scheduled Jobs: GrantExpiry | DerivativeCleanup | ExportCleanup | AuditVerify | SOC Detection | Outbox"]
-        IcapSrv["ICAP Server (RFC 3507 - TCP 1344) + 5-Layer DLP Engine"]
+        Jobs["Scheduled Jobs: GrantExpiry | DerivativeCleanup | ExportProcessor | ExportCleanup | AuditVerify | SOC Detection | Outbox"]
+        IcapSrv["ICAP Server (RFC 3507 - TCP 1344) + 5-Layer DLP Engine + Health/Metrics (:9102)"]
     end
 
     subgraph InfraLayer["Tầng Lưu trữ & Hạ tầng Phụ trợ"]
@@ -93,9 +93,10 @@ flowchart TB
     Jobs --> LocalFS
     IcapSrv --> PG
     Obs -.->|"Metrics Scrape"| ApiLayer
+    Obs -.->|"Metrics Scrape (:9102)"| WorkerLayer
 ```
 
-> **Phân tách Phụ thuộc của `@sda/worker`**: Tiến trình `apps/worker` chỉ phụ thuộc vào `@sda/contracts` và `@sda/database` — kết nối duy nhất tới **PostgreSQL**, hệ thống tệp cục bộ (`os.tmpdir()` cho bản phái sinh tạm thời và `.local/exports` cho tệp xuất báo cáo bất đồng bộ) và mở cổng TCP `1344` cho máy chủ ICAP DLP. Worker **không** cài đặt hay kết nối tới Redis, S3 hay ClamAV.
+> **Phân tách Phụ thuộc của `@sda/worker`**: Tiến trình `apps/worker` chỉ phụ thuộc vào `@sda/contracts` và `@sda/database` — kết nối tới **PostgreSQL**, cổng SMTP nội bộ (cho `NotificationOutboxJob`), vùng lưu trữ tệp báo cáo dùng chung (`EXPORT_STORAGE_DIR` / `.local/exports`), mở cổng TCP `1344` cho máy chủ ICAP DLP và cổng HTTP `:9102` cho `/health` & `/metrics`. Worker **không** cài đặt hay nhận khóa truy cập tới Redis, S3, KMS (`APP_ENCRYPTION_MASTER_KEY`) hay ClamAV.
 
 ### Cấu trúc Không gian Làm việc (Workspace Topology)
 
@@ -104,7 +105,7 @@ secure-document-access-system/
 ├── apps/
 │   ├── api/                 # @sda/api — Backend REST API (17 domain modules, Fastify adapter)
 │   ├── web/                 # @sda/web — Giao diện người dùng Next.js 16 (5 role workspaces)
-│   └── worker/              # @sda/worker — 6 background jobs định kỳ & máy chủ ICAP DLP (TCP 1344)
+│   └── worker/              # @sda/worker — 7 background jobs định kỳ, máy chủ ICAP DLP (:1344) & Health/Metrics (:9102)
 ├── packages/
 │   ├── config/              # @sda/config — Cấu hình tsconfig nền tảng dùng chung
 │   ├── contracts/           # @sda/contracts — DTOs, Zod schemas, mã lỗi chuẩn hóa, hằng số phân quyền
@@ -169,9 +170,9 @@ sequenceDiagram
 3. **Giải mã & Biến đổi Phái sinh**:
    - Giải bọc DEK qua `KmsService`, xác thực thẻ `GCM Auth Tag` (128-bit) và kiểm tra đối chiếu `SHA-256` bản rõ.
    - Nếu là tệp Office (`.docx`, `.xlsx`, `.pptx`), chuyển tiếp qua dịch vụ **Gotenberg** (LibreOffice headless cô lập, chặn macro VBA và liên kết ngoài SSRF/XXE) để kết xuất sang PDF chuẩn hóa.
-4. **Đóng dấu Pháp chứng (`WatermarkEngineService`)**:
-   - Nhúng trực tiếp lớp văn bản chéo và mã QR chứa danh tính người đọc, địa chỉ IP, dấu thời gian UTC và mã định danh thủy ấn vào từng trang PDF phục vụ điều tra truy vết rò rỉ.
-   - Lưu tạm bản phái sinh có thời hạn tự hủy (`DERIVATIVE_TTL_MINUTES`) hoặc cấp vé tải ngắn hạn dùng một lần (`DOWNLOAD_TICKET_TTL_SECONDS`).
+4. **Đóng dấu Pháp chứng & Bộ đệm Phiên (`WatermarkEngineService` & `DerivativePdfCache`)**:
+   - Lưu bộ đệm PDF phiên bản đã giải mã/chuyển đổi dưới dạng mã hóa phong bì (`AES-256-GCM`) ngắn hạn trên bucket `STORAGE_BUCKET_DERIVATIVES` theo khóa phiên để tránh tải S3 và gọi Gotenberg lặp lại khi chuyển trang.
+   - Nhúng trực tiếp lớp văn bản chéo (khử dấu chuẩn hóa + `shortToken` truy vết được) và mã QR bắt buộc (fail-closed) chứa danh tính người đọc, địa chỉ IP, dấu thời gian UTC và mã định danh thủy ấn vào trang PDF mục tiêu, phẳng hóa biểu mẫu PDF và cấp vé tải ngắn hạn dùng một lần (`DOWNLOAD_TICKET_TTL_SECONDS`) có tái xác minh trạng thái phiên/tài khoản thời gian thực.
 
 ---
 
@@ -323,7 +324,7 @@ Toàn bộ cổng hạ tầng phát triển trong `infra/compose.yaml` chỉ g�
 
 ## 7. Tham chiếu Biến Môi trường
 
-Cấu hình ứng dụng được kiểm tra hợp lệ nghiêm ngặt lúc khởi động thông qua `apps/api/src/config/env.schema.ts` (Zod). Khi `NODE_ENV=production`, hệ thống áp dụng cơ chế **Fail-Fast**: từ chối khởi chạy nếu phát hiện bất kỳ giá trị mặc định/placeholder nào hoặc thiếu cặp khóa ký `Ed25519` được cấp từ bên ngoài.
+Cấu hình ứng dụng được kiểm tra hợp lệ nghiêm ngặt lúc khởi động thông qua `apps/api/src/config/env.schema.ts` (Zod). Khi `NODE_ENV=production` hoặc `NODE_ENV=staging`, hệ thống áp dụng cơ chế **Fail-Fast**: từ chối khởi chạy nếu phát hiện bất kỳ giá trị mặc định/placeholder nào, adapter KMS mô phỏng, cấu hình `TRUST_PROXY` số nguyên hop không an toàn, hoặc thiếu cặp khóa ký `Ed25519` được cấp từ bên ngoài.
 
 | Nhóm Cấu hình      | Biến Môi trường Tiêu biểu                                                                                                 | Mô tả & Quy tắc Ràng buộc                                                                                        |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------- |
@@ -367,8 +368,8 @@ Toàn bộ thay đổi mã nguồn phải vượt qua lệnh tổng hợp `pnpm 
   - `scripts/generate-dev-secrets.mjs`: Sinh khóa mật mã ngẫu nhiên cho môi trường phát triển vào `.local/dev.env` (`0600`).
   - `scripts/validate-database.mjs`: Kiểm định độc lập migration nền tảng và các ràng buộc bất biến CSDL bằng PGlite WASM.
   - `scripts/run-infra-tests.mjs`, `scripts/scan-secrets.mjs`, `scripts/check-licenses-sbom.mjs`, `scripts/check-toolchain.mjs`: Chạy kiểm thử hạ tầng thật (ClamAV/S3/API), quét rò rỉ khóa bí mật, kiểm tra giấy phép/SBOM và phiên bản Node.js/pnpm.
-- **Bộ Mô phỏng & Benchmark Cô lập trên RAM (`PGlite` In-Memory Harnesses)**:
-  - Bốn kịch bản `scripts/backup-restore.mjs`, `scripts/load-test.mjs`, `scripts/profile-queries.mjs` và `scripts/smoke-test.mjs` là các bộ kiểm chứng thuật toán tự thân khởi tạo thực thể `new PGlite()` tạm thời ngay trong bộ nhớ RAM với lược đồ rút gọn (1–6 bảng mẫu) rồi tự giải phóng khi kết thúc — **không** kết nối hay sao lưu/phục hồi trên cụm PostgreSQL, S3 hoặc API đang vận hành thực tế.
+- **Bộ Kiểm chứng Hạ tầng Thực tế & Dự phòng Cô lập (`PGlite` Fallback Harnesses)**:
+  - Bốn kịch bản `scripts/backup-restore.mjs`, `scripts/load-test.mjs`, `scripts/profile-queries.mjs` và `scripts/smoke-test.mjs` hỗ trợ kết nối trực tiếp tới cụm PostgreSQL (`DATABASE_URL`) và API đang vận hành khi chạy đối kiểm thực tế (`--live` hoặc có sẵn biến môi trường), đồng thời tự động chuyển sang chế độ kiểm chứng cô lập bằng `PGlite` trên RAM khi chạy offline/CI không có dịch vụ nền.
 
 ### 8.3. Đường ống CI/CD & Quét An ninh Tự động (`.github/workflows/`)
 
@@ -406,6 +407,6 @@ Hệ thống được thiết kế không phụ thuộc nhà cung cấp hạ t�
 
 - [`infra/README.md`](./infra/README.md): Quy tắc vận hành hạ tầng Docker Compose cục bộ, cơ chế bảo vệ dữ liệu volume và giám sát Prometheus / Grafana.
 - [`infra/compose.prod.yaml`](./infra/compose.prod.yaml): Đặc tả triển khai container cứng hóa (non-root, read-only rootfs, cô lập mạng và giới hạn tài nguyên hệ thống).
-- [`packages/database/prisma/schema/`](./packages/database/prisma/schema): Lược đồ Prisma đa tệp định nghĩa 39 bảng nghiệp vụ và 18 kiểu `ENUM` đồng bộ với 10 bản migration.
+- [`packages/database/prisma/schema/`](./packages/database/prisma/schema): Lược đồ Prisma đa tệp định nghĩa 39 bảng nghiệp vụ và 18 kiểu `ENUM` đồng bộ với 13 bản migration.
 - [`packages/contracts/`](./packages/contracts): Lược đồ kiểm tra đầu vào Zod, hằng số phân quyền RBAC/ABAC và danh mục mã lỗi chuẩn hóa toàn hệ thống.
 - [`.github/workflows/`](./.github/workflows): Định nghĩa đường ống CI, quét bảo mật tự động DevSecOps và phát hành container chuẩn SLSA.

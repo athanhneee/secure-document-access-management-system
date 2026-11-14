@@ -136,9 +136,19 @@ async function main() {
     case 'up': {
       run('docker', [...composeBase, 'config', '--quiet']);
       const isCi = process.env['CI'] === 'true';
-      // In CI environments, start core long-running daemon services and skip heavy ClamAV daemon
-      // (which has in-memory mock socket fallback in tests) and monitoring stack.
-      const targetServices = isCi ? ['postgres', 'redis', 'minio', 'gotenberg', 'mailpit'] : [];
+      const enableClamavInCi = process.env['ENABLE_CLAMAV_CI']?.trim().toLowerCase() === 'true';
+      // In CI environments, start core long-running daemon services and optionally include ClamAV
+      // when ENABLE_CLAMAV_CI=true for live malware-scan verification.
+      const targetServices = isCi
+        ? [
+            'postgres',
+            'redis',
+            'minio',
+            'gotenberg',
+            'mailpit',
+            ...(enableClamavInCi ? ['clamav'] : []),
+          ]
+        : [];
       run('docker', [
         ...composeBase,
         'up',

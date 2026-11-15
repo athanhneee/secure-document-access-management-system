@@ -46,7 +46,7 @@ test('Prisma migration deploy, idempotent seed, and ABAC version triggers are va
   const migrationCount = await database.query(
     'SELECT count(*)::int AS count FROM _prisma_migrations WHERE finished_at IS NOT NULL',
   );
-  assert.equal(migrationCount.rows[0].count, 12);
+  assert.equal(migrationCount.rows[0].count, 13);
 
   const abacEvolution = await database.query(
     `SELECT table_name,column_name FROM information_schema.columns
@@ -150,8 +150,8 @@ test('Prisma migration deploy, idempotent seed, and ABAC version triggers are va
     attribute_definitions: 15,
     clearance_options: 4,
     employment_status_options: 3,
-    departments: 2,
-    categories: 2,
+    departments: 5,
+    categories: 4,
     users: 6,
   });
   runPrisma(['db', 'seed'], targetUrl);

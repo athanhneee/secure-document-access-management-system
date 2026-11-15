@@ -71,7 +71,22 @@ async function adminQuery(sql) {
   }
 }
 
+const ALLOWED_EPHEMERAL_DB_HOSTS = new Set([
+  '127.0.0.1',
+  'localhost',
+  '::1',
+  '[::1]',
+  'postgres',
+  'host.docker.internal',
+]);
+
 export async function isDatabaseReachable() {
+  if (
+    !ALLOWED_EPHEMERAL_DB_HOSTS.has(String(sourceUrl.hostname ?? '').toLowerCase()) &&
+    process.env['ALLOW_REMOTE_TEST_DB_DROP'] !== 'true'
+  ) {
+    return false;
+  }
   const client = new pg.Client({
     connectionString: adminUrl.toString(),
     connectionTimeoutMillis: 1000,

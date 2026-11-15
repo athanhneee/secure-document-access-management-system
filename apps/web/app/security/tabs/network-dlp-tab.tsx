@@ -2,7 +2,7 @@
 
 import { AlertTriangle, Network, Search, ShieldCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import {
   Table,
@@ -40,37 +40,31 @@ export function NetworkDlpTab({
         : 'OFFLINE · TCP 1344';
 
   return (
-    <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
-      <CardHeader>
+    <Card>
+      <CardHeader className="pb-3">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div>
-            <CardTitle className="text-base text-[#222222] flex items-center gap-2">
-              <Network size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
-              <span>Cổng phòng chống thất thoát dữ liệu tầng mạng (Network DLP Gateway)</span>
-            </CardTitle>
-            <CardDescription className="text-xs text-[#717171] mt-1">
-              Tích hợp máy chủ ICAP Server (RFC 3507) kiểm tra luồng dữ liệu ra ngoài Internet
-              (Egress Traffic) kết nối thiết bị biên (Squid, Symantec, Forcepoint, F5)
-            </CardDescription>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <CardTitle className="text-sm sm:text-base text-[#222222] flex items-center gap-2">
+            <Network size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
+            <span>Network DLP Gateway (ICAP · TCP 1344)</span>
+          </CardTitle>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <Badge variant={healthBadgeVariant}>{healthLabel}</Badge>
             <Badge variant="danger">BLOCK VIOLATIONS</Badge>
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-4">
         <NetworkDlpOverview />
 
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-bold text-[#222222] uppercase tracking-wider">
-              Cảnh báo rò rỉ dữ liệu tầng mạng gần đây ({dlpAlerts.length})
+              Cảnh báo rò rỉ dữ liệu tầng mạng ({dlpAlerts.length})
             </h3>
-            <span className="text-xs text-[#717171]">Tự động đồng bộ từ sự kiện ICAP Gateway</span>
+            <span className="text-xs text-[#717171]">Đồng bộ từ ICAP Gateway</span>
           </div>
 
-          <div className="overflow-x-auto rounded-[16px] border border-[#ebebeb]">
+          <div className="rounded-[16px] border border-[#ebebeb] overflow-hidden">
             <Table>
               <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
                 <TableRow>
@@ -85,37 +79,29 @@ export function NetworkDlpTab({
               <TableBody>
                 {dlpAlerts.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-[#717171] text-xs">
+                    <TableCell colSpan={6} className="text-center py-7 text-[#717171] text-xs">
                       {gatewayHealth === 'ONLINE' ? (
-                        <div className="flex flex-col items-center justify-center gap-1.5">
+                        <div className="flex items-center justify-center gap-2">
                           <ShieldCheck
-                            size={24}
+                            size={20}
                             strokeWidth={1.75}
-                            className="text-[#008A05]"
+                            className="text-[#008A05] shrink-0"
                             aria-hidden="true"
                           />
                           <span className="font-medium text-[#222222]">
-                            Cổng Network DLP ICAP Server đang bảo vệ an toàn luồng dữ liệu Egress
-                          </span>
-                          <span className="text-xs text-[#717171]">
-                            Chưa ghi nhận sự cố rò rỉ dữ liệu mật hoặc khóa bí mật ra ngoài thiết bị
-                            biên.
+                            ICAP Gateway đang hoạt động · Chưa ghi nhận vi phạm Egress
                           </span>
                         </div>
                       ) : (
-                        <div className="flex flex-col items-center justify-center gap-1.5">
+                        <div className="flex items-center justify-center gap-2">
                           <AlertTriangle
-                            size={24}
+                            size={20}
                             strokeWidth={1.75}
-                            className="text-[#C13515]"
+                            className="text-[#C13515] shrink-0"
                             aria-hidden="true"
                           />
                           <span className="font-medium text-[#222222]">
-                            Trạng thái kết nối dịch vụ giám sát DLP đang suy giảm ({gatewayHealth})
-                          </span>
-                          <span className="text-xs text-[#717171]">
-                            Vui lòng kiểm tra kết nối máy chủ API / ICAP Gateway trước khi kết luận
-                            không có vi phạm.
+                            Kết nối dịch vụ DLP đang suy giảm ({gatewayHealth})
                           </span>
                         </div>
                       )}
@@ -153,7 +139,7 @@ export function NetworkDlpTab({
                       <TableCell className="text-xs text-[#717171]">
                         {new Date(alert.detectedAt).toLocaleString('vi-VN')}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right whitespace-nowrap">
                         <InteractiveHoverButton
                           size="sm"
                           variant="secondary"

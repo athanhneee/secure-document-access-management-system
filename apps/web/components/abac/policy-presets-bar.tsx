@@ -43,30 +43,23 @@ export function PolicyPresetsBar({
 }: PolicyPresetsBarProps) {
   return (
     <>
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] shadow-xs">
-        <div className="flex items-center gap-3">
-          {/* // CONFLICT-RESOLVED: Loại bỏ hộp tròn nền màu nhạt bg-[#FF385C]/10 bọc quanh icon Shield theo rules/ui-design-system.md. */}
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 p-4 rounded-[16px] border border-[#ebebeb] bg-[#ffffff]">
+        <div className="flex items-center gap-2.5 min-w-0">
           <Shield
-            size={24}
+            size={20}
             strokeWidth={1.75}
             className="text-[#FF385C] shrink-0"
             aria-hidden="true"
           />
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-[#222222]">
-                Trình Biên Tập Chính Sách ABAC Trực Quan (Visual Policy Builder)
-              </h2>
-              <Badge variant="info">No-Code DNF Engine</Badge>
-            </div>
-            <p className="text-xs text-[#717171]">
-              Kéo thả khối điều kiện logic phân cấp (Disjunctive Normal Form: OR groups → AND
-              conditions).
-            </p>
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <h2 className="text-sm sm:text-base font-bold text-[#222222]">
+              Trình biên tập chính sách ABAC
+            </h2>
+            <Badge variant="info">DNF Engine</Badge>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <Button
             type="button"
             variant="outline"

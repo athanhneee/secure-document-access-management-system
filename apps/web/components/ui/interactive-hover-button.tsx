@@ -96,9 +96,9 @@ const variantStyles: Record<InteractiveButtonVariant, VariantStyle> = {
 };
 
 const sizeStyles: Record<'sm' | 'md' | 'lg', string> = {
-  sm: 'min-h-11 sm:min-h-9 px-4 text-xs font-semibold min-w-[5.5rem]',
-  md: 'min-h-11 px-5 text-xs font-semibold min-w-[7rem]',
-  lg: 'min-h-11 px-6 text-sm font-semibold min-w-[8.5rem]',
+  sm: 'min-h-11 sm:min-h-8 px-3 text-xs font-semibold whitespace-nowrap',
+  md: 'min-h-11 sm:min-h-9 px-4 text-xs font-semibold whitespace-nowrap',
+  lg: 'min-h-11 px-5 text-sm font-semibold whitespace-nowrap',
 };
 
 /**
@@ -166,12 +166,13 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
       text || (typeof children === 'string' && children.trim() ? children : 'Button');
     const variantStyle: VariantStyle = variantStyles[variant] ?? variantStyles.primary;
     const sizeClass = sizeStyles[size] || sizeStyles.md;
-    const iconElement = icon || <ArrowRight size={16} strokeWidth={2} aria-hidden="true" />;
+    const hasLeadingIcon = Boolean(icon);
+    const showTrailingArrow = !hasLeadingIcon && Boolean(href);
 
     const innerContent = (
       <>
         {effectiveLoading ? (
-          <span className="inline-flex items-center justify-center gap-2">
+          <span className="inline-flex items-center justify-center gap-1.5">
             <Loader2
               size={16}
               strokeWidth={2}
@@ -181,14 +182,21 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
             <span>Đang xử lý…</span>
           </span>
         ) : (
-          <span className="inline-flex items-center justify-center gap-2">
+          <span className="inline-flex items-center justify-center gap-1.5">
+            {hasLeadingIcon && (
+              <span className="shrink-0 flex items-center" aria-hidden="true">
+                {icon}
+              </span>
+            )}
             <span className="truncate">{buttonText}</span>
-            <span
-              className="shrink-0 transition-transform duration-100 ease-out group-hover:translate-x-1"
-              aria-hidden="true"
-            >
-              {iconElement}
-            </span>
+            {showTrailingArrow && (
+              <span
+                className="shrink-0 transition-transform duration-100 ease-out group-hover:translate-x-0.5"
+                aria-hidden="true"
+              >
+                <ArrowRight size={16} strokeWidth={2} aria-hidden="true" />
+              </span>
+            )}
           </span>
         )}
       </>

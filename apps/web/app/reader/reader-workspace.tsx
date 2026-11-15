@@ -51,20 +51,13 @@ export function ReaderWorkspace() {
           errorMessage={catalog.errorMessage}
           onDismiss={() => catalog.setErrorMessage(null)}
         >
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="info">Document Reader</Badge>
-                  <span className="text-xs text-[#717171]">Phân hệ Người đọc</span>
-                </div>
-                <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="min-w-0">
+                <Badge variant="info">Document Reader</Badge>
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
                   Khám phá &amp; Đọc Tài liệu Mật
                 </h1>
-                <p className="text-xs text-[#717171]">
-                  Tìm kiếm danh mục tài liệu, gửi yêu cầu cấp quyền, xem trước an toàn và tải bản
-                  sao có watermark
-                </p>
               </div>
 
               <InteractiveHoverButton
@@ -81,6 +74,7 @@ export function ReaderWorkspace() {
                 }
                 onClick={() => void catalog.refreshData()}
                 disabled={catalog.isLoading}
+                className="shrink-0 self-start sm:self-auto"
               />
             </div>
 
@@ -108,8 +102,8 @@ export function ReaderWorkspace() {
               </Alert>
             )}
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-              <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3 h-auto min-h-11 rounded-[20px] p-1.5 sm:h-11 sm:rounded-full sm:p-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3.5">
+              <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto h-auto min-h-10 rounded-[18px] sm:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
                 <TabsTrigger
                   value="discover"
                   className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-1.5 px-1 sm:px-2"

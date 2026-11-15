@@ -62,57 +62,49 @@ export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGu
 
   if (!isRoleAllowed || !isPermissionAllowed) {
     return (
-      <div className="mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center p-6">
-        <Card className="w-full rounded-[28px] border border-[#C13515]/20 bg-[#ffffff] text-[#222222] shadow-[0_12px_40px_rgba(0,0,0,0.08)]">
+      <div className="mx-auto flex min-h-[65vh] max-w-lg flex-col items-center justify-center p-4">
+        <Card className="w-full rounded-[24px] border border-[#C13515]/25 bg-[#ffffff] text-[#222222] shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
           <CardHeader className="text-center pb-2">
-            <div className="mx-auto mb-3 flex items-center justify-center text-[#C13515]">
+            <div className="mx-auto mb-2 flex items-center justify-center text-[#C13515]">
               <Lock size={24} strokeWidth={1.75} aria-hidden="true" />
             </div>
-            <CardTitle className="text-2xl font-bold tracking-tight text-[#C13515]">
+            <CardTitle className="text-xl font-bold tracking-tight text-[#C13515]">
               403 · Truy cập bị từ chối
             </CardTitle>
-            <CardDescription className="text-[#717171] text-sm mt-1">
-              Quyền tối thiểu · Không đủ thẩm quyền truy cập không gian này
+            <CardDescription className="text-[#717171] text-xs mt-0.5">
+              Tài khoản hiện tại không có thẩm quyền truy cập phân hệ này
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6 pt-4 text-center">
-            <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4 text-left space-y-2 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[#222222]">
-                <span className="text-[#717171]">Tài khoản:</span>
-                <span className="font-bold text-[#222222]">
-                  {user.username} ({user.fullName})
-                </span>
+          <CardContent className="space-y-4 pt-3 text-center">
+            <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 text-left space-y-1.5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[#717171]">Tài khoản</span>
+                <span className="font-semibold text-[#222222]">{user.username}</span>
               </div>
               {requiredRole && (
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[#222222]">
-                  <span className="text-[#717171]">Vai trò yêu cầu:</span>
-                  <span className="font-semibold text-[#C13515]">
-                    {ROLE_LABELS[requiredRole]} ({requiredRole})
-                  </span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[#717171]">Vai trò yêu cầu</span>
+                  <span className="font-semibold text-[#C13515]">{ROLE_LABELS[requiredRole]}</span>
                 </div>
               )}
               {requiredPermission && (
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[#222222]">
-                  <span className="text-[#717171]">Thẩm quyền yêu cầu:</span>
-                  <span className="font-bold text-xs text-[#C13515]">{requiredPermission}</span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[#717171]">Quyền yêu cầu</span>
+                  <span className="font-semibold text-[#C13515]">{requiredPermission}</span>
                 </div>
               )}
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[#222222] pt-1 border-t border-[#ebebeb]">
-                <span className="text-[#717171]">Vai trò hiện có:</span>
-                <span className="text-xs text-[#222222]">
-                  {user.roles.length > 0 ? user.roles.join(', ') : 'Chưa gán vai trò'}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#ebebeb]">
+                <span className="text-[#717171]">Vai trò hiện có</span>
+                <span className="text-[#222222]">
+                  {user.roles.length > 0 ? user.roles.join(', ') : 'Chưa gán'}
                 </span>
               </div>
             </div>
 
-            <p className="text-xs text-[#717171] leading-relaxed">
-              Mọi nỗ lực truy cập vượt thẩm quyền đều được ghi lại vào nhật ký kiểm toán hệ thống
-              (Audit Trail) và chuỗi băm HMAC-SHA256 nhằm phục vụ quy trách nhiệm.
-            </p>
-
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-1">
               <InteractiveHoverButton
                 variant="secondary"
+                size="sm"
                 text="Về trang chủ"
                 icon={<ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />}
                 onClick={() => router.push('/')}
@@ -120,6 +112,7 @@ export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGu
               />
               <InteractiveHoverButton
                 variant="primary"
+                size="sm"
                 text="Kiểm tra lại quyền"
                 icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
                 onClick={() => void refreshUser()}

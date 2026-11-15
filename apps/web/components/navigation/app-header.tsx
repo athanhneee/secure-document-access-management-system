@@ -104,16 +104,16 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
         </Link>
 
         {isAuthenticated && user && (
-          <div className="relative ml-0.5 sm:ml-2" ref={menuRef}>
+          <div className="relative ml-0.5 sm:ml-2 min-w-0" ref={menuRef}>
             <button
               type="button"
               onClick={() => setRoleMenuOpen(!roleMenuOpen)}
-              className="flex min-h-11 sm:min-h-9 items-center gap-1.5 sm:gap-2 rounded-full border border-[#ebebeb] bg-[#ffffff] px-2.5 py-1 sm:px-3 text-xs font-medium text-[#222222] transition-colors hover:border-[#dddddd] hover:bg-[#f7f7f7] cursor-pointer shadow-2xs"
+              className="flex min-h-11 sm:min-h-9 min-w-0 max-w-full items-center gap-1.5 sm:gap-2 rounded-full border border-[#ebebeb] bg-[#ffffff] px-2.5 py-1 sm:px-3 text-xs font-medium text-[#222222] transition-colors hover:border-[#dddddd] hover:bg-[#f7f7f7] cursor-pointer shadow-2xs"
               aria-expanded={roleMenuOpen}
               aria-haspopup="true"
             >
-              <span className="dot dot-success" aria-hidden="true" />
-              <span className="max-w-[76px] sm:max-w-none truncate">
+              <span className="dot dot-success shrink-0" aria-hidden="true" />
+              <span className="min-w-0 max-w-[80px] sm:max-w-none truncate">
                 {activeRole ? ROLE_LABELS[activeRole] : 'Góc nhìn'}
               </span>
               <ChevronDown
@@ -199,15 +199,27 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
               <span>{user.fullName || user.username}</span>
             </span>
 
-            <InteractiveHoverButton
-              variant="secondary"
-              size="sm"
-              text="Đăng xuất"
-              icon={<LogOut size={16} strokeWidth={1.75} aria-hidden="true" />}
+            <button
+              type="button"
               onClick={() => void logout()}
               aria-label="Đăng xuất khỏi hệ thống"
-              className="min-w-0 px-3 sm:min-w-[5.5rem] sm:px-4"
-            />
+              title="Đăng xuất"
+              className="flex sm:hidden h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:bg-[#f7f7f7] transition-colors cursor-pointer shadow-2xs"
+            >
+              <LogOut size={16} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+
+            <span className="hidden sm:inline-flex">
+              <InteractiveHoverButton
+                variant="secondary"
+                size="sm"
+                text="Đăng xuất"
+                icon={<LogOut size={16} strokeWidth={1.75} aria-hidden="true" />}
+                onClick={() => void logout()}
+                aria-label="Đăng xuất khỏi hệ thống"
+                className="px-3"
+              />
+            </span>
           </>
         ) : (
           <InteractiveHoverButton href="/login" variant="primary" size="sm" text="Đăng nhập" />

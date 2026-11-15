@@ -54,13 +54,9 @@ export function LoginDemoPanel({ onSelectAccount }: LoginDemoPanelProps) {
         </div>
       )}
 
-      <div className="text-center text-xs text-[#717171] space-y-1">
-        <p className="sm:hidden">Chỉ dành cho cán bộ được phân quyền truy cập.</p>
-        <div className="hidden sm:block space-y-1">
-          <p>Hệ thống chỉ dành cho cán bộ, nhân viên được ủy quyền.</p>
-          <p>Mọi hành vi truy cập bất hợp pháp đều bị xử lý theo quy định pháp luật.</p>
-        </div>
-      </div>
+      <p className="text-center text-xs text-[#717171]">
+        Dành riêng cho nhân sự được cấp thẩm quyền truy cập.
+      </p>
     </>
   );
 }

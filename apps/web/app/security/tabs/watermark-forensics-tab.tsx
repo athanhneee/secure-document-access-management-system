@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { AlertTriangle, CheckCircle2, QrCode, Search } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { mapWatermarkVerifyDto, normalizeWatermarkTokenInput } from '../helpers';
@@ -68,21 +68,18 @@ export function WatermarkForensicsTab({
   }
 
   return (
-    <div className="grid gap-6 md:grid-cols-2">
-      <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
-        <CardHeader>
-          <CardTitle className="text-base text-[#222222]">
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm sm:text-base text-[#222222]">
             Tra cứu dấu bản quyền (Watermark Forensic)
           </CardTitle>
-          <CardDescription className="text-xs text-[#717171]">
-            UC28: Nhập mã token trên tài liệu rò rỉ để đối chiếu xuất xứ, thời điểm và người nhận
-          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4 text-xs">
+        <CardContent className="space-y-3.5 text-xs">
           <form onSubmit={handleTraceWatermark} className="space-y-3" noValidate>
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <label htmlFor="wm-token-input" className="font-medium text-[#222222]">
-                Mã Token Watermark (Mã ngắn 12-hex hoặc mã QR 48-hex)
+                Mã Token Watermark (12–48 ký tự hex)
               </label>
               <Input
                 id="wm-token-input"
@@ -93,7 +90,7 @@ export function WatermarkForensicsTab({
                 }}
                 placeholder="Ví dụ: WM-2e59958fa6c7 hoặc WM-<48-hex>"
                 aria-invalid={Boolean(validationError)}
-                className="min-h-11 sm:h-9 font-bold text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+                className="min-h-11 sm:h-9 font-mono text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
               />
               {validationError && (
                 <p role="alert" className="text-xs font-medium text-[#C13515] pt-0.5">
@@ -114,87 +111,89 @@ export function WatermarkForensicsTab({
             />
           </form>
 
-          <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 text-[#717171] text-xs leading-relaxed">
-            <p>
-              <strong>Nguyên lý:</strong> Mỗi lần người dùng bấm xem hoặc tải tài liệu, hệ thống
-              sinh ra một Watermark Instance gắn với phiên Access Session và Document Version cụ
-              thể.
-            </p>
-            <p>
-              Hỗ trợ dán trực tiếp chuỗi hex 12–48 ký tự từ lớp thủy vân PDF (hệ thống tự động ghép
-              tiền tố <code>WM-</code> trước khi đối soát).
-            </p>
-          </div>
+          <p className="rounded-[14px] border border-[#ebebeb] bg-[#f7f7f7] px-3 py-2 text-[#717171] text-xs leading-relaxed">
+            Hỗ trợ dán mã <code>WM-...</code> hoặc chuỗi hex 12–48 ký tự trích xuất trực tiếp từ lớp
+            thủy vân PDF để truy nguyên phiên đọc/tải.
+          </p>
         </CardContent>
       </Card>
 
-      <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)] flex flex-col justify-between">
+      <Card className="flex flex-col justify-between">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base text-[#222222]">Kết quả đối soát bằng chứng</CardTitle>
-          <CardDescription className="text-xs text-[#717171]">
-            Thông tin truy nguyên người chịu trách nhiệm phát tán
-          </CardDescription>
+          <CardTitle className="text-sm sm:text-base text-[#222222]">
+            Kết quả đối soát bằng chứng
+          </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 flex flex-col justify-center text-xs">
           {wmTraceResult ? (
             wmTraceResult.verified ? (
-              <div className="space-y-3 rounded-[24px] border border-[#008A05]/20 bg-[#008A05]/5 p-4">
+              <div className="space-y-3 rounded-[18px] border border-[#008A05]/20 bg-[#008A05]/5 p-4">
                 <div className="flex items-center gap-2 text-[#008A05] font-semibold border-b border-[#008A05]/15 pb-2">
                   <CheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Đối soát thành công · Bằng chứng hợp lệ</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[#222222]">
-                  <span className="text-[#717171]">Tài liệu:</span>
-                  <span className="font-semibold text-[#222222]">
-                    {wmTraceResult.documentTitle}
-                  </span>
-
-                  <span className="text-[#717171]">Mã số tài liệu:</span>
-                  <span className="font-bold text-[#222222] break-all">
-                    {wmTraceResult.documentCode}
-                  </span>
-
-                  <span className="text-[#717171]">Mức độ mật:</span>
-                  <span className="font-semibold text-[#C13515]">
-                    {wmTraceResult.classificationName}
-                  </span>
-
-                  <span className="text-[#717171]">Người nhận cấp quyền:</span>
-                  <span className="font-semibold text-[#222222]">
-                    {wmTraceResult.recipientName}
-                  </span>
-
-                  <span className="text-[#717171]">Mã nhân viên (EMP):</span>
-                  <span className="font-bold text-[#008A05]">{wmTraceResult.employeeCode}</span>
-
-                  <span className="text-[#717171]">Địa chỉ IP phiên:</span>
-                  <span className="font-bold text-[#222222]">{wmTraceResult.ipAddress}</span>
-
-                  <span className="text-[#717171]">Thời điểm tạo phiên:</span>
-                  <span className="font-bold text-[#222222]">{wmTraceResult.generatedAtUtc}</span>
-
-                  <span className="text-[#717171]">Session ID:</span>
-                  <span className="font-bold text-[13px] text-[#717171] break-all">
-                    {wmTraceResult.sessionId}
-                  </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2.5 text-[#222222]">
+                  <div className="min-w-0">
+                    <div className="text-[#717171]">Tài liệu</div>
+                    <div className="font-semibold text-[#222222] break-words">
+                      {wmTraceResult.documentTitle}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[#717171]">Mã tài liệu</div>
+                    <div className="font-mono text-[#222222] break-all">
+                      {wmTraceResult.documentCode}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[#717171]">Mức độ mật</div>
+                    <div className="font-semibold text-[#C13515]">
+                      {wmTraceResult.classificationName}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[#717171]">Người nhận</div>
+                    <div className="font-semibold text-[#222222]">
+                      {wmTraceResult.recipientName}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[#717171]">Mã nhân viên</div>
+                    <div className="font-mono text-[#008A05]">{wmTraceResult.employeeCode}</div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[#717171]">Địa chỉ IP</div>
+                    <div className="font-mono text-[#222222]">{wmTraceResult.ipAddress}</div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[#717171]">Thời điểm tạo</div>
+                    <div className="font-semibold text-[#222222]">
+                      {wmTraceResult.generatedAtUtc}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[#717171]">Session ID</div>
+                    <div className="font-mono text-[#717171] break-all">
+                      {wmTraceResult.sessionId}
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (
-              <div className="space-y-2 rounded-[24px] border border-[#C13515]/20 bg-[#C13515]/5 p-4 text-[#C13515]">
+              <div className="space-y-2 rounded-[18px] border border-[#C13515]/20 bg-[#C13515]/5 p-4 text-[#C13515]">
                 <div className="flex items-center gap-2 font-semibold">
                   <AlertTriangle size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Chưa xác thực · Không đủ căn cứ pháp chứng</span>
                 </div>
                 <p className="text-[#717171] text-xs">
-                  Phản hồi không chứa xác nhận mật mã hợp lệ từ sổ cái đối soát. Hệ thống từ chối
-                  hiển thị thông tin quy kết (Fail-Closed).
+                  Phản hồi không chứa xác nhận mật mã hợp lệ từ sổ cái đối soát (Fail-Closed).
                 </p>
               </div>
             )
           ) : (
-            <div className="flex flex-col items-center justify-center text-center p-8 text-[#717171] space-y-2">
+            <div className="flex flex-col items-center justify-center text-center py-6 px-4 text-[#717171] space-y-2">
               <QrCode size={24} strokeWidth={1.75} className="text-[#717171]" aria-hidden="true" />
-              <p>Nhập mã token ở bên trái và bấm đối soát để hiển thị thông tin chứng cứ</p>
+              <p>Nhập mã token bên trái và bấm đối soát để xem kết quả</p>
             </div>
           )}
         </CardContent>

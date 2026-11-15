@@ -1,7 +1,7 @@
 'use client';
 
-import { Check, Stamp } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Stamp } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { DEFAULT_WATERMARK_TEMPLATE } from '../hooks/use-watermark-settings';
@@ -46,30 +46,28 @@ export function WatermarkTab({
     templateText ?? activeConfig?.templateText ?? DEFAULT_WATERMARK_TEMPLATE;
 
   return (
-    <div className="grid gap-6 md:grid-cols-2">
-      <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
-        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <CardTitle className="text-base text-[#222222]">Cấu hình Watermark động</CardTitle>
-            <CardDescription className="text-xs text-[#717171]">
-              Thiết lập các thành phần đóng dấu bản quyền và lưu trực tiếp lên máy chủ
-            </CardDescription>
-          </div>
+    <div className="grid gap-4 md:grid-cols-2">
+      <Card>
+        <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <CardTitle className="text-sm sm:text-base text-[#222222]">
+            Cấu hình Watermark động
+          </CardTitle>
           <InteractiveHoverButton
             variant="primary"
             size="sm"
-            text={isSaving ? 'Đang lưu...' : 'Lưu lên Server'}
+            text={isSaving ? 'Đang lưu...' : 'Lưu cấu hình'}
             icon={<Stamp size={16} strokeWidth={1.75} aria-hidden="true" />}
             onClick={onSaveConfig}
             disabled={isSaving || !activeConfigId}
             isLoading={isSaving}
+            className="shrink-0"
           />
         </CardHeader>
         <CardContent className="space-y-4 text-xs">
           {configs.length > 1 && (
             <div className="space-y-1">
               <label htmlFor="wm-config-select" className="font-medium text-[#222222]">
-                Chọn mẫu cấu hình:
+                Mẫu cấu hình
               </label>
               <select
                 id="wm-config-select"
@@ -88,7 +86,7 @@ export function WatermarkTab({
 
           <div className="space-y-1">
             <label htmlFor="wm-template-text" className="font-medium text-[#222222]">
-              Mẫu văn bản thủy vân (`templateText`):
+              Mẫu văn bản thủy vân
             </label>
             <Input
               id="wm-template-text"
@@ -98,27 +96,16 @@ export function WatermarkTab({
               placeholder="{username} · {employeeCode} | {documentCode} · {timestamp} | {shortToken}"
               className="min-h-11 sm:h-9 text-xs font-mono"
             />
-            <p className="text-[13px] text-[#717171]">
-              Biến hỗ trợ: <code>{'{username}'}</code>, <code>{'{employeeCode}'}</code>,{' '}
+            <p className="text-xs text-[#717171]">
+              Biến: <code>{'{username}'}</code>, <code>{'{employeeCode}'}</code>,{' '}
               <code>{'{documentCode}'}</code>, <code>{'{timestamp}'}</code>,{' '}
               <code>{'{shortToken}'}</code>
             </p>
           </div>
 
-          <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 font-bold text-xs text-[#008A05]">
-            <div className="flex items-center gap-2">
-              <Check size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-              <span>Họ tên đầy đủ, Mã nhân viên &amp; Thời điểm tạo phiên (UTC)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Check size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-              <span>Mã tài liệu &amp; Mã token ngẫu nhiên CSPRNG (WM-...)</span>
-            </div>
-          </div>
-
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center pt-1">
             <label htmlFor="wm-qr" className="font-medium text-[#222222]">
-              Đính kèm mã QR truy vết:
+              Đính kèm mã QR truy vết
             </label>
             <input
               id="wm-qr"

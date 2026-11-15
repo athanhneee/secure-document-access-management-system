@@ -83,18 +83,13 @@ export function SidebarDirectory({
 }: SidebarDirectoryProps) {
   return (
     <>
-      <div className="mb-3 flex items-start justify-between gap-2 px-2">
-        <div>
-          <div
-            id={headingId}
-            className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#717171]"
-          >
-            <Shield size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
-            <span>Phân hệ theo vai trò</span>
-          </div>
-          <p className="mt-0.5 text-xs text-[#717171] leading-normal">
-            Kiểm soát truy cập Zero Trust &amp; RBAC
-          </p>
+      <div className="mb-2 flex items-center justify-between gap-2 px-2.5">
+        <div
+          id={headingId}
+          className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#717171]"
+        >
+          <Shield size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
+          <span>Phân hệ vai trò</span>
         </div>
         {onCloseButton && (
           <button
@@ -109,7 +104,7 @@ export function SidebarDirectory({
         )}
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto pr-1" aria-label="Danh sách phân hệ">
+      <nav className="flex-1 space-y-1 overflow-y-auto" aria-label="Danh sách phân hệ">
         {NAV_ITEMS.map((item) => {
           const isActive = pathname?.startsWith(item.href);
           const hasAccess = userRoles?.includes(item.role);
@@ -120,41 +115,39 @@ export function SidebarDirectory({
               key={item.href}
               href={item.href}
               onClick={() => onNavigate?.()}
-              className={`group flex items-start gap-2.5 rounded-[20px] px-3.5 py-2.5 text-xs transition-all ${
+              title={item.description}
+              className={`group flex min-h-11 sm:min-h-9 items-center justify-between gap-2 rounded-full px-3 py-2 text-xs transition-colors ${
                 isActive
-                  ? 'border border-[#E31C5F]/40 bg-[#FF385C]/10 text-[#E31C5F] shadow-2xs'
+                  ? 'border border-[#E31C5F]/35 bg-[#FF385C]/10 font-semibold text-[#E31C5F]'
                   : hasAccess
-                    ? 'border border-transparent text-[#717171] hover:border-[#ebebeb] hover:bg-[#f7f7f7] hover:text-[#222222]'
-                    : 'border border-transparent text-[#717171] opacity-80 hover:bg-[#f7f7f7]'
+                    ? 'border border-transparent font-medium text-[#222222] hover:bg-[#f7f7f7]'
+                    : 'border border-transparent font-medium text-[#717171] hover:bg-[#f7f7f7]'
               }`}
               aria-current={isActive ? 'page' : undefined}
             >
-              <Icon
-                className={`mt-0.5 shrink-0 ${
-                  isActive
-                    ? 'text-[#E31C5F]'
-                    : hasAccess
-                      ? 'text-[#717171] group-hover:text-[#222222]'
-                      : 'text-[#717171]'
-                }`}
-                size={16}
-                strokeWidth={1.75}
-                aria-hidden="true"
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-1.5">
-                  <span className="font-semibold truncate">{item.title}</span>
-                  {!hasAccess && (
-                    <span className="flex shrink-0 items-center gap-1 text-[12px] text-[#717171]">
-                      <Lock size={16} strokeWidth={1.75} aria-hidden="true" />
-                      <span>Chưa gán</span>
-                    </span>
-                  )}
-                </div>
-                <p className="mt-0.5 text-xs text-[#717171] line-clamp-1 leading-normal">
-                  {item.description}
-                </p>
-              </div>
+              <span className="flex min-w-0 items-center gap-2.5">
+                <Icon
+                  className={`shrink-0 ${
+                    isActive
+                      ? 'text-[#E31C5F]'
+                      : hasAccess
+                        ? 'text-[#717171] group-hover:text-[#222222]'
+                        : 'text-[#b0b0b0]'
+                  }`}
+                  size={16}
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                />
+                <span className="truncate">{item.title}</span>
+              </span>
+              {!hasAccess && (
+                <Lock
+                  size={16}
+                  strokeWidth={1.75}
+                  className="shrink-0 text-[#b0b0b0]"
+                  aria-label="Chưa gán vai trò"
+                />
+              )}
             </Link>
           );
         })}
@@ -164,27 +157,23 @@ export function SidebarDirectory({
         <Link
           href="/sessions"
           onClick={() => onNavigate?.()}
-          className={`flex min-h-11 sm:min-h-9 items-center justify-between rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+          className={`flex min-h-11 sm:min-h-9 items-center gap-2.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
             pathname === '/sessions'
               ? 'bg-[#f7f7f7] text-[#222222] font-semibold'
               : 'text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222]'
           }`}
         >
-          <div className="flex items-center gap-2">
-            <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
-            <span>Quản lý phiên &amp; thiết bị</span>
-          </div>
+          <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
+          <span className="truncate">Phiên &amp; thiết bị</span>
         </Link>
 
         <Link
           href="/"
           onClick={() => onNavigate?.()}
-          className="flex min-h-11 sm:min-h-9 items-center justify-between rounded-full px-3 py-1.5 text-xs font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors"
+          className="flex min-h-11 sm:min-h-9 items-center gap-2.5 rounded-full px-3 py-1.5 text-xs font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors"
         >
-          <div className="flex items-center gap-2">
-            <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
-            <span>Cổng giới thiệu hệ thống</span>
-          </div>
+          <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+          <span className="truncate">Trang giới thiệu</span>
         </Link>
       </div>
     </>

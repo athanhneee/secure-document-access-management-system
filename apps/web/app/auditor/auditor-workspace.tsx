@@ -77,23 +77,16 @@ export function AuditorWorkspace() {
     <AuthGuard requiredRole="AUDITOR">
       <AppLayout>
         <DialogErrorProvider errorMessage={errorMessage} onDismiss={() => setErrorMessage(null)}>
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="info">Auditor (Read-Only)</Badge>
-                  <span className="text-xs text-[#717171]">Phân tách Trách nhiệm (SoD)</span>
-                </div>
-                <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="min-w-0">
+                <Badge variant="info">Auditor (Read-Only)</Badge>
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-1">
                   Kiểm toán Toàn vẹn &amp; Báo cáo Tuân thủ
                 </h1>
-                <p className="text-xs text-[#717171]">
-                  Chế độ chỉ đọc nghiêm ngặt. Xác minh chuỗi băm HMAC-SHA256 và xuất dữ liệu có
-                  chống Formula Injection
-                </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
                 <InteractiveHoverButton
                   variant="secondary"
                   size="sm"
@@ -119,7 +112,7 @@ export function AuditorWorkspace() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 rounded-[20px] border border-[#008489]/20 bg-[#008489]/5 px-3.5 py-2.5 text-xs text-[#008489]">
+            <div className="flex items-center gap-2 rounded-[16px] border border-[#008489]/20 bg-[#008489]/5 px-3.5 py-2 text-xs text-[#008489]">
               <Lock
                 size={16}
                 strokeWidth={1.75}
@@ -128,8 +121,7 @@ export function AuditorWorkspace() {
               />
               <span className="text-[#222222]">
                 <strong className="text-[#008489]">Nguyên tắc Phân tách Trách nhiệm (SoD):</strong>{' '}
-                Kiểm toán viên chỉ có quyền xem nhật ký và xuất báo cáo. Không được phép chỉnh sửa
-                kết luận điều tra sự cố hoặc can thiệp cấp quyền tài liệu.
+                Chế độ chỉ đọc — tra cứu nhật ký và xuất báo cáo, không can thiệp dữ liệu nghiệp vụ.
               </span>
             </div>
 
@@ -169,7 +161,7 @@ export function AuditorWorkspace() {
             )}
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-              <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3 h-auto min-h-11 rounded-[20px] p-1.5 sm:h-11 sm:rounded-full sm:p-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+              <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3 lg:inline-flex lg:w-auto h-auto min-h-10 rounded-[18px] lg:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
                 <TabsTrigger value="logs" className="flex items-center gap-1.5 text-xs">
                   <FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Nhật ký kiểm toán ({totalLogs})</span>

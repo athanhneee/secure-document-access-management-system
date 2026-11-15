@@ -2,7 +2,7 @@
 
 import { Download } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import {
   Table,
@@ -26,97 +26,91 @@ export function ExportQueueTab({
   onDownloadExport,
 }: ExportQueueTabProps) {
   return (
-    <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
+    <Card>
       <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3">
-        <div>
-          <CardTitle className="text-base text-[#222222]">
-            Hàng đợi xuất báo cáo kiểm toán bất đồng bộ
-          </CardTitle>
-          <CardDescription className="text-xs text-[#717171]">
-            Tệp xuất được lưu tạm 24 giờ và tự động thu hồi
-          </CardDescription>
-        </div>
+        <CardTitle className="text-sm sm:text-base text-[#222222]">
+          Hàng đợi xuất báo cáo ({exportJobs.length})
+        </CardTitle>
         <InteractiveHoverButton
           size="sm"
           variant="primary"
           text="Tạo báo cáo mới"
           icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
           onClick={onOpenExportModal}
+          className="shrink-0"
         />
       </CardHeader>
       <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+        <Table>
+          <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+            <TableRow>
+              <TableHead className="text-xs text-[#717171]">Mã tác vụ</TableHead>
+              <TableHead className="text-xs text-[#717171]">Loại báo cáo</TableHead>
+              <TableHead className="text-xs text-[#717171]">Định dạng</TableHead>
+              <TableHead className="text-xs text-[#717171]">Thời gian tạo</TableHead>
+              <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
+              <TableHead className="text-xs text-[#717171] text-right">Tải về</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {exportJobs.length === 0 ? (
               <TableRow>
-                <TableHead className="text-xs text-[#717171]">Mã tác vụ</TableHead>
-                <TableHead className="text-xs text-[#717171]">Loại báo cáo</TableHead>
-                <TableHead className="text-xs text-[#717171]">Định dạng</TableHead>
-                <TableHead className="text-xs text-[#717171]">Thời gian tạo</TableHead>
-                <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
-                <TableHead className="text-xs text-[#717171] text-right">Tải về</TableHead>
+                <TableCell colSpan={6} className="text-center py-8 text-xs text-[#717171]">
+                  Chưa có tác vụ xuất báo cáo kiểm toán nào trong hàng đợi
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {exportJobs.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-xs text-[#717171]">
-                    Chưa có tác vụ xuất báo cáo kiểm toán nào trong hàng đợi
-                  </TableCell>
-                </TableRow>
-              ) : (
-                exportJobs.map((job) => {
-                  const canDownload = job.status === 'COMPLETED' && !job.isExpired;
-                  const displayStatus = job.isExpired ? 'EXPIRED' : job.status;
-                  return (
-                    <TableRow
-                      key={job.id}
-                      className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
-                    >
-                      <TableCell className="font-bold text-xs text-[#222222]">{job.id}</TableCell>
-                      <TableCell className="text-xs text-[#222222]">{job.exportType}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{job.format}</Badge>
-                      </TableCell>
-                      <TableCell className="text-xs font-bold text-[#717171]">
-                        {new Date(job.createdAt).toLocaleDateString('vi-VN')}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            displayStatus === 'COMPLETED'
-                              ? 'success'
-                              : displayStatus === 'FAILED'
-                                ? 'destructive'
-                                : displayStatus === 'EXPIRED'
-                                  ? 'neutral'
-                                  : 'warning'
+            ) : (
+              exportJobs.map((job) => {
+                const canDownload = job.status === 'COMPLETED' && !job.isExpired;
+                const displayStatus = job.isExpired ? 'EXPIRED' : job.status;
+                return (
+                  <TableRow
+                    key={job.id}
+                    className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
+                  >
+                    <TableCell className="font-bold text-xs text-[#222222]">{job.id}</TableCell>
+                    <TableCell className="text-xs text-[#222222]">{job.exportType}</TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{job.format}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs font-bold text-[#717171]">
+                      {new Date(job.createdAt).toLocaleDateString('vi-VN')}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          displayStatus === 'COMPLETED'
+                            ? 'success'
+                            : displayStatus === 'FAILED'
+                              ? 'destructive'
+                              : displayStatus === 'EXPIRED'
+                                ? 'neutral'
+                                : 'warning'
+                        }
+                      >
+                        {displayStatus}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">
+                      <InteractiveHoverButton
+                        size="sm"
+                        variant="secondary"
+                        text="Tải tệp"
+                        icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        disabled={!canDownload}
+                        onClick={() => {
+                          if (canDownload) {
+                            onDownloadExport(job);
                           }
-                        >
-                          {displayStatus}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <InteractiveHoverButton
-                          size="sm"
-                          variant="secondary"
-                          text="Tải tệp"
-                          icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
-                          disabled={!canDownload}
-                          onClick={() => {
-                            if (canDownload) {
-                              onDownloadExport(job);
-                            }
-                          }}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </div>
+                        }}
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
       </CardContent>
     </Card>
   );

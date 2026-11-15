@@ -83,7 +83,7 @@ export function SecurityWorkspace() {
           errorMessage={data.errorMessage}
           onDismiss={() => data.setErrorMessage(null)}
         >
-          <div className="space-y-6">
+          <div className="space-y-4">
             <SecurityWorkspaceHeader
               isLoading={data.isLoading}
               message={data.message}
@@ -93,7 +93,7 @@ export function SecurityWorkspace() {
             />
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-6 h-auto min-h-11 rounded-[20px] p-1.5 md:h-11 md:rounded-full md:p-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 xl:inline-flex xl:w-auto h-auto min-h-10 rounded-[18px] xl:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
                 <TabsTrigger value="alerts" className="flex items-center gap-1.5 text-xs">
                   <AlertOctagon size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Cảnh báo ({data.alerts.length})</span>

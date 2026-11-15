@@ -172,7 +172,7 @@ export function DialogContent({
     <div
       data-dialog-content="true"
       className={cn(
-        'relative w-full max-w-lg rounded-[28px] border border-[#ebebeb] bg-[#ffffff] p-5 sm:p-7 text-[#222222] shadow-[0_20px_60px_rgba(0,0,0,0.12)] backdrop-blur-md animate-modal-enter max-h-[90dvh] overflow-y-auto',
+        'relative w-full max-w-lg rounded-[24px] border border-[#ebebeb] bg-[#ffffff] p-5 sm:p-6 text-[#222222] shadow-[0_20px_60px_rgba(0,0,0,0.12)] backdrop-blur-md animate-modal-enter max-h-[90dvh] overflow-y-auto',
         className,
       )}
       {...props}
@@ -182,7 +182,7 @@ export function DialogContent({
           type="button"
           data-dialog-close="true"
           onClick={() => onOpenChange(false)}
-          className="absolute right-3 top-3 z-20 flex h-11 w-11 items-center justify-center rounded-full text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] cursor-pointer"
+          className="absolute right-3 top-3 z-20 flex h-11 w-11 sm:h-9 sm:w-9 items-center justify-center rounded-full text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] cursor-pointer"
           aria-label="Đóng hộp thoại"
         >
           <X size={16} strokeWidth={2} aria-hidden="true" />

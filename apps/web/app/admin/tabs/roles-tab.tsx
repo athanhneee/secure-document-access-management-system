@@ -32,44 +32,32 @@ export function RolesTab({
   const [isDisabling, setIsDisabling] = useState(false);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="text-base font-semibold text-[#222222]">
-            Quản trị Vai trò &amp; Quyền hạn (RBAC)
-          </h3>
-          <p className="text-xs text-[#717171]">
-            Thiết lập vai trò, ma trận phân quyền và liên kết người dùng
-          </p>
-        </div>
+        <h3 className="text-sm sm:text-base font-semibold text-[#222222]">
+          Vai trò &amp; Quyền hạn RBAC ({roles.length})
+        </h3>
         <InteractiveHoverButton
           variant="primary"
           size="sm"
           text="Tạo vai trò mới"
           icon={<Plus size={16} strokeWidth={1.75} aria-hidden="true" />}
           onClick={onOpenCreateRole}
+          className="shrink-0"
         />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3.5 md:grid-cols-2 lg:grid-cols-3">
         {roles.map((role) => (
-          <Card
-            key={role.id}
-            className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)] flex flex-col justify-between"
-          >
-            <CardHeader className="pb-3">
+          <Card key={role.id} className="flex flex-col justify-between">
+            <CardHeader className="pb-2.5">
               <div className="flex items-center justify-between gap-2">
-                <CardTitle className="text-sm font-semibold text-[#222222]">{role.name}</CardTitle>
+                <CardTitle className="text-sm font-semibold text-[#222222] truncate">
+                  {role.name}
+                </CardTitle>
                 <div className="flex items-center gap-2 shrink-0">
-                  {role.isSystemRole && (
-                    <Badge variant="secondary" className="text-[13px]">
-                      Hệ thống
-                    </Badge>
-                  )}
-                  <Badge
-                    variant={role.isActive ? 'success' : 'destructive'}
-                    className="text-[13px]"
-                  >
+                  {role.isSystemRole && <Badge variant="secondary">Hệ thống</Badge>}
+                  <Badge variant={role.isActive ? 'success' : 'destructive'}>
                     {role.isActive ? 'Active' : 'Disabled'}
                   </Badge>
                 </div>
@@ -78,18 +66,18 @@ export function RolesTab({
                 {role.code}
               </CardDescription>
               {role.description && (
-                <p className="text-xs text-[#717171] line-clamp-2 mt-1">{role.description}</p>
+                <p className="text-xs text-[#717171] line-clamp-1 mt-0.5">{role.description}</p>
               )}
             </CardHeader>
-            <CardContent className="pt-0 space-y-3">
+            <CardContent className="pt-0 space-y-2.5">
               <div className="text-xs font-medium text-[#717171]">
-                Quyền hạn ({role.permissions.length}):
+                Quyền hạn ({role.permissions.length})
               </div>
-              <div className="flex flex-wrap gap-x-3 gap-y-1 max-h-24 overflow-y-auto pr-1">
+              <div className="flex flex-wrap gap-x-2.5 gap-y-1 max-h-20 overflow-y-auto pr-1">
                 {role.permissions.map((p, idx) => (
                   <span
                     key={idx}
-                    className="staff-badge inline-flex items-center gap-1 font-mono text-[13px] text-[#008489]"
+                    className="staff-badge inline-flex items-center gap-1 font-mono text-xs text-[#008489]"
                   >
                     <span className="dot dot-info" aria-hidden="true" />
                     <span>{p.code}</span>

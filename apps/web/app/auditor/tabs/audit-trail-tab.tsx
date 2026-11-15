@@ -2,7 +2,7 @@
 
 import { Calendar, ChevronLeft, ChevronRight, Eye, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import {
@@ -57,19 +57,14 @@ export function AuditTrailTab({
   const safeTotalPages = Math.max(1, totalPages);
 
   return (
-    <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
+    <Card>
       <CardHeader className="pb-3">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-          <div>
-            <CardTitle className="text-base text-[#222222]">
-              Dấu vết hoạt động (Audit Trail Explorer)
-            </CardTitle>
-            <CardDescription className="text-xs text-[#717171]">
-              Append-only · Chống chỉnh sửa · Bảo vệ thông tin nhạy cảm không bị lộ trong log
-            </CardDescription>
-          </div>
+        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
+          <CardTitle className="text-sm sm:text-base text-[#222222] shrink-0">
+            Nhật ký kiểm toán ({totalLogs})
+          </CardTitle>
 
-          <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full lg:w-auto min-w-0">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full xl:w-auto min-w-0">
             <div>
               <label htmlFor="auditor-outcome-filter" className="sr-only">
                 Lọc theo kết quả kiểm toán
@@ -78,7 +73,7 @@ export function AuditTrailTab({
                 id="auditor-outcome-filter"
                 value={outcomeFilter}
                 onChange={(e) => onOutcomeFilterChange(e.target.value)}
-                className="min-h-11 sm:h-10 w-full sm:w-auto rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+                className="min-h-11 sm:h-9 w-full sm:w-auto rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
               >
                 <option value="ALL">Mọi kết quả</option>
                 <option value="SUCCESS">SUCCESS (Thành công)</option>
@@ -87,28 +82,28 @@ export function AuditTrailTab({
               </select>
             </div>
 
-            <div className="relative w-full sm:w-48 min-w-0">
+            <div className="relative w-full sm:w-44 min-w-0">
               <label htmlFor="auditor-action-filter" className="sr-only">
                 Lọc theo mã hành động
               </label>
               <Search
                 size={16}
                 strokeWidth={1.75}
-                className="pointer-events-none absolute left-3.5 top-3.5 sm:top-3 text-[#717171]"
+                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#717171]"
                 aria-hidden="true"
               />
               <Input
                 id="auditor-action-filter"
                 type="text"
-                placeholder="Lọc theo hành động..."
+                placeholder="Lọc hành động..."
                 value={actionFilter}
                 onChange={(e) => onActionFilterChange(e.target.value)}
-                className="pl-10 min-h-11 sm:h-10 w-full text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+                className="pl-9 min-h-11 sm:h-9 w-full text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
               />
             </div>
 
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 w-full sm:w-auto min-w-0 text-xs text-[#717171]">
-              <div className="flex items-center gap-1.5 w-full sm:w-auto min-w-0">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 w-full sm:w-auto shrink-0 text-xs text-[#717171]">
+              <div className="flex items-center gap-1.5 w-full sm:w-auto shrink-0">
                 <Calendar
                   size={16}
                   strokeWidth={1.75}
@@ -118,103 +113,102 @@ export function AuditTrailTab({
                 <label htmlFor="auditor-from-date" className="sr-only">
                   Từ ngày
                 </label>
-                <Input
-                  id="auditor-from-date"
-                  type="date"
-                  value={fromDate}
-                  onChange={(e) => onFromDateChange(e.target.value)}
-                  className="min-h-11 sm:h-10 w-full sm:w-36 min-w-0 text-xs rounded-full bg-[#f7f7f7] border-[#ebebeb] px-3 text-[#222222] focus:border-[#FF385C]"
-                />
+                <div className="w-full sm:w-36 shrink-0">
+                  <Input
+                    id="auditor-from-date"
+                    type="date"
+                    value={fromDate}
+                    onChange={(e) => onFromDateChange(e.target.value)}
+                    className="min-h-11 sm:h-9 w-full text-xs rounded-full bg-[#ffffff] border-[#dddddd] px-3 text-[#222222] focus:border-[#FF385C]"
+                  />
+                </div>
               </div>
-              <span className="hidden sm:inline text-[#717171]" aria-hidden="true">
-                -
+              <span className="hidden sm:inline shrink-0 text-[#717171]" aria-hidden="true">
+                –
               </span>
               <label htmlFor="auditor-to-date" className="sr-only">
                 Đến ngày
               </label>
-              <Input
-                id="auditor-to-date"
-                type="date"
-                value={toDate}
-                onChange={(e) => onToDateChange(e.target.value)}
-                className="min-h-11 sm:h-10 w-full sm:w-36 min-w-0 text-xs rounded-full bg-[#f7f7f7] border-[#ebebeb] px-3 text-[#222222] focus:border-[#FF385C]"
-              />
+              <div className="w-full sm:w-36 shrink-0">
+                <Input
+                  id="auditor-to-date"
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => onToDateChange(e.target.value)}
+                  className="min-h-11 sm:h-9 w-full text-xs rounded-full bg-[#ffffff] border-[#dddddd] px-3 text-[#222222] focus:border-[#FF385C]"
+                />
+              </div>
             </div>
           </div>
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+        <Table>
+          <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+            <TableRow>
+              <TableHead className="text-xs text-[#717171]">Thời gian (UTC)</TableHead>
+              <TableHead className="text-xs text-[#717171]">Người thực hiện</TableHead>
+              <TableHead className="text-xs text-[#717171]">Hành động</TableHead>
+              <TableHead className="text-xs text-[#717171]">Kết quả</TableHead>
+              <TableHead className="text-xs text-[#717171]">Địa chỉ IP</TableHead>
+              <TableHead className="text-xs text-[#717171]">Correlation ID / Hash</TableHead>
+              <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {logs.length === 0 ? (
               <TableRow>
-                <TableHead className="text-xs text-[#717171]">Thời gian (UTC)</TableHead>
-                <TableHead className="text-xs text-[#717171]">Người thực hiện</TableHead>
-                <TableHead className="text-xs text-[#717171]">Hành động</TableHead>
-                <TableHead className="text-xs text-[#717171]">Kết quả</TableHead>
-                <TableHead className="text-xs text-[#717171]">Địa chỉ IP</TableHead>
-                <TableHead className="text-xs text-[#717171]">Correlation ID / Hash</TableHead>
-                <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
+                <TableCell colSpan={7} className="py-8 text-center text-xs text-[#717171]">
+                  Không có bản ghi nhật ký kiểm toán phù hợp bộ lọc hiện tại
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {logs.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-8 text-center text-xs text-[#717171]">
-                    Không có bản ghi nhật ký kiểm toán phù hợp bộ lọc hiện tại
+            ) : (
+              logs.map((log) => (
+                <TableRow key={log.id} className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60">
+                  <TableCell className="font-bold text-xs text-[#717171] whitespace-nowrap">
+                    {log.occurredAt
+                      ? new Date(log.occurredAt).toISOString().replace('T', ' ').slice(0, 19)
+                      : '—'}
+                  </TableCell>
+                  <TableCell className="font-semibold text-xs text-[#222222]">
+                    {log.actorUsername}
+                  </TableCell>
+                  <TableCell className="font-bold text-xs text-[#008489]">{log.action}</TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={
+                        log.outcome === 'SUCCESS'
+                          ? 'success'
+                          : log.outcome === 'DENIED'
+                            ? 'warning'
+                            : 'destructive'
+                      }
+                    >
+                      {log.outcome}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-bold text-xs text-[#717171]">
+                    {log.ipAddress || '—'}
+                  </TableCell>
+                  <TableCell className="font-bold text-xs text-[#717171] max-w-xs truncate">
+                    {log.correlationId}
+                  </TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    <InteractiveHoverButton
+                      size="sm"
+                      variant="secondary"
+                      text="Xem"
+                      icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
+                      onClick={() => onSelectLog(log)}
+                    />
                   </TableCell>
                 </TableRow>
-              ) : (
-                logs.map((log) => (
-                  <TableRow
-                    key={log.id}
-                    className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
-                  >
-                    <TableCell className="font-bold text-xs text-[#717171] whitespace-nowrap">
-                      {log.occurredAt
-                        ? new Date(log.occurredAt).toISOString().replace('T', ' ').slice(0, 19)
-                        : '—'}
-                    </TableCell>
-                    <TableCell className="font-semibold text-xs text-[#222222]">
-                      {log.actorUsername}
-                    </TableCell>
-                    <TableCell className="font-bold text-xs text-[#008489]">{log.action}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          log.outcome === 'SUCCESS'
-                            ? 'success'
-                            : log.outcome === 'DENIED'
-                              ? 'warning'
-                              : 'destructive'
-                        }
-                      >
-                        {log.outcome}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-bold text-xs text-[#717171]">
-                      {log.ipAddress || '—'}
-                    </TableCell>
-                    <TableCell className="font-bold text-xs text-[#717171] max-w-xs truncate">
-                      {log.correlationId}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <InteractiveHoverButton
-                        size="sm"
-                        variant="secondary"
-                        text="Xem"
-                        icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
-                        onClick={() => onSelectLog(log)}
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
+              ))
+            )}
+          </TableBody>
+        </Table>
 
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-[#ebebeb] bg-[#f7f7f7]/50 px-4 py-3 text-xs text-[#717171]">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t border-[#ebebeb] bg-[#f7f7f7]/50 px-4 py-2.5 text-xs text-[#717171]">
           <div>
             Tổng cộng <strong className="text-[#222222]">{totalLogs}</strong> bản ghi · Hiển thị{' '}
             <strong className="text-[#222222]">{logs.length}</strong> dòng

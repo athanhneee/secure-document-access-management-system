@@ -32,45 +32,71 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
         </DialogHeader>
 
         {auditLog && (
-          <div className="py-2 text-xs space-y-2">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-[#f7f7f7] p-3 rounded-[20px] border border-[#ebebeb]">
-              <div>
-                Thời điểm: <strong>{new Date(auditLog.occurredAt).toLocaleString('vi-VN')}</strong>
+          <div className="py-1 text-xs space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2.5 bg-[#f7f7f7] p-3.5 rounded-[16px] border border-[#ebebeb]">
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-[#717171]">
+                  Thời điểm
+                </div>
+                <div className="mt-0.5 font-semibold text-[#222222]">
+                  {new Date(auditLog.occurredAt).toLocaleString('vi-VN')}
+                </div>
               </div>
-              <div>
-                Hành động: <strong>{auditLog.action}</strong>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-[#717171]">
+                  Hành động
+                </div>
+                <div className="mt-0.5 font-semibold text-[#222222] break-all">
+                  {auditLog.action}
+                </div>
               </div>
-              <div>
-                Người dùng: <strong>{auditLog.actorUsername || 'system'}</strong>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-[#717171]">
+                  Người thực hiện
+                </div>
+                <div className="mt-0.5 font-semibold text-[#222222] break-all">
+                  {auditLog.actorUsername || 'system'}
+                </div>
               </div>
-              <div>
-                Kết quả:{' '}
-                <Badge
-                  variant={auditLog.outcome === 'SUCCESS' ? 'success' : 'destructive'}
-                  className="text-[13px]"
-                >
-                  {auditLog.outcome}
-                </Badge>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-[#717171]">
+                  Kết quả
+                </div>
+                <div className="mt-0.5">
+                  <Badge variant={auditLog.outcome === 'SUCCESS' ? 'success' : 'destructive'}>
+                    {auditLog.outcome}
+                  </Badge>
+                </div>
               </div>
-              <div>
-                IP: <span className="font-mono">{auditLog.ipAddress || '—'}</span>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-[#717171]">
+                  Địa chỉ IP
+                </div>
+                <div className="mt-0.5 font-mono text-[#222222] break-all">
+                  {auditLog.ipAddress || '—'}
+                </div>
               </div>
-              <div>
-                Phiên: <span className="font-mono">{auditLog.accessSessionId || '—'}</span>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-[#717171]">
+                  Mã phiên
+                </div>
+                <div className="mt-0.5 font-mono text-[#222222] break-all">
+                  {auditLog.accessSessionId || '—'}
+                </div>
               </div>
             </div>
 
             <div className="space-y-1">
-              <span className="font-medium text-[#222222]">Hash chuỗi kiểm toán (Entry Hash):</span>
-              <div className="p-2 rounded bg-[#f7f7f7] border font-mono text-[13px] break-all text-[#717171]">
+              <span className="font-medium text-[#222222]">Mã băm chuỗi (Entry Hash)</span>
+              <div className="p-2.5 rounded-[12px] bg-[#f7f7f7] border border-[#ebebeb] font-mono text-xs break-all text-[#717171]">
                 {auditLog.entryHash}
               </div>
             </div>
 
             {auditLog.details && Object.keys(auditLog.details).length > 0 && (
               <div className="space-y-1">
-                <span className="font-medium text-[#222222]">Thuộc tính chi tiết (Details):</span>
-                <pre className="p-2 rounded bg-[#f7f7f7] border font-mono text-[13px] text-[#222222] overflow-x-auto max-h-36">
+                <span className="font-medium text-[#222222]">Chi tiết sự kiện</span>
+                <pre className="p-2.5 rounded-[12px] bg-[#f7f7f7] border border-[#ebebeb] font-mono text-xs text-[#222222] overflow-x-auto max-h-36">
                   {JSON.stringify(auditLog.details, null, 2)}
                 </pre>
               </div>

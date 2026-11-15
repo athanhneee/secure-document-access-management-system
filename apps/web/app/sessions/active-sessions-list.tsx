@@ -6,7 +6,7 @@
  */
 import { Globe, Laptop, RefreshCw, Smartphone, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
 export { SessionSecurityOverview } from './session-security-overview';
@@ -79,17 +79,11 @@ export function ActiveSessionsList({
   onRevokeSession,
 }: ActiveSessionsListProps) {
   return (
-    <Card className="rounded-[28px] border border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
+    <Card>
       <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3">
-        <div>
-          <CardTitle className="text-base font-bold text-[#222222]">
-            Danh sách thiết bị &amp; phiên đang hoạt động ({sessions.length})
-          </CardTitle>
-          <CardDescription className="text-xs text-[#717171]">
-            Kiểm tra địa chỉ IP, thời điểm tương tác cuối và thu hồi riêng từng phiên từ xa mà không
-            làm gián đoạn thiết bị hiện tại
-          </CardDescription>
-        </div>
+        <CardTitle className="text-sm sm:text-base font-bold text-[#222222]">
+          Thiết bị đang đăng nhập ({sessions.length})
+        </CardTitle>
         <InteractiveHoverButton
           type="button"
           variant="secondary"
@@ -97,18 +91,19 @@ export function ActiveSessionsList({
           isLoading={isFetching}
           disabled={isFetching}
           icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
-          text="Làm mới danh sách"
+          text="Làm mới"
           onClick={onRefresh}
+          className="shrink-0"
         />
       </CardHeader>
 
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-2.5">
         {isFetching && sessions.length === 0 ? (
           <div className="py-6 text-center text-xs text-[#717171]">
             Đang tải danh sách thiết bị đăng nhập…
           </div>
         ) : sessions.length === 0 ? (
-          <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4 text-xs text-[#717171]">
+          <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 text-xs text-[#717171]">
             Hiện chỉ ghi nhận phiên làm việc trực tiếp trên thiết bị này.
           </div>
         ) : (
@@ -119,7 +114,7 @@ export function ActiveSessionsList({
             return (
               <div
                 key={session.id}
-                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[20px] border border-[#ebebeb] bg-[#ffffff] p-4 text-xs"
+                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] p-3.5 text-xs"
               >
                 <div className="space-y-1.5 min-w-0">
                   <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">

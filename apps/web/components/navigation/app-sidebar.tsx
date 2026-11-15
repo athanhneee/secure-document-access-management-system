@@ -114,7 +114,7 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
   return (
     <>
       <aside
-        className="hidden lg:flex w-68 shrink-0 flex-col border-r border-[#ebebeb] bg-[#ffffff] p-3.5"
+        className="hidden lg:flex w-60 shrink-0 flex-col border-r border-[#ebebeb] bg-[#ffffff] p-3"
         aria-label="Thanh điều hướng phân hệ"
       >
         <SidebarDirectory pathname={pathname} userRoles={user?.roles} />

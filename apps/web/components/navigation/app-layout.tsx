@@ -23,7 +23,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <main
           id="main-content"
           tabIndex={-1}
-          className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 lg:px-8 focus:outline-none"
+          className="flex-1 min-w-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:px-7 focus:outline-none"
         >
           <div className="mx-auto max-w-7xl page-enter">{children}</div>
         </main>

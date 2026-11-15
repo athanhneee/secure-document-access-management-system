@@ -22,44 +22,23 @@ export default function HomePage() {
         <SecurityPillarsSection />
       </main>
 
-      <footer className="border-t border-[#ebebeb] bg-[#ffffff] py-6 sm:py-10 pb-16 sm:pb-10">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col items-center sm:items-start md:flex-row md:items-start justify-between gap-4 sm:gap-6 text-center sm:text-left">
-            <div className="space-y-1 sm:space-y-1.5 max-w-md">
-              <div className="flex items-center justify-center sm:justify-start gap-2">
-                <span className="text-xs font-bold tracking-tight text-[#222222]">
-                  Secure<span className="text-[#E31C5F]">Document</span> Access System
-                </span>
-                <span className="staff-badge inline-flex items-center gap-1 text-[13px] font-bold text-[#008A05]">
-                  <span className="dot dot-success" aria-hidden="true" />
-                  <span>ONLINE</span>
-                </span>
-              </div>
-              <p className="hidden sm:block text-xs text-[#717171] leading-relaxed">
-                Nền tảng kiểm soát truy cập và bảo vệ tài liệu mật tổ chức theo kiến trúc Zero
-                Trust, kiểm soát phân quyền tối thiểu (Least Privilege).
-              </p>
-            </div>
-
-            <div className="flex flex-col items-center sm:items-start md:items-end gap-1.5 sm:gap-2 text-xs text-[#717171]">
-              <div className="flex flex-wrap items-center justify-center sm:justify-start md:justify-end gap-x-2.5 sm:gap-x-3 gap-y-1 text-xs">
-                <span>Enterprise v1.0</span>
-                <span className="text-[#ebebeb]">·</span>
-                <span>Bảo mật 2FA</span>
-                <span className="text-[#ebebeb]">·</span>
-                <span className="font-bold text-[#008A05]">STATUS: NORMAL</span>
-              </div>
-              <p className="hidden sm:block text-[13px] text-[#717171]">
-                Mã hóa AES-256-GCM · Kiểm toán chuỗi bất biến HMAC-SHA256
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 sm:mt-6 pt-4 sm:pt-6 border-t border-[#ebebeb] flex flex-col sm:flex-row items-center justify-between gap-1.5 sm:gap-2 text-[13px] sm:text-xs text-[#717171] text-center sm:text-left">
-            <span>© 2026 Secure Document Access System.</span>
-            <span className="hidden sm:inline text-[13px] text-[#717171]">
-              Quyền tối thiểu · Trách nhiệm rõ ràng
+      <footer className="border-t border-[#ebebeb] bg-[#ffffff] py-5">
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 text-xs text-[#717171] sm:flex-row sm:px-6 lg:px-8">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-[#222222]">
+              Secure<span className="text-[#E31C5F]">Document</span>
             </span>
+            <span className="staff-badge inline-flex items-center gap-1 font-semibold text-[#008A05]">
+              <span className="dot dot-success" aria-hidden="true" />
+              <span>ONLINE</span>
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1">
+            <span>AES-256-GCM</span>
+            <span className="text-[#ebebeb]">·</span>
+            <span>HMAC-SHA256</span>
+            <span className="text-[#ebebeb]">·</span>
+            <span>© 2026</span>
           </div>
         </div>
       </footer>

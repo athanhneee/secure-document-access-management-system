@@ -94,22 +94,15 @@ export function OwnerWorkspace() {
           errorMessage={data.errorMessage}
           onDismiss={() => data.setErrorMessage(null)}
         >
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="warning">Document Owner</Badge>
-                  <span className="text-xs text-[#717171]">Phân hệ Chủ sở hữu</span>
-                </div>
-                <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="min-w-0">
+                <Badge variant="warning">Document Owner</Badge>
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
                   Quản lý &amp; Cấp phép Tài liệu Mật
                 </h1>
-                <p className="text-xs text-[#717171]">
-                  Tải lên tệp đa phương thức với kiểm tra phân loại bắt buộc, cấp quyền trực tiếp,
-                  xét duyệt và quản lý toàn diện vòng đời tài liệu
-                </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
                 <InteractiveHoverButton
                   variant="secondary"
                   size="sm"
@@ -158,8 +151,8 @@ export function OwnerWorkspace() {
               </Alert>
             )}
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-              <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 h-auto min-h-11 rounded-[20px] p-1.5 md:h-11 md:rounded-full md:p-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3.5">
+              <TabsList className="grid w-full grid-cols-2 lg:inline-flex lg:w-auto h-auto min-h-10 rounded-[18px] lg:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
                 <TabsTrigger value="documents" className="flex items-center gap-1.5 text-xs">
                   <FolderLock size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Tài liệu sở hữu ({data.documents.length})</span>

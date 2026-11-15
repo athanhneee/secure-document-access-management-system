@@ -3,11 +3,11 @@ import { cn } from '@/lib/utils';
 
 /**
  * Thuật toán: Bảng Dữ Liệu Doanh Nghiệp Cuộn Ngang Mượt Trên Màn Hình Nhỏ (`Table`, `TableHeader`, `TableBody`, `TableRow`, `TableHead`, `TableCell`)
- * Mục đích: Bọc phần tử `<table>` trong khung `overflow-x-auto` bo góc `28px` để giữ nguyên bố cục dữ liệu trên thiết bị `375px` mà không gây vỡ trang.
+ * Mục đích: Bọc phần tử `<table>` trong khung `overflow-x-auto` tự khử viền kép khi đặt trong `CardContent`, giữ tiêu đề cột trên một dòng (`whitespace-nowrap`) và không gây vỡ trang trên thiết bị `375px`.
  */
 export function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) {
   return (
-    <div className="relative w-full overflow-x-auto rounded-[28px] border border-[#ebebeb] bg-[#ffffff] shadow-xs">
+    <div className="relative w-full overflow-x-auto rounded-[16px] border border-[#ebebeb] bg-[#ffffff] [[data-card-body]_&]:rounded-none [[data-card-body]_&]:border-0">
       <table className={cn('w-full caption-bottom text-xs', className)} {...props} />
     </div>
   );
@@ -33,7 +33,7 @@ export function TableRow({ className, ...props }: React.HTMLAttributes<HTMLTable
   return (
     <tr
       className={cn(
-        'border-b border-[#ebebeb] transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[#f7f7f7] data-[state=selected]:bg-[#f7f7f7]',
+        'border-b border-[#ebebeb] transition-colors duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[#f7f7f7]/80 data-[state=selected]:bg-[#f7f7f7]',
         className,
       )}
       {...props}
@@ -45,7 +45,7 @@ export function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTa
   return (
     <th
       className={cn(
-        'h-10 px-4 text-left align-middle text-xs font-semibold uppercase tracking-wider text-[#717171] [&:has([role=checkbox])]:pr-0 select-none',
+        'h-9 px-3.5 text-left align-middle text-[11px] font-semibold uppercase tracking-wider text-[#717171] whitespace-nowrap [&:has([role=checkbox])]:pr-0 select-none',
         className,
       )}
       {...props}
@@ -57,7 +57,7 @@ export function TableCell({ className, ...props }: React.TdHTMLAttributes<HTMLTa
   return (
     <td
       className={cn(
-        'px-4 py-3 align-middle text-xs text-[#222222] [&:has([role=checkbox])]:pr-0',
+        'px-3.5 py-2.5 align-middle text-xs text-[#222222] [&:has([role=checkbox])]:pr-0',
         className,
       )}
       {...props}

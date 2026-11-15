@@ -143,20 +143,17 @@ export default function SessionsPage() {
     <AuthGuard>
       <AppLayout>
         <DialogErrorProvider errorMessage={errorMessage} onDismiss={() => setErrorMessage(null)}>
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div>
-                <h1 className="text-2xl font-bold tracking-tight text-[#222222]">
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222]">
                   Quản lý phiên làm việc &amp; thiết bị
                 </h1>
-                <p className="text-xs text-[#717171] mt-1">
-                  Theo dõi các phiên đăng nhập đang hoạt động và thu hồi quyền truy cập khi có nghi
-                  ngờ rò rỉ
-                </p>
               </div>
 
               <InteractiveHoverButton
                 variant="destructive"
+                size="sm"
                 onClick={() => setConfirmLogoutOthersOpen(true)}
                 disabled={isRevokingOthers}
                 isLoading={isRevokingOthers}
@@ -165,7 +162,7 @@ export default function SessionsPage() {
                     ? `Đăng xuất tất cả thiết bị khác (${otherSessionsCount})`
                     : 'Đăng xuất tất cả thiết bị khác'
                 }
-                className="w-full sm:w-auto"
+                className="w-full sm:w-auto shrink-0"
               />
             </div>
 

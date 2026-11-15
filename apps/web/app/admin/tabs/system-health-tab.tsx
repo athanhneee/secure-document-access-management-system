@@ -67,16 +67,12 @@ export function SystemHealthTab({ healthData, onCaptureSnapshot }: SystemHealthT
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[20px] border border-[#ebebeb] bg-[#ffffff] p-4 shadow-[0_4px_16px_rgba(0,0,0,0.03)]">
-        <div>
-          <h3 className="text-base font-semibold text-[#222222]">
-            Giám sát sức khỏe hạ tầng &amp; Tiến trình vận hành
+    <div className="space-y-3.5">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[20px] border border-[#ebebeb] bg-[#ffffff] p-4">
+        <div className="min-w-0">
+          <h3 className="text-sm sm:text-base font-semibold text-[#222222]">
+            Giám sát hạ tầng &amp; tiến trình
           </h3>
-          <p className="text-xs text-[#717171]">
-            Thăm dò thời gian thực API Gateway, PostgreSQL, Redis, Object Storage (S3 / R2) và bộ
-            nhớ Node.js
-          </p>
         </div>
         <InteractiveHoverButton
           variant="primary"
@@ -86,17 +82,16 @@ export function SystemHealthTab({ healthData, onCaptureSnapshot }: SystemHealthT
           isLoading={isCapturing}
           disabled={isCapturing}
           onClick={() => void handleCapture()}
+          className="shrink-0"
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_4px_16px_rgba(0,0,0,0.03)]">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs text-[#717171]">
-              Trạng thái API Gateway
-            </CardDescription>
+      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <Card>
+          <CardHeader className="pb-1.5">
+            <CardDescription className="text-xs text-[#717171]">API Gateway</CardDescription>
             <CardTitle
-              className={`text-xl font-bold flex items-center gap-2 ${gatewayTheme.textClass}`}
+              className={`text-lg font-bold flex items-center gap-1.5 ${gatewayTheme.textClass}`}
             >
               <GatewayIcon
                 size={20}
@@ -108,16 +103,16 @@ export function SystemHealthTab({ healthData, onCaptureSnapshot }: SystemHealthT
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-[#717171]">
-            {gatewayStatus === 'ONLINE'
-              ? 'Zero-trust policy gates: Active'
-              : 'Cảnh báo kết nối dịch vụ hạ tầng'}
+            {gatewayStatus === 'ONLINE' ? 'PEP / PDP sẵn sàng' : 'Cảnh báo kết nối'}
           </CardContent>
         </Card>
 
-        <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_4px_16px_rgba(0,0,0,0.03)]">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs text-[#717171]">PostgreSQL Cluster</CardDescription>
-            <CardTitle className={`text-xl font-bold flex items-center gap-2 ${dbTheme.textClass}`}>
+        <Card>
+          <CardHeader className="pb-1.5">
+            <CardDescription className="text-xs text-[#717171]">PostgreSQL</CardDescription>
+            <CardTitle
+              className={`text-lg font-bold flex items-center gap-1.5 ${dbTheme.textClass}`}
+            >
               <DbIcon
                 size={20}
                 strokeWidth={1.75}
@@ -135,13 +130,11 @@ export function SystemHealthTab({ healthData, onCaptureSnapshot }: SystemHealthT
           </CardContent>
         </Card>
 
-        <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_4px_16px_rgba(0,0,0,0.03)]">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-xs text-[#717171]">
-              Bộ nhớ đệm phiên &amp; Chính sách (Redis)
-            </CardDescription>
+        <Card>
+          <CardHeader className="pb-1.5">
+            <CardDescription className="text-xs text-[#717171]">Redis Cache</CardDescription>
             <CardTitle
-              className={`text-xl font-bold flex items-center gap-2 ${cacheTheme.textClass}`}
+              className={`text-lg font-bold flex items-center gap-1.5 ${cacheTheme.textClass}`}
             >
               <CacheIcon
                 size={20}
@@ -156,24 +149,24 @@ export function SystemHealthTab({ healthData, onCaptureSnapshot }: SystemHealthT
             {healthData?.cache?.latencyMs !== undefined
               ? `Độ trễ: ${healthData.cache.latencyMs}ms`
               : cacheStatus === 'ONLINE'
-                ? 'Đồng bộ PDP & Rate-limit: Sẵn sàng'
-                : 'Kết nối bộ đệm gián đoạn'}
+                ? 'Phiên & Rate-limit sẵn sàng'
+                : 'Bộ đệm gián đoạn'}
           </CardContent>
         </Card>
 
-        <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_4px_16px_rgba(0,0,0,0.03)]">
-          <CardHeader className="pb-2">
+        <Card>
+          <CardHeader className="pb-1.5">
             <CardDescription className="text-xs text-[#717171] flex items-center gap-1.5">
               <HardDrive
                 size={16}
                 strokeWidth={1.75}
-                className="text-[#717171]"
+                className="text-[#717171] shrink-0"
                 aria-hidden="true"
               />
-              <span>Kho lưu trữ đối tượng (S3 / R2)</span>
+              <span>Lưu trữ S3 / R2</span>
             </CardDescription>
             <CardTitle
-              className={`text-xl font-bold flex items-center gap-2 ${storageTheme.textClass}`}
+              className={`text-lg font-bold flex items-center gap-1.5 ${storageTheme.textClass}`}
             >
               <StorageIcon
                 size={20}
@@ -192,12 +185,12 @@ export function SystemHealthTab({ healthData, onCaptureSnapshot }: SystemHealthT
           </CardContent>
         </Card>
 
-        <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_4px_16px_rgba(0,0,0,0.03)]">
-          <CardHeader className="pb-2">
+        <Card>
+          <CardHeader className="pb-1.5">
             <CardDescription className="text-xs text-[#717171]">
-              Uptime &amp; Bộ nhớ (Heap / RSS)
+              Uptime &amp; Bộ nhớ
             </CardDescription>
-            <CardTitle className="text-xl font-bold text-[#222222]">
+            <CardTitle className="text-lg font-bold text-[#222222]">
               {formatUptimeDuration(healthData?.uptimeSeconds)}
             </CardTitle>
           </CardHeader>

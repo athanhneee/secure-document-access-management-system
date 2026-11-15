@@ -101,10 +101,10 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     };
 
     const sizes: Record<string, string> = {
-      default: 'min-h-11 px-5 py-2 text-xs font-semibold',
-      sm: 'min-h-11 sm:min-h-9 px-3.5 text-xs font-medium',
-      lg: 'min-h-11 px-6 text-sm font-semibold',
-      icon: 'h-11 w-11 p-0',
+      default: 'min-h-11 sm:min-h-9 px-4 py-1.5 text-xs font-semibold',
+      sm: 'min-h-11 sm:min-h-8 px-3 text-xs font-medium',
+      lg: 'min-h-11 px-5 text-sm font-semibold',
+      icon: 'h-11 w-11 sm:h-9 sm:w-9 p-0',
     };
 
     if (variant === 'interactive') {

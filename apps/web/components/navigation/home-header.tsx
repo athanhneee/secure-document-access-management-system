@@ -29,19 +29,14 @@ export function HomeHeader() {
               onClick={closeMenu}
             >
               <ShieldCheck
-                size={24}
+                size={20}
                 strokeWidth={1.75}
                 className="text-[#E31C5F] shrink-0"
                 aria-hidden="true"
               />
-              <div className="flex flex-col">
-                <span className="text-sm font-extrabold tracking-tight text-[#222222]">
-                  Secure<span className="font-light text-[#E31C5F]">Document</span>
-                </span>
-                <span className="text-[12px] sm:text-[13px] text-[#717171] font-bold tracking-wider">
-                  ENTERPRISE v1.0
-                </span>
-              </div>
+              <span className="text-sm font-bold tracking-tight text-[#222222]">
+                Secure<span className="font-light text-[#E31C5F]">Document</span>
+              </span>
             </Link>
           </div>
 

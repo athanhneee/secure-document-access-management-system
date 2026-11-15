@@ -2,7 +2,7 @@
 
 import { Pencil, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import {
   Table,
@@ -31,78 +31,71 @@ export function DepartmentsTab({
   onOpenEditDepartment,
 }: DepartmentsTabProps) {
   return (
-    <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
-      <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <CardTitle className="text-base text-[#222222]">Cơ cấu phòng ban tổ chức</CardTitle>
-          <CardDescription className="text-xs text-[#717171]">
-            Phân định ranh giới sở hữu tài liệu, cây tổ chức và phạm vi ủy quyền truy cập
-          </CardDescription>
-        </div>
+    <Card>
+      <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <CardTitle className="text-sm sm:text-base text-[#222222]">
+          Cơ cấu phòng ban ({departments.length})
+        </CardTitle>
         <InteractiveHoverButton
           variant="primary"
           size="sm"
           text="Thêm phòng ban"
           icon={<Plus size={16} strokeWidth={1.75} aria-hidden="true" />}
           onClick={onOpenCreateDepartment}
+          className="shrink-0"
         />
       </CardHeader>
       <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+        <Table>
+          <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+            <TableRow>
+              <TableHead className="text-xs text-[#717171]">Mã phòng ban</TableHead>
+              <TableHead className="text-xs text-[#717171]">Tên phòng ban</TableHead>
+              <TableHead className="text-xs text-[#717171]">Phòng ban cấp trên</TableHead>
+              <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
+              <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {departments.length === 0 ? (
               <TableRow>
-                <TableHead className="text-xs text-[#717171]">Mã phòng ban</TableHead>
-                <TableHead className="text-xs text-[#717171]">Tên phòng ban</TableHead>
-                <TableHead className="text-xs text-[#717171]">Phòng ban cấp trên</TableHead>
-                <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
-                <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
+                <TableCell colSpan={5} className="text-center py-8 text-xs text-[#717171]">
+                  Chưa có phòng ban nào được khởi tạo
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {departments.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-xs text-[#717171]">
-                    Chưa có phòng ban nào được khởi tạo
+            ) : (
+              departments.map((dept) => (
+                <TableRow key={dept.id} className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60">
+                  <TableCell className="font-mono font-bold text-xs text-[#222222]">
+                    {dept.code}
+                  </TableCell>
+                  <TableCell className="font-semibold text-xs text-[#222222]">
+                    {dept.name}
+                  </TableCell>
+                  <TableCell className="text-xs text-[#717171]">
+                    {resolveParentDepartmentLabel(departments, dept.parentId)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={dept.isActive ? 'success' : 'secondary'}>
+                      {dept.isActive ? 'Active' : 'Inactive'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <InteractiveHoverButton
+                        variant="ghost"
+                        size="sm"
+                        text="Sửa"
+                        icon={<Pencil size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        onClick={() => onOpenEditDepartment(dept)}
+                      />
+                    </div>
                   </TableCell>
                 </TableRow>
-              ) : (
-                departments.map((dept) => (
-                  <TableRow
-                    key={dept.id}
-                    className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
-                  >
-                    <TableCell className="font-mono font-bold text-xs text-[#222222]">
-                      {dept.code}
-                    </TableCell>
-                    <TableCell className="font-semibold text-xs text-[#222222]">
-                      {dept.name}
-                    </TableCell>
-                    <TableCell className="text-xs text-[#717171]">
-                      {resolveParentDepartmentLabel(departments, dept.parentId)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={dept.isActive ? 'success' : 'secondary'}>
-                        {dept.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <InteractiveHoverButton
-                          variant="ghost"
-                          size="sm"
-                          text="Sửa"
-                          icon={<Pencil size={16} strokeWidth={1.75} aria-hidden="true" />}
-                          onClick={() => onOpenEditDepartment(dept)}
-                        />
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
+              ))
+            )}
+          </TableBody>
+        </Table>
       </CardContent>
     </Card>
   );

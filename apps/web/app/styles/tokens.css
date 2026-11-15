@@ -27,14 +27,22 @@
   font-family: var(--font-inter), 'Inter', sans-serif !important;
 }
 
-/* Enforce Inter Bold on all monospace / code-style elements per design system */
+/* Enforce Inter tabular numerals on all code-style elements per design system */
 .font-mono,
 code,
-pre,
 kbd,
 samp {
   font-family: var(--font-inter), 'Inter', sans-serif !important;
-  font-weight: 700 !important;
+  font-weight: 600 !important;
+  font-feature-settings:
+    'tnum' on,
+    'lnum' on,
+    'zero' on;
+}
+
+pre {
+  font-family: var(--font-inter), 'Inter', sans-serif !important;
+  font-weight: 500 !important;
   font-feature-settings:
     'tnum' on,
     'lnum' on,

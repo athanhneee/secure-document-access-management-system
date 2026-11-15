@@ -26,21 +26,15 @@ export function SecurityWorkspaceHeader({
 }: SecurityWorkspaceHeaderProps) {
   return (
     <>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <Badge variant="destructive">Security Officer</Badge>
-            <span className="text-xs text-[#717171]">Phân hệ An ninh Thông tin</span>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="min-w-0">
+          <Badge variant="destructive">Security Officer</Badge>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-1">
             Giám sát An ninh &amp; Điều tra Sự cố
           </h1>
-          <p className="text-xs text-[#717171]">
-            Xử lý cảnh báo xâm phạm, điều tra provenance watermark, xử lý sự cố và luật phát hiện
-          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
           <InteractiveHoverButton
             variant="secondary"
             size="sm"

@@ -2,14 +2,14 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 /**
- * Thuật toán: Các Thành Phần Khung Thẻ Bề Mặt Chuẩn Hóa Bo Góc `28px` (`Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`)
- * Mục đích: Đồng bộ khoảng đệm thích ứng di động (`p-4 sm:p-5`) và hiệu ứng nâng nhẹ bề mặt có bảo vệ `prefers-reduced-motion`.
+ * Thuật toán: Các Thành Phần Khung Thẻ Bề Mặt Chuẩn Hóa Bo Góc `20px` (`Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`)
+ * Mục đích: Đồng bộ khoảng đệm thích ứng di động (`p-4 sm:p-5`) và gắn cờ `data-card-body` để bảng dữ liệu lồng bên trong tự động khử viền kép.
  */
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        'rounded-[28px] border border-[#ebebeb] bg-[#ffffff] text-[#222222] shadow-[0_6px_20px_rgba(0,0,0,0.04)] hover-card',
+        'rounded-[20px] border border-[#ebebeb] bg-[#ffffff] text-[#222222] shadow-[0_2px_10px_rgba(0,0,0,0.03)]',
         className,
       )}
       {...props}
@@ -47,7 +47,7 @@ export function CardDescription({
 }
 
 export function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('p-4 sm:p-5 pt-0', className)} {...props} />;
+  return <div data-card-body="" className={cn('p-4 sm:p-5 pt-0', className)} {...props} />;
 }
 
 export function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {

@@ -57,24 +57,17 @@ export function AdminWorkspace() {
           errorMessage={data.errorMessage}
           onDismiss={() => data.setErrorMessage(null)}
         >
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="success">System Admin</Badge>
-                  <span className="text-xs text-[#717171]">Phân hệ Quản trị</span>
-                </div>
-                <h1 className="text-2xl font-bold tracking-tight text-[#222222] mt-1">
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="min-w-0">
+                <Badge variant="success">System Admin</Badge>
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
                   Users · RBAC · ABAC · Watermark
                 </h1>
-                <p className="text-xs text-[#717171]">
-                  Quản lý người dùng, cơ cấu phòng ban, ma trận phân quyền RBAC/ABAC toàn diện, cấu
-                  hình watermark và sức khỏe hệ thống
-                </p>
               </div>
 
               {canManage && (
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
                   <InteractiveHoverButton
                     variant="secondary"
                     size="sm"
@@ -136,8 +129,8 @@ export function AdminWorkspace() {
                   </Alert>
                 )}
 
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-                  <TabsList className="grid w-full grid-cols-2 md:grid-cols-6 h-auto min-h-11 rounded-[20px] p-1.5 md:h-11 md:rounded-full md:p-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+                <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3.5">
+                  <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 xl:inline-flex xl:w-auto h-auto min-h-10 rounded-[18px] xl:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
                     <TabsTrigger value="users" className="flex items-center gap-1.5 text-xs">
                       <Users size={16} strokeWidth={1.75} aria-hidden="true" />
                       <span>Tài khoản ({data.users.length})</span>

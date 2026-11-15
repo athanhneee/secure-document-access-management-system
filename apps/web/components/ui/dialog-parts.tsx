@@ -27,7 +27,7 @@ export const DialogContext = React.createContext<DialogContextValue>({
  */
 export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn('flex flex-col space-y-1.5 text-left mb-4 pr-12', className)} {...props} />
+    <div className={cn('flex flex-col space-y-1 text-left mb-3.5 pr-11', className)} {...props} />
   );
 }
 
@@ -41,7 +41,10 @@ export function DialogTitle({
   return (
     <h2
       id={id ?? titleId}
-      className={cn('text-lg font-semibold leading-none tracking-tight text-[#222222]', className)}
+      className={cn(
+        'text-base sm:text-lg font-semibold leading-snug tracking-tight text-[#222222]',
+        className,
+      )}
       {...props}
     >
       {children}
@@ -62,7 +65,7 @@ export function DialogDescription({
   return (
     <p
       id={id ?? descriptionId}
-      className={cn('text-xs text-[#717171] mt-1 leading-relaxed', className)}
+      className={cn('text-xs text-[#717171] mt-0.5 leading-relaxed', className)}
       {...props}
     />
   );
@@ -72,7 +75,7 @@ export function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLD
   return (
     <div
       className={cn(
-        'flex flex-col-reverse sm:flex-row sm:flex-wrap sm:justify-end mt-6 gap-2',
+        'flex flex-col-reverse sm:flex-row sm:flex-wrap sm:justify-end mt-5 gap-2',
         className,
       )}
       {...props}

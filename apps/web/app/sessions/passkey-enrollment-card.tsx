@@ -1,10 +1,10 @@
 'use client';
 
 /**
- * Thuật toán: Thẻ Đăng Ký Khóa Phần Cứng FIDO2 / Passkey Trực Tiếp Trong Không Gian Phiên (`/sessions`) (`PasskeyEnrollmentCard`)
+ * Thuật toán: Thẻ Đăng Ký Khóa Phần Cứng FIDO2 / Passkey Trực Tiếp Trong Không Gian Phiên (`/sessions`) (`PasskeyEnrollmentCard`, V-31, V-48, V-62)
  * Mục đích:
- *   - Cho phép tài khoản đã xác thực Step-Up MFA (hoặc tài khoản chưa bật MFA lần nào) đăng ký khóa Windows Hello / Touch ID / YubiKey qua W3C WebAuthn `startRegistration`.
- *   - Hiển thị 10 mã khôi phục khẩn cấp trong `<dialog>` chuẩn WCAG `.showModal()` ngay sau khi kích hoạt thành công và tự phát hiện tên miền `127.0.0.1` để nhắc chuyển sang `localhost`.
+ *   - Chuẩn hóa nút đăng ký theo hệ thống thiết kế `InteractiveHoverButton` (bỏ nút đen đặc `#222222` và con quay CSS tự chế, `V-62`).
+ *   - Hiển thị đúng trạng thái `"Chưa xác thực MFA"` thay vì nhãn lệch `"Chống giả mạo"` (`V-31`), đồng thời báo trước việc tạo mới bộ 10 mã khôi phục khẩn cấp (`V-48`).
  */
 import { useState, type FormEvent } from 'react';
 import { AlertTriangle, Check, Copy, Fingerprint, ShieldCheck } from 'lucide-react';
@@ -91,13 +91,14 @@ export function PasskeyEnrollmentCard({
                 Khóa bảo mật &amp; Passkey
               </CardTitle>
             </div>
-            <Badge variant={mfaVerified ? 'success' : 'info'}>
-              {mfaVerified ? 'Đã xác thực MFA' : 'Chống giả mạo'}
+            <Badge variant={mfaVerified ? 'success' : 'warning'}>
+              {mfaVerified ? 'Đã xác thực MFA' : 'Chưa xác thực MFA'}
             </Badge>
           </div>
           <CardDescription className="text-xs text-[#717171]">
             Đăng ký Windows Hello (PIN / Vân tay / Khuôn mặt), Touch ID, Passkey điện thoại hoặc
-            khóa bảo mật USB để xác thực bước 2 nhanh chóng và chống giả mạo trang đăng nhập.
+            khóa bảo mật USB để xác thực bước 2 nhanh chóng. Mỗi lần thêm khóa mới sẽ cấp thêm bộ 10
+            mã khôi phục khẩn cấp gắn với khóa đó.
           </CardDescription>
         </CardHeader>
 
@@ -145,28 +146,16 @@ export function PasskeyEnrollmentCard({
               />
             </div>
 
-            <button
+            <InteractiveHoverButton
               type="submit"
+              variant="primary"
+              size="md"
+              isLoading={isRegistering}
               disabled={isRegistering}
-              className="min-h-11 sm:h-10 shrink-0 rounded-full border border-[#222222] bg-[#222222] px-5 py-2 text-xs font-semibold text-[#ffffff] hover:opacity-90 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            >
-              {isRegistering ? (
-                <>
-                  <div className="h-4 w-4 rounded-full border-2 border-[#ffffff]/30 border-t-[#ffffff] animate-spin" />
-                  <span>Đang xác nhận thiết bị…</span>
-                </>
-              ) : (
-                <>
-                  <Fingerprint
-                    size={16}
-                    strokeWidth={2}
-                    className="text-[#ffffff]"
-                    aria-hidden="true"
-                  />
-                  <span>Đăng ký khóa bảo mật / Passkey</span>
-                </>
-              )}
-            </button>
+              icon={<Fingerprint size={16} strokeWidth={2} aria-hidden="true" />}
+              text="Đăng ký khóa bảo mật / Passkey"
+              className="w-full sm:w-auto shrink-0"
+            />
           </form>
         </CardContent>
       </Card>

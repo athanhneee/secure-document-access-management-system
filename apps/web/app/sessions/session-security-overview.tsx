@@ -1,11 +1,15 @@
 'use client';
 
 /**
- * Thuật toán: Tổng Quan Phiên Hiện Tại & Chính Sách An Toàn Phiên Chuẩn Production (`SessionSecurityOverview`)
- * Mục đích: Trình bày thông tin phiên hiện hành (người dùng, trạng thái MFA, thời điểm đăng nhập, kết nối bảo vệ) và chính sách an toàn phiên bằng ngôn ngữ nghiệp vụ dễ hiểu, không lộ tên cookie hay cờ bảo mật nội bộ.
+ * Thuật toán: Tổng Quan Phiên Hiện Tại & Kiểm Chứng Giao Thức TLS Thực Tế (`SessionSecurityOverview`, V-25, V-30)
+ * Mục đích:
+ *   - Trình bày trung thực giao thức kết nối thực tế (`window.location.protocol === 'https:'`) thay vì cứng chữ `"Đã mã hóa"` khi chạy qua HTTP cục bộ (`V-25`).
+ *   - Hiển thị đầy đủ danh tính, phòng ban và cấp thẩm quyền bảo mật của tài khoản hiện hành (`V-30`).
  */
+import { useSyncExternalStore } from 'react';
 import { Laptop, ShieldCheck } from 'lucide-react';
 import { formatSafeDateVi } from '@/lib/ui-labels';
+import { ClassificationBadge } from '@/components/classification-badge';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -13,6 +17,9 @@ import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button
 export interface SessionSecurityOverviewProps {
   fullName?: string | undefined;
   username?: string | undefined;
+  departmentName?: string | null | undefined;
+  clearanceCode?: string | null | undefined;
+  clearanceRank?: number | undefined;
   mfaVerified?: boolean | undefined;
   ipAddress?: string | null | undefined;
   createdAt?: string | null | undefined;
@@ -22,11 +29,31 @@ export interface SessionSecurityOverviewProps {
 export function SessionSecurityOverview({
   fullName,
   username,
+  departmentName,
+  clearanceCode,
+  clearanceRank,
   mfaVerified,
   ipAddress,
   createdAt,
   onLogoutCurrent,
 }: SessionSecurityOverviewProps) {
+  const isHttps = useSyncExternalStore<boolean | null>(
+    () => () => undefined,
+    () => window.location.protocol === 'https:',
+    () => null,
+  );
+
+  const transportLabel =
+    isHttps === null
+      ? 'Đang kiểm tra kết nối…'
+      : isHttps
+        ? ipAddress
+          ? `HTTPS (TLS) · IP ${ipAddress}`
+          : 'Kết nối HTTPS (TLS)'
+        : ipAddress
+          ? `HTTP nội bộ (chưa bật TLS) · IP ${ipAddress}`
+          : 'HTTP nội bộ (chưa bật TLS)';
+
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
@@ -54,6 +81,24 @@ export function SessionSecurityOverview({
                 {fullName} ({username})
               </span>
             </div>
+            {departmentName && (
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <span className="text-[#717171]">Đơn vị trực thuộc</span>
+                <span className="font-medium text-[#222222]">{departmentName}</span>
+              </div>
+            )}
+            {clearanceCode && (
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <span className="text-[#717171]">Cấp thẩm quyền</span>
+                <ClassificationBadge
+                  code={clearanceCode}
+                  rank={clearanceRank}
+                  showRank
+                  subject="user"
+                  size="sm"
+                />
+              </div>
+            )}
             <div className="flex flex-wrap justify-between items-center gap-2">
               <span className="text-[#717171]">Xác thực đa yếu tố</span>
               <Badge variant={mfaVerified ? 'success' : 'warning'}>
@@ -67,9 +112,11 @@ export function SessionSecurityOverview({
               </span>
             </div>
             <div className="flex flex-wrap justify-between items-center gap-2">
-              <span className="text-[#717171]">Bảo vệ kết nối</span>
-              <span className="font-medium text-[#008A05]">
-                {ipAddress ? `Đã mã hóa · IP ${ipAddress}` : 'Đã mã hóa và bảo vệ phiên'}
+              <span className="text-[#717171]">Kênh truyền tải</span>
+              <span
+                className={`font-medium ${isHttps ? 'text-[#008A05]' : isHttps === false ? 'text-[#E07912]' : 'text-[#717171]'}`}
+              >
+                {transportLabel}
               </span>
             </div>
           </div>

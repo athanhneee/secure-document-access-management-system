@@ -156,6 +156,9 @@ export function ActiveSessionsList({
                       Hoạt động cuối:{' '}
                       {formatSessionTimestamp(session.lastSeenAt || session.createdAt)}
                     </span>
+                    {session.expiresAt && (
+                      <span>Hết hạn: {formatSessionTimestamp(session.expiresAt)}</span>
+                    )}
                   </div>
                 </div>
 

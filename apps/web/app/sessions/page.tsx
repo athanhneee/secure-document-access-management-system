@@ -1,16 +1,17 @@
 'use client';
 
 /**
- * Thuật toán: Không Gian Quản Lý Phiên Thiết Bị, Xử Lý Lỗi Tải Tường Minh & Thu Hồi Có Xác Nhận WCAG (`SessionsPage`)
- * Mục đích: Bọc toàn trang trong `DialogErrorProvider` để chuyển lỗi tầng Top-Layer vào `<dialog>`, hiển thị trạng thái
- * `mfaVerified` phẳng `staff-001` cho từng thiết bị, khóa nút đăng xuất thiết bị khác khi không có phiên từ xa và yêu cầu
- * xác nhận qua `ConfirmDialog` (`.showModal()`) trước khi thu hồi phiên đơn lẻ hoặc toàn bộ phiên khác.
+ * Thuật toán: Không Gian Quản Lý Phiên Thiết Bị, Tự Phục Vụ MFA/Passkey & Đổi Mật Khẩu Có Xác Nhận WCAG (`SessionsPage`)
+ * Mục đích: Bọc toàn trang trong `DialogErrorProvider`, quản lý phiên thiết bị kèm `ConfirmDialog`, kết nối trung tâm tự phục vụ MFA (`MfaFactorsCard`), Passkey (`PasskeyEnrollmentCard`) và đổi mật khẩu (`ChangePasswordCard`, `V-09`, `V-48`).
  */
 import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { removeOptimisticById } from '@/lib/optimistic-state';
+import { disconnectRealtimeStream } from '@/lib/realtime-events';
+import { clearNotificationMemoryCache } from '@/components/navigation/notification-bell-dialog';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { AuthGuard } from '@/components/auth-guard';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -23,6 +24,8 @@ import {
   summarizeUserAgent,
   type ActiveAuthSessionItem,
 } from './active-sessions-list';
+import { ChangePasswordCard } from './change-password-card';
+import { MfaFactorsCard } from './mfa-factors-card';
 import { PasskeyEnrollmentCard } from './passkey-enrollment-card';
 
 export default function SessionsPage() {
@@ -36,7 +39,8 @@ export default function SessionsPage() {
 }
 
 function SessionsPageContent() {
-  const { user, logout, refreshUser } = useAuth();
+  const router = useRouter();
+  const { user, logout, hydrateUser, refreshUser } = useAuth();
   const [sessions, setSessions] = useState<ActiveAuthSessionItem[]>([]);
   const [isFetching, setIsFetching] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -46,6 +50,8 @@ function SessionsPageContent() {
     null,
   );
   const [confirmLogoutOthersOpen, setConfirmLogoutOthersOpen] = useState(false);
+  const [confirmLogoutCurrentOpen, setConfirmLogoutCurrentOpen] = useState(false);
+  const [mfaRefreshTick, setMfaRefreshTick] = useState(0);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -165,6 +171,13 @@ function SessionsPageContent() {
     }
   }
 
+  async function handleSecurityResetRedirect() {
+    disconnectRealtimeStream();
+    clearNotificationMemoryCache();
+    hydrateUser(null);
+    router.replace('/login');
+  }
+
   const otherSessionsCount = sessions.filter((s) => !s.isCurrent).length;
   const currentSession = sessions.find((s) => s.isCurrent);
   const revokeTargetSummary = confirmRevokeTarget
@@ -235,10 +248,28 @@ function SessionsPageContent() {
         <SessionSecurityOverview
           fullName={user?.fullName}
           username={user?.username}
+          departmentName={user?.departmentName}
+          clearanceCode={user?.clearanceCode}
+          clearanceRank={user?.clearanceRank}
           mfaVerified={currentSession?.mfaVerified}
           ipAddress={currentSession?.ipAddress}
           createdAt={currentSession?.createdAt}
-          onLogoutCurrent={() => void logout()}
+          onLogoutCurrent={() => setConfirmLogoutCurrentOpen(true)}
+        />
+
+        <MfaFactorsCard
+          mfaVerified={currentSession?.mfaVerified}
+          refreshTrigger={mfaRefreshTick}
+          onSuccess={(msg) => {
+            setErrorMessage(null);
+            setSuccessMessage(msg);
+            void refreshUser();
+          }}
+          onError={(msg) => {
+            setSuccessMessage(null);
+            setErrorMessage(msg);
+          }}
+          onAllMfaDisabled={handleSecurityResetRedirect}
         />
 
         <PasskeyEnrollmentCard
@@ -246,9 +277,18 @@ function SessionsPageContent() {
           onRegistered={async (msg) => {
             setErrorMessage(null);
             setSuccessMessage(msg);
+            setMfaRefreshTick((prev) => prev + 1);
             await refreshUser();
             await loadActiveSessions({ silent: true });
           }}
+          onError={(msg) => {
+            setSuccessMessage(null);
+            setErrorMessage(msg);
+          }}
+        />
+
+        <ChangePasswordCard
+          onPasswordChanged={handleSecurityResetRedirect}
           onError={(msg) => {
             setSuccessMessage(null);
             setErrorMessage(msg);
@@ -287,6 +327,20 @@ function SessionsPageContent() {
           variant="danger"
           isLoading={isRevokingOthers}
           onConfirm={handleLogoutOthers}
+        />
+
+        <ConfirmDialog
+          open={confirmLogoutCurrentOpen}
+          onOpenChange={setConfirmLogoutCurrentOpen}
+          title="Đăng xuất khỏi thiết bị hiện tại"
+          description="Bạn có chắc chắn muốn kết thúc phiên làm việc hiện tại trên thiết bị này không?"
+          confirmText="Đăng xuất ngay"
+          cancelText="Ở lại"
+          variant="danger"
+          onConfirm={() => {
+            setConfirmLogoutCurrentOpen(false);
+            void logout();
+          }}
         />
       </div>
     </DialogErrorProvider>

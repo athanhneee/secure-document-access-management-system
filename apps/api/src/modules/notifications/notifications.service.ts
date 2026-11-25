@@ -150,6 +150,7 @@ export class NotificationsService {
     page: number;
     pageSize: number;
     hasMore: boolean;
+    unreadCount: number;
   }> {
     const where: Prisma.NotificationWhereInput = {
       recipient_id: userId,
@@ -159,12 +160,21 @@ export class NotificationsService {
     const take = query.pageSize + 1;
     const skip = (query.page - 1) * query.pageSize;
 
-    const items = await this.database.notification.findMany({
-      where,
-      orderBy: { created_at: 'desc' },
-      take,
-      skip,
-    });
+    const [items, unreadCount] = await Promise.all([
+      this.database.notification.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        take,
+        skip,
+      }),
+      typeof this.database.notification.count === 'function'
+        ? this.database.notification
+            .count({
+              where: { recipient_id: userId, status: 'UNREAD' },
+            })
+            .catch(() => 0)
+        : Promise.resolve(0),
+    ]);
 
     const hasMore = items.length > query.pageSize;
     const resultItems = hasMore ? items.slice(0, query.pageSize) : items;
@@ -184,7 +194,25 @@ export class NotificationsService {
       page: query.page,
       pageSize: query.pageSize,
       hasMore,
+      unreadCount:
+        typeof this.database.notification.count === 'function'
+          ? unreadCount
+          : resultItems.filter((n) => n.status === 'UNREAD').length,
     };
+  }
+
+  /**
+   * Thuật toán: Đánh Dấu Toàn Bộ Thông Báo Chưa Đọc Của Người Dùng Thành Đã Đọc (`markAllAsRead`, V-28/V-37).
+   */
+  async markAllAsRead(userId: bigint): Promise<number> {
+    if (typeof this.database.notification.updateMany !== 'function') {
+      return 0;
+    }
+    const result = await this.database.notification.updateMany({
+      where: { recipient_id: userId, status: 'UNREAD' },
+      data: { status: 'READ', read_at: new Date() },
+    });
+    return result.count;
   }
 
   /**

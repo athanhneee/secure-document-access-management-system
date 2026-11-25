@@ -41,6 +41,17 @@ export class NotificationsController {
     return this.notificationsService.listUserNotifications(req.auth.userId, parsed.data);
   }
 
+  @Patch('read-all')
+  @RequirePermission('NOTIFICATION', 'VIEW')
+  @ApiOperation({ summary: 'Mark all unread in-app notifications as read' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'All notifications marked as read' })
+  async markAllAsRead(@Req() req: FastifyRequest) {
+    this.csrf.assertRequest(req);
+    if (!req.auth) throw new UnauthorizedException('Authentication required.');
+    const updatedCount = await this.notificationsService.markAllAsRead(req.auth.userId);
+    return { success: true, updatedCount };
+  }
+
   @Patch(':id/read')
   @RequirePermission('NOTIFICATION', 'VIEW')
   @ApiOperation({ summary: 'Mark an in-app notification as read' })

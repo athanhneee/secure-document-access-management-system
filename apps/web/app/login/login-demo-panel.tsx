@@ -8,7 +8,7 @@ const SHOW_DEMO_ACCOUNTS = process.env['NEXT_PUBLIC_ENABLE_DEMO_ACCOUNTS'] === '
 
 const DEMO_ACCOUNTS = [
   { label: 'Quản trị viên', user: 'admin.demo', dot: 'dot-success' },
-  { label: 'Chủ tài liệu', user: 'owner.demo', dot: 'dot-warning' },
+  { label: 'Chủ sở hữu tài liệu', user: 'owner.demo', dot: 'dot-warning' },
   { label: 'Người đọc', user: 'reader.demo', dot: 'dot-info' },
   { label: 'An ninh thông tin', user: 'security.demo', dot: 'dot-danger' },
   { label: 'Kiểm toán viên', user: 'auditor.demo', dot: 'dot-neutral' },

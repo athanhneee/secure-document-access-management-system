@@ -45,15 +45,15 @@ export function MfaEnrollForm({
     {
       key: 'secret',
       id: 'mfa-enroll-secret',
-      label: 'Khóa bí mật Base32',
-      aria: 'Sao chép khóa Base32',
+      label: 'Khóa thiết lập thủ công',
+      aria: 'Sao chép khóa thiết lập thủ công',
       value: enrollData.secret,
     },
     {
       key: 'uri',
       id: 'mfa-enroll-uri',
-      label: 'Đường dẫn cấu hình (otpauth URI)',
-      aria: 'Sao chép đường dẫn otpauth URI',
+      label: 'Đường dẫn cấu hình ứng dụng xác thực',
+      aria: 'Sao chép đường dẫn cấu hình ứng dụng xác thực',
       value: enrollData.uri,
     },
   ];
@@ -96,7 +96,7 @@ export function MfaEnrollForm({
               ) : (
                 <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
               )}
-              <span>{copiedField === item.key ? 'Đã chép' : 'Chép'}</span>
+              <span>{copiedField === item.key ? 'Đã sao chép' : 'Sao chép'}</span>
             </button>
           </div>
         </div>

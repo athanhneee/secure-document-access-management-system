@@ -106,7 +106,9 @@ function SessionsPageContent() {
     setErrorMessage(null);
     setSessions((prev) => removeOptimisticById(prev, target.id));
     setSuccessMessage(
-      `Đã thu hồi phiên đăng nhập từ địa chỉ IP ${target.ipAddress || 'từ xa'} thành công.`,
+      target.ipAddress
+        ? `Đã thu hồi phiên đăng nhập (IP: ${target.ipAddress}) thành công.`
+        : 'Đã thu hồi phiên đăng nhập trên thiết bị từ xa thành công.',
     );
 
     try {
@@ -175,7 +177,7 @@ function SessionsPageContent() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222]">
-              Quản lý phiên làm việc &amp; thiết bị
+              Quản lý phiên và thiết bị
             </h1>
           </div>
 
@@ -279,7 +281,7 @@ function SessionsPageContent() {
           open={confirmLogoutOthersOpen}
           onOpenChange={setConfirmLogoutOthersOpen}
           title="Đăng xuất khỏi tất cả thiết bị khác"
-          description="Bạn có chắc chắn muốn thu hồi ngay lập tức toàn bộ các phiên đăng nhập đang mở trên những thiết bị khác không? Thiết bị hiện tại và cookie phiên này vẫn được giữ nguyên."
+          description="Bạn có chắc chắn muốn thu hồi ngay lập tức toàn bộ các phiên đăng nhập đang mở trên những thiết bị khác không? Phiên làm việc trên thiết bị hiện tại vẫn được giữ nguyên."
           confirmText="Đăng xuất thiết bị khác"
           cancelText="Giữ nguyên"
           variant="danger"

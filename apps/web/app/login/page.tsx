@@ -9,7 +9,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ShieldCheck, AlertCircle } from 'lucide-react';
 import { apiClient, ApiError, sanitizeRedirectPath } from '@/lib/api-client';
-import { resolveAuthorizedRedirectPath, useAuth } from '@/lib/auth-context';
+import { resolveAuthorizedRedirectPath, useAuth, type AuthUser } from '@/lib/auth-context';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { LoginFormFields, type FormFieldErrors } from './login-form-fields';
@@ -19,7 +19,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTarget = sanitizeRedirectPath(searchParams.get('redirect'));
-  const { user, isAuthenticated, isLoading: isAuthLoading, refreshUser } = useAuth();
+  const { user, isAuthenticated, isLoading: isAuthLoading, hydrateUser, refreshUser } = useAuth();
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -68,6 +68,7 @@ function LoginForm() {
         authenticated: boolean;
         mfaRequired: boolean;
         enrollmentRequired: boolean;
+        user?: AuthUser;
       }>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ identifier: identifier.trim(), password }),
@@ -79,8 +80,14 @@ function LoginForm() {
         return;
       }
 
-      const user = await refreshUser();
-      router.push(resolveAuthorizedRedirectPath(redirectTarget, user?.roles));
+      if (result.user) {
+        hydrateUser(result.user);
+        router.push(resolveAuthorizedRedirectPath(redirectTarget, result.user.roles));
+        return;
+      }
+
+      const resolvedUser = await refreshUser();
+      router.push(resolveAuthorizedRedirectPath(redirectTarget, resolvedUser?.roles));
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(
@@ -101,7 +108,7 @@ function LoginForm() {
           <Link
             href="/"
             className="inline-flex items-center gap-2 text-[#222222] hover:opacity-90 transition-opacity"
-            aria-label="Về trang chủ Secure Document"
+            aria-label="Về trang chủ SecureDocument"
           >
             <ShieldCheck
               size={24}
@@ -120,7 +127,7 @@ function LoginForm() {
           <CardHeader className="space-y-1 pb-3">
             <CardTitle className="text-lg font-bold text-[#222222]">Đăng nhập tài khoản</CardTitle>
             <CardDescription className="text-xs text-[#717171]">
-              Nhập định danh và mật khẩu nội bộ của bạn
+              Nhập tên đăng nhập (hoặc email) và mật khẩu của bạn.
             </CardDescription>
           </CardHeader>
 

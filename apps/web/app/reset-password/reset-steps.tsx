@@ -29,7 +29,7 @@ export function ForgotPasswordStepForm({
     <form onSubmit={onSubmit} className="space-y-4">
       <div className="space-y-1.5">
         <label htmlFor="identifier" className="block text-xs font-semibold text-[#222222]">
-          Tên đăng nhập hoặc Email
+          Tên đăng nhập hoặc email
         </label>
         <div className="relative">
           <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#717171]">
@@ -91,7 +91,7 @@ export function ConfirmResetStepForm({
     <form onSubmit={onSubmit} className="space-y-4">
       <div className="space-y-1.5">
         <label htmlFor="new-password" className="block text-xs font-semibold text-[#222222]">
-          Mật khẩu mới (Tối thiểu 15 ký tự)
+          Mật khẩu mới (tối thiểu 15 ký tự)
         </label>
         <div className="relative">
           <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#717171]">

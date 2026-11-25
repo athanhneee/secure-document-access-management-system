@@ -34,13 +34,13 @@ export function MfaWebAuthnEnrollPanel({
             className="text-[#008A05] shrink-0"
             aria-hidden="true"
           />
-          <span>Chống Phishing bằng khóa công khai phần cứng</span>
+          <span>Chống giả mạo trang đăng nhập bằng khóa bảo mật</span>
         </div>
         <p>
           Hỗ trợ <strong className="text-[#222222]">Windows Hello</strong> (PIN / Vân tay / Khuôn
           mặt), <strong className="text-[#222222]">Touch ID</strong>,{' '}
-          <strong className="text-[#222222]">Passkey điện thoại</strong> hoặc khóa USB{' '}
-          <strong className="text-[#222222]">YubiKey</strong>.
+          <strong className="text-[#222222]">Passkey điện thoại</strong> hoặc{' '}
+          <strong className="text-[#222222]">khóa bảo mật USB</strong>.
         </p>
       </div>
 
@@ -72,7 +72,7 @@ export function MfaWebAuthnEnrollPanel({
           disabled={isRegistering}
           value={deviceLabel}
           onChange={(e) => onChangeLabel(e.target.value)}
-          placeholder="VD: Windows Hello Laptop, YubiKey 5..."
+          placeholder="VD: Windows Hello Laptop, khóa USB văn phòng…"
           className="bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
         />
       </div>
@@ -85,12 +85,12 @@ export function MfaWebAuthnEnrollPanel({
         {isRegistering ? (
           <>
             <div className="h-4 w-4 rounded-full border-2 border-[#ffffff]/30 border-t-[#ffffff] animate-spin" />
-            <span>Đang chờ xác nhận thiết bị FIDO2 / Passkey…</span>
+            <span>Đang chờ xác nhận thiết bị…</span>
           </>
         ) : (
           <>
             <Fingerprint size={16} strokeWidth={2} className="text-[#ffffff]" aria-hidden="true" />
-            <span>Đăng ký Khóa FIDO2 / Passkey</span>
+            <span>Đăng ký khóa bảo mật / Passkey</span>
           </>
         )}
       </button>

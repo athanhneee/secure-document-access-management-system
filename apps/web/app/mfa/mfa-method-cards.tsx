@@ -52,14 +52,12 @@ export function MfaMethodCards({
     <Card className="rounded-[28px] border border-[#ebebeb] bg-[#ffffff] shadow-[0_12px_40px_rgba(0,0,0,0.06)] animate-fade-in-up delay-100">
       <CardHeader className="space-y-1 pb-4">
         <CardTitle className="text-base font-bold text-[#222222]">
-          {isRecoveryMode
-            ? 'Sử dụng mã khôi phục khẩn cấp'
-            : 'Xác nhận danh tính với FIDO2 hoặc TOTP'}
+          {isRecoveryMode ? 'Sử dụng mã khôi phục khẩn cấp' : 'Xác nhận danh tính bước 2'}
         </CardTitle>
         <CardDescription className="text-xs text-[#717171]">
           {isRecoveryMode
-            ? 'Nhập 1 trong các mã phục hồi đã được cung cấp khi thiết lập tài khoản'
-            : 'Sử dụng khóa bảo mật vật lý (YubiKey), sinh trắc học hoặc ứng dụng Authenticator'}
+            ? 'Nhập 1 trong các mã khôi phục đã được cấp khi thiết lập tài khoản.'
+            : 'Sử dụng khóa bảo mật, sinh trắc học thiết bị hoặc ứng dụng xác thực.'}
         </CardDescription>
       </CardHeader>
 
@@ -90,7 +88,7 @@ export function MfaMethodCards({
               {isWebAuthnLoading ? (
                 <>
                   <div className="h-4 w-4 rounded-full border-2 border-[#ffffff]/30 border-t-[#ffffff] animate-spin" />
-                  <span>Đang chạm khóa bảo mật FIDO2…</span>
+                  <span>Đang chờ xác nhận từ thiết bị…</span>
                 </>
               ) : (
                 <>
@@ -100,7 +98,7 @@ export function MfaMethodCards({
                     className="text-[#ffffff]"
                     aria-hidden="true"
                   />
-                  <span>Xác thực bằng Khóa FIDO2 / Passkey (YubiKey)</span>
+                  <span>Xác thực bằng khóa bảo mật / Passkey</span>
                 </>
               )}
             </button>
@@ -119,7 +117,7 @@ export function MfaMethodCards({
           {!isRecoveryMode ? (
             <div className="space-y-2">
               <label htmlFor="totp-code" className="block text-xs font-semibold text-[#222222]">
-                Mã xác thực 6 chữ số (TOTP)
+                Mã xác thực 6 chữ số
               </label>
               <Input
                 id="totp-code"
@@ -137,13 +135,13 @@ export function MfaMethodCards({
                 aria-label="Mã xác thực 6 chữ số"
               />
               <p className="text-xs text-[#717171] text-center">
-                Mã TOTP làm mới mỗi 30 giây từ Google/Microsoft Authenticator
+                Mã xác thực làm mới mỗi 30 giây từ ứng dụng Google hoặc Microsoft Authenticator.
               </p>
             </div>
           ) : (
             <div className="space-y-2">
               <label htmlFor="recovery-code" className="block text-xs font-semibold text-[#222222]">
-                Mã khôi phục khẩn cấp (Recovery Code)
+                Mã khôi phục khẩn cấp
               </label>
               <Input
                 id="recovery-code"
@@ -158,7 +156,7 @@ export function MfaMethodCards({
                 aria-label="Mã khôi phục khẩn cấp"
               />
               <p className="text-xs text-[#C13515] font-medium text-center">
-                Lưu ý: Mỗi mã khôi phục chỉ sử dụng được duy nhất một lần
+                Lưu ý: Mỗi mã khôi phục chỉ sử dụng được duy nhất một lần.
               </p>
             </div>
           )}
@@ -183,7 +181,7 @@ export function MfaMethodCards({
           <Key size={16} strokeWidth={1.75} aria-hidden="true" />
           <span>
             {isRecoveryMode
-              ? 'Quay lại phương thức xác thực FIDO2 / TOTP'
+              ? 'Quay lại xác thực bằng khóa bảo mật hoặc mã ứng dụng'
               : 'Không có thiết bị xác thực? Dùng mã khôi phục'}
           </span>
         </button>

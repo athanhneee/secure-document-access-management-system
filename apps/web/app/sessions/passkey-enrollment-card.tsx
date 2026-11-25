@@ -55,7 +55,7 @@ export function PasskeyEnrollmentCard({
         setCopiedRecovery(false);
       }
       await onRegistered(
-        `Đã đăng ký khóa FIDO2 / Passkey${trimmedLabel ? ` "${trimmedLabel}"` : ''} thành công! Từ lần đăng nhập sau bạn có thể dùng vân tay / PIN hoặc khóa cứng thay cho mã TOTP.`,
+        `Đã đăng ký khóa bảo mật / Passkey${trimmedLabel ? ` "${trimmedLabel}"` : ''} thành công. Từ lần đăng nhập sau bạn có thể dùng sinh trắc học, mã PIN hoặc khóa bảo mật thay cho mã ứng dụng.`,
       );
     } catch (err: unknown) {
       onError(formatWebAuthnError(err));
@@ -88,16 +88,16 @@ export function PasskeyEnrollmentCard({
                 aria-hidden="true"
               />
               <CardTitle className="text-sm font-bold text-[#222222]">
-                Khóa bảo mật FIDO2 / Passkey (WebAuthn)
+                Khóa bảo mật &amp; Passkey
               </CardTitle>
             </div>
             <Badge variant={mfaVerified ? 'success' : 'info'}>
-              {mfaVerified ? 'Step-Up MFA Ready' : 'Phishing-Resistant'}
+              {mfaVerified ? 'Đã xác thực MFA' : 'Chống giả mạo'}
             </Badge>
           </div>
           <CardDescription className="text-xs text-[#717171]">
             Đăng ký Windows Hello (PIN / Vân tay / Khuôn mặt), Touch ID, Passkey điện thoại hoặc
-            khóa USB YubiKey để đăng nhập bước 2 nhanh chóng và chống giả mạo tên miền.
+            khóa bảo mật USB để xác thực bước 2 nhanh chóng và chống giả mạo trang đăng nhập.
           </CardDescription>
         </CardHeader>
 
@@ -140,7 +140,7 @@ export function PasskeyEnrollmentCard({
                 disabled={isRegistering}
                 value={deviceLabel}
                 onChange={(e) => setDeviceLabel(e.target.value)}
-                placeholder="VD: Windows Hello Laptop, YubiKey 5C..."
+                placeholder="VD: Windows Hello Laptop, khóa USB văn phòng…"
                 className="bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
               />
             </div>
@@ -163,7 +163,7 @@ export function PasskeyEnrollmentCard({
                     className="text-[#ffffff]"
                     aria-hidden="true"
                   />
-                  <span>Đăng ký Khóa FIDO2 / Passkey</span>
+                  <span>Đăng ký khóa bảo mật / Passkey</span>
                 </>
               )}
             </button>
@@ -189,8 +189,8 @@ export function PasskeyEnrollmentCard({
               <span>Lưu 10 mã khôi phục khẩn cấp mới</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-[#717171]">
-              Khóa FIDO2 / Passkey đã được kích hoạt. Hãy sao lưu bộ 10 mã dùng một lần dưới đây để
-              dự phòng khi thay đổi thiết bị — mã sẽ không hiển thị lại sau khi đóng hộp thoại.
+              Khóa bảo mật / Passkey đã được kích hoạt. Hãy sao lưu bộ 10 mã dùng một lần dưới đây
+              để dự phòng khi thay đổi thiết bị — mã sẽ không hiển thị lại sau khi đóng hộp thoại.
             </DialogDescription>
           </DialogHeader>
 

@@ -24,7 +24,7 @@ function MfaContent() {
   const searchParams = useSearchParams();
   const redirectTarget = sanitizeRedirectPath(searchParams.get('redirect'));
   const enrollParam = searchParams.get('enroll') === '1';
-  const { refreshUser } = useAuth();
+  const { hydrateUser, refreshUser } = useAuth();
 
   const [isEnrollMode, setIsEnrollMode] = useState(enrollParam);
   const [isRecoveryMode, setIsRecoveryMode] = useState(false);
@@ -42,13 +42,22 @@ function MfaContent() {
     router.push(resolveAuthorizedRedirectPath(redirectTarget, user?.roles));
   }
 
+  async function completeAuthWithProfile(inlineUser?: AuthUser | null) {
+    if (inlineUser) {
+      hydrateUser(inlineUser);
+      handlePostAuthRedirect(inlineUser);
+      return;
+    }
+    const resolved = await refreshUser();
+    handlePostAuthRedirect(resolved);
+  }
+
   async function handleWebAuthnVerify() {
     setErrorMessage(null);
     setIsWebAuthnLoading(true);
     try {
-      await executeWebAuthnAssertion();
-      const user = await refreshUser();
-      handlePostAuthRedirect(user);
+      const inlineUser = await executeWebAuthnAssertion();
+      await completeAuthWithProfile(inlineUser);
     } catch (err: unknown) {
       setErrorMessage(formatWebAuthnError(err));
     } finally {
@@ -80,13 +89,12 @@ function MfaContent() {
         ? { recoveryCode: recoveryCode.trim() }
         : { code: totpCode.trim() };
 
-      await apiClient<{ authenticated: true }>('/auth/mfa/verify', {
+      const res = await apiClient<{ authenticated: true; user?: AuthUser }>('/auth/mfa/verify', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
 
-      const user = await refreshUser();
-      handlePostAuthRedirect(user);
+      await completeAuthWithProfile(res?.user ?? null);
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(
@@ -123,9 +131,8 @@ function MfaContent() {
 
         {isEnrollMode ? (
           <MfaEnrollmentCard
-            onComplete={async () => {
-              const user = await refreshUser();
-              handlePostAuthRedirect(user);
+            onComplete={async (enrolledUser) => {
+              await completeAuthWithProfile(enrolledUser);
             }}
             onSwitchToVerify={() => {
               setIsEnrollMode(false);

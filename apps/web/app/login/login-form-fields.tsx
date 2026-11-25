@@ -40,7 +40,7 @@ export function LoginFormFields({
     <form id="login-form" onSubmit={onSubmit} className="space-y-4" noValidate>
       <div className="space-y-1.5">
         <label htmlFor="identifier" className="block text-xs font-semibold text-[#222222]">
-          Tên đăng nhập hoặc Email <span className="text-[#C13515]">*</span>
+          Tên đăng nhập hoặc email <span className="text-[#C13515]">*</span>
         </label>
         <div className="relative">
           <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#717171]">

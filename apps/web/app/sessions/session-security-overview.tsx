@@ -5,10 +5,10 @@
  * Mục đích: Trình bày thông tin phiên hiện hành (người dùng, trạng thái MFA, thời điểm đăng nhập, kết nối bảo vệ) và chính sách an toàn phiên bằng ngôn ngữ nghiệp vụ dễ hiểu, không lộ tên cookie hay cờ bảo mật nội bộ.
  */
 import { Laptop, ShieldCheck } from 'lucide-react';
+import { formatSafeDateVi } from '@/lib/ui-labels';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
-import { formatSessionTimestamp } from './session-device.helper';
 
 export interface SessionSecurityOverviewProps {
   fullName?: string | undefined;
@@ -63,7 +63,7 @@ export function SessionSecurityOverview({
             <div className="flex flex-wrap justify-between items-center gap-2">
               <span className="text-[#717171]">Thời điểm đăng nhập</span>
               <span className="font-medium text-[#222222]">
-                {formatSessionTimestamp(createdAt)}
+                {formatSafeDateVi(createdAt, { includeTime: true })}
               </span>
             </div>
             <div className="flex flex-wrap justify-between items-center gap-2">
@@ -103,9 +103,8 @@ export function SessionSecurityOverview({
           <div className="flex items-start gap-2">
             <span className="dot dot-success mt-1.5 shrink-0" aria-hidden="true" />
             <p>
-              <strong className="text-[#222222]">Hết hạn tự động:</strong> Khóa cả phiên đăng nhập
-              lẫn phiên đọc tài liệu khi không hoạt động vượt ngưỡng cho phép, đồng thời giới hạn số
-              thiết bị đăng nhập đồng thời.
+              <strong className="text-[#222222]">Hết hạn tự động:</strong> Khóa phiên khi không hoạt
+              động vượt ngưỡng cho phép.
             </p>
           </div>
           <div className="flex items-start gap-2">

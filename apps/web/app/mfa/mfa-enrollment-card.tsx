@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { AlertCircle, ArrowLeft, Fingerprint, KeyRound, RefreshCw, Smartphone } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import type { AuthUser } from '@/lib/auth-context';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Card,
@@ -20,7 +21,7 @@ import { MfaWebAuthnEnrollPanel } from './mfa-webauthn-enroll-panel';
 import { executeWebAuthnRegistration, formatWebAuthnError } from './webauthn-binary';
 
 interface MfaEnrollmentCardProps {
-  onComplete: () => Promise<void>;
+  onComplete: (enrolledUser?: AuthUser | null) => Promise<void>;
   onSwitchToVerify: () => void;
 }
 
@@ -42,6 +43,7 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
   const [isRegisteringWebAuthn, setIsRegisteringWebAuthn] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [enrolledUser, setEnrolledUser] = useState<AuthUser | null>(null);
   const [copiedField, setCopiedField] = useState<'secret' | 'uri' | 'recovery' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -95,10 +97,14 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
     }
     setIsVerifying(true);
     try {
-      const res = await apiClient<{ recoveryCodes: string[] }>('/auth/mfa/enroll/verify', {
-        method: 'POST',
-        body: JSON.stringify({ code: verificationCode.trim() }),
-      });
+      const res = await apiClient<{ recoveryCodes: string[]; user?: AuthUser }>(
+        '/auth/mfa/enroll/verify',
+        {
+          method: 'POST',
+          body: JSON.stringify({ code: verificationCode.trim() }),
+        },
+      );
+      setEnrolledUser(res.user ?? null);
       setRecoveryCodes(res.recoveryCodes || []);
     } catch (err) {
       setErrorMessage(
@@ -117,6 +123,7 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
     setIsRegisteringWebAuthn(true);
     try {
       const res = await executeWebAuthnRegistration(deviceLabel);
+      setEnrolledUser(res.user ?? null);
       setRecoveryCodes(res.recoveryCodes);
     } catch (err: unknown) {
       setErrorMessage(formatWebAuthnError(err));
@@ -128,7 +135,7 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
   async function handleConfirmSavedCodes() {
     setIsRedirecting(true);
     try {
-      await onComplete();
+      await onComplete(enrolledUser);
     } finally {
       setIsRedirecting(false);
     }
@@ -153,7 +160,7 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
           Thiết lập xác thực đa yếu tố (MFA)
         </CardTitle>
         <CardDescription className="text-xs text-[#717171]">
-          Chọn đăng ký khóa bảo mật FIDO2 / Passkey hoặc quét mã QR với ứng dụng Authenticator
+          Chọn đăng ký khóa bảo mật / Passkey hoặc quét mã QR bằng ứng dụng xác thực.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -177,7 +184,7 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
             }`}
           >
             <Fingerprint size={16} strokeWidth={1.75} aria-hidden="true" />
-            <span className="truncate">FIDO2 / Passkey</span>
+            <span className="truncate">Khóa bảo mật / Passkey</span>
           </button>
           <button
             type="button"
@@ -194,7 +201,7 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
             }`}
           >
             <Smartphone size={16} strokeWidth={1.75} aria-hidden="true" />
-            <span className="truncate">Mã TOTP (6 số)</span>
+            <span className="truncate">Mã ứng dụng (6 số)</span>
           </button>
         </div>
 

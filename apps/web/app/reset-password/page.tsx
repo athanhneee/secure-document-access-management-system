@@ -109,7 +109,7 @@ function ResetPasswordContent() {
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
-          ? err.message || 'Token đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.'
+          ? err.message || 'Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.'
           : 'Không thể đặt lại mật khẩu. Vui lòng thử lại.',
       );
     } finally {
@@ -146,8 +146,8 @@ function ResetPasswordContent() {
             </CardTitle>
             <CardDescription className="text-xs text-[#717171]">
               {token
-                ? 'Mật khẩu phải đáp ứng độ dài tối thiểu 15 ký tự và bao gồm các lớp ký tự'
-                : 'Nhập tên đăng nhập hoặc email để nhận mã liên kết khôi phục'}
+                ? 'Mật khẩu phải dài tối thiểu 15 ký tự, gồm chữ hoa, chữ thường, chữ số và ký tự đặc biệt.'
+                : 'Nhập tên đăng nhập hoặc email để nhận liên kết khôi phục.'}
             </CardDescription>
           </CardHeader>
 

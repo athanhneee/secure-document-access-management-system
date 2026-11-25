@@ -13,6 +13,7 @@ import {
   type PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
 import { apiClient, ApiError } from '@/lib/api-client';
+import type { AuthUser } from '@/lib/auth-context';
 
 function base64UrlToUint8Array(base64Url: string): Uint8Array {
   const normalized = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -30,6 +31,7 @@ function base64UrlToUint8Array(base64Url: string): Uint8Array {
  * Mục đích: Chuẩn W3C WebAuthn yêu cầu Relying Party ID là tên miền hợp lệ (như `localhost`), không chấp nhận IP thô `127.0.0.1`. Hàm trả về URL `localhost` tương đương nếu người dùng đang mở bằng `127.0.0.1`.
  */
 export function getLocalhostSwitchUrl(): string | null {
+  if (process.env.NODE_ENV !== 'development') return null;
   if (typeof window === 'undefined') return null;
   if (window.location.hostname !== '127.0.0.1') return null;
   const nextUrl = new URL(window.location.href);
@@ -57,9 +59,9 @@ export function useLocalhostSwitchUrl(): string | null {
  */
 export async function executeWebAuthnRegistration(
   label?: string,
-): Promise<{ recoveryCodes: string[] }> {
+): Promise<{ recoveryCodes: string[]; user?: AuthUser | undefined }> {
   if (!browserSupportsWebAuthn()) {
-    throw new Error('Trình duyệt hiện tại chưa hỗ trợ đăng ký khóa FIDO2 / Passkey.');
+    throw new Error('Trình duyệt hiện tại chưa hỗ trợ đăng ký khóa bảo mật / Passkey.');
   }
 
   const trimmedLabel = label?.trim();
@@ -74,12 +76,12 @@ export async function executeWebAuthnRegistration(
   });
 
   if (!options.challenge || base64UrlToUint8Array(options.challenge).byteLength < 16) {
-    throw new Error('Thách thức đăng ký WebAuthn từ máy chủ không hợp lệ.');
+    throw new Error('Phiên đăng ký khóa bảo mật không hợp lệ. Vui lòng thử lại.');
   }
 
   const registrationResponse = await startRegistration({ optionsJSON: options });
 
-  const result = await apiClient<{ recoveryCodes: string[] }>(
+  const result = await apiClient<{ recoveryCodes: string[]; user?: AuthUser }>(
     '/auth/mfa/webauthn/register/verify',
     {
       method: 'POST',
@@ -91,7 +93,10 @@ export async function executeWebAuthnRegistration(
     },
   );
 
-  return { recoveryCodes: Array.isArray(result?.recoveryCodes) ? result.recoveryCodes : [] };
+  return {
+    recoveryCodes: Array.isArray(result?.recoveryCodes) ? result.recoveryCodes : [],
+    user: result?.user,
+  };
 }
 
 /**
@@ -101,9 +106,9 @@ export async function executeWebAuthnRegistration(
  *   - Bước 1: Yêu cầu máy chủ sinh `challenge` Base64URL (kiểm tra độ dài entropy tối thiểu 16 byte sau giải mã nhị phân) kèm `challengeToken` ràng buộc phiên.
  *   - Bước 2: Kích hoạt hộp thoại phần cứng `navigator.credentials.get` qua `startAuthentication` và gửi chữ ký `AuthenticatorAssertionResponse` lên `/auth/mfa/webauthn/auth/verify`.
  */
-export async function executeWebAuthnAssertion(): Promise<void> {
+export async function executeWebAuthnAssertion(): Promise<AuthUser | null> {
   if (!browserSupportsWebAuthn()) {
-    throw new Error('Trình duyệt hiện tại chưa hỗ trợ xác thực khóa FIDO2 / WebAuthn.');
+    throw new Error('Trình duyệt hiện tại chưa hỗ trợ xác thực khóa bảo mật / Passkey.');
   }
 
   const { options, challengeToken } = await apiClient<{
@@ -115,40 +120,49 @@ export async function executeWebAuthnAssertion(): Promise<void> {
   });
 
   if (!options.challenge || base64UrlToUint8Array(options.challenge).byteLength < 16) {
-    throw new Error('Thách thức mật mã WebAuthn từ máy chủ không hợp lệ.');
+    throw new Error('Phiên xác thực khóa bảo mật không hợp lệ. Vui lòng thử lại.');
   }
 
   const authResponse = await startAuthentication({ optionsJSON: options });
 
-  await apiClient<{ authenticated: true }>('/auth/mfa/webauthn/auth/verify', {
-    method: 'POST',
-    body: JSON.stringify({
-      response: authResponse,
-      challengeToken,
-    }),
-  });
+  const res = await apiClient<{ authenticated: true; user?: AuthUser }>(
+    '/auth/mfa/webauthn/auth/verify',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        response: authResponse,
+        challengeToken,
+      }),
+    },
+  );
+
+  return res?.user ?? null;
 }
 
 export function formatWebAuthnError(err: unknown): string {
   if (err instanceof Error && err.name === 'SecurityError') {
     const localhostUrl = getLocalhostSwitchUrl();
     return localhostUrl
-      ? `Trình duyệt chặn FIDO2 / Passkey trên địa chỉ IP 127.0.0.1. Vui lòng truy cập qua ${localhostUrl} để đăng ký và xác thực.`
-      : 'Tên miền hiện tại không khớp với cấu hình Relying Party ID (WEBAUTHN_RP_ID) của hệ thống.';
+      ? `Trình duyệt chặn khóa bảo mật trên địa chỉ 127.0.0.1. Vui lòng truy cập qua ${localhostUrl} để đăng ký và xác thực.`
+      : 'Tên miền hiện tại chưa được cấu hình cho khóa bảo mật. Vui lòng liên hệ quản trị viên.';
   }
   if (err instanceof Error && err.name === 'InvalidStateError') {
     return 'Khóa bảo mật hoặc Passkey trên thiết bị này đã được đăng ký cho tài khoản của bạn trước đó.';
   }
   if (err instanceof Error && err.name === 'NotAllowedError') {
-    return 'Yêu cầu khóa bảo mật FIDO2 / Passkey đã bị hủy hoặc quá thời gian phản hồi.';
+    return 'Yêu cầu xác nhận khóa bảo mật / Passkey đã bị hủy hoặc quá thời gian phản hồi.';
   }
   if (err instanceof ApiError) {
     return (
-      err.message || 'Không tìm thấy khóa bảo mật FIDO2 khớp với tài khoản, hoặc xác thực thất bại.'
+      err.message ||
+      'Không tìm thấy khóa bảo mật khớp với tài khoản hoặc xác thực không thành công.'
     );
   }
   if (err instanceof Error) {
-    return err.message || 'Không thể xử lý FIDO2 / Passkey. Vui lòng thử lại hoặc dùng TOTP.';
+    return (
+      err.message ||
+      'Không thể xử lý khóa bảo mật / Passkey. Vui lòng thử lại hoặc dùng mã ứng dụng.'
+    );
   }
-  return 'Không thể xử lý FIDO2 / Passkey. Vui lòng thử lại hoặc dùng TOTP.';
+  return 'Không thể xử lý khóa bảo mật / Passkey. Vui lòng thử lại hoặc dùng mã ứng dụng.';
 }

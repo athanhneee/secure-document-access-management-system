@@ -18,6 +18,7 @@ import type {
 
 export interface SseClientRegistration {
   userId: string;
+  sessionId?: string | undefined;
   roles: readonly string[];
   writeFrame: (frame: string) => boolean;
   close: () => void;
@@ -26,6 +27,7 @@ export interface SseClientRegistration {
 interface ActiveSseClient {
   id: string;
   userId: string;
+  sessionId?: string | undefined;
   roles: Set<string>;
   writeFrame: (frame: string) => boolean;
   close: () => void;
@@ -76,6 +78,7 @@ export class RealtimeEventsService implements OnModuleDestroy {
     const client: ActiveSseClient = {
       id: clientId,
       userId: registration.userId,
+      ...(registration.sessionId ? { sessionId: registration.sessionId } : {}),
       roles: new Set(registration.roles),
       writeFrame: registration.writeFrame,
       close: registration.close,
@@ -118,6 +121,11 @@ export class RealtimeEventsService implements OnModuleDestroy {
       ? [...new Set(input.targetRoles.filter((role) => role.length > 0))]
       : undefined;
 
+    const targetSessionIds = input.targetSessionIds
+      ? [...new Set(input.targetSessionIds.filter((id) => id.length > 0))]
+      : undefined;
+    const excludeSessionId = input.excludeSessionId?.trim() || undefined;
+
     if (
       (!targetUserIds || targetUserIds.length === 0) &&
       (!targetRoles || targetRoles.length === 0)
@@ -131,6 +139,8 @@ export class RealtimeEventsService implements OnModuleDestroy {
       occurredAt: new Date().toISOString(),
       ...(targetUserIds && targetUserIds.length > 0 ? { targetUserIds } : {}),
       ...(targetRoles && targetRoles.length > 0 ? { targetRoles } : {}),
+      ...(targetSessionIds && targetSessionIds.length > 0 ? { targetSessionIds } : {}),
+      ...(excludeSessionId ? { excludeSessionId } : {}),
       payload: input.payload,
     };
 
@@ -208,19 +218,46 @@ export class RealtimeEventsService implements OnModuleDestroy {
     const frame = `id: ${wirePayload.id}\nevent: ${wirePayload.type}\ndata: ${JSON.stringify(wirePayload)}\n\n`;
 
     const staleClientIds: string[] = [];
+    const revokedClients: ActiveSseClient[] = [];
+    const shouldCloseAfterDelivery = envelope.type === 'USER_SESSION_REVOKED';
+    const sessionFilterSet =
+      Array.isArray(envelope.targetSessionIds) && envelope.targetSessionIds.length > 0
+        ? new Set(envelope.targetSessionIds)
+        : null;
+    const excludedSessionId = envelope.excludeSessionId ?? null;
     for (const client of this.clients.values()) {
       const matchedUser = userSet !== null && userSet.has(client.userId);
       const matchedRole = roleSet !== null && [...client.roles].some((role) => roleSet.has(role));
       if (!matchedUser && !matchedRole) continue;
+      // Thuật toán: Cô lập ngắt kết nối SSE chính xác theo phiên đăng nhập đích (`targetSessionIds` / `excludeSessionId`) để không đóng nhầm thiết bị hiện tại khi đăng xuất thiết bị khác (V-06).
+      if (
+        sessionFilterSet !== null &&
+        (!client.sessionId || !sessionFilterSet.has(client.sessionId))
+      ) {
+        continue;
+      }
+      if (excludedSessionId !== null && client.sessionId === excludedSessionId) {
+        continue;
+      }
 
       const ok = client.writeFrame(frame);
       if (!ok) {
         staleClientIds.push(client.id);
+      } else if (shouldCloseAfterDelivery) {
+        revokedClients.push(client);
       }
     }
 
     for (const staleId of staleClientIds) {
       this.unregisterClient(staleId);
+    }
+    for (const revoked of revokedClients) {
+      this.unregisterClient(revoked.id);
+      try {
+        revoked.close();
+      } catch {
+        // Ignore close error on revoked socket
+      }
     }
   }
 

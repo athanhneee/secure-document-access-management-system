@@ -140,6 +140,62 @@ export class ApiError extends Error {
   }
 }
 
+export type SessionExpiredReason = 'session_revoked' | 'mfa_required';
+export type SessionExpiredListener = (reason: SessionExpiredReason) => void;
+const sessionExpiredListeners = new Set<SessionExpiredListener>();
+
+/**
+ * Thuật toán: Kênh Phát Tín Hiệu Phiên Hết Hạn `401` (Không Bao Giờ Kích Hoạt Với `403`) Cho `AuthProvider` (`subscribeSessionExpired`)
+ */
+export function subscribeSessionExpired(listener: SessionExpiredListener): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => {
+    sessionExpiredListeners.delete(listener);
+  };
+}
+
+function emitSessionExpired(reason: SessionExpiredReason = 'session_revoked'): void {
+  for (const listener of sessionExpiredListeners) {
+    try {
+      listener(reason);
+    } catch {
+      // Cô lập lỗi giữa các listener phiên
+    }
+  }
+}
+
+async function isPreMfa401Response(response: Response): Promise<boolean> {
+  try {
+    const cloned = response.clone();
+    const payload = (await cloned.json()) as { message?: string | string[] };
+    const msg = Array.isArray(payload?.message)
+      ? payload.message.join(' ')
+      : payload?.message || '';
+    return msg.toLowerCase().includes('mfa verification is required');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Thuật toán: Trích Xuất Tên Tệp Tin An Toàn Từ Tiêu Đề `Content-Disposition` (`parseContentDispositionFilename`, V-08).
+ */
+export function parseContentDispositionFilename(header: string | null): string | undefined {
+  if (!header) return undefined;
+  const utf8Match = header.match(/filename\*\s*=\s*UTF-8''([^;\r\n]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      const decoded = decodeURIComponent(utf8Match[1].trim());
+      if (decoded) return decoded;
+    } catch {
+      // Fallback sang mẫu filename="..."
+    }
+  }
+  const plainMatch = header.match(/filename\s*=\s*"?([^";\r\n]+)"?/i);
+  const candidate = plainMatch?.[1]?.trim();
+  return candidate || undefined;
+}
+
 export interface ApiRequestOptions extends Omit<RequestInit, 'signal'> {
   signal?: AbortSignal | null | undefined;
   _retriedAfterRefresh?: boolean | undefined;
@@ -173,14 +229,29 @@ export async function apiClient<T>(endpoint: string, options: ApiRequestOptions 
     !signal?.aborted &&
     !isRefreshExcludedEndpoint(endpoint)
   ) {
-    const refreshed = await attemptSessionRefresh(
-      resolveSafeApiUrl,
-      getCsrfToken,
-      requestStartedAt,
-    );
-    if (refreshed && !signal?.aborted) {
-      return apiClient<T>(endpoint, { ...options, _retriedAfterRefresh: true });
+    // CONFLICT-RESOLVED: Phân biệt 401 tiền-MFA (`MFA verification is required.`) để chuyển về `/mfa` thay vì báo sai `session_revoked` (V-14).
+    if (await isPreMfa401Response(response)) {
+      emitSessionExpired('mfa_required');
+    } else {
+      const refreshed = await attemptSessionRefresh(
+        resolveSafeApiUrl,
+        getCsrfToken,
+        requestStartedAt,
+      );
+      if (refreshed && !signal?.aborted) {
+        return apiClient<T>(endpoint, { ...options, _retriedAfterRefresh: true });
+      }
+      if (!signal?.aborted) {
+        emitSessionExpired('session_revoked');
+      }
     }
+  } else if (
+    response.status === 401 &&
+    _retriedAfterRefresh &&
+    !signal?.aborted &&
+    !isRefreshExcludedEndpoint(endpoint)
+  ) {
+    emitSessionExpired('session_revoked');
   }
 
   if (response.status === 204) return undefined as unknown as T;
@@ -198,10 +269,11 @@ export async function apiClient<T>(endpoint: string, options: ApiRequestOptions 
   return response.json() as Promise<T>;
 }
 
-export type DownloadBlob = Blob & { totalPages?: number };
+export type DownloadBlob = Blob & { totalPages?: number; filename?: string };
 
 export interface ApiDownloadOptions {
   signal?: AbortSignal | null | undefined;
+  headers?: Record<string, string> | undefined;
   _retriedAfterRefresh?: boolean | undefined;
 }
 
@@ -209,15 +281,20 @@ export async function apiDownload(
   endpoint: string,
   options: ApiDownloadOptions = {},
 ): Promise<DownloadBlob> {
-  const { _retriedAfterRefresh, signal } = options;
+  const { _retriedAfterRefresh, signal, headers: extraHeaders } = options;
   const url = resolveSafeApiUrl(endpoint);
   const csrf = getCsrfToken();
+
+  const headers: Record<string, string> = {
+    ...(extraHeaders ?? {}),
+    ...(csrf ? { 'x-csrf-token': csrf } : {}),
+  };
 
   const requestStartedAt = Date.now();
   const response = await fetch(url, {
     method: 'GET',
     credentials: 'include',
-    headers: csrf ? { 'x-csrf-token': csrf } : {},
+    headers,
     ...(signal ? { signal } : {}),
   });
 
@@ -227,14 +304,28 @@ export async function apiDownload(
     !signal?.aborted &&
     !isRefreshExcludedEndpoint(endpoint)
   ) {
-    const refreshed = await attemptSessionRefresh(
-      resolveSafeApiUrl,
-      getCsrfToken,
-      requestStartedAt,
-    );
-    if (refreshed && !signal?.aborted) {
-      return apiDownload(endpoint, { ...options, _retriedAfterRefresh: true });
+    if (await isPreMfa401Response(response)) {
+      emitSessionExpired('mfa_required');
+    } else {
+      const refreshed = await attemptSessionRefresh(
+        resolveSafeApiUrl,
+        getCsrfToken,
+        requestStartedAt,
+      );
+      if (refreshed && !signal?.aborted) {
+        return apiDownload(endpoint, { ...options, _retriedAfterRefresh: true });
+      }
+      if (!signal?.aborted) {
+        emitSessionExpired('session_revoked');
+      }
     }
+  } else if (
+    response.status === 401 &&
+    _retriedAfterRefresh &&
+    !signal?.aborted &&
+    !isRefreshExcludedEndpoint(endpoint)
+  ) {
+    emitSessionExpired('session_revoked');
   }
 
   if (!response.ok) {
@@ -252,6 +343,12 @@ export async function apiDownload(
   if (totalPagesHeader) {
     const parsed = parseInt(totalPagesHeader, 10);
     if (!isNaN(parsed) && parsed > 0) downloadBlob.totalPages = parsed;
+  }
+  const parsedFilename = parseContentDispositionFilename(
+    response.headers.get('content-disposition'),
+  );
+  if (parsedFilename) {
+    downloadBlob.filename = parsedFilename;
   }
 
   return downloadBlob;

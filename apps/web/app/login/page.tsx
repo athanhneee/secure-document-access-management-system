@@ -19,6 +19,15 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTarget = sanitizeRedirectPath(searchParams.get('redirect'));
+  const sessionReason = searchParams.get('reason');
+  const sessionBannerMessage =
+    sessionReason === 'locked'
+      ? 'Tài khoản của bạn đã bị tạm khóa bảo mật và phiên làm việc đã được đăng xuất ngay lập tức.'
+      : sessionReason === 'disabled'
+        ? 'Tài khoản của bạn đã bị vô hiệu hóa bởi quản trị viên. Vui lòng liên hệ bộ phận quản trị.'
+        : sessionReason === 'session_revoked'
+          ? 'Phiên làm việc đã hết hạn hoặc bị thu hồi. Vui lòng đăng nhập lại để tiếp tục.'
+          : null;
   const { user, isAuthenticated, isLoading: isAuthLoading, hydrateUser, refreshUser } = useAuth();
 
   const [identifier, setIdentifier] = useState('');
@@ -33,7 +42,7 @@ function LoginForm() {
    */
   useEffect(() => {
     if (!isAuthLoading && isAuthenticated && user) {
-      router.replace(resolveAuthorizedRedirectPath(redirectTarget, user.roles));
+      router.replace(resolveAuthorizedRedirectPath(redirectTarget, user));
     }
   }, [isAuthLoading, isAuthenticated, user, redirectTarget, router]);
 
@@ -82,12 +91,12 @@ function LoginForm() {
 
       if (result.user) {
         hydrateUser(result.user);
-        router.push(resolveAuthorizedRedirectPath(redirectTarget, result.user.roles));
+        router.push(resolveAuthorizedRedirectPath(redirectTarget, result.user));
         return;
       }
 
       const resolvedUser = await refreshUser();
-      router.push(resolveAuthorizedRedirectPath(redirectTarget, resolvedUser?.roles));
+      router.push(resolveAuthorizedRedirectPath(redirectTarget, resolvedUser));
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(
@@ -132,6 +141,23 @@ function LoginForm() {
           </CardHeader>
 
           <CardContent className="space-y-4">
+            {!errorMessage && sessionBannerMessage && (
+              <Alert
+                variant="warning"
+                className="rounded-[16px] border border-[#E07912]/30 bg-[#E07912]/10 text-[#222222] text-xs"
+              >
+                <AlertCircle
+                  size={16}
+                  strokeWidth={1.75}
+                  className="shrink-0 text-[#E07912]"
+                  aria-hidden="true"
+                />
+                <AlertDescription className="ml-2 leading-relaxed">
+                  {sessionBannerMessage}
+                </AlertDescription>
+              </Alert>
+            )}
+
             {errorMessage && (
               <Alert
                 variant="destructive"

@@ -222,6 +222,18 @@ const EXACT_MESSAGE_MAP: Readonly<Record<string, string>> = {
   'verified mfa is required.': 'Thao tác này yêu cầu phiên đã xác thực đa yếu tố (MFA).',
   'mfa verification failed.': 'Mã xác thực đa yếu tố (MFA) không chính xác hoặc đã hết hạn.',
   'step-up authentication failed.': 'Xác thực nâng cấp bảo mật không thành công.',
+  'step-up mfa verification is required to enroll or modify mfa factors.':
+    'Phiên hiện tại cần xác thực đa yếu tố (MFA) bước 2 trước khi đăng ký hoặc thay đổi phương thức bảo mật. Hãy xác thực tại trang MFA rồi thử lại.',
+  'an active totp authenticator is already enabled for this account.':
+    'Tài khoản này đã kích hoạt sẵn ứng dụng xác thực TOTP (6 số). Bạn có thể chuyển sang nhập mã xác thực hoặc quản lý nhân tố tại trang Phiên & thiết bị.',
+  'cannot remove the last active mfa factor for a privileged role.':
+    'Không thể gỡ nhân tố MFA cuối cùng đối với vai trò đặc quyền bắt buộc bảo mật 2 lớp.',
+  'requestedfrom cannot be in the past.': 'Thời điểm bắt đầu đề nghị không được nằm trong quá khứ.',
+  'requesteduntil must be in the future.': 'Thời điểm kết thúc đề nghị phải nằm trong tương lai.',
+  'requesteduntil must be after requestedfrom.':
+    'Thời điểm kết thúc đề nghị phải lớn hơn thời điểm bắt đầu.',
+  'requested access duration cannot exceed 365 days.':
+    'Khoảng thời gian đề nghị truy cập không được vượt quá 365 ngày.',
   'password and live mfa verification are required.':
     'Vui lòng cung cấp mật khẩu hiện tại và mã MFA trực tiếp để xác nhận.',
   'reset request is invalid or expired.': 'Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.',
@@ -252,6 +264,44 @@ const EXACT_MESSAGE_MAP: Readonly<Record<string, string>> = {
   'fido2 / webauthn authentication failed.': 'Xác thực khóa bảo mật / Passkey không thành công.',
   'an unexpected internal error occurred. contact the administrator with the correlation id.':
     'Máy chủ gặp sự cố xử lý nội bộ. Vui lòng thử lại hoặc liên hệ quản trị viên.',
+  'disabled accounts cannot be unlocked.':
+    'Tài khoản đã vô hiệu hóa không thể dùng thao tác Mở khóa; vui lòng dùng thao tác Kích hoạt lại.',
+  'only disabled accounts can be reactivated.':
+    'Chỉ có thể kích hoạt lại các tài khoản đang ở trạng thái Vô hiệu hóa.',
+  'validto must be later than validfrom.':
+    'Thời điểm kết thúc hiệu lực phải lớn hơn thời điểm bắt đầu.',
+  'validto must be later than validfrom':
+    'Thời điểm kết thúc hiệu lực phải lớn hơn thời điểm bắt đầu.',
+  'validto must be in the future.': 'Thời điểm kết thúc hiệu lực phải nằm trong tương lai.',
+  'validto must be in the future': 'Thời điểm kết thúc hiệu lực phải nằm trong tương lai.',
+  'validfrom cannot be in the past.': 'Thời điểm bắt đầu hiệu lực không được nằm trong quá khứ.',
+  'validfrom cannot be in the past': 'Thời điểm bắt đầu hiệu lực không được nằm trong quá khứ.',
+  'administrators cannot assign roles to themselves.':
+    'Quản trị viên không thể tự gán vai trò cho chính mình.',
+  'administrators cannot revoke their own roles.':
+    'Quản trị viên không thể tự thu hồi vai trò của chính mình.',
+  'administrators cannot change a role they hold.':
+    'Quản trị viên không thể tự chỉnh sửa vai trò mà chính mình đang nắm giữ.',
+  'administrators cannot disable a role they hold.':
+    'Quản trị viên không thể tự vô hiệu hóa vai trò mà chính mình đang nắm giữ.',
+  'administrators cannot lock themselves.':
+    'Quản trị viên không thể tự khóa tài khoản của chính mình.',
+  'administrators cannot disable themselves.':
+    'Quản trị viên không thể tự vô hiệu hóa tài khoản của chính mình.',
+  'role assignment history prevents deletion; disable the role instead.':
+    'Vai trò đã có lịch sử gán cho người dùng nên không thể xóa vĩnh viễn; vui lòng dùng thao tác Vô hiệu hóa.',
+  'cannot activate department while parent department is inactive.':
+    'Không thể kích hoạt lại phòng ban khi đơn vị cấp trên đang ngừng hoạt động.',
+  'department is already active.': 'Phòng ban này hiện đang hoạt động.',
+  'role is already active.': 'Vai trò này hiện đang hoạt động.',
+  'system role mapping is outside the approved permission matrix.':
+    'Danh sách quyền chọn cho vai trò hệ thống vượt quá ma trận đặc quyền tối thiểu cho phép.',
+  'role permissions violate separation of duties across incompatible security domains.':
+    'Tập quyền vi phạm nguyên tắc Phân tách nhiệm vụ (không thể gộp quyền Quản trị, SOC, Kiểm toán và Nghiệp vụ tài liệu vào cùng một vai trò).',
+  'separation of duties violation: privileged roles and capabilities are mutually exclusive and cannot be combined with business roles.':
+    'Vi phạm nguyên tắc Phân tách nhiệm vụ (SoD): vai trò đặc quyền (Quản trị / SOC / Kiểm toán) không được gán chồng lấp thời gian với nhau hoặc với vai trò nghiệp vụ tài liệu.',
+  'separation of duties violation: updating role permissions conflicts with another role held by an assigned user.':
+    'Vi phạm Phân tách nhiệm vụ (SoD): tập quyền mới xung đột với vai trò khác mà nhân sự đang nắm giữ.',
 };
 
 const GENERIC_ERROR_CODE_MAP: Readonly<Record<string, string>> = {
@@ -282,8 +332,17 @@ function translateEnglishPattern(rawMessage: string): string | null {
   if (normalized.includes('challenge token')) {
     return 'Phiên xác thực khóa bảo mật đã hết hạn hoặc không hợp lệ. Vui lòng thử lại.';
   }
-  if (normalized.includes('password') && normalized.includes('15')) {
-    return 'Mật khẩu bắt buộc có độ dài tối thiểu 15 ký tự và đáp ứng quy tắc phức tạp.';
+  if (normalized.includes('password_contains_identifier')) {
+    return 'Mật khẩu mới không được chứa tên đăng nhập hoặc phần tên email của tài khoản.';
+  }
+  if (normalized.includes('password_common')) {
+    return 'Mật khẩu quá phổ biến và dễ đoán. Vui lòng chọn cụm mật khẩu độc đáo hơn.';
+  }
+  if (
+    normalized.includes('password_length') ||
+    (normalized.includes('password') && normalized.includes('15'))
+  ) {
+    return 'Mật khẩu bắt buộc có độ dài từ 15 đến 128 ký tự theo tiêu chuẩn bảo mật NIST SP 800-63B.';
   }
   return null;
 }

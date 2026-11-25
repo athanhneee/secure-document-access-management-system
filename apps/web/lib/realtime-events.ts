@@ -1,6 +1,7 @@
 'use client';
 
-import { getCsrfToken } from './api-client';
+import { API_BASE_URL, getCsrfToken } from './api-client';
+import { attemptSessionRefresh } from './api-refresh';
 
 export type RealtimeEventType =
   | 'NOTIFICATION_CREATED'
@@ -8,7 +9,8 @@ export type RealtimeEventType =
   | 'ACCESS_REQUEST_UPDATED'
   | 'ACCESS_GRANT_UPDATED'
   | 'SECURITY_ALERT_UPDATED'
-  | 'ACCESS_SESSION_UPDATED';
+  | 'ACCESS_SESSION_UPDATED'
+  | 'USER_SESSION_REVOKED';
 
 export interface RealtimeEventEnvelope<T = Record<string, unknown>> {
   type: RealtimeEventType;
@@ -29,11 +31,13 @@ const ALL_EVENT_TYPES: readonly RealtimeEventType[] = [
   'ACCESS_GRANT_UPDATED',
   'SECURITY_ALERT_UPDATED',
   'ACCESS_SESSION_UPDATED',
+  'USER_SESSION_REVOKED',
 ];
 
 const INITIAL_RETRY_MS = 1_500;
 const MAX_RETRY_MS = 25_000;
-const STREAM_URL = '/api/v1/events/stream';
+// CONFLICT-RESOLVED: Kế thừa API_BASE_URL động thay vì hardcode '/api/v1/events/stream' (V-56).
+const STREAM_URL = `${API_BASE_URL.replace(/\/+$/u, '')}/events/stream`;
 
 /**
  * Thuật toán: Bộ Quản Lý Kênh SSE Đơn Thể Toàn Tab Kèm Backoff Mũ & Tự Động Ngắt Khi Đăng Xuất (`realtime-events`)
@@ -175,6 +179,9 @@ class RealtimeEventsClient {
           if (this.source !== es) return;
           const messageEvent = rawEvent as MessageEvent<string>;
           this.dispatch(eventType, messageEvent.data);
+          if (eventType === 'USER_SESSION_REVOKED') {
+            this.disconnect();
+          }
         });
       }
 
@@ -187,7 +194,22 @@ class RealtimeEventsClient {
         }
         this.source = null;
         this.setConnected(false);
-        this.scheduleReconnect();
+        // Thuật toán: Tự động thử làm mới Access Token một lần khi SSE gặp lỗi (401 hết hạn TTL) trước khi lùi theo backoff mũ để tránh lặp 401 vô hạn (V-15).
+        void attemptSessionRefresh(
+          (endpoint) => `${API_BASE_URL.replace(/\/+$/u, '')}${endpoint}`,
+          getCsrfToken,
+          Date.now(),
+        )
+          .catch(() => false)
+          .then((refreshed) => {
+            if (refreshed && this.hasActiveEventListeners() && !this.source) {
+              this.retryDelayMs = INITIAL_RETRY_MS;
+              this.clearReconnectTimer();
+              this.ensureConnected();
+              return;
+            }
+            this.scheduleReconnect();
+          });
       };
     } catch {
       this.source = null;

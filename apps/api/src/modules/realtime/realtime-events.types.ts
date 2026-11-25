@@ -9,7 +9,8 @@ export type RealtimeEventType =
   | 'ACCESS_REQUEST_UPDATED'
   | 'ACCESS_GRANT_UPDATED'
   | 'SECURITY_ALERT_UPDATED'
-  | 'ACCESS_SESSION_UPDATED';
+  | 'ACCESS_SESSION_UPDATED'
+  | 'USER_SESSION_REVOKED';
 
 export interface RealtimeEventEnvelope<T = Record<string, unknown>> {
   id: string;
@@ -17,6 +18,8 @@ export interface RealtimeEventEnvelope<T = Record<string, unknown>> {
   occurredAt: string;
   targetUserIds?: string[] | undefined;
   targetRoles?: string[] | undefined;
+  targetSessionIds?: string[] | undefined;
+  excludeSessionId?: string | undefined;
   payload: T;
 }
 
@@ -24,6 +27,8 @@ export interface PublishRealtimeEventInput<T = Record<string, unknown>> {
   type: RealtimeEventType;
   targetUserIds?: readonly string[] | undefined;
   targetRoles?: readonly string[] | undefined;
+  targetSessionIds?: readonly string[] | undefined;
+  excludeSessionId?: string | undefined;
   payload: T;
 }
 

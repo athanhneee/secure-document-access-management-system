@@ -13,6 +13,12 @@ import {
 import { getDatabaseClient } from '@sda/database';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import { DistributedStateService } from '../concurrency/distributed-state.service.js';
+import {
+  DERIVATIVE_CACHE_TTL_MS,
+  WATERMARK_CONFIG_EPOCH_KEY,
+  WATERMARK_CONFIG_EPOCH_NAMESPACE,
+} from '../documents/derivative-pdf-cache.helper.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
 import {
   traceWatermarkToken,
@@ -56,6 +62,7 @@ export class WatermarksService {
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
     @Optional() private readonly authorization?: AuthorizationService,
+    @Optional() private readonly stateStore?: DistributedStateService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -197,6 +204,22 @@ export class WatermarksService {
         updated_at: new Date(),
       },
     });
+
+    if (typeof this.stateStore?.putEphemeral === 'function') {
+      try {
+        await this.stateStore.putEphemeral(
+          WATERMARK_CONFIG_EPOCH_NAMESPACE,
+          WATERMARK_CONFIG_EPOCH_KEY,
+          {
+            updatedAt: updated.updated_at.toISOString(),
+            configId: updated.id.toString(),
+          },
+          DERIVATIVE_CACHE_TTL_MS,
+        );
+      } catch {
+        // Non-fatal cache epoch bump failure; new sessions still load fresh DB config.
+      }
+    }
 
     if (this.auditWriter && actor) {
       await this.auditWriter.writeLog({

@@ -55,17 +55,21 @@ export function generateCryptographicWatermarkToken(): string {
 }
 
 /**
- * Thuật toán: Gấp dấu tiếng Việt Unicode NFD sang tập ký tự in ASCII tương thích WinAnsi
- * Mục đích: Đảm bảo `pdf-lib` nhúng phông chuẩn `Helvetica` không bao giờ ném lỗi mã hóa với tên người dùng tiếng Việt.
+ * Thuật toán: Gấp dấu tiếng Việt Unicode NFD & Chuyển Tự Ký Hiệu Typo Sang ASCII Tương Thích WinAnsi (`toWinAnsiSafeText`)
+ * Mục đích: Đảm bảo `pdf-lib` nhúng phông chuẩn `Helvetica` không bao giờ ném lỗi mã hóa và không biến các dấu phân tách phổ biến (`·`, `•`, `–`, `—`, `…`, ngoặc kép cong) thành ký tự `?`.
  * Cơ chế hoạt động:
- *   - Chuẩn hóa `NFD`, loại bỏ dấu tổ hợp `[\u0300-\u036f]`, ánh xạ `đ/Đ -> d/D` và thay ký tự ngoài `[\x20-\x7E]` bằng `?`.
- *
- * Algorithm: Unicode NFD Diacritic Folding to WinAnsi Printable ASCII.
- * Strips combining diacritical marks, maps Vietnamese `đ/Đ` -> `d/D`, and replaces
- * out-of-range glyphs with `?` so `pdf-lib` StandardFonts never throw encoding errors.
+ *   - Chuyển tự các ký hiệu phân tách/typo Unicode phổ biến (`·`/`•` -> `-`, `–`/`—` -> `-`, `‘`/`’` -> `'`, `“`/`”` -> `"`, `…` -> `...`, `×` -> `x`, khoảng trắng không ngắt/xuống dòng -> dấu cách).
+ *   - Chuẩn hóa `NFD`, loại bỏ dấu tổ hợp `[\u0300-\u036f]`, ánh xạ `đ/Đ -> d/D` và thay các ký tự ngoài `[\x20-\x7E]` còn lại bằng `?`.
  */
 export function toWinAnsiSafeText(text: string): string {
   return text
+    .replace(/[\u00B7\u2022\u2023\u2219\u30FB]/gu, '-')
+    .replace(/[\u2013\u2014\u2212]/gu, '-')
+    .replace(/[\u2018\u2019\u201A]/gu, "'")
+    .replace(/[\u201C\u201D\u201E]/gu, '"')
+    .replace(/\u2026/gu, '...')
+    .replace(/\u00D7/gu, 'x')
+    .replace(/[\u00A0\u202F\u2009\t\r\n]+/gu, ' ')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/gu, '')
     .replace(/đ/gu, 'd')

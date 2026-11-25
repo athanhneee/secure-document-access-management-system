@@ -17,14 +17,22 @@ const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 const HEADER_LENGTH = DERIVATIVE_MAGIC.length + 1 + IV_LENGTH + AUTH_TAG_LENGTH;
 const DERIVATIVE_META_NAMESPACE = 'derivative-pdf-meta';
+export const WATERMARK_CONFIG_EPOCH_NAMESPACE = 'watermark-config';
+export const WATERMARK_CONFIG_EPOCH_KEY = 'epoch';
 export const DERIVATIVE_CACHE_TTL_MS = 30 * 60_000;
 
 const FALLBACK_PROCESS_SECRET = crypto.randomBytes(32);
+
+export interface WatermarkConfigEpochPayload {
+  updatedAt: string;
+  configId?: string | undefined;
+}
 
 export interface CachedDerivativePdfMetadata {
   pageCount: number;
   watermarkToken?: string | undefined;
   outputSha256Hash: string;
+  configEpoch?: string | null | undefined;
 }
 
 export interface LoadedDerivativeSessionPdf extends CachedDerivativePdfMetadata {
@@ -155,11 +163,22 @@ export async function tryLoadCachedSessionPdf(params: {
   }
 
   const metaId = buildDerivativeMetaId(accessSessionId, documentVersionId);
-  const meta = await stateStore.getJson<CachedDerivativePdfMetadata>(
-    DERIVATIVE_META_NAMESPACE,
-    metaId,
-  );
+  const [meta, currentEpoch] = await Promise.all([
+    stateStore.getJson<CachedDerivativePdfMetadata>(DERIVATIVE_META_NAMESPACE, metaId),
+    stateStore
+      .getJson<WatermarkConfigEpochPayload>(
+        WATERMARK_CONFIG_EPOCH_NAMESPACE,
+        WATERMARK_CONFIG_EPOCH_KEY,
+      )
+      .catch(() => null),
+  ]);
   if (!meta) return null;
+
+  // CONFLICT-RESOLVED: Tự động vô hiệu hóa bản đệm xem trước 30 phút nếu quản trị viên vừa cập nhật cấu hình watermark, đảm bảo trang tiếp theo áp dụng ngay cấu hình mới.
+  if (currentEpoch?.updatedAt && currentEpoch.updatedAt !== (meta.configEpoch ?? null)) {
+    await stateStore.deleteKey(DERIVATIVE_META_NAMESPACE, metaId);
+    return null;
+  }
 
   try {
     const objectKey = buildDerivativePdfStorageKey(accessSessionId, documentVersionId);
@@ -231,10 +250,17 @@ export async function storeCachedSessionPdf(params: {
       encryptedEnvelope,
       'application/octet-stream',
     );
+    const currentEpoch = await stateStore
+      .getJson<WatermarkConfigEpochPayload>(
+        WATERMARK_CONFIG_EPOCH_NAMESPACE,
+        WATERMARK_CONFIG_EPOCH_KEY,
+      )
+      .catch(() => null);
     const metaPayload: CachedDerivativePdfMetadata = {
       pageCount,
       ...(watermarkToken !== undefined ? { watermarkToken } : {}),
       outputSha256Hash,
+      configEpoch: currentEpoch?.updatedAt ?? null,
     };
     await stateStore.putEphemeral(
       DERIVATIVE_META_NAMESPACE,

@@ -4,12 +4,16 @@
  */
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { DatabaseConflictError, getDatabaseClient, type Prisma } from '@sda/database';
+import { getDatabaseClient, type Prisma } from '@sda/database';
 import { AppErrorCode, type AuditKeyRing } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
 import type { RequestContext } from '../auth/auth.types.js';
 import { AuditRedactionService } from './audit-redaction.service.js';
-import { appendChainedAuditLog, resolveAuditKeyRing } from './audit-chain-helper.js';
+import {
+  appendChainedAuditLog,
+  isTransientAuditTxConflict,
+  resolveAuditKeyRing,
+} from './audit-chain-helper.js';
 
 export interface AuditWriteEvent {
   action: string;
@@ -162,18 +166,4 @@ export class AuditWriterService {
     }
     throw new Error('Unreachable audit retry exhaustion');
   }
-}
-
-/**
- * Thuật toán: Nhận diện xung đột giao dịch tạm thời PostgreSQL/Prisma (`40001`, `40P01`, `P2034`).
- */
-function isTransientAuditTxConflict(error: unknown): boolean {
-  if (error instanceof DatabaseConflictError) {
-    return true;
-  }
-  const code =
-    typeof error === 'object' && error !== null && 'code' in error
-      ? String((error as { code?: unknown }).code)
-      : '';
-  return code === 'P2034' || code === '40001' || code === '40P01';
 }

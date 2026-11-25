@@ -7,6 +7,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { formatSignerKeyId } from '@sda/contracts';
 import type { getDatabaseClient } from '@sda/database';
 import type { AuthPrincipal } from '../auth/auth.types.js';
+import type { AuthorizationService } from '../rbac/authorization.service.js';
 import type { AuditWriterService } from './audit-writer.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -17,7 +18,48 @@ export interface CreatedAuditAnchorDto {
   anchorSequence: string;
   entryHash: string;
   signature: string;
+  signerKeyId?: string | undefined;
+  status?: string | undefined;
   anchoredAt: string;
+}
+
+/**
+ * Algorithm / Thuật toán: Liệt kê các điểm neo kiểm chứng chuỗi băm kiểm toán (`listPartitionAnchors`) cho `SECURITY_OFFICER`, `AUDITOR` và vai trò tùy chỉnh có `AUDIT_LOG:VIEW` (UC32, #04).
+ */
+export async function listPartitionAnchors(
+  database: PrismaClient,
+  principal: AuthPrincipal,
+  partition?: string,
+  authorization?: AuthorizationService,
+): Promise<{ data: CreatedAuditAnchorDto[] }> {
+  const isPrivilegedRole = principal.roles.some((r) => r === 'SECURITY_OFFICER' || r === 'AUDITOR');
+  const isCustomAuditor =
+    !isPrivilegedRole &&
+    !principal.roles.includes('DOCUMENT_OWNER') &&
+    Boolean(
+      authorization &&
+      (await authorization.hasPermission(principal, 'AUDIT_LOG', 'VIEW', { anyScope: true })),
+    );
+  if (!isPrivilegedRole && !isCustomAuditor) {
+    throw new ForbiddenException('Only Security Officer or Auditor can view audit anchors');
+  }
+  const rows = await database.auditAnchor.findMany({
+    ...(partition?.trim() ? { where: { chain_partition: partition.trim() } } : {}),
+    orderBy: [{ anchored_at: 'desc' }, { id: 'desc' }],
+    take: 100,
+  });
+  return {
+    data: rows.map((row) => ({
+      id: row.id.toString(),
+      chainPartition: row.chain_partition,
+      anchorSequence: row.anchor_sequence.toString(),
+      entryHash: row.entry_hash,
+      signature: row.signature,
+      signerKeyId: row.signer_key_id,
+      status: row.status,
+      anchoredAt: row.anchored_at.toISOString(),
+    })),
+  };
 }
 
 /**
@@ -65,12 +107,33 @@ export async function createPartitionAnchor(
     },
   });
 
+  if (typeof writerService?.writeLog === 'function') {
+    await writerService
+      .writeLog({
+        actorUserId: principal.userId,
+        actorUsername: principal.username,
+        action: 'AUDIT_ANCHOR_CREATED',
+        objectType: 'AUDIT_ANCHOR',
+        objectId: created.id.toString(),
+        outcome: 'SUCCESS',
+        chainPartition: 'AUDIT',
+        details: {
+          chainPartition: created.chain_partition,
+          anchorSequence: created.anchor_sequence.toString(),
+          signerKeyId: created.signer_key_id,
+        },
+      })
+      .catch(() => {});
+  }
+
   return {
     id: created.id.toString(),
     chainPartition: created.chain_partition,
     anchorSequence: created.anchor_sequence.toString(),
     entryHash: created.entry_hash,
     signature: created.signature,
+    signerKeyId: created.signer_key_id,
+    status: created.status,
     anchoredAt: created.anchored_at.toISOString(),
   };
 }

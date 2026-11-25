@@ -137,6 +137,23 @@ export class AuditController {
   }
 
   /**
+   * List signed checkpoint anchors across audit partitions (UC32).
+   */
+  @Get('anchors')
+  @RequirePermission('AUDIT_LOG', 'VIEW')
+  @ApiOperation({ summary: 'List signed checkpoint anchors for audit partitions' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Audit anchors retrieved' })
+  async listAnchors(
+    @Query('chainPartition') chainPartition: string | undefined,
+    @Req() request: FastifyRequest,
+  ): Promise<unknown> {
+    if (!request.auth) {
+      throw new UnauthorizedException('Authenticated principal is required');
+    }
+    return await this.auditService.listAnchors(request.auth, chainPartition);
+  }
+
+  /**
    * Create a signed checkpoint anchor for an audit partition.
    */
   @Post('anchors')

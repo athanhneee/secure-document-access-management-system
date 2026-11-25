@@ -18,6 +18,7 @@ import {
 } from '@sda/contracts';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
 import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import {
@@ -58,6 +59,7 @@ export class IncidentsService {
     @Optional() private readonly auditWriter?: AuditWriterService,
     @Optional() private readonly authorization?: AuthorizationService,
     @Optional() private readonly realtime?: RealtimeEventsService,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -220,6 +222,29 @@ export class IncidentsService {
       actor,
     );
     const detail = await this.getIncidentReportById(updatedId, actor);
+    if (
+      this.notifications &&
+      input.submittedToOwner !== undefined &&
+      input.submittedToOwner !== actor.userId
+    ) {
+      try {
+        await this.notifications.sendNotification({
+          recipientId: input.submittedToOwner,
+          notificationType: 'INCIDENT_REPORT_SUBMITTED',
+          title: `Biên bản sự cố an ninh mới: ${detail.incidentCode}`,
+          body: `Bộ phận An ninh thông tin vừa đệ trình biên bản sự cố "${detail.title}" (${detail.incidentCode}) tới bạn để phối hợp xử lý.`,
+          relatedObjectType: 'INCIDENT_REPORT',
+          relatedObjectId: detail.id,
+          deduplicationKey: `INCIDENT_REPORT_SUBMITTED:${input.submittedToOwner.toString()}:${detail.id}`,
+          payload: {
+            incidentId: detail.id,
+            incidentCode: detail.incidentCode,
+          },
+        });
+      } catch {
+        // Non-fatal post-commit notification dispatch
+      }
+    }
     this.emitIncidentUpdated(detail.id, 'SUBMITTED', detail.status);
     return detail;
   }

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module.js';
 import { AuditModule } from '../audit/audit.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 import { RbacModule } from '../rbac/rbac.module.js';
 import { SecurityDetectionService } from './security-detection.service.js';
 import { SecurityAlertsService } from './security-alerts.service.js';
@@ -9,7 +10,7 @@ import { DlpStatusService } from './dlp-status.service.js';
 import { SecurityOperationsController } from './security-operations.controller.js';
 
 @Module({
-  imports: [AuthModule, AuditModule, RbacModule],
+  imports: [AuthModule, AuditModule, NotificationsModule, RbacModule],
   controllers: [SecurityOperationsController],
   providers: [SecurityDetectionService, SecurityAlertsService, IncidentsService, DlpStatusService],
   exports: [SecurityDetectionService, SecurityAlertsService, IncidentsService, DlpStatusService],

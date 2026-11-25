@@ -3,41 +3,60 @@
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { applyOptimisticStatusById } from '@/lib/optimistic-state';
+import {
+  filterGrantEligibleUsers,
+  filterGrantableDocuments,
+  GRANT_MAX_DURATION_DAYS,
+  shouldWarnGrantClearance,
+  validateDirectGrantTimeRange,
+} from '../grant-helpers';
 import { expandGrantPermissions, toLocalISO } from '../helpers';
 import type { AccessGrantItem, DocumentItem, RoleLookupItem, UserLookupItem } from '../types';
+import type { OwnerTab } from './use-owner-data';
 
 interface UseOwnerGrantsParams {
+  currentUserId?: string | null | undefined;
   documents: DocumentItem[];
   setGrants: Dispatch<SetStateAction<AccessGrantItem[]>>;
+  setActiveGrantsCount: Dispatch<SetStateAction<number>>;
   usersLookup: UserLookupItem[];
   rolesLookup: RoleLookupItem[];
-  refreshData: (options?: { silent?: boolean }) => Promise<void>;
+  ensureGrantLookups?: () => Promise<void>;
+  refreshData: (options?: { silent?: boolean; scope?: OwnerTab }) => Promise<void>;
   setMessage: (msg: string | null) => void;
   setErrorMessage: (msg: string | null) => void;
 }
 
 /**
  * Thuật toán: Cấp Quyền Trực Tiếp Có Thời Hạn & Thu Hồi Giấy Phép Xác Thực Máy Chủ (`useOwnerGrants`)
- * Mục đích: Kiểm định khoảng hiệu lực, chuẩn hóa tập quyền `DOWNLOAD => ['VIEW', 'DOWNLOAD']`, bắt buộc `await` phản hồi thành công từ máy chủ trước khi đóng `<dialog>` hoặc hiển thị thông báo xanh lá.
+ * Mục đích:
+ *   - Tải lười danh sách người dùng và vai trò đúng lúc mở hộp thoại cấp quyền, tự động đồng bộ mục chọn mặc định khi dữ liệu về.
+ *   - Cập nhật trạng thái thu hồi trực tiếp trên state và chỉ làm mới cục bộ tab `grants` sau khi cấp quyền mới.
  */
 export function useOwnerGrants({
+  currentUserId,
   documents,
   setGrants,
+  setActiveGrantsCount,
   usersLookup,
   rolesLookup,
+  ensureGrantLookups,
   refreshData,
   setMessage,
   setErrorMessage,
 }: UseOwnerGrantsParams) {
+  const grantableDocuments = filterGrantableDocuments(documents);
+  const eligibleUsers = filterGrantEligibleUsers(usersLookup, currentUserId);
+
   const [directGrantOpen, setDirectGrantOpen] = useState(false);
-  const [directDocId, setDirectDocId] = useState('');
+  const [directDocIdOverride, setDirectDocIdOverride] = useState('');
   const [directPrincipalType, setDirectPrincipalType] = useState<'USER' | 'ROLE'>('USER');
-  const [directUserId, setDirectUserId] = useState('');
-  const [directRoleId, setDirectRoleId] = useState('');
-  const [directPermissions, setDirectPermissions] = useState<('VIEW' | 'DOWNLOAD')[]>(['VIEW']);
+  const [directUserIdOverride, setDirectUserIdOverride] = useState('');
+  const [directRoleIdOverride, setDirectRoleIdOverride] = useState('');
+  const [directPermissionMode, setDirectPermissionMode] = useState<'VIEW' | 'DOWNLOAD'>('VIEW');
   const [directValidFrom, setDirectValidFrom] = useState(() => toLocalISO(new Date()));
   const [directValidUntil, setDirectValidUntil] = useState(() =>
-    toLocalISO(new Date(Date.now() + 7 * 86400000)),
+    toLocalISO(new Date(Date.now() + 7 * 86_400_000)),
   );
   const [isSubmittingDirectGrant, setIsSubmittingDirectGrant] = useState(false);
 
@@ -46,46 +65,83 @@ export function useOwnerGrants({
   const [revokeReason, setRevokeReason] = useState('');
   const [isRevoking, setIsRevoking] = useState(false);
 
+  const directDocId = directDocIdOverride || grantableDocuments[0]?.id || '';
+  const directUserId = directUserIdOverride || eligibleUsers[0]?.id || '';
+  const directRoleId = directRoleIdOverride || rolesLookup[0]?.id || '';
+
+  function resetDirectGrantForm() {
+    setDirectDocIdOverride('');
+    setDirectPrincipalType('USER');
+    setDirectUserIdOverride('');
+    setDirectRoleIdOverride('');
+    setDirectPermissionMode('VIEW');
+    setDirectValidFrom(toLocalISO(new Date()));
+    setDirectValidUntil(toLocalISO(new Date(Date.now() + 7 * 86_400_000)));
+  }
+
+  function handleSelectDirectDocId(nextDocId: string) {
+    setDirectDocIdOverride(nextDocId);
+    const nextDoc = grantableDocuments.find((d) => d.id === nextDocId);
+    if (nextDoc && !nextDoc.allowDownload && directPermissionMode === 'DOWNLOAD') {
+      setDirectPermissionMode('VIEW');
+    }
+  }
+
+  function handleDirectGrantOpenChange(open: boolean) {
+    setDirectGrantOpen(open);
+    if (!open) {
+      setErrorMessage(null);
+      resetDirectGrantForm();
+    }
+  }
+
   function openDirectGrantModal() {
     setErrorMessage(null);
-    if (documents[0] && !directDocId) {
-      setDirectDocId(documents[0].id);
-    }
-    if (usersLookup[0] && !directUserId) {
-      setDirectUserId(usersLookup[0].id);
-    }
-    if (rolesLookup[0] && !directRoleId) {
-      setDirectRoleId(rolesLookup[0].id);
-    }
-    setDirectValidFrom(toLocalISO(new Date()));
-    setDirectValidUntil(toLocalISO(new Date(Date.now() + 7 * 86400000)));
+    void ensureGrantLookups?.();
+    resetDirectGrantForm();
     setDirectGrantOpen(true);
   }
 
   async function handleCreateDirectGrant(e: FormEvent) {
     e.preventDefault();
-    if (!directDocId) {
-      setErrorMessage('Vui lòng chọn tài liệu cần cấp quyền.');
+    const selectedDoc = grantableDocuments.find((d) => d.id === directDocId);
+    if (!selectedDoc) {
+      setErrorMessage('Vui lòng chọn tài liệu đang hiệu lực để cấp quyền.');
       return;
     }
-    if (directPrincipalType === 'USER' && !directUserId) {
-      setErrorMessage('Vui lòng chọn người dùng được cấp quyền.');
-      return;
-    }
-    if (directPrincipalType === 'ROLE' && !directRoleId) {
+    if (directPrincipalType === 'USER') {
+      const selectedUser = eligibleUsers.find((u) => u.id === directUserId);
+      if (!selectedUser) {
+        setErrorMessage('Vui lòng chọn người dùng hợp lệ được cấp quyền.');
+        return;
+      }
+      if (
+        shouldWarnGrantClearance({
+          principalType: 'USER',
+          document: selectedDoc,
+          user: selectedUser,
+        })
+      ) {
+        setErrorMessage(
+          `Người dùng ${selectedUser.fullName} có cấp thẩm quyền (Cấp ${selectedUser.clearanceRank}) thấp hơn mức độ mật của tài liệu (Cấp ${selectedDoc.classificationRank ?? 0}).`,
+        );
+        return;
+      }
+    } else if (!rolesLookup.some((r) => r.id === directRoleId)) {
       setErrorMessage('Vui lòng chọn vai trò được cấp quyền.');
       return;
     }
-    if (directPermissions.length === 0) {
-      setErrorMessage('Vui lòng chọn ít nhất một quyền (VIEW hoặc DOWNLOAD).');
+
+    if (directPermissionMode === 'DOWNLOAD' && !selectedDoc.allowDownload) {
+      setErrorMessage('Mức độ mật của tài liệu này không cho phép cấp quyền tải về.');
       return;
     }
-    if (!directValidFrom || !directValidUntil) {
-      setErrorMessage('Vui lòng nhập đầy đủ thời gian bắt đầu và kết thúc hiệu lực.');
-      return;
-    }
-    if (new Date(directValidUntil) <= new Date(directValidFrom)) {
-      setErrorMessage('Thời gian kết thúc phải diễn ra sau thời gian bắt đầu.');
+
+    const timeError = validateDirectGrantTimeRange(directValidFrom, directValidUntil, {
+      maxDurationDays: GRANT_MAX_DURATION_DAYS,
+    });
+    if (timeError) {
+      setErrorMessage(timeError);
       return;
     }
 
@@ -93,7 +149,7 @@ export function useOwnerGrants({
     setErrorMessage(null);
 
     try {
-      const normalizedPermissions = expandGrantPermissions(directPermissions);
+      const normalizedPermissions = expandGrantPermissions(directPermissionMode);
       const payload: {
         documentId: string;
         principalType: 'USER' | 'ROLE';
@@ -103,7 +159,7 @@ export function useOwnerGrants({
         validFrom: string;
         validUntil: string;
       } = {
-        documentId: directDocId,
+        documentId: selectedDoc.id,
         principalType: directPrincipalType,
         permissions: normalizedPermissions,
         validFrom: new Date(directValidFrom).toISOString(),
@@ -122,16 +178,14 @@ export function useOwnerGrants({
       });
 
       setDirectGrantOpen(false);
-      setDirectDocId('');
-      setDirectUserId('');
-      setDirectRoleId('');
-      setMessage('Đã cấp giấy phép truy cập trực tiếp thành công.');
-      void refreshData({ silent: true });
+      resetDirectGrantForm();
+      setMessage('Đã cấp quyền truy cập trực tiếp thành công.');
+      void refreshData({ silent: true, scope: 'grants' });
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể cấp quyền truy cập.'
-          : 'Đã xảy ra lỗi khi tạo giấy phép truy cập.',
+          : 'Đã xảy ra lỗi khi cấp quyền truy cập.',
       );
     } finally {
       setIsSubmittingDirectGrant(false);
@@ -151,7 +205,7 @@ export function useOwnerGrants({
 
     const trimmedReason = revokeReason.trim();
     if (trimmedReason.length < 10) {
-      setErrorMessage('Lý do thu hồi bắt buộc phải có ít nhất 10 ký tự để ghi nhật ký kiểm toán.');
+      setErrorMessage('Lý do thu hồi phải có tối thiểu 10 ký tự để lưu nhật ký kiểm toán.');
       return;
     }
 
@@ -171,10 +225,12 @@ export function useOwnerGrants({
       setSelectedGrant(null);
       setRevokeReason('');
       setGrants((prev) => applyOptimisticStatusById(prev, target.id, 'REVOKED'));
+      if (target.status === 'ACTIVE') {
+        setActiveGrantsCount((prev) => Math.max(0, prev - 1));
+      }
       setMessage(
-        `Đã thu hồi quyền truy cập của ${target.principalName}. Mọi phiên làm việc đang chạy đã bị chấm dứt tức thì.`,
+        `Đã thu hồi quyền truy cập của ${target.principalName}. Mọi phiên đọc đang mở đã được ngắt ngay lập tức.`,
       );
-      void refreshData({ silent: true });
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
@@ -187,18 +243,20 @@ export function useOwnerGrants({
   }
 
   return {
+    grantableDocuments,
+    eligibleUsers,
     directGrantOpen,
-    setDirectGrantOpen,
+    setDirectGrantOpen: handleDirectGrantOpenChange,
     directDocId,
-    setDirectDocId,
+    setDirectDocId: handleSelectDirectDocId,
     directPrincipalType,
     setDirectPrincipalType,
     directUserId,
-    setDirectUserId,
+    setDirectUserId: setDirectUserIdOverride,
     directRoleId,
-    setDirectRoleId,
-    directPermissions,
-    setDirectPermissions,
+    setDirectRoleId: setDirectRoleIdOverride,
+    directPermissionMode,
+    setDirectPermissionMode,
     directValidFrom,
     setDirectValidFrom,
     directValidUntil,

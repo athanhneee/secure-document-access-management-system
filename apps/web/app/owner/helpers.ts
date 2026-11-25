@@ -65,11 +65,11 @@ export function validateRetentionDateInput(
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (!isValidIsoCalendarDate(trimmed)) {
-    return 'Thời hạn lưu trữ bảo mật không hợp lệ theo lịch (định dạng YYYY-MM-DD).';
+    return 'Thời hạn lưu trữ bảo mật không hợp lệ.';
   }
   const minDate = getMinRetentionDate(referenceDate);
   if (trimmed < minDate) {
-    return `Thời hạn lưu trữ bảo mật không được chọn ngày trong quá khứ (tối thiểu từ ${formatIsoDateDisplay(minDate)}).`;
+    return `Thời hạn lưu trữ bảo mật không được là ngày trong quá khứ (tối thiểu từ ${formatIsoDateDisplay(minDate)}).`;
   }
   return null;
 }
@@ -153,7 +153,7 @@ export function mapDocumentDtoToItem(
 
   return {
     id: d.id,
-    title: d.title || 'Tài liệu không tên',
+    title: d.title || 'Tài liệu chưa có tiêu đề',
     documentCode: d.documentCode || d.document_code,
     classificationCode: clsCode,
     classificationRank: clsRank,
@@ -213,21 +213,21 @@ export function mapGrantDtoToItem(
     g.principalRole?.code ||
     matchedRole?.code ||
     (g.principalUserId
-      ? `Người dùng #${g.principalUserId}`
+      ? 'Người dùng nội bộ'
       : g.principalRoleId
-        ? `Vai trò #${g.principalRoleId}`
+        ? 'Nhóm vai trò'
         : 'Đối tượng được cấp');
 
   const normalizedStatus =
-    g.status === 'REVOKED' || g.status === 'EXPIRED' ? g.status : ('ACTIVE' as const);
+    g.status === 'REVOKED' || g.status === 'EXPIRED' || g.status === 'SUSPENDED'
+      ? g.status
+      : ('ACTIVE' as const);
 
   return {
     id: g.id,
     documentId: g.documentId,
     documentTitle:
-      g.document?.title ||
-      lookups?.docsById?.get(g.documentId)?.title ||
-      'Tài liệu ' + g.documentId.slice(0, 8),
+      g.document?.title || lookups?.docsById?.get(g.documentId)?.title || 'Tài liệu được cấp quyền',
     principalType: g.principalType === 'ROLE' ? 'ROLE' : 'USER',
     principalName,
     permissions: g.permissions && g.permissions.length > 0 ? g.permissions : ['VIEW'],
@@ -263,6 +263,88 @@ export function extractAuditPagination(res: {
     page: res.pagination?.page ?? res.page ?? 1,
     totalPages: res.pagination?.totalPages ?? res.totalPages ?? 1,
     total: res.pagination?.total ?? res.total ?? 0,
+  };
+}
+
+/**
+ * Thuật toán: Kiểm Định Mức Độ Sẵn Sàng Thuộc Tính Chủ Thể Trước Khi Tải Lên Tài Liệu (`evaluateUploadSubjectReadiness`)
+ * Mục đích: Xác minh tài khoản chủ sở hữu đã có trạng thái hoạt động, phòng ban trực thuộc và cấp thẩm quyền bảo mật hợp lệ trước khi tải lên tài liệu mới.
+ */
+export interface UploadSubjectReadiness {
+  ready: boolean;
+  missingDepartment: boolean;
+  missingClearance: boolean;
+  inactiveAccount: boolean;
+  blockingReason: string | null;
+}
+
+export function evaluateUploadSubjectReadiness(params: {
+  departmentId?: string | number | null | undefined;
+  clearanceRank?: number | null | undefined;
+  status?: string | null | undefined;
+}): UploadSubjectReadiness {
+  const parsedDept =
+    params.departmentId !== null && params.departmentId !== undefined && params.departmentId !== ''
+      ? Number(params.departmentId)
+      : NaN;
+  const missingDepartment = !Number.isFinite(parsedDept) || parsedDept <= 0;
+  const missingClearance =
+    typeof params.clearanceRank !== 'number' ||
+    !Number.isFinite(params.clearanceRank) ||
+    params.clearanceRank <= 0;
+  const normalizedStatus = (params.status ?? 'ACTIVE').trim().toUpperCase();
+  const inactiveAccount = normalizedStatus !== 'ACTIVE';
+
+  if (inactiveAccount) {
+    return {
+      ready: false,
+      missingDepartment,
+      missingClearance,
+      inactiveAccount: true,
+      blockingReason:
+        'Tài khoản hiện không ở trạng thái hoạt động nên chưa thể tải lên tài liệu mới. Vui lòng liên hệ quản trị viên.',
+    };
+  }
+
+  if (missingDepartment && missingClearance) {
+    return {
+      ready: false,
+      missingDepartment: true,
+      missingClearance: true,
+      inactiveAccount: false,
+      blockingReason:
+        'Tài khoản chưa được gán phòng ban trực thuộc và cấp thẩm quyền bảo mật nên chưa thể tải lên tài liệu mới. Vui lòng liên hệ quản trị viên để cập nhật.',
+    };
+  }
+
+  if (missingDepartment) {
+    return {
+      ready: false,
+      missingDepartment: true,
+      missingClearance: false,
+      inactiveAccount: false,
+      blockingReason:
+        'Tài khoản chưa được gán phòng ban trực thuộc nên chưa thể tải lên tài liệu mới. Vui lòng liên hệ quản trị viên để cập nhật.',
+    };
+  }
+
+  if (missingClearance) {
+    return {
+      ready: false,
+      missingDepartment: false,
+      missingClearance: true,
+      inactiveAccount: false,
+      blockingReason:
+        'Tài khoản chưa được cấp thẩm quyền bảo mật nên chưa thể tải lên tài liệu mới. Vui lòng liên hệ quản trị viên để cập nhật.',
+    };
+  }
+
+  return {
+    ready: true,
+    missingDepartment: false,
+    missingClearance: false,
+    inactiveAccount: false,
+    blockingReason: null,
   };
 }
 

@@ -101,6 +101,8 @@ export interface AccessRequestItem {
   createdAt: string;
 }
 
+export type GrantStatusFilter = 'ALL' | 'ACTIVE' | 'REVOKED' | 'EXPIRED';
+
 export interface AccessGrantItem {
   id: string;
   documentId: string;
@@ -110,7 +112,7 @@ export interface AccessGrantItem {
   permissions: string[];
   validFrom: string;
   validUntil: string;
-  status: 'ACTIVE' | 'REVOKED' | 'EXPIRED';
+  status: 'ACTIVE' | 'REVOKED' | 'EXPIRED' | 'SUSPENDED';
   version: number;
 }
 
@@ -141,8 +143,10 @@ export interface UserLookupItem {
   id: string;
   username: string;
   fullName: string;
-  departmentName: string;
+  departmentName?: string | null;
   clearanceRank: number;
+  clearanceCode?: string | null;
+  clearanceName?: string | null;
 }
 
 export interface RoleLookupItem {

@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, ArrowUpRight, Bell, Check, CheckCheck, RefreshCw } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { useAuth, type RoleType } from '@/lib/auth-context';
 import { subscribeRealtimeEvent } from '@/lib/realtime-events';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
@@ -20,6 +21,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import {
+  applyIncomingNotificationToCache,
+  resolveNotificationHref as resolveNotificationHrefByCapabilities,
+  WORKSPACE_TAB_EVENT,
+} from './notification-routing';
+
+export { WORKSPACE_TAB_EVENT };
 
 export interface InAppNotificationItem {
   id: string;
@@ -63,13 +71,18 @@ function formatNotificationTime(iso: string): string {
   return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString('vi-VN');
 }
 
-function resolveNotificationHref(item: InAppNotificationItem): string | null {
-  const objType = (item.relatedObjectType ?? '').toUpperCase();
-  if (objType === 'ACCESS_REQUEST') return '/reader?tab=my-requests';
-  if (objType === 'ACCESS_GRANT' || objType === 'DOCUMENT' || objType === 'ACCESS_SESSION') {
-    return '/reader?tab=my-docs';
-  }
-  return null;
+/**
+ * Thuật toán: Ánh Xạ Đường Dẫn Chi Tiết Thông Báo Theo Loại Sự Kiện & Phân Hệ Được Cấp Quyền (`resolveNotificationHref`)
+ * Mục đích: Ưu tiên đúng ngữ cảnh `notificationType` (phân biệt sự kiện dành cho Chủ sở hữu và Người đọc ngay cả khi tài khoản có cả 2 phân hệ) và chỉ trả về liên kết tới phân hệ người dùng có quyền truy cập.
+ */
+export function resolveNotificationHref(
+  item: Pick<InAppNotificationItem, 'relatedObjectType'> & { notificationType?: string | null },
+  canAccessPortal: (portal: RoleType) => boolean,
+): string | null {
+  return resolveNotificationHrefByCapabilities(item, {
+    canAccessOwner: canAccessPortal('DOCUMENT_OWNER'),
+    canAccessReader: canAccessPortal('DOCUMENT_READER'),
+  });
 }
 
 function parseNotificationResponse(res: NotificationListResponse | InAppNotificationItem[]): {
@@ -101,12 +114,19 @@ export function NotificationBellDialog({
 
 function NotificationBellDialogInner({ userId }: { userId: string }) {
   const router = useRouter();
+  const { canAccessPortal } = useAuth();
   const cached = notificationMemoryCache.get(userId);
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<InAppNotificationItem[]>(() => cached?.items ?? []);
-  const [unreadCount, setUnreadCount] = useState<number>(() => cached?.unreadCount ?? 0);
-  const [page, setPage] = useState<number>(() => cached?.page ?? 1);
-  const [hasMore, setHasMore] = useState<boolean>(() => cached?.hasMore ?? false);
+  const [inbox, setInbox] = useState<NotificationCacheEntry>(
+    () =>
+      cached ?? {
+        items: [],
+        unreadCount: 0,
+        page: 1,
+        hasMore: false,
+      },
+  );
+  const { items, unreadCount, page, hasMore } = inbox;
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
@@ -136,23 +156,21 @@ function NotificationBellDialogInner({ userId }: { userId: string }) {
           `/notifications?page=${targetPage}&pageSize=${PAGE_SIZE}`,
         );
         const parsed = parseNotificationResponse(res);
-        setUnreadCount(parsed.unreadCount);
-        setPage(targetPage);
-        setHasMore(parsed.hasMore);
-        setItems((prev) => {
+        setInbox((prev) => {
           const nextItems = append
             ? [
-                ...prev,
-                ...parsed.list.filter((incoming) => !prev.some((p) => p.id === incoming.id)),
+                ...prev.items,
+                ...parsed.list.filter((incoming) => !prev.items.some((p) => p.id === incoming.id)),
               ]
             : parsed.list;
-          persistCache({
+          const nextEntry: NotificationCacheEntry = {
             items: nextItems,
             unreadCount: parsed.unreadCount,
             page: targetPage,
             hasMore: parsed.hasMore,
-          });
-          return nextItems;
+          };
+          persistCache(nextEntry);
+          return nextEntry;
         });
       } catch (err) {
         if (!silent) {
@@ -180,16 +198,14 @@ function NotificationBellDialogInner({ userId }: { userId: string }) {
       .then((res) => {
         if (cancelled) return;
         const parsed = parseNotificationResponse(res);
-        persistCache({
+        const entry: NotificationCacheEntry = {
           items: parsed.list,
           unreadCount: parsed.unreadCount,
           page: 1,
           hasMore: parsed.hasMore,
-        });
-        setItems(parsed.list);
-        setUnreadCount(parsed.unreadCount);
-        setPage(1);
-        setHasMore(parsed.hasMore);
+        };
+        persistCache(entry);
+        setInbox(entry);
       })
       .catch(() => {
         /* Tải nền im lặng: không bật banner lỗi trên chuông header */
@@ -216,14 +232,9 @@ function NotificationBellDialogInner({ userId }: { userId: string }) {
             createdAt: p.createdAt ?? event.timestamp,
             readAt: p.readAt ?? null,
           };
-          setItems((prev) => {
-            const existed = prev.some((entry) => entry.id === incoming.id);
-            const next = [incoming, ...prev.filter((entry) => entry.id !== incoming.id)];
-            setUnreadCount((curr) => {
-              const nextUnread = !existed && incoming.status === 'UNREAD' ? curr + 1 : curr;
-              persistCache({ items: next, unreadCount: nextUnread, page, hasMore });
-              return nextUnread;
-            });
+          setInbox((prev) => {
+            const next = applyIncomingNotificationToCache(prev, incoming);
+            persistCache(next);
             return next;
           });
           return;
@@ -231,30 +242,30 @@ function NotificationBellDialogInner({ userId }: { userId: string }) {
         void fetchNotifications({ silent: true, targetPage: 1, append: false });
       },
     );
-  }, [fetchNotifications, persistCache, page, hasMore]);
+  }, [fetchNotifications, persistCache]);
 
   async function handleMarkAsRead(target: InAppNotificationItem) {
     if (target.status !== 'UNREAD' || markingIds.has(target.id)) return;
-    const prevItems = items;
-    const prevUnread = unreadCount;
-    const nextItems = items.map((entry) =>
-      entry.id === target.id
-        ? { ...entry, status: 'READ', readAt: new Date().toISOString() }
-        : entry,
-    );
-    const nextUnread = Math.max(0, unreadCount - 1);
+    const prevSnapshot = inbox;
+    const nextSnapshot: NotificationCacheEntry = {
+      ...inbox,
+      items: inbox.items.map((entry) =>
+        entry.id === target.id
+          ? { ...entry, status: 'READ', readAt: new Date().toISOString() }
+          : entry,
+      ),
+      unreadCount: Math.max(0, inbox.unreadCount - 1),
+    };
 
     setMarkingIds((prev) => new Set(prev).add(target.id));
     setErrorMessage(null);
-    setItems(nextItems);
-    setUnreadCount(nextUnread);
-    persistCache({ items: nextItems, unreadCount: nextUnread, page, hasMore });
+    setInbox(nextSnapshot);
+    persistCache(nextSnapshot);
     try {
       await apiClient(`/notifications/${encodeURIComponent(target.id)}/read`, { method: 'PATCH' });
     } catch (err) {
-      setItems(prevItems);
-      setUnreadCount(prevUnread);
-      persistCache({ items: prevItems, unreadCount: prevUnread, page, hasMore });
+      setInbox(prevSnapshot);
+      persistCache(prevSnapshot);
       setErrorMessage(
         err instanceof ApiError ? err.message : 'Không thể cập nhật trạng thái thông báo.',
       );
@@ -269,24 +280,25 @@ function NotificationBellDialogInner({ userId }: { userId: string }) {
 
   async function handleMarkAllRead() {
     if (unreadCount === 0 || isMarkingAll) return;
-    const prevItems = items;
-    const prevUnread = unreadCount;
+    const prevSnapshot = inbox;
     const nowIso = new Date().toISOString();
-    const nextItems = items.map((entry) =>
-      entry.status === 'UNREAD' ? { ...entry, status: 'READ', readAt: nowIso } : entry,
-    );
+    const nextSnapshot: NotificationCacheEntry = {
+      ...inbox,
+      items: inbox.items.map((entry) =>
+        entry.status === 'UNREAD' ? { ...entry, status: 'READ', readAt: nowIso } : entry,
+      ),
+      unreadCount: 0,
+    };
 
     setIsMarkingAll(true);
     setErrorMessage(null);
-    setItems(nextItems);
-    setUnreadCount(0);
-    persistCache({ items: nextItems, unreadCount: 0, page, hasMore });
+    setInbox(nextSnapshot);
+    persistCache(nextSnapshot);
     try {
       await apiClient('/notifications/read-all', { method: 'PATCH' });
     } catch (err) {
-      setItems(prevItems);
-      setUnreadCount(prevUnread);
-      persistCache({ items: prevItems, unreadCount: prevUnread, page, hasMore });
+      setInbox(prevSnapshot);
+      persistCache(prevSnapshot);
       setErrorMessage(
         err instanceof ApiError ? err.message : 'Không thể đánh dấu tất cả thông báo đã đọc.',
       );
@@ -300,6 +312,15 @@ function NotificationBellDialogInner({ userId }: { userId: string }) {
       void handleMarkAsRead(item);
     }
     setOpen(false);
+    if (typeof window !== 'undefined') {
+      const parsed = new URL(href, window.location.origin);
+      const tab = parsed.searchParams.get('tab');
+      if (tab) {
+        window.dispatchEvent(
+          new CustomEvent(WORKSPACE_TAB_EVENT, { detail: { path: parsed.pathname, tab } }),
+        );
+      }
+    }
     router.push(href);
   }
 
@@ -345,8 +366,8 @@ function NotificationBellDialogInner({ userId }: { userId: string }) {
               </span>
             </div>
             <DialogDescription className="text-xs text-[#717171]">
-              Cập nhật trạng thái cấp quyền, từ chối, thu hồi quyền truy cập và thông báo vận hành
-              nội bộ.
+              Cập nhật yêu cầu truy cập mới, trạng thái cấp quyền, từ chối, thu hồi quyền truy cập
+              và thông báo vận hành nội bộ.
             </DialogDescription>
           </DialogHeader>
 
@@ -403,7 +424,7 @@ function NotificationBellDialogInner({ userId }: { userId: string }) {
                 {items.map((item) => {
                   const isUnread = item.status === 'UNREAD';
                   const isMarkingThis = markingIds.has(item.id);
-                  const targetHref = resolveNotificationHref(item);
+                  const targetHref = resolveNotificationHref(item, canAccessPortal);
                   return (
                     <article
                       key={item.id}

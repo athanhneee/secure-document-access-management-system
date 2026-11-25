@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -14,6 +15,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { AuthGuard } from '@/components/auth-guard';
 import { AppLayout } from '@/components/navigation/app-layout';
+import { WORKSPACE_TAB_EVENT } from '@/components/navigation/notification-bell-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { DialogErrorProvider } from '@/components/ui/dialog';
@@ -45,14 +47,19 @@ export function OwnerWorkspace() {
   return (
     <AuthGuard requiredPortal="DOCUMENT_OWNER">
       <AppLayout>
-        <OwnerWorkspaceContent />
+        <Suspense fallback={null}>
+          <OwnerWorkspaceContent />
+        </Suspense>
       </AppLayout>
     </AuthGuard>
   );
 }
 
+const VALID_OWNER_TABS = new Set<OwnerTab>(['documents', 'requests', 'grants', 'history']);
+
 function OwnerWorkspaceContent() {
   const { user, hasPermission } = useAuth();
+  const searchParams = useSearchParams();
 
   const canUpload = hasPermission('DOCUMENT:UPLOAD');
   const canManageDoc = hasPermission('DOCUMENT:MANAGE');
@@ -77,7 +84,29 @@ function OwnerWorkspaceContent() {
     canViewHistory ? ('history' as const) : null,
   ].filter((t): t is OwnerTab => t !== null);
 
-  const [selectedTab, setSelectedTab] = useState<OwnerTab>('documents');
+  const requestedTabParam = searchParams.get('tab') as OwnerTab | null;
+  const [selectedTab, setSelectedTab] = useState<OwnerTab>(() =>
+    requestedTabParam && VALID_OWNER_TABS.has(requestedTabParam) ? requestedTabParam : 'documents',
+  );
+
+  // Đồng bộ tham số `?tab=` và sự kiện chuyển tab tức thì từ chuông thông báo nội bộ ngay cả khi đang ở sẵn `/owner`
+  useEffect(() => {
+    if (requestedTabParam && VALID_OWNER_TABS.has(requestedTabParam)) {
+      // oxlint-disable-next-line react/set-state-in-effect
+      setSelectedTab(requestedTabParam);
+    }
+  }, [requestedTabParam]);
+
+  useEffect(() => {
+    function handleTabSync(event: Event) {
+      const detail = (event as CustomEvent<{ path?: string; tab?: string }>).detail;
+      if (detail?.path === '/owner' && detail.tab && VALID_OWNER_TABS.has(detail.tab as OwnerTab)) {
+        setSelectedTab(detail.tab as OwnerTab);
+      }
+    }
+    window.addEventListener(WORKSPACE_TAB_EVENT, handleTabSync);
+    return () => window.removeEventListener(WORKSPACE_TAB_EVENT, handleTabSync);
+  }, []);
   const activeTab: OwnerTab = permittedTabs.includes(selectedTab)
     ? selectedTab
     : (permittedTabs[0] ?? 'documents');

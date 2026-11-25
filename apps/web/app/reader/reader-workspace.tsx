@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   AlertTriangle,
   BookOpen,
@@ -16,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { AppLayout } from '@/components/navigation/app-layout';
+import { WORKSPACE_TAB_EVENT } from '@/components/navigation/notification-bell-dialog';
 import { AuthGuard } from '@/components/auth-guard';
 import { ClassificationBadge } from '@/components/classification-badge';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -43,14 +45,19 @@ export function ReaderWorkspace() {
   return (
     <AuthGuard requiredPortal="DOCUMENT_READER">
       <AppLayout>
-        <ReaderWorkspaceContent />
+        <Suspense fallback={null}>
+          <ReaderWorkspaceContent />
+        </Suspense>
       </AppLayout>
     </AuthGuard>
   );
 }
 
+const VALID_READER_TABS = new Set(['discover', 'my-docs', 'my-requests']);
+
 function ReaderWorkspaceContent() {
   const { user, hasPermission } = useAuth();
+  const searchParams = useSearchParams();
   const canDiscover = hasPermission('DOCUMENT:DISCOVER');
   const canViewDocument = hasPermission('DOCUMENT:VIEW');
   const canDownloadDocument = hasPermission('DOCUMENT:DOWNLOAD');
@@ -65,16 +72,28 @@ function ReaderWorkspaceContent() {
     canViewRequests ? 'my-requests' : null,
   ].filter((t): t is string => t !== null);
 
-  const [selectedTab, setSelectedTab] = useState('discover');
+  const requestedTabParam = searchParams.get('tab');
+  const [selectedTab, setSelectedTab] = useState(() =>
+    requestedTabParam && VALID_READER_TABS.has(requestedTabParam) ? requestedTabParam : 'discover',
+  );
 
-  // Đồng bộ tham số `?tab=` từ liên kết chuông thông báo nội bộ (`V-53`)
+  // Đồng bộ tham số `?tab=` và sự kiện chuyển tab tức thì từ chuông thông báo nội bộ ngay cả khi đang ở sẵn `/reader` (`V-53`)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const requestedTab = new URLSearchParams(window.location.search).get('tab');
-    if (requestedTab && ['discover', 'my-docs', 'my-requests'].includes(requestedTab)) {
+    if (requestedTabParam && VALID_READER_TABS.has(requestedTabParam)) {
       // oxlint-disable-next-line react/set-state-in-effect
-      setSelectedTab(requestedTab);
+      setSelectedTab(requestedTabParam);
     }
+  }, [requestedTabParam]);
+
+  useEffect(() => {
+    function handleTabSync(event: Event) {
+      const detail = (event as CustomEvent<{ path?: string; tab?: string }>).detail;
+      if (detail?.path === '/reader' && detail.tab && VALID_READER_TABS.has(detail.tab)) {
+        setSelectedTab(detail.tab);
+      }
+    }
+    window.addEventListener(WORKSPACE_TAB_EVENT, handleTabSync);
+    return () => window.removeEventListener(WORKSPACE_TAB_EVENT, handleTabSync);
   }, []);
 
   const activeTab = permittedTabs.includes(selectedTab)

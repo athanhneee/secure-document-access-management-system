@@ -8,18 +8,14 @@ node_modules/
 .local/
 **/.local/
 !.local.example/
-# CONFLICT-RESOLVED: Chỉ chặn .supabase/ (cache CLI cục bộ), mở khóa supabase/ cùng hai tệp chuẩn thiết kế rules/ui-design-system.md và design-system/MASTER.md để Git và CI theo dõi đầy đủ.
+# CONFLICT-RESOLVED: Chỉ chặn .supabase/ (cache CLI cục bộ), mở khóa supabase/ (SQL & README.md triển khai);
+# các thư mục tài liệu nội bộ (docs/, /rules/, /design-system/) được quản lý tập trung tại Mục 6.
 .supabase/
 **/.supabase/
 .wrangler/
 **/.wrangler/
 .vercel/
 **/.vercel/
-docs/
-rules/*
-!rules/ui-design-system.md
-design-system/*
-!design-system/MASTER.md
 
 # =========================================================================
 # 2. Build, framework, caches and test artifacts
@@ -49,6 +45,7 @@ playwright/.cache/
 **/*.tsbuildinfo
 next-env.d.ts
 **/next-env.d.ts
+apps/web/public/pdf.worker.min.mjs
 *.sarif
 **/*.sarif
 sbom.spdx.json
@@ -115,13 +112,13 @@ storage/
 *.backup
 
 # =========================================================================
-# 5. Documents, PDFs, Office and Archives (Forbidden / Unnecessary)
+# 5. Documents, PDFs, Office, Diagrams and Archives (Forbidden / Unnecessary)
 # =========================================================================
 # PDF files (Chặn tuyệt đối file PDF)
 *.pdf
 **/*.pdf
 
-# Office and raw binary documents (Chặn file Office)
+# Office, e-book and raw binary documents (Chặn file Office / văn bản nội bộ)
 *.doc
 *.docx
 *.xls
@@ -133,6 +130,26 @@ storage/
 *.odp
 *.rtf
 *.csv
+*.pages
+*.numbers
+*.keynote
+*.epub
+
+# Architecture, UML, ERD and whiteboard diagram sources (Sơ đồ nội bộ)
+*.puml
+**/*.puml
+*.plantuml
+**/*.plantuml
+*.dbml
+**/*.dbml
+*.drawio
+**/*.drawio
+*.excalidraw
+**/*.excalidraw
+*.mmd
+**/*.mmd
+*.mermaid
+**/*.mermaid
 
 # Compressed and archive packages
 *.zip
@@ -155,19 +172,85 @@ storage/
 *.flac
 
 # =========================================================================
-# 6. Markdown files (Chỉ giữ lại duy nhất README.md và các tệp chuẩn thiết kế bắt buộc cho CI)
+# 6. Internal documentation directories, notes & Markdown files
+#    (Chỉ giữ lại 3 tệp README.md công khai: gốc, infra/README.md, supabase/README.md)
 # =========================================================================
+# CONFLICT-RESOLVED: Chặn hoàn toàn thư mục tài liệu nội bộ (docs/, /rules/, /design-system/,
+# /reports/, /agent/, ghi chú, đặc tả, kế hoạch) cùng mọi tệp Markdown/markup/text nội bộ và AGENTS.md;
+# neo đầu `/` cho /reports/, /rules/, /design-system/, /internal/... để không chạm mã nguồn như apps/api/src/modules/reports/.
+
+# Internal documentation folders (mọi cấp thư mục)
+docs/
+**/docs/
+doc/
+**/doc/
+documentation/
+**/documentation/
+notes/
+**/notes/
+drafts/
+**/drafts/
+scratch/
+**/scratch/
+diagrams/
+**/diagrams/
+prompts/
+**/prompts/
+skills/
+**/skills/
+
+# Root-level internal folders (neo `/` ở gốc repo để tránh trùng thư mục mã nguồn)
+/rules/
+/design-system/
+/internal/
+/private/
+/plans/
+/specs/
+/adr/
+/rfcs/
+/reports/
+/agent/
+/agents/
+/wiki/
+/runbooks/
+/playbooks/
+
+# Vietnamese internal document folders / files (tài liệu, báo cáo nội bộ)
+Tài liệu*/
+*tai-lieu*
+*bao-cao*
+*baocao*
+
+# Markdown, markup & plain-text documentation files
 *.md
 **/*.md
-!README.md
-!readme.md
-!**/README.md
-!**/readme.md
-# CONFLICT-RESOLVED: Mở khóa theo dõi Git cho rules/ui-design-system.md, design-system/MASTER.md và AGENTS.md để tuân thủ chuẩn dự án và vượt qua kiểm thử CI trên bản clone sạch.
-!rules/ui-design-system.md
-!design-system/MASTER.md
-!AGENTS.md
-!**/AGENTS.md
+*.mdx
+**/*.mdx
+*.markdown
+**/*.markdown
+*.mdown
+**/*.mdown
+*.mkd
+**/*.mkd
+*.rst
+**/*.rst
+*.adoc
+**/*.adoc
+*.asciidoc
+**/*.asciidoc
+*.org
+**/*.org
+*.tex
+**/*.tex
+*.txt
+**/*.txt
+
+# Explicit allowlist: chỉ giữ 3 tệp README.md công khai và fixture/robots .txt bắt buộc
+!/README.md
+!/infra/README.md
+!/supabase/README.md
+!test/fixtures/**
+!**/robots.txt
 
 # =========================================================================
 # 7. Prisma generated client; migrations and schema MUST be tracked
@@ -202,16 +285,44 @@ Thumbs.db
 Thumbs.db:encryptable
 desktop.ini
 .agents/
+**/.agents/
 .agent/
+**/.agent/
 .gemini/
+**/.gemini/
 .claude/
+**/.claude/
 .cursor/
+**/.cursor/
+.cursorrules
+.cursorignore
 .windsurf/
+**/.windsurf/
+.windsurfrules
 .roo/
+**/.roo/
 .cline/
+**/.cline/
+.clinerules
+.codex/
+**/.codex/
+.opencode/
+**/.opencode/
+.copilot/
+**/.copilot/
 .aider*
+AGENTS.md
+**/AGENTS.md
 CLAUDE.md
 **/CLAUDE.md
+GEMINI.md
+**/GEMINI.md
+COPILOT.md
+**/COPILOT.md
+CURSOR.md
+**/CURSOR.md
+MEMORY.md
+**/MEMORY.md
 
 # =========================================================================
 # 9. Docker mounts, volumes and Git hooks internal state

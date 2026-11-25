@@ -194,3 +194,51 @@ test('DocumentPEP — automatically allows Document Owner to preview with suffic
   assert.equal(result.documentId, docId);
   assert.equal(result.versionNo, 1);
 });
+
+test('DocumentPEP — includes structured reasonCode and missingAttributes when ABAC denies for MISSING_REQUIRED_ATTRIBUTE', async () => {
+  const docId = randomUUID();
+  const grantId = randomUUID();
+  const mockDb = {
+    document: {
+      findUnique: async () =>
+        createActivePepDocumentRow(docId, {
+          rank: 3,
+          allow_download: false,
+          require_watermark: true,
+        }),
+    },
+    user: { findUnique: async () => ({ department_id: null, status: 'ACTIVE' }) },
+    userAttributeAssignment: {
+      findFirst: async () => ({ attribute_options: { numeric_rank: 3, is_active: true } }),
+      findMany: async () => [],
+    },
+  };
+  const mockGrants = { assertGrantValidForAccess: async () => {} };
+  const mockAbac = {
+    evaluate: async () => ({
+      decision: 'DENY',
+      reasonCode: 'MISSING_REQUIRED_ATTRIBUTE',
+      obligations: [],
+    }),
+  };
+  const mockAudit = { record: async () => {} };
+
+  const pep = new DocumentPepService(mockAbac, mockGrants, mockAudit, mockDb);
+  const principal = { userId: 30n, username: 'athanhnee', roles: ['DOCUMENT_OWNER'], mfa: false };
+  const context = { ip: '127.0.0.1', userAgent: 'test-agent' };
+
+  await assert.rejects(
+    async () => {
+      await pep.enforceAccess(docId, principal, context, { action: 'VIEW', grantId });
+    },
+    (err) => {
+      const res = err.getResponse?.();
+      return (
+        res?.errorCode === AppErrorCode.POLICY_DENIED &&
+        res?.details?.reasonCode === 'MISSING_REQUIRED_ATTRIBUTE' &&
+        Array.isArray(res?.details?.missingAttributes) &&
+        res.details.missingAttributes.includes('SUBJECT_DEPARTMENT')
+      );
+    },
+  );
+});

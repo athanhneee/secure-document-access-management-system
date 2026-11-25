@@ -19,6 +19,7 @@ import { AbacService } from '../abac/abac.service.js';
 import { AppConfigService } from '../../config/config.service.js';
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
 import { DistributedStateService } from '../concurrency/distributed-state.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { verifyAndResolveEffectiveGrant } from './pep-clearance.helper.js';
@@ -60,6 +61,7 @@ export class DocumentPepService {
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly config?: AppConfigService,
     @Optional() stateStore?: DistributedStateService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -237,6 +239,12 @@ export class DocumentPepService {
       principal,
       context,
       policyOutcome,
+    });
+
+    this.realtime?.publish({
+      type: 'ACCESS_SESSION_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: { id: sessionId, documentId, status: 'ACTIVE', action: 'STARTED' },
     });
 
     return {

@@ -317,3 +317,41 @@ test('DocumentIngestionService Anti-BOLA: rejects peer DOCUMENT_OWNER uploading 
   );
   assert.equal(stream.destroyed, true);
 });
+
+test('DocumentIngestionService ABAC Pre-Check: rejects uploader missing required SUBJECT_DEPARTMENT before spooling', async () => {
+  const mockDb = {
+    user: {
+      findUnique: async () => ({ department_id: null, status: 'ACTIVE' }),
+    },
+    attributeDefinition: {
+      findFirst: async () => ({ is_required: true }),
+    },
+  };
+  const { ingestion } = createIngestionHarness({ mockDb });
+  const stream = Readable.from([createSamplePdfBuffer('Quarterly financial report')]);
+  const ownerWithoutDept = {
+    userId: 30n,
+    sessionId: 'session-no-dept',
+    username: 'athanhnee',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: false,
+  };
+
+  await assert.rejects(
+    ingestion.ingestDocument({
+      fileStream: stream,
+      rawFilename: 'bctc_q3.pdf',
+      declaredMime: 'application/pdf',
+      title: 'Báo cáo tài chính quý 3/2026',
+      departmentId: 9n,
+      principal: ownerWithoutDept,
+      context: { ip: '127.0.0.1', correlationId: crypto.randomUUID() },
+    }),
+    (err) =>
+      err.response?.errorCode === AppErrorCode.POLICY_DENIED &&
+      err.response?.details?.reasonCode === 'MISSING_REQUIRED_ATTRIBUTE' &&
+      Array.isArray(err.response?.details?.missingAttributes) &&
+      err.response.details.missingAttributes.includes('SUBJECT_DEPARTMENT'),
+  );
+  assert.equal(stream.destroyed, true);
+});

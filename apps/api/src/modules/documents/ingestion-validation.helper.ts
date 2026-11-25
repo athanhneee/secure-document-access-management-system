@@ -16,7 +16,10 @@ import { AppErrorCode } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
-import { getUserClearanceRank } from './document-access-guard.helper.js';
+import {
+  assertSubjectAttributesReadyForAbac,
+  getUserClearanceRank,
+} from './document-access-guard.helper.js';
 import { parseIsoRetentionDate } from './document-draft-validation.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -100,6 +103,10 @@ export async function validateIngestionPreconditions(
     }
   }
 
+  const callerSubject = await assertSubjectAttributesReadyForAbac(database, input.principal, () =>
+    input.fileStream.destroy(),
+  );
+
   if (input.documentId && typeof database?.document?.findUnique === 'function') {
     const targetDoc = await database.document.findUnique({
       where: { id: input.documentId },
@@ -149,14 +156,8 @@ export async function validateIngestionPreconditions(
     }
   } else if (!input.documentId) {
     // CONFLICT-RESOLVED: Kiểm tra quyền trên phòng ban đích và độ mật Bell-LaPadula trước khi ghi đệm tệp tải lên mới (HIGH-05).
-    let callerDeptId = (input.principal as { departmentId?: bigint }).departmentId;
-    if (callerDeptId === undefined && typeof database?.user?.findUnique === 'function') {
-      const caller = await database.user.findUnique({
-        where: { id: input.principal.userId },
-        select: { department_id: true },
-      });
-      callerDeptId = caller?.department_id ?? undefined;
-    }
+    const callerDeptId =
+      (input.principal as { departmentId?: bigint }).departmentId ?? callerSubject.departmentId;
     const targetDeptId = input.departmentId ?? callerDeptId ?? 1n;
     if (typeof database?.department?.findUnique === 'function') {
       const dept = await database.department.findUnique({ where: { id: targetDeptId } });

@@ -95,10 +95,25 @@ export async function evaluatePepPolicyAndObligations(params: {
   });
 
   if (abacResult.decision === 'DENY') {
-    await deny(effectiveGrantId, AppErrorCode.POLICY_DENIED, abacResult.reasonCode);
+    const missingAttributes: string[] = [];
+    if (abacResult.reasonCode === 'MISSING_REQUIRED_ATTRIBUTE') {
+      if (subjectAttributes.departmentId === null) missingAttributes.push('SUBJECT_DEPARTMENT');
+      if (subjectAttributes.clearanceRank === null) missingAttributes.push('CLEARANCE_LEVEL');
+      if (subjectAttributes.employmentStatus === null) missingAttributes.push('EMPLOYMENT_STATUS');
+      if (departmentId === null || departmentId === undefined)
+        missingAttributes.push('RESOURCE_DEPARTMENT');
+      if (categoryCode === null) missingAttributes.push('RESOURCE_CATEGORY');
+    }
+    const missingSuffix = missingAttributes.length > 0 ? ` (${missingAttributes.join(', ')})` : '';
+    const denialSummary = `${abacResult.reasonCode}${missingSuffix}`;
+    await deny(effectiveGrantId, AppErrorCode.POLICY_DENIED, denialSummary);
     throw new ForbiddenException({
       errorCode: AppErrorCode.POLICY_DENIED,
-      message: `Access denied by policy: ${abacResult.reasonCode}`,
+      message: `Access denied by policy: ${denialSummary}`,
+      details: {
+        reasonCode: abacResult.reasonCode,
+        ...(missingAttributes.length > 0 ? { missingAttributes } : {}),
+      },
     });
   }
 

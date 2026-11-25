@@ -18,6 +18,7 @@ import type { AuthorizationService } from '../rbac/authorization.service.js';
 import type { DocumentAuditService } from './document-audit.service.js';
 import {
   assertDocumentMutationPermission,
+  assertSubjectAttributesReadyForAbac,
   getUserClearanceRank,
   isPureTechnicalOrAuditRole,
 } from './document-access-guard.helper.js';
@@ -48,6 +49,8 @@ export async function executeCreateDocumentDraft(params: {
       message: 'Technical administrator and auditor accounts cannot own business documents.',
     });
   }
+
+  await assertSubjectAttributesReadyForAbac(database, principal);
 
   if (
     input.documentCode !== undefined &&

@@ -59,6 +59,62 @@ export async function getUserClearanceRank(
 }
 
 /**
+ * Thuật toán: Kiểm định thuộc tính chủ thể bắt buộc theo ABAC (`SUBJECT_DEPARTMENT` và trạng thái `ACTIVE`) trước khi tạo hoặc tải lên tài liệu.
+ * Mục đích: Ngăn tình trạng chủ sở hữu tải lên tài liệu thành công nhưng không thể mở xem do thiếu phòng ban (`subject.departmentId = null`).
+ * Cơ chế hoạt động:
+ *   - Chỉ kiểm tra khi `database.user.findUnique` khả dụng (bỏ qua an toàn trên mock kiểm thử nhẹ không cung cấp bảng `user`).
+ *   - Từ chối ngay nếu tài khoản không ở trạng thái `ACTIVE` (`USER_NOT_ACTIVE`) hoặc có `department_id === null` trong khi `SUBJECT_DEPARTMENT` đang là thuộc tính bắt buộc (`POLICY_DENIED` kèm `MISSING_REQUIRED_ATTRIBUTE`).
+ */
+export async function assertSubjectAttributesReadyForAbac(
+  database: PrismaClient | undefined,
+  principal: AuthPrincipal,
+  onBeforeThrow?: () => void,
+): Promise<{ departmentId?: bigint | undefined }> {
+  if (!database || typeof database?.user?.findUnique !== 'function') {
+    return {};
+  }
+  const caller = await database.user.findUnique({
+    where: { id: principal.userId },
+    select: { department_id: true, status: true },
+  });
+  if (!caller) {
+    return {};
+  }
+  if (caller.status !== undefined && caller.status !== 'ACTIVE') {
+    onBeforeThrow?.();
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.USER_NOT_ACTIVE,
+      message: 'User account is not active.',
+    });
+  }
+  if (caller.department_id === null) {
+    let departmentRequired = true;
+    if (typeof database?.attributeDefinition?.findFirst === 'function') {
+      const def = await database.attributeDefinition.findFirst({
+        where: { code: 'SUBJECT_DEPARTMENT', is_active: true },
+        select: { is_required: true },
+      });
+      if (def) {
+        departmentRequired = def.is_required;
+      }
+    }
+    if (departmentRequired) {
+      onBeforeThrow?.();
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.POLICY_DENIED,
+        message:
+          'Access denied by policy: MISSING_REQUIRED_ATTRIBUTE (SUBJECT_DEPARTMENT). Assign a department before uploading documents.',
+        details: {
+          reasonCode: 'MISSING_REQUIRED_ATTRIBUTE',
+          missingAttributes: ['SUBJECT_DEPARTMENT'],
+        },
+      });
+    }
+  }
+  return { departmentId: caller.department_id ?? undefined };
+}
+
+/**
  * Thuật toán: Cưỡng chế bất biến thống trị độ mật Bell-LaPadula (`actorClearanceRank >= documentRank`) cho chủ sở hữu và quản trị viên.
  */
 export async function assertActorClearanceDominatesDocument(

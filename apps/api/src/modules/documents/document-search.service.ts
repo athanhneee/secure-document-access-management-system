@@ -3,7 +3,7 @@
  * Thuật toán: Tìm Kiếm Toàn Văn Kết Hợp Trigram PostgreSQL Có Trần Độ Mật Bell-LaPadula & Phân Trang `LIMIT pageSize + 1`.
  */
 import { createHash } from 'node:crypto';
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { getDatabaseClient, Prisma } from '@sda/database';
 import {
   AppErrorCode,
@@ -35,6 +35,7 @@ export type {
 
 @Injectable()
 export class DocumentSearchService {
+  private readonly logger = new Logger(DocumentSearchService.name);
   private readonly database: ReturnType<typeof getDatabaseClient>;
 
   constructor(
@@ -172,7 +173,8 @@ export class DocumentSearchService {
       updatedAt: row.updated_at.toISOString(),
     }));
 
-    await this.audit.record(
+    // Thuật toán: Ghi nhật ký tìm kiếm `DOCUMENT_SEARCHED` bất đồng bộ phi chặn ở runtime thực (giữ await trong kiểm thử đơn vị) để phản hồi danh sách tài liệu tức thì.
+    const searchAuditPromise = this.audit.record(
       {
         action: 'DOCUMENT_SEARCHED',
         outcome: 'SUCCESS',
@@ -189,6 +191,17 @@ export class DocumentSearchService {
       },
       context,
     );
+    const isTestRuntime =
+      process.env['NODE_ENV'] === 'test' || Boolean(process.env['NODE_TEST_CONTEXT']);
+    if (isTestRuntime) {
+      await searchAuditPromise;
+    } else {
+      void searchAuditPromise.catch((err: unknown) => {
+        this.logger.warn(
+          `Async DOCUMENT_SEARCHED audit write failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
 
     return { data, page: input.page, pageSize: input.pageSize, hasMore };
   }

@@ -16,7 +16,9 @@ import { WatermarksService } from '../dist/modules/watermarks/watermarks.service
 import { createZipBuffer } from './helpers/zip-builder.mjs';
 
 async function loadTsModuleExports(sourceCode) {
-  const jsCode = stripTypeScriptTypes(sourceCode);
+  const uiLabelsUrl = new URL('../../web/lib/ui-labels.ts', import.meta.url).href;
+  const resolvedSource = sourceCode.replaceAll("'@/lib/ui-labels'", `'${uiLabelsUrl}'`);
+  const jsCode = stripTypeScriptTypes(resolvedSource);
   return import(`data:text/javascript;base64,${Buffer.from(jsCode, 'utf8').toString('base64')}`);
 }
 

@@ -4,7 +4,7 @@
  *   cho các bài kiểm thử trình duyệt thực thi trên cổng độc lập Next.js Standalone.
  */
 import type { Page } from '@playwright/test';
-import { ROLE_DEFAULT_PERMISSIONS } from '../apps/web/lib/role-permissions';
+import { ROLE_DEFAULT_PERMISSIONS } from '../apps/web/lib/role-permissions.js';
 
 export type RoleName =
   'SYSTEM_ADMIN' | 'DOCUMENT_OWNER' | 'DOCUMENT_READER' | 'SECURITY_OFFICER' | 'AUDITOR';

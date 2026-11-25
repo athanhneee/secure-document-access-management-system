@@ -18,8 +18,6 @@ interface AccessAndAuditModalsProps {
   auditDetailOpen: boolean;
   onAuditDetailOpenChange: (open: boolean) => void;
   selectedAuditLog: AuditLogItem | null;
-  userFullName?: string | null | undefined;
-  username?: string | null | undefined;
 }
 
 export function AccessAndAuditModals({
@@ -30,8 +28,6 @@ export function AccessAndAuditModals({
   auditDetailOpen,
   onAuditDetailOpenChange,
   selectedAuditLog,
-  userFullName,
-  username,
 }: AccessAndAuditModalsProps) {
   return (
     <>
@@ -66,13 +62,15 @@ export function AccessAndAuditModals({
         onOpenChange={delivery.handleClosePreview}
         document={delivery.previewDoc}
         sessionId={delivery.previewSessionId}
+        versionNo={delivery.previewVersionNo}
+        pdfBytes={delivery.previewPdfBytes}
         pdfUrl={delivery.previewPdfUrl}
         page={delivery.previewPage}
         totalPages={delivery.previewTotalPages}
+        pageError={delivery.previewPageError}
         isLoading={delivery.isLoadingPreview}
-        userFullName={userFullName}
-        username={username}
         onPageChange={(p) => void delivery.handlePageChange(p)}
+        onRetryPage={() => void delivery.handleRetryPage()}
       />
     </>
   );

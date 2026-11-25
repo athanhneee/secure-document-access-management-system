@@ -4,11 +4,12 @@ export interface DiscoverableDoc {
   id: string;
   title: string;
   documentCode?: string | undefined;
+  description?: string | null | undefined;
+  businessCategoryName?: string | null | undefined;
   classificationCode: ClassificationCode;
-  classificationRank?: number | undefined;
+  classificationRank: number;
   departmentName?: string | undefined;
   allowDownload: boolean;
-  hasAccess?: boolean | undefined;
 }
 
 export interface MyGrantedDoc {
@@ -18,19 +19,27 @@ export interface MyGrantedDoc {
   documentCode?: string | undefined;
   classificationCode: ClassificationCode;
   permissions: Array<'VIEW' | 'DOWNLOAD'>;
+  principalType: 'USER' | 'ROLE';
+  roleName?: string | null | undefined;
+  validFrom?: string | undefined;
   validUntil: string;
+  grantedAt?: string | undefined;
   allowDownload: boolean;
 }
 
 export interface MyRequestItem {
   id: string;
+  documentId?: string | undefined;
   documentTitle: string;
+  documentCode?: string | null | undefined;
   requestedAction: 'VIEW' | 'DOWNLOAD';
-  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED';
   createdAt: string;
-  requestedFrom?: string;
-  requestedUntil?: string;
-  reason?: string;
+  requestedFrom?: string | undefined;
+  requestedUntil?: string | undefined;
+  justification?: string | undefined;
+  decidedAt?: string | null | undefined;
+  decisionNote?: string | null | undefined;
 }
 
 export interface ReaderDocumentApiDto {
@@ -38,6 +47,8 @@ export interface ReaderDocumentApiDto {
   title?: string;
   documentCode?: string;
   document_code?: string;
+  description?: string | null;
+  businessCategoryName?: string | null;
   // CONFLICT-RESOLVED: Bổ sung các trường phẳng từ GET /api/v1/documents (classificationLevelCode, classificationLevelName, departmentName) song song cấu trúc lồng cũ.
   classificationLevelCode?: ClassificationCode | null;
   classificationLevelName?: string | null;
@@ -49,9 +60,11 @@ export interface ReaderDocumentApiDto {
 }
 
 export interface ReaderGrantApiDto {
-  // CONFLICT-RESOLVED: Đồng bộ cấu trúc trả về thực tế của GET /api/v1/documents/my-grants (grantId, grantStatus, validFrom, document lồng).
+  // CONFLICT-RESOLVED: Đồng bộ cấu trúc trả về thực tế của GET /api/v1/documents/my-grants (grantId, principalType, roleName, grantStatus, validFrom, document lồng).
   grantId?: string;
   id?: string;
+  principalType?: 'USER' | 'ROLE';
+  roleName?: string | null;
   documentId?: string;
   title?: string;
   documentTitle?: string;

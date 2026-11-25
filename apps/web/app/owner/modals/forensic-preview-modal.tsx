@@ -8,13 +8,15 @@ interface ForensicPreviewModalProps {
   onOpenChange: (open: boolean) => void;
   document: DocumentItem | null;
   sessionId: string | null;
-  pdfUrl: string | null;
+  versionNo?: number | null | undefined;
+  pdfBytes?: Uint8Array | null | undefined;
+  pdfUrl?: string | null | undefined;
   page: number;
   totalPages: number;
+  pageError?: string | null | undefined;
   isLoading: boolean;
-  userFullName?: string | null | undefined;
-  username?: string | null | undefined;
   onPageChange: (newPage: number) => void;
+  onRetryPage?: (() => void) | undefined;
 }
 
 export function ForensicPreviewModal({
@@ -22,11 +24,15 @@ export function ForensicPreviewModal({
   onOpenChange,
   document,
   sessionId,
+  versionNo,
+  pdfBytes,
   pdfUrl,
   page,
   totalPages,
+  pageError,
   isLoading,
   onPageChange,
+  onRetryPage,
 }: ForensicPreviewModalProps) {
   return (
     <SharedPdfPreviewModal
@@ -35,9 +41,14 @@ export function ForensicPreviewModal({
       title={document?.title}
       classificationCode={document?.classificationCode}
       sessionId={sessionId}
+      versionNo={versionNo}
+      pdfBytes={pdfBytes}
       pdfUrl={pdfUrl}
       page={page}
       totalPages={totalPages}
+      allowDownload={document?.allowDownload ?? false}
+      pageError={pageError}
+      onRetryPage={onRetryPage}
       isLoading={isLoading}
       pipelineLabel="Chế độ xem bảo mật · Có gắn watermark bảo mật"
       loadingLabel="Đang chuẩn bị bản xem trước tài liệu và gắn watermark bảo mật…"

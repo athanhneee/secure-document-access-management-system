@@ -5,21 +5,25 @@ import type { useReaderViewer } from '../hooks/use-reader-viewer';
 
 interface DocumentViewerModalProps {
   viewer: ReturnType<typeof useReaderViewer>;
-  userFullName?: string | null | undefined;
-  username?: string | null | undefined;
 }
 
+/**
+ * Thuật toán: Bọc Chuyển Tiếp Trạng Thái Xem Trước Canvas Bảo Mật Cho Người Đọc (`DocumentViewerModal`, V-51)
+ */
 export function DocumentViewerModal({ viewer }: DocumentViewerModalProps) {
   const {
     previewOpen,
     previewDoc,
     previewSessionId,
-    previewPdfUrl,
+    previewPdfBytes,
     previewPage,
     previewTotalPages,
+    previewVersionNo,
+    previewPageError,
     isLoadingPreview,
     handleClosePreview,
     handlePageChange,
+    handleRetryPage,
   } = viewer;
 
   return (
@@ -29,9 +33,13 @@ export function DocumentViewerModal({ viewer }: DocumentViewerModalProps) {
       title={previewDoc?.title}
       classificationCode={previewDoc?.classificationCode}
       sessionId={previewSessionId}
-      pdfUrl={previewPdfUrl}
+      pdfBytes={previewPdfBytes}
       page={previewPage}
       totalPages={previewTotalPages}
+      versionNo={previewVersionNo}
+      allowDownload={previewDoc?.allowDownload ?? false}
+      pageError={previewPageError}
+      onRetryPage={() => void handleRetryPage()}
       isLoading={isLoadingPreview}
       pipelineLabel="Chế độ xem bảo mật · Có gắn watermark bảo mật"
       loadingLabel="Đang chuẩn bị bản xem trước tài liệu và gắn watermark bảo mật…"

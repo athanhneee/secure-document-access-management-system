@@ -336,8 +336,6 @@ function OwnerWorkspaceContent() {
           auditDetailOpen={data.auditDetailOpen}
           onAuditDetailOpenChange={data.setAuditDetailOpen}
           selectedAuditLog={data.selectedAuditLog}
-          userFullName={user?.fullName}
-          username={user?.username}
         />
       </div>
     </DialogErrorProvider>

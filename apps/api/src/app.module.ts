@@ -22,11 +22,13 @@ import { ReportsModule } from './modules/reports/reports.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 
 import { ConcurrencyModule } from './modules/concurrency/concurrency.module.js';
+import { RealtimeModule } from './modules/realtime/realtime.module.js';
 
 @Module({
   imports: [
     AppConfigModule,
     ConcurrencyModule,
+    RealtimeModule,
     AuthModule,
     RbacModule,
     AbacModule,

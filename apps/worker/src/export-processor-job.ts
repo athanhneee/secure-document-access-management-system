@@ -8,6 +8,7 @@ import {
   uploadExportCiphertextToS3,
 } from './exports/export-s3-storage.js';
 import { parseFilterParams, queryExportDataset } from './export-query.helper.js';
+import { publishWorkerRealtimeEvent } from './realtime-redis-publisher.js';
 import { recordWorkerJobRun, setExportQueueDepth } from './worker-metrics.js';
 
 /**
@@ -57,6 +58,7 @@ export interface ExportProcessorSummary {
 
 interface PendingExportJobRow {
   id: string;
+  requester_user_id?: bigint | string | null;
   export_type: string;
   format: string;
   filter_params: unknown;
@@ -83,7 +85,7 @@ async function claimPendingExportJobs(
        SET status = 'PROCESSING'
        FROM claimed
        WHERE j.id = claimed.id
-       RETURNING j.id, j.export_type, j.format, j.filter_params`,
+       RETURNING j.id, j.requester_user_id, j.export_type, j.format, j.filter_params`,
       batchSize,
     );
   }
@@ -92,7 +94,13 @@ async function claimPendingExportJobs(
     where: { status: 'PENDING' },
     orderBy: { created_at: 'asc' },
     take: batchSize,
-    select: { id: true, export_type: true, format: true, filter_params: true },
+    select: {
+      id: true,
+      requester_user_id: true,
+      export_type: true,
+      format: true,
+      filter_params: true,
+    },
   });
   const claimed: PendingExportJobRow[] = [];
   for (const job of candidates) {
@@ -184,6 +192,25 @@ export async function processPendingExportJobs(options?: {
           completed_at: now,
         },
       });
+      const requesterUserId =
+        job.requester_user_id !== undefined && job.requester_user_id !== null
+          ? String(job.requester_user_id)
+          : null;
+      if (requesterUserId) {
+        void publishWorkerRealtimeEvent({
+          type: 'EXPORT_JOB_UPDATED',
+          targetUserIds: [requesterUserId],
+          payload: {
+            id: job.id,
+            exportType: job.export_type,
+            format: job.format,
+            status: 'COMPLETED',
+            rowCount: rows.length,
+            fileSizeBytes: artifact.buffer.byteLength,
+            completedAt: now.toISOString(),
+          },
+        });
+      }
       summary.completed++;
     } catch (err) {
       const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
@@ -197,6 +224,24 @@ export async function processPendingExportJobs(options?: {
           },
         })
         .catch(() => {});
+      const requesterUserId =
+        job.requester_user_id !== undefined && job.requester_user_id !== null
+          ? String(job.requester_user_id)
+          : null;
+      if (requesterUserId) {
+        void publishWorkerRealtimeEvent({
+          type: 'EXPORT_JOB_UPDATED',
+          targetUserIds: [requesterUserId],
+          payload: {
+            id: job.id,
+            exportType: job.export_type,
+            format: job.format,
+            status: 'FAILED',
+            errorMessage: message,
+            completedAt: now.toISOString(),
+          },
+        });
+      }
       summary.failed++;
     }
   }

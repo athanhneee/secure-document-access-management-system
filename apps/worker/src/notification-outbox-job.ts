@@ -4,6 +4,7 @@ import {
   deliverIdempotentInAppNotification,
 } from './outbox-claim-and-inapp.helper.js';
 import { deliverOutboxEmailViaSmtp } from './outbox-mailer.helper.js';
+import { publishWorkerRealtimeEvent } from './realtime-redis-publisher.js';
 import { incrementOutboxDeadLetter, recordWorkerJobRun } from './worker-metrics.js';
 
 /**
@@ -83,6 +84,19 @@ export async function processOutboxBatch(options?: {
 
       if (wantsInApp) {
         inAppDelivered = await deliverIdempotentInAppNotification(database, item, now);
+        if (inAppDelivered) {
+          void publishWorkerRealtimeEvent({
+            type: 'NOTIFICATION_CREATED',
+            targetUserIds: [item.recipient_id.toString()],
+            payload: {
+              notificationType: item.notification_type,
+              title: item.title,
+              body: item.body,
+              status: 'UNREAD',
+              createdAt: now.toISOString(),
+            },
+          });
+        }
       }
 
       if (wantsEmail) {

@@ -76,10 +76,13 @@ export function createRedlockClients(config: AppConfigService, logger: Logger): 
         .filter((u) => u.length > 0)
     : [config.get('REDIS_URL')];
 
+  const isTestRuntime =
+    (config.get('NODE_ENV') ?? process.env['NODE_ENV']) === 'test' ||
+    Boolean(process.env['NODE_TEST_CONTEXT']);
   return urls.map((url) => {
     const safeUrl = redactRedisEndpointUrl(url);
     const client = new Redis(url, {
-      lazyConnect: true,
+      lazyConnect: isTestRuntime,
       enableOfflineQueue: true,
       maxRetriesPerRequest: 1,
       connectTimeout: 3_000,

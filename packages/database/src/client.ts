@@ -84,11 +84,15 @@ export function buildPgPoolConfig(connectionString?: string): ResolvedPgConfig {
 
   const configuredMax = Number(process.env['DATABASE_POOL_MAX'] ?? '10');
   const max = Number.isFinite(configuredMax) && configuredMax > 0 ? Math.floor(configuredMax) : 10;
+  const isTestRuntime =
+    process.env['NODE_ENV'] === 'test' || Boolean(process.env['NODE_TEST_CONTEXT']);
+  const warmMin = isTestRuntime ? 0 : Math.min(2, max);
 
-  // CONFLICT-RESOLVED: Bật TCP Keep-Alive và `query_timeout` trên `pg.PoolConfig` chống treo socket nửa mở (half-open TCP stall) qua L4 Proxy đám mây (Railway/AWS).
+  // CONFLICT-RESOLVED: Bật TCP Keep-Alive, giữ ấm tối thiểu 2 kết nối (`min`) và nâng `idleTimeoutMillis` lên 5 phút để triệt tiêu độ trễ bắt tay TLS lạnh khi nhàn rỗi qua L4 Proxy.
   const poolConfig: pg.PoolConfig = {
     max,
-    idleTimeoutMillis: 30_000,
+    min: warmMin,
+    idleTimeoutMillis: 300_000,
     connectionTimeoutMillis: 10_000,
     query_timeout: 45_000,
     keepAlive: true,

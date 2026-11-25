@@ -5,6 +5,7 @@ import {
   type PrismaClient,
 } from './detection/rule-defaults.js';
 import { evaluateDetectionRule } from './detection/rule-evaluators.js';
+import { publishWorkerRealtimeEvent } from './realtime-redis-publisher.js';
 import { recordWorkerJobRun } from './worker-metrics.js';
 
 export { type DetectionRuleConfig, loadDetectionRules };
@@ -36,6 +37,14 @@ export async function runDetectionCycle(options?: {
     } catch (err) {
       console.warn('Error evaluating rule %s:', rule.ruleCode, err);
     }
+  }
+
+  if (alertsCreated > 0) {
+    void publishWorkerRealtimeEvent({
+      type: 'SECURITY_ALERT_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: { alertsCreated, action: 'DETECTION_CYCLE_CREATED' },
+    });
   }
 
   return { alertsCreated, rulesEvaluated };

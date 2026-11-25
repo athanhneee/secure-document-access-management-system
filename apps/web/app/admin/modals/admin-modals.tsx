@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { DepartmentRow, PermissionRow, RoleRow, UserRow } from '../types';
+import type { ClearanceOptionRow, DepartmentRow, PermissionRow, RoleRow, UserRow } from '../types';
 import { AssignRoleModal } from './assign-role-modal';
 import { CreateRoleModal } from './create-role-modal';
 import { CreateUserModal } from './create-user-modal';
@@ -9,6 +9,7 @@ import { DepartmentModal } from './department-modal';
 import { EditRoleModal } from './edit-role-modal';
 import { EditUserModal } from './edit-user-modal';
 import { RolePermissionsModal } from './role-permissions-modal';
+import { UpdateClearanceModal } from './update-clearance-modal';
 
 /**
  * Thuật toán: Quản Lý Vòng Đời Trạng Thái Hộp Thoại Quản Trị Kèm Xóa Lỗi Tồn Đọng (`useAdminModalState`)
@@ -18,6 +19,8 @@ export function useAdminModalState(onClearError?: () => void) {
   const [createUserOpen, setCreateUserOpen] = useState(false);
   const [editUserOpen, setEditUserOpen] = useState(false);
   const [selectedUserForEdit, setSelectedUserForEdit] = useState<UserRow | null>(null);
+  const [clearanceModalOpen, setClearanceModalOpen] = useState(false);
+  const [selectedUserForClearance, setSelectedUserForClearance] = useState<UserRow | null>(null);
   const [departmentModalOpen, setDepartmentModalOpen] = useState(false);
   const [selectedDepartment, setSelectedDepartment] = useState<DepartmentRow | null>(null);
   const [createRoleOpen, setCreateRoleOpen] = useState(false);
@@ -35,6 +38,10 @@ export function useAdminModalState(onClearError?: () => void) {
     setEditUserOpen,
     selectedUserForEdit,
     setSelectedUserForEdit,
+    clearanceModalOpen,
+    setClearanceModalOpen,
+    selectedUserForClearance,
+    setSelectedUserForClearance,
     departmentModalOpen,
     setDepartmentModalOpen,
     selectedDepartment,
@@ -61,6 +68,11 @@ export function useAdminModalState(onClearError?: () => void) {
       onClearError?.();
       setSelectedUserForEdit(user);
       setEditUserOpen(true);
+    },
+    openUpdateClearance: (user: UserRow) => {
+      onClearError?.();
+      setSelectedUserForClearance(user);
+      setClearanceModalOpen(true);
     },
     openCreateDepartment: () => {
       onClearError?.();
@@ -99,6 +111,7 @@ export type AdminModalState = ReturnType<typeof useAdminModalState>;
 interface AdminModalsProps {
   modals: AdminModalState;
   departments: DepartmentRow[];
+  clearanceOptions: ClearanceOptionRow[];
   roles: RoleRow[];
   permissions: PermissionRow[];
   onClearError: () => void;
@@ -109,6 +122,7 @@ interface AdminModalsProps {
 export function AdminModals({
   modals,
   departments,
+  clearanceOptions,
   roles,
   permissions,
   onClearError,
@@ -121,6 +135,7 @@ export function AdminModals({
         open={modals.createUserOpen}
         onOpenChange={modals.setCreateUserOpen}
         departments={departments}
+        clearanceOptions={clearanceOptions}
         onClearError={onClearError}
         onSuccess={onSuccess}
         onError={onError}
@@ -134,6 +149,20 @@ export function AdminModals({
         }}
         user={modals.selectedUserForEdit}
         departments={departments}
+        clearanceOptions={clearanceOptions}
+        onClearError={onClearError}
+        onSuccess={onSuccess}
+        onError={onError}
+      />
+
+      <UpdateClearanceModal
+        open={modals.clearanceModalOpen}
+        onOpenChange={(open) => {
+          modals.setClearanceModalOpen(open);
+          if (!open) modals.setSelectedUserForClearance(null);
+        }}
+        user={modals.selectedUserForClearance}
+        clearanceOptions={clearanceOptions}
         onClearError={onClearError}
         onSuccess={onSuccess}
         onError={onError}

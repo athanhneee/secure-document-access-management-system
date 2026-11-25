@@ -15,17 +15,47 @@ export {
   resolveVisualRuleForPolicy,
 } from './abac-helpers';
 
+export {
+  buildDepartmentNameMap,
+  computeUserFilterFacets,
+  DEFAULT_USER_LIST_QUERY,
+  filterAndSortUsers,
+  formatUserSortOption,
+  hasActiveUserFilters,
+  isNonDefaultUserQuery,
+  matchesUserActionFilter,
+  parseUserSortOption,
+  resolveUserDepartmentName,
+  toggleUserSort,
+  UNASSIGNED_DEPARTMENT_LABEL,
+  USER_SORT_OPTIONS,
+} from './users-query';
+export type {
+  DepartmentFacetOption,
+  SortDirection,
+  UserActionFilter,
+  UserDepartmentFilter,
+  UserFilterFacets,
+  UserListQueryState,
+  UserSortField,
+  UserSortOption,
+  UserSortOptionKey,
+  UserStatusFilter,
+} from './users-query';
+
 /**
  * Thuật toán: Tìm kiếm Định danh Người dùng Đa Trường Không Phân biệt Hoa Thường (`filterUsersByQuery`)
- * Mục đích: Lọc tức thời danh sách tài khoản theo chuỗi con khớp trên họ tên, tên đăng nhập hoặc thư điện tử (`O(N)`).
+ * Mục đích: Lọc tức thời danh sách tài khoản theo chuỗi con khớp trên họ tên, tên đăng nhập, thư điện tử hoặc mã nhân viên (`O(N)`).
  */
 export function filterUsersByQuery(users: UserRow[], searchQuery: string): UserRow[] {
-  const query = searchQuery.toLowerCase();
+  const query = searchQuery.trim().toLowerCase();
+  if (!query) return [...users];
   return users.filter(
     (u) =>
       u.fullName.toLowerCase().includes(query) ||
       u.username.toLowerCase().includes(query) ||
-      u.email.toLowerCase().includes(query),
+      u.email.toLowerCase().includes(query) ||
+      (u.employeeCode ?? '').toLowerCase().includes(query),
   );
 }
 

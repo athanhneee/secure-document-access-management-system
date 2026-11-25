@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { Check } from 'lucide-react';
+import { AlertTriangle, Check } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import {
   Dialog,
@@ -13,13 +13,14 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
-import type { DepartmentRow, UserRow } from '../types';
+import type { ClearanceOptionRow, DepartmentRow, UserRow } from '../types';
 
 interface EditUserModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   user: UserRow | null;
   departments: DepartmentRow[];
+  clearanceOptions: ClearanceOptionRow[];
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
@@ -27,13 +28,14 @@ interface EditUserModalProps {
 
 /**
  * Thuật toán: Cập Nhật Hồ Sơ Nhân Sự Có Kiểm Soát Tương Tranh OCC (`EditUserModal`)
- * Mục đích: Đồng bộ trường `fullName`, `email`, `employeeCode`, `departmentId` kèm `expectedVersion` qua `PATCH /users/:id`; chỉ đóng `<dialog>` sau khi máy chủ xác nhận thành công.
+ * Mục đích: Đồng bộ trường `fullName`, `email`, `employeeCode`, `departmentId`, `clearanceOptionId` kèm `expectedVersion` qua `PATCH /users/:id`; chỉ đóng `<dialog>` sau khi máy chủ xác nhận thành công.
  */
 export function EditUserModal({
   open,
   onOpenChange,
   user,
   departments,
+  clearanceOptions,
   onClearError,
   onSuccess,
   onError,
@@ -46,16 +48,17 @@ export function EditUserModal({
             Chỉnh sửa tài khoản: @{user?.username}
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Cập nhật họ tên, email, mã nhân viên và đơn vị công tác (phiên bản v{user?.version ?? 0}
-            )
+            Cập nhật họ tên, email, mã nhân viên, đơn vị công tác và cấp độ thẩm tra (phiên bản v
+            {user?.version ?? 0})
           </DialogDescription>
         </DialogHeader>
 
         {open && user && (
           <EditUserForm
-            key={`${user.id}-${user.version}`}
+            key={`${user.id}-${user.version}-${user.clearanceOptionId ?? 'none'}`}
             user={user}
             departments={departments}
+            clearanceOptions={clearanceOptions}
             onClose={() => onOpenChange(false)}
             onClearError={onClearError}
             onSuccess={onSuccess}
@@ -70,6 +73,7 @@ export function EditUserModal({
 interface EditUserFormProps {
   user: UserRow;
   departments: DepartmentRow[];
+  clearanceOptions: ClearanceOptionRow[];
   onClose: () => void;
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
@@ -79,6 +83,7 @@ interface EditUserFormProps {
 function EditUserForm({
   user,
   departments,
+  clearanceOptions,
   onClose,
   onClearError,
   onSuccess,
@@ -90,7 +95,15 @@ function EditUserForm({
   const [departmentId, setDepartmentId] = useState(
     user.departmentId ? String(user.departmentId) : '',
   );
+  const [clearanceOptionId, setClearanceOptionId] = useState(user.clearanceOptionId ?? '');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const currentRank = user.clearanceRank ?? 0;
+  const selectedClearance = clearanceOptions.find(
+    (opt) => String(opt.id) === String(clearanceOptionId),
+  );
+  const nextRank = selectedClearance?.rank ?? 0;
+  const isClearanceDowngrade = nextRank < currentRank;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -110,6 +123,7 @@ function EditUserForm({
           email: email.trim(),
           employeeCode: employeeCode.trim() ? employeeCode.trim() : null,
           departmentId: departmentId ? departmentId : null,
+          clearanceOptionId: clearanceOptionId ? clearanceOptionId : null,
         }),
       });
 
@@ -190,6 +204,39 @@ function EditUserForm({
               </option>
             ))}
         </select>
+      </div>
+
+      <div className="space-y-1">
+        <label htmlFor="edit-user-clearance" className="font-medium text-[#222222]">
+          Cấp độ thẩm tra an ninh (CLEARANCE_LEVEL)
+        </label>
+        <select
+          id="edit-user-clearance"
+          value={clearanceOptionId}
+          onChange={(e) => setClearanceOptionId(e.target.value)}
+          className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+        >
+          <option value="">Chưa cấp / Thu hồi thẩm quyền (Rank 0)</option>
+          {clearanceOptions.map((opt) => (
+            <option key={opt.id} value={String(opt.id)}>
+              {opt.name} ({opt.code}) · Rank {opt.rank}
+            </option>
+          ))}
+        </select>
+        {isClearanceDowngrade && (
+          <div className="mt-1.5 rounded-[16px] border border-[#E07912]/40 bg-[#f7f7f7] p-2.5 flex items-start gap-2 text-[11px] text-[#717171]">
+            <AlertTriangle
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#E07912] mt-0.5"
+              aria-hidden="true"
+            />
+            <span>
+              Hạ bậc thẩm tra (R{currentRank} → R{nextRank}) sẽ tự động thu hồi giấy phép và ngắt
+              phiên xem tài liệu có độ mật cao hơn Rank {nextRank}.
+            </span>
+          </div>
+        )}
       </div>
 
       <DialogFooter className="pt-2">

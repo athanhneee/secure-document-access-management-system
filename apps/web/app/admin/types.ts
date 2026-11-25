@@ -4,6 +4,13 @@ import type {
   VisualObligation,
 } from '@/components/abac/abac-models';
 
+export interface ClearanceOptionRow {
+  id: string;
+  code: string;
+  name: string;
+  rank: number;
+}
+
 export interface UserRow {
   id: string;
   username: string;
@@ -12,6 +19,10 @@ export interface UserRow {
   employeeCode?: string | null | undefined;
   status: string;
   departmentId: string | null;
+  clearanceOptionId?: string | null | undefined;
+  clearanceCode?: string | null | undefined;
+  clearanceName?: string | null | undefined;
+  clearanceRank?: number | undefined;
   version: number;
 }
 
@@ -32,12 +43,19 @@ export interface RoleRow {
   isSystemRole: boolean;
   isActive: boolean;
   version: number;
-  permissions: Array<{ id?: string; code: string; name?: string }>;
+  permissions: Array<{
+    id?: string;
+    code: string;
+    name?: string | null | undefined;
+    resource?: string | undefined;
+    action?: string | undefined;
+  }>;
 }
 
 export interface PermissionRow {
   id: string;
   code: string;
+  name?: string | null | undefined;
   resource?: string | undefined;
   resourceType?: string | undefined;
   action: string;

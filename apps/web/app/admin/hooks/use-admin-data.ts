@@ -12,6 +12,7 @@ import type {
   AbacPolicyRow,
   AttributeDefinitionApiDto,
   AttributeDefinitionRow,
+  ClearanceOptionRow,
   DepartmentRow,
   HealthDashboardResponse,
   HealthReadyResponse,
@@ -30,6 +31,7 @@ import { useWatermarkSettings } from './use-watermark-settings';
  */
 export function useAdminData() {
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [clearanceOptions, setClearanceOptions] = useState<ClearanceOptionRow[]>([]);
   const [departments, setDepartments] = useState<DepartmentRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [permissions, setPermissions] = useState<PermissionRow[]>([]);
@@ -61,6 +63,7 @@ export function useAdminData() {
 
       const [
         usersRes,
+        clearanceOptsRes,
         deptsRes,
         rolesRes,
         permsRes,
@@ -71,6 +74,7 @@ export function useAdminData() {
         dashboardRes,
       ] = await Promise.allSettled([
         apiClient<{ data: UserRow[] }>('/users'),
+        apiClient<{ data: ClearanceOptionRow[] }>('/users/clearance-options'),
         apiClient<{ data: DepartmentRow[] }>('/departments'),
         apiClient<{ data: RoleRow[] }>('/rbac/roles'),
         apiClient<{ data: PermissionRow[] }>('/rbac/permissions'),
@@ -88,8 +92,29 @@ export function useAdminData() {
       if (policiesRes.status === 'fulfilled') {
         setPolicies((policiesRes.value.data || []).map(normalizeAbacPolicyRow));
       }
-      if (attrsRes.status === 'fulfilled') {
-        setAttributes((attrsRes.value.data || []).map(normalizeAttributeDefinitionRow));
+      const normalizedAttrs =
+        attrsRes.status === 'fulfilled'
+          ? (attrsRes.value.data || []).map(normalizeAttributeDefinitionRow)
+          : null;
+      if (normalizedAttrs !== null) {
+        setAttributes(normalizedAttrs);
+      }
+      if (clearanceOptsRes.status === 'fulfilled') {
+        setClearanceOptions(clearanceOptsRes.value.data || []);
+      } else if (normalizedAttrs !== null) {
+        const clearanceDef = normalizedAttrs.find((a) => a.code === 'CLEARANCE_LEVEL');
+        if (clearanceDef) {
+          setClearanceOptions(
+            clearanceDef.attribute_options
+              .map((opt) => ({
+                id: opt.id,
+                code: opt.code,
+                name: opt.name,
+                rank: opt.numeric_rank ?? 0,
+              }))
+              .sort((a, b) => a.rank - b.rank),
+          );
+        }
       }
       if (wmConfigsRes.status === 'fulfilled') {
         hydrateConfigs(wmConfigsRes.value.data || []);
@@ -165,6 +190,7 @@ export function useAdminData() {
 
   return {
     users,
+    clearanceOptions,
     departments,
     roles,
     permissions,

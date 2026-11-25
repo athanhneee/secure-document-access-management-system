@@ -13,12 +13,13 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
-import type { DepartmentRow } from '../types';
+import type { ClearanceOptionRow, DepartmentRow } from '../types';
 
 interface CreateUserModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   departments: DepartmentRow[];
+  clearanceOptions: ClearanceOptionRow[];
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
@@ -28,6 +29,7 @@ export function CreateUserModal({
   open,
   onOpenChange,
   departments,
+  clearanceOptions,
   onClearError,
   onSuccess,
   onError,
@@ -38,6 +40,11 @@ export function CreateUserModal({
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newDepartmentId, setNewDepartmentId] = useState('');
+  const defaultClearanceId =
+    clearanceOptions.find((opt) => opt.code === 'INTERNAL')?.id ?? clearanceOptions[0]?.id ?? '';
+  const [newClearanceOptionId, setNewClearanceOptionId] = useState<string | null>(null);
+  const effectiveClearanceOptionId =
+    newClearanceOptionId === null ? defaultClearanceId : newClearanceOptionId;
 
   async function handleCreateUser(e: FormEvent) {
     e.preventDefault();
@@ -53,6 +60,7 @@ export function CreateUserModal({
           fullName: newFullName.trim(),
           password: newPassword,
           departmentId: newDepartmentId ? newDepartmentId : null,
+          clearanceOptionId: effectiveClearanceOptionId ? effectiveClearanceOptionId : null,
         }),
       });
 
@@ -62,6 +70,7 @@ export function CreateUserModal({
       setNewEmail('');
       setNewPassword('');
       setNewDepartmentId('');
+      setNewClearanceOptionId(null);
       await onSuccess('Đã tạo tài khoản mới thành công.');
     } catch (err) {
       if (err instanceof ApiError) {
@@ -164,6 +173,25 @@ export function CreateUserModal({
                     {d.name} ({d.code})
                   </option>
                 ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="modal-clearance" className="text-xs font-medium text-[#222222]">
+              Cấp độ thẩm tra an ninh (CLEARANCE_LEVEL)
+            </label>
+            <select
+              id="modal-clearance"
+              value={effectiveClearanceOptionId}
+              onChange={(e) => setNewClearanceOptionId(e.target.value)}
+              className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+            >
+              <option value="">Chưa cấp (Rank 0 — Không thể thao tác tài liệu mật)</option>
+              {clearanceOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.name} ({opt.code}) · Rank {opt.rank}
+                </option>
+              ))}
             </select>
           </div>
 

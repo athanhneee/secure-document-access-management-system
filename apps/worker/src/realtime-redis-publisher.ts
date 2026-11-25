@@ -73,8 +73,11 @@ export async function publishWorkerRealtimeEvent(input: WorkerRealtimePublishInp
   wireData += encodeRespCommand(['PUBLISH', WORKER_REALTIME_CHANNEL, JSON.stringify(envelope)]);
   wireData += encodeRespCommand(['QUIT']);
 
+  const expectedReplies = (password ? 1 : 0) + 2; // AUTH? + PUBLISH + QUIT
+
   await new Promise<void>((resolve) => {
     let settled = false;
+    let receivedBuffer = '';
     const finish = () => {
       if (settled) return;
       settled = true;
@@ -90,15 +93,24 @@ export async function publishWorkerRealtimeEvent(input: WorkerRealtimePublishInp
 
     const connectEvent = useTls ? 'secureConnect' : 'connect';
     socket.once(connectEvent, () => {
-      socket.write(wireData, 'utf8', () => {
-        setTimeout(() => {
-          socket.destroy();
-          finish();
-        }, 120).unref();
-      });
+      socket.write(wireData, 'utf8');
+    });
+    // Thuật toán: Đợi đủ dòng phản hồi RESP2 từ Redis (AUTH/PUBLISH/QUIT) hoặc tín hiệu kết thúc kết nối
+    // thay vì cắt socket mù sau 120ms gây rơi gói tin SSE khi độ trễ mạng TLS cao.
+    socket.on('data', (chunk: Buffer | string) => {
+      receivedBuffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      const replyLines = receivedBuffer.split('\r\n').length - 1;
+      if (replyLines >= expectedReplies) {
+        socket.end();
+        socket.destroy();
+        finish();
+      }
     });
     socket.once('end', () => {
       socket.destroy();
+      finish();
+    });
+    socket.once('close', () => {
       finish();
     });
     socket.once('timeout', () => {

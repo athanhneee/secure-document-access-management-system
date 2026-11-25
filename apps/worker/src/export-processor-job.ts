@@ -33,6 +33,12 @@ const EPHEMERAL_FALLBACK_KEY = randomBytes(32);
 function encryptExportArtifactBuffer(jobId: string, plaintext: Buffer): Buffer {
   const configured =
     process.env['EXPORT_ENCRYPTION_KEY']?.trim() || process.env['AUDIT_INTEGRITY_KEY']?.trim();
+  const nodeEnv = process.env['NODE_ENV']?.trim().toLowerCase();
+  if (!configured && (nodeEnv === 'production' || nodeEnv === 'staging')) {
+    throw new Error(
+      'EXPORT_ENCRYPTION_KEY (or AUDIT_INTEGRITY_KEY) is mandatory for worker export encryption in production and staging.',
+    );
+  }
   const ikm = configured ? Buffer.from(configured, 'utf8') : EPHEMERAL_FALLBACK_KEY;
   const key = Buffer.from(
     hkdfSync(
@@ -62,6 +68,7 @@ interface PendingExportJobRow {
   export_type: string;
   format: string;
   filter_params: unknown;
+  expires_at?: Date | string | null;
 }
 
 /**
@@ -85,7 +92,7 @@ async function claimPendingExportJobs(
        SET status = 'PROCESSING'
        FROM claimed
        WHERE j.id = claimed.id
-       RETURNING j.id, j.requester_user_id, j.export_type, j.format, j.filter_params`,
+       RETURNING j.id, j.requester_user_id, j.export_type, j.format, j.filter_params, j.expires_at`,
       batchSize,
     );
   }
@@ -100,6 +107,7 @@ async function claimPendingExportJobs(
       export_type: true,
       format: true,
       filter_params: true,
+      expires_at: true,
     },
   });
   const claimed: PendingExportJobRow[] = [];
@@ -150,6 +158,29 @@ export async function processPendingExportJobs(options?: {
   };
 
   for (const job of claimedJobs) {
+    const requesterUserId =
+      job.requester_user_id !== undefined && job.requester_user_id !== null
+        ? String(job.requester_user_id)
+        : null;
+    const expiresAtIso =
+      job.expires_at instanceof Date
+        ? job.expires_at.toISOString()
+        : typeof job.expires_at === 'string'
+          ? job.expires_at
+          : undefined;
+    if (requesterUserId) {
+      void publishWorkerRealtimeEvent({
+        type: 'EXPORT_JOB_UPDATED',
+        targetUserIds: [requesterUserId],
+        payload: {
+          id: job.id,
+          exportType: job.export_type,
+          format: job.format,
+          status: 'PROCESSING',
+          ...(expiresAtIso ? { expiresAt: expiresAtIso } : {}),
+        },
+      });
+    }
     try {
       const safeId = job.id.replace(/[^a-zA-Z0-9_-]/gu, '');
       if (!safeId) throw new Error('Invalid export job identifier');
@@ -192,10 +223,6 @@ export async function processPendingExportJobs(options?: {
           completed_at: now,
         },
       });
-      const requesterUserId =
-        job.requester_user_id !== undefined && job.requester_user_id !== null
-          ? String(job.requester_user_id)
-          : null;
       if (requesterUserId) {
         void publishWorkerRealtimeEvent({
           type: 'EXPORT_JOB_UPDATED',
@@ -206,8 +233,10 @@ export async function processPendingExportJobs(options?: {
             format: job.format,
             status: 'COMPLETED',
             rowCount: rows.length,
-            fileSizeBytes: artifact.buffer.byteLength,
+            fileSizeBytes: String(artifact.buffer.byteLength),
+            sha256Hash,
             completedAt: now.toISOString(),
+            ...(expiresAtIso ? { expiresAt: expiresAtIso } : {}),
           },
         });
       }
@@ -224,10 +253,6 @@ export async function processPendingExportJobs(options?: {
           },
         })
         .catch(() => {});
-      const requesterUserId =
-        job.requester_user_id !== undefined && job.requester_user_id !== null
-          ? String(job.requester_user_id)
-          : null;
       if (requesterUserId) {
         void publishWorkerRealtimeEvent({
           type: 'EXPORT_JOB_UPDATED',
@@ -239,6 +264,7 @@ export async function processPendingExportJobs(options?: {
             status: 'FAILED',
             errorMessage: message,
             completedAt: now.toISOString(),
+            ...(expiresAtIso ? { expiresAt: expiresAtIso } : {}),
           },
         });
       }

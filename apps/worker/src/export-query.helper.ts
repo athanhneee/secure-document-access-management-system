@@ -8,6 +8,7 @@ import { type getDatabaseClient } from '@sda/database';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 const MAX_EXPORT_ROWS = 10_000;
+const ISO_DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/u;
 
 export function parseFilterParams(raw: unknown): Record<string, unknown> {
   if (typeof raw === 'string') {
@@ -26,10 +27,18 @@ export function parseFilterParams(raw: unknown): Record<string, unknown> {
   return {};
 }
 
-function parseDateBound(raw: unknown): Date | undefined {
+/**
+ * Thuật toán: Phân tích mốc thời gian đầu/cuối ngày cho chuỗi ngày thuần `YYYY-MM-DD` (Inclusive End-of-Day Bound)
+ * giúp Worker khớp 100% logic lọc ngày của `@sda/api` và không bỏ sót dữ liệu ngày cuối.
+ */
+export function parseDateBound(raw: unknown, endOfDay = false): Date | undefined {
   if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw;
   if (typeof raw === 'string' && raw.trim().length > 0) {
-    const parsed = new Date(raw);
+    const trimmed = raw.trim();
+    const normalized = ISO_DATE_ONLY_REGEX.test(trimmed)
+      ? `${trimmed}${endOfDay ? 'T23:59:59.999Z' : 'T00:00:00.000Z'}`
+      : trimmed;
+    const parsed = new Date(normalized);
     if (!Number.isNaN(parsed.getTime())) return parsed;
   }
   return undefined;
@@ -94,22 +103,39 @@ export async function queryExportDataset(
     Number.isFinite(requestedLimit) && requestedLimit > 0
       ? Math.min(MAX_EXPORT_ROWS, Math.floor(requestedLimit))
       : MAX_EXPORT_ROWS;
-  const fromDate = parseDateBound(filterParams['from'] ?? filterParams['startDate']);
-  const toDate = parseDateBound(filterParams['to'] ?? filterParams['endDate']);
+  const fromDate = parseDateBound(filterParams['from'] ?? filterParams['startDate'], false);
+  const toDate = parseDateBound(filterParams['to'] ?? filterParams['endDate'], true);
   const scope = await resolveDepartmentScopeSets(database, filterParams);
 
   if (exportType === 'AUDIT_LOGS') {
     const baseWhere: Record<string, unknown> = {};
     const actorId = parseOptionalBigInt(filterParams['actorUserId']);
     if (actorId !== undefined) baseWhere['actor_user_id'] = actorId;
+    if (typeof filterParams['actorUsername'] === 'string' && filterParams['actorUsername'].trim()) {
+      baseWhere['actor_username'] = {
+        contains: filterParams['actorUsername'].trim(),
+        mode: 'insensitive',
+      };
+    }
     if (typeof filterParams['documentId'] === 'string' && filterParams['documentId'])
       baseWhere['document_id'] = filterParams['documentId'];
-    if (typeof filterParams['action'] === 'string' && filterParams['action'])
-      baseWhere['action'] = filterParams['action'];
+    if (typeof filterParams['action'] === 'string' && filterParams['action'].trim()) {
+      baseWhere['action'] = { contains: filterParams['action'].trim(), mode: 'insensitive' };
+    }
     if (typeof filterParams['outcome'] === 'string' && filterParams['outcome'])
       baseWhere['outcome'] = filterParams['outcome'];
-    if (typeof filterParams['chainPartition'] === 'string' && filterParams['chainPartition'])
-      baseWhere['chain_partition'] = filterParams['chainPartition'];
+    if (
+      typeof filterParams['chainPartition'] === 'string' &&
+      filterParams['chainPartition'].trim()
+    ) {
+      baseWhere['chain_partition'] = filterParams['chainPartition'].trim();
+    }
+    if (typeof filterParams['correlationId'] === 'string' && filterParams['correlationId'].trim()) {
+      baseWhere['correlation_id'] = {
+        contains: filterParams['correlationId'].trim(),
+        mode: 'insensitive',
+      };
+    }
     if (fromDate || toDate) {
       baseWhere['occurred_at'] = {
         ...(fromDate ? { gte: fromDate } : {}),

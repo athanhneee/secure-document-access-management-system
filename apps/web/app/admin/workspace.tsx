@@ -40,7 +40,7 @@ import { DEFAULT_USER_LIST_QUERY, type UserListQueryState } from './users-query'
  */
 export function AdminWorkspace() {
   return (
-    <AuthGuard requiredRole="SYSTEM_ADMIN">
+    <AuthGuard requiredPortal="SYSTEM_ADMIN">
       <AppLayout>
         <AdminWorkspaceContent />
       </AppLayout>
@@ -53,10 +53,10 @@ function AdminWorkspaceContent() {
   const canManageUsers = hasPermission('USER:MANAGE');
   const canManageDepartments = hasPermission('DEPARTMENT:MANAGE');
   const canManageRoles = hasPermission('ROLE:MANAGE');
-  const canManageAbac =
-    hasPermission('POLICY:MANAGE') ||
-    hasPermission('ATTRIBUTE:MANAGE') ||
-    hasPermission('POLICY:SIMULATE');
+  const canManagePolicies = hasPermission('POLICY:MANAGE');
+  const canManageAttributes = hasPermission('ATTRIBUTE:MANAGE');
+  const canSimulatePolicy = hasPermission('POLICY:SIMULATE');
+  const canManageAbac = canManagePolicies || canManageAttributes || canSimulatePolicy;
   const canManageWatermark = hasPermission('WATERMARK_CONFIG:MANAGE');
   const canManageHealth = hasPermission('SYSTEM_HEALTH:MANAGE');
   const canViewHealth = hasPermission('SYSTEM_HEALTH:VIEW') || canManageHealth;
@@ -76,7 +76,13 @@ function AdminWorkspaceContent() {
     : (permittedTabs[0] ?? 'users');
   const [userQuery, setUserQuery] = useState<UserListQueryState>(DEFAULT_USER_LIST_QUERY);
 
-  const data = useAdminData(activeTab);
+  const data = useAdminData(activeTab, {
+    canManageDepartments,
+    canManageRoles,
+    canManagePolicies,
+    canManageAttributes,
+    canSimulatePolicy,
+  });
   const clearError = () => data.setErrorMessage(null);
   const modals = useAdminModalState(clearError);
 
@@ -90,10 +96,14 @@ function AdminWorkspaceContent() {
     modals.openAssignRole(targetUser);
   }
 
-  async function handleModalSuccess(msg: string) {
+  async function handleModalSuccess(msg: string, targetTab?: AdminTab) {
     data.setErrorMessage(null);
     data.setMessage(msg);
-    await data.refresh({ silent: true, tab: activeTab });
+    const tabToRefresh = targetTab ?? activeTab;
+    await data.refresh({ silent: true, tab: tabToRefresh });
+    if (tabToRefresh !== activeTab && data.loadedTabs[activeTab]) {
+      await data.refresh({ silent: true, tab: activeTab });
+    }
   }
 
   return (
@@ -218,6 +228,7 @@ function AdminWorkspaceContent() {
                 <UsersTab
                   users={data.users}
                   departments={data.departments}
+                  currentUserId={user?.id}
                   query={userQuery}
                   onQueryChange={setUserQuery}
                   onOpenEditUser={modals.openEditUser}
@@ -235,6 +246,9 @@ function AdminWorkspaceContent() {
                   departments={data.departments}
                   onOpenCreateDepartment={modals.openCreateDepartment}
                   onOpenEditDepartment={modals.openEditDepartment}
+                  onDeactivateDepartment={data.deactivateDepartment}
+                  onActivateDepartment={data.activateDepartment}
+                  onClearError={clearError}
                 />
               </TabsContent>
             )}
@@ -243,10 +257,13 @@ function AdminWorkspaceContent() {
               <TabsContent value="rbac" className="space-y-4">
                 <RolesTab
                   roles={data.roles}
+                  currentUserRoles={user?.roles}
                   onOpenCreateRole={modals.openCreateRole}
                   onOpenRolePermissions={modals.openRolePermissions}
                   onOpenEditRole={modals.openEditRole}
                   onDisableRole={data.disableRole}
+                  onEnableRole={data.enableRole}
+                  onDeleteRole={data.deleteRole}
                   onClearError={clearError}
                 />
               </TabsContent>
@@ -257,7 +274,14 @@ function AdminWorkspaceContent() {
                 <AbacTab
                   policies={data.policies}
                   attributes={data.attributes}
+                  departments={data.abacDepartments}
+                  businessCategories={data.businessCategories}
+                  canManagePolicies={canManagePolicies}
+                  canManageAttributes={canManageAttributes}
+                  canSimulatePolicy={canSimulatePolicy}
                   onActivatePolicy={data.activatePolicy}
+                  onDeactivatePolicy={data.deactivatePolicy}
+                  onDeletePolicy={data.deletePolicy}
                   onSaveDraftPolicy={data.saveDraftPolicy}
                   onClearError={clearError}
                 />
@@ -272,13 +296,18 @@ function AdminWorkspaceContent() {
                   showQr={data.watermark.showQr}
                   opacity={data.watermark.opacity}
                   fontSize={data.watermark.fontSize}
+                  colorHex={data.watermark.colorHex}
+                  rotationDegrees={data.watermark.rotationDegrees}
                   templateText={data.watermark.templateText}
                   previewUsername={user?.username}
+                  previewFullName={user?.fullName}
                   isSaving={data.watermark.isSaving}
                   onSelectConfig={data.watermark.selectConfig}
                   onShowQrChange={data.watermark.setShowQr}
                   onOpacityChange={data.watermark.setOpacity}
                   onFontSizeChange={data.watermark.setFontSize}
+                  onColorHexChange={data.watermark.setColorHex}
+                  onRotationDegreesChange={data.watermark.setRotationDegrees}
                   onTemplateTextChange={data.watermark.setTemplateText}
                   onSaveConfig={() => void data.watermark.saveConfig()}
                 />
@@ -299,6 +328,7 @@ function AdminWorkspaceContent() {
 
         <AdminModals
           modals={modals}
+          currentUserId={user?.id}
           departments={data.departments}
           clearanceOptions={data.clearanceOptions}
           roles={data.roles}

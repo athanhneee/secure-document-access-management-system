@@ -21,6 +21,7 @@ export interface AuthSessionLifecycleDeps {
   audit: AuthAuditService;
   accessTtl: number;
   refreshTtl: number;
+  onSecurityAlertCreated?: ((alertType: string, alertId?: string) => void) | undefined;
 }
 
 /**
@@ -166,6 +167,7 @@ export async function executeRefresh(
       },
       context,
     );
+    deps.onSecurityAlertCreated?.('REFRESH_TOKEN_REUSE', result.alertId);
     throw new UnauthorizedException('Session is no longer valid.');
   }
   if (result.kind !== 'rotated') throw new UnauthorizedException('Session is no longer valid.');

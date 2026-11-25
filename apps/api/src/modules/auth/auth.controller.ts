@@ -227,6 +227,25 @@ export class AuthController {
     };
   }
 
+  @Get('mfa/methods')
+  listMfaMethods(@Req() request: FastifyRequest) {
+    return this.auth.listMfaMethods(requireAuthPrincipal(request));
+  }
+
+  @Delete('mfa/methods/:methodId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeMfaMethod(
+    @Param('methodId') methodId: string,
+    @Req() request: FastifyRequest,
+  ): Promise<void> {
+    this.csrf.assertRequest(request);
+    await this.auth.removeMfaMethod(
+      requireAuthPrincipal(request),
+      methodId,
+      extractAuthRequestContext(request),
+    );
+  }
+
   @Delete('mfa')
   @HttpCode(HttpStatus.NO_CONTENT)
   async disableMfa(

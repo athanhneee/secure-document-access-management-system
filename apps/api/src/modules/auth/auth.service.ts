@@ -4,10 +4,17 @@
  * xoay vòng Refresh Token theo chuẩn RFC 9700 kèm phát hiện tái sử dụng cây họ token, quản lý vòng đời phiên
  * thiết bị và xác thực đa nhân tố TOTP / WebAuthn FIDO2.
  */
-import { Injectable, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { AppConfigService } from '../../config/config.service.js';
 import { DistributedStateService } from '../concurrency/distributed-state.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { AuthAuditService } from './auth-audit.service.js';
 import {
   executeBeginMfaEnrollment,
@@ -32,7 +39,12 @@ import {
   executeVerifyWebAuthnEnrollment,
 } from './auth-webauthn.helper.js';
 import { AuthRepository } from './auth.repository.js';
-import type { AuthPrincipal, AuthUserProfile, RequestContext } from './auth.types.js';
+import {
+  MFA_REQUIRED_ROLES,
+  type AuthPrincipal,
+  type AuthUserProfile,
+  type RequestContext,
+} from './auth.types.js';
 import { LoginRateLimitService } from './login-rate-limit.service.js';
 import { MfaService } from './mfa.service.js';
 import { PasswordService } from './password.service.js';
@@ -69,6 +81,7 @@ export class AuthService {
     config: AppConfigService,
     @Optional() webauthn?: WebAuthnService,
     @Optional() stateStore?: DistributedStateService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     this.webauthn = webauthn ?? new WebAuthnService(this.mfa, config, stateStore);
     this.accessTtl = config.get('AUTH_ACCESS_TTL_SECONDS');
@@ -86,9 +99,19 @@ export class AuthService {
     return executeRefresh(this.deps(), refreshToken, context);
   }
 
-  /** Thuật toán: Thu hồi phiên hiện tại và ghi nhật ký kiểm toán `LOGOUT`. */
+  /** Thuật toán: Thu hồi phiên hiện tại, đóng kết nối SSE phiên đó và ghi nhật ký kiểm toán `LOGOUT`. */
   async logout(principal: AuthPrincipal, context: RequestContext): Promise<void> {
     await this.repository.revokeSession(principal.sessionId, principal.userId, 'USER_LOGOUT');
+    this.realtime?.publish({
+      type: 'USER_SESSION_REVOKED',
+      targetUserIds: [principal.userId.toString()],
+      targetSessionIds: [principal.sessionId],
+      payload: {
+        userId: principal.userId.toString(),
+        sessionId: principal.sessionId,
+        reason: 'USER_LOGOUT',
+      },
+    });
     await this.audit.record(
       {
         action: 'LOGOUT',
@@ -101,9 +124,14 @@ export class AuthService {
     );
   }
 
-  /** Thuật toán: Thu hồi toàn bộ phiên đang hoạt động trên mọi thiết bị của người dùng (`LOGOUT_ALL`). */
+  /** Thuật toán: Thu hồi toàn bộ phiên đang hoạt động trên mọi thiết bị của người dùng (`LOGOUT_ALL`) và ngắt toàn bộ kênh SSE. */
   async logoutAll(principal: AuthPrincipal, context: RequestContext): Promise<void> {
     const count = await this.repository.revokeAllSessions(principal.userId, 'USER_LOGOUT_ALL');
+    this.realtime?.publish({
+      type: 'USER_SESSION_REVOKED',
+      targetUserIds: [principal.userId.toString()],
+      payload: { userId: principal.userId.toString(), reason: 'USER_LOGOUT_ALL' },
+    });
     await this.audit.record(
       {
         action: 'LOGOUT_ALL',
@@ -122,7 +150,7 @@ export class AuthService {
     return { data };
   }
 
-  /** Thuật toán: Thu hồi mọi phiên song song khác của người dùng mà vẫn bảo toàn phiên hiện hành (`LOGOUT_OTHERS`). */
+  /** Thuật toán: Thu hồi mọi phiên song song khác của người dùng và đóng kênh SSE các thiết bị bị đá ra mà giữ nguyên phiên hiện tại (`LOGOUT_OTHERS`). */
   async logoutOthers(
     principal: AuthPrincipal,
     context: RequestContext,
@@ -132,6 +160,14 @@ export class AuthService {
       principal.sessionId,
       'USER_LOGOUT_OTHERS',
     );
+    if (revokedCount > 0) {
+      this.realtime?.publish({
+        type: 'USER_SESSION_REVOKED',
+        targetUserIds: [principal.userId.toString()],
+        excludeSessionId: principal.sessionId,
+        payload: { userId: principal.userId.toString(), reason: 'USER_LOGOUT_OTHERS' },
+      });
+    }
     await this.audit.record(
       {
         action: 'LOGOUT_OTHERS',
@@ -145,29 +181,45 @@ export class AuthService {
     return { revokedCount };
   }
 
-  /** Thuật toán: Thu hồi đích danh một phiên theo `sessionId` và báo hiệu xóa cookie nếu trùng phiên hiện tại. */
-  revokeTargetSession(
+  /** Thuật toán: Thu hồi đích danh một phiên theo `sessionId`, đóng kênh SSE của phiên đó và báo hiệu xóa cookie nếu trùng phiên hiện tại. */
+  async revokeTargetSession(
     principal: AuthPrincipal,
     targetSessionId: string,
     context: RequestContext,
   ): Promise<{ clearedCurrentCookies: boolean }> {
-    return executeRevokeTargetSession({
+    const result = await executeRevokeTargetSession({
       repository: this.repository,
       audit: this.audit,
       principal,
       targetSessionId,
       context,
     });
+    this.realtime?.publish({
+      type: 'USER_SESSION_REVOKED',
+      targetUserIds: [principal.userId.toString()],
+      targetSessionIds: [targetSessionId],
+      payload: {
+        userId: principal.userId.toString(),
+        sessionId: targetSessionId,
+        reason: 'USER_SESSION_REVOKED',
+      },
+    });
+    return result;
   }
 
-  /** Thuật toán: Xác minh mật khẩu cũ, băm Argon2id mật khẩu mới và thu hồi các phiên thiết bị cũ. */
-  changePassword(
+  /** Thuật toán: Xác minh mật khẩu cũ, băm Argon2id mật khẩu mới, thu hồi các phiên thiết bị cũ và ngắt toàn bộ SSE. */
+  async changePassword(
     principal: AuthPrincipal,
     currentPassword: string,
     newPassword: string,
     context: RequestContext,
   ): Promise<void> {
-    return executeChangePassword(this.deps(), principal, currentPassword, newPassword, context);
+    await executeChangePassword(this.deps(), principal, currentPassword, newPassword, context);
+    this.realtime?.publish({
+      type: 'USER_SESSION_REVOKED',
+      targetUserIds: [principal.userId.toString()],
+      payload: { userId: principal.userId.toString(), reason: 'PASSWORD_CHANGED' },
+    });
   }
 
   /** Thuật toán: Phát hành mã đặt lại mật khẩu một lần dùng chống dò tìm tài khoản (Enumeration-Safe). */
@@ -265,6 +317,77 @@ export class AuthService {
     return executeDisableMfa(this.deps(), principal, currentPassword, code, recoveryCode, context);
   }
 
+  /**
+   * Thuật toán: Liệt Kê Các Nhân Tố MFA Đang Kích Hoạt Của Tài Khoản (Không Trả Bí Mật, V-48).
+   */
+  async listMfaMethods(principal: AuthPrincipal): Promise<{
+    data: Array<{
+      id: string;
+      methodType: 'TOTP' | 'WEBAUTHN';
+      label: string;
+      createdAt: string;
+    }>;
+    canDisableMfa: boolean;
+  }> {
+    const methods = await this.repository.getActiveMfaMethods(principal.userId);
+    const requiresMandatoryMfa = principal.roles.some((r) => MFA_REQUIRED_ROLES.has(r));
+    return {
+      data: methods.map((m) => ({
+        id: m.id,
+        methodType: m.methodType,
+        label:
+          m.label ||
+          (m.methodType === 'WEBAUTHN' ? 'Khóa bảo mật / Passkey' : 'Ứng dụng xác thực TOTP'),
+        createdAt: m.createdAt.toISOString(),
+      })),
+      canDisableMfa: !requiresMandatoryMfa,
+    };
+  }
+
+  /**
+   * Thuật toán: Gỡ Một Khóa Bảo Mật / Nhân Tố MFA Đơn Lẻ Có Chốt Chặn Step-Up MFA & Vai Trò Bắt Buộc (`removeMfaMethod`, V-48).
+   */
+  async removeMfaMethod(
+    principal: AuthPrincipal,
+    methodId: string,
+    context: RequestContext,
+  ): Promise<void> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(methodId)) {
+      throw new BadRequestException('MFA method identifier must be a valid UUID.');
+    }
+    if (!principal.mfa) {
+      throw new ForbiddenException(
+        'Step-up MFA verification is required to enroll or modify MFA factors.',
+      );
+    }
+    const activeMethods = await this.repository.getActiveMfaMethods(principal.userId);
+    const target = activeMethods.find((m) => m.id === methodId);
+    if (!target) {
+      throw new NotFoundException('Active MFA method was not found.');
+    }
+    const requiresMandatoryMfa = principal.roles.some((r) => MFA_REQUIRED_ROLES.has(r));
+    if (requiresMandatoryMfa && activeMethods.length <= 1) {
+      throw new ForbiddenException(
+        'Cannot remove the last active MFA factor for a privileged role.',
+      );
+    }
+    const disabled = await this.repository.disableSingleMfaMethod(principal.userId, methodId);
+    if (!disabled) {
+      throw new NotFoundException('Active MFA method was not found.');
+    }
+    await this.audit.record(
+      {
+        action: 'MFA_FACTOR_REMOVED',
+        outcome: 'SUCCESS',
+        actorUserId: principal.userId,
+        actorUsername: principal.username,
+        objectId: methodId,
+        details: { methodType: target.methodType, label: target.label ?? null },
+      },
+      context,
+    );
+  }
+
   /** Thuật toán: Công bố tập khóa công khai JSON Web Key Set (JWKS) phục vụ xác minh chữ ký JWT bất đối xứng. */
   jwks(): ReturnType<TokenService['jwks']> {
     return this.tokens.jwks();
@@ -284,6 +407,20 @@ export class AuthService {
       accessTtl: this.accessTtl,
       refreshTtl: this.refreshTtl,
       resetTtl: this.resetTtl,
+      onUserSessionsRevoked: (userId: bigint, reason: string) => {
+        this.realtime?.publish({
+          type: 'USER_SESSION_REVOKED',
+          targetUserIds: [userId.toString()],
+          payload: { userId: userId.toString(), reason },
+        });
+      },
+      onSecurityAlertCreated: (alertType: string, alertId?: string) => {
+        this.realtime?.publish({
+          type: 'SECURITY_ALERT_UPDATED',
+          targetRoles: ['SECURITY_OFFICER'],
+          payload: { alertType, ...(alertId ? { id: alertId } : {}), action: 'CREATED' },
+        });
+      },
     };
   }
 }

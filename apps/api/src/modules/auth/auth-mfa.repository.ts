@@ -11,6 +11,7 @@ type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 export interface ActiveMfaMethodRecord {
   id: string;
+  methodType: 'TOTP' | 'WEBAUTHN';
   encryptedSecret: string;
   label: string | null;
   recoveryCodeHashes: string[];
@@ -229,6 +230,7 @@ export async function listActiveMfaMethods(
   });
   return methods.map((m) => ({
     id: m.id,
+    methodType: m.method_type === 'WEBAUTHN' ? 'WEBAUTHN' : 'TOTP',
     encryptedSecret: m.secret_encrypted,
     label: m.label,
     recoveryCodeHashes: Array.isArray(m.recovery_code_hashes)
@@ -236,6 +238,26 @@ export async function listActiveMfaMethods(
       : [],
     createdAt: m.created_at,
   }));
+}
+
+/**
+ * Thuật toán: Gỡ Bỏ Một Nhân Tố MFA Đơn Lẻ (Passkey / TOTP) Có Kiểm Tra Chủ Sở Hữu (`disableSingleUserMfaMethod`, V-48).
+ */
+export async function disableSingleUserMfaMethod(
+  database: PrismaClient,
+  userId: bigint,
+  methodId: string,
+): Promise<boolean> {
+  const result = await database.mfaMethod.updateMany({
+    where: {
+      id: methodId,
+      user_id: userId,
+      enabled_at: { not: null },
+      disabled_at: null,
+    },
+    data: { disabled_at: new Date() },
+  });
+  return result.count > 0;
 }
 
 export async function disableUserMfaMethods(

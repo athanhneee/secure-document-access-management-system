@@ -14,22 +14,23 @@ export const ARGON2ID_OPTIONS = Object.freeze({
   hashLength: 32,
 });
 
+// CONFLICT-RESOLVED: Cập nhật danh sách từ chối mật khẩu phổ biến sang các chuỗi >= 15 ký tự để nhánh kiểm tra COMMON_PASSWORDS có hiệu lực thực tế sau chốt chặn độ dài 15 ký tự NIST SP 800-63B (V-56).
 const COMMON_PASSWORDS = new Set([
-  '123456789',
-  '12345678',
-  'password',
-  'password1',
-  'qwerty123',
-  'admin123',
-  'letmein',
-  'welcome',
-  'welcome1',
-  'iloveyou',
-  'monkey',
-  'dragon',
-  'football',
-  'abc123456',
-  'changeme',
+  '123456789012345',
+  '1234567890123456',
+  'password1234567',
+  'password12345678',
+  'qwertyuiop12345',
+  'admin1234567890',
+  'letmein12345678',
+  'welcome12345678',
+  'iloveyou1234567',
+  'changeme1234567',
+  'abc123456789012',
+  '000000000000000',
+  '111111111111111',
+  'aaaaaaaaaaaaaaaa',
+  'securedocument1',
 ]);
 
 @Injectable()

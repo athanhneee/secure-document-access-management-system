@@ -23,6 +23,7 @@ export interface AuthPasswordDeps {
   audit: AuthAuditService;
   mailer: ResetMailerService;
   resetTtl: number;
+  onUserSessionsRevoked?: ((userId: bigint, reason: string) => void) | undefined;
 }
 
 /**
@@ -127,6 +128,7 @@ export async function executeResetPassword(
     await deps.passwords.hash(newPassword),
   );
   if (!userId) throw new BadRequestException('Reset request is invalid or expired.');
+  deps.onUserSessionsRevoked?.(userId, 'PASSWORD_RESET');
   await deps.audit.record(
     { action: 'PASSWORD_RESET', outcome: 'SUCCESS', actorUserId: userId },
     context,

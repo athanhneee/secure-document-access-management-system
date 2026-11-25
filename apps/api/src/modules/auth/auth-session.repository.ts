@@ -37,7 +37,7 @@ export interface RotateRefreshOptions {
 
 export type RotationResult =
   | { kind: 'rotated'; user: AuthUser; sessionId: string; mfa: boolean }
-  | { kind: 'reuse'; userId: bigint; sessionId: string }
+  | { kind: 'reuse'; userId: bigint; sessionId: string; alertId?: string | undefined }
   | { kind: 'invalid' | 'disabled' | 'locked' };
 
 /**
@@ -235,17 +235,42 @@ export async function rotateSessionRefreshToken(
     }
     if (current.used_at || current.revoked_at) {
       await revokeTokenFamily(transaction, current.token_family_id, session.id, 'REFRESH_REUSE');
-      await transaction.securityAlert.create({
-        data: {
-          id: randomUUID(),
-          alert_type: 'REFRESH_TOKEN_REUSE',
-          severity: 'HIGH',
-          title: 'Refresh token reuse detected',
-          description: 'An already rotated or revoked refresh token was presented.',
-          detected_user_id: session.user_id,
-        },
-      });
-      return { kind: 'reuse', userId: session.user_id, sessionId: session.id };
+      // CONFLICT-RESOLVED: Việt hóa cảnh báo tái sử dụng Refresh Token và áp dụng chống trùng lặp theo cooldownMinutes từ detection_rule_configs (N06).
+      const ruleCfg =
+        typeof transaction.detectionRuleConfig?.findUnique === 'function'
+          ? await transaction.detectionRuleConfig
+              .findUnique({ where: { rule_code: 'REFRESH_TOKEN_REUSE' } })
+              .catch(() => null)
+          : null;
+      const cooldownStart = new Date(now.getTime() - (ruleCfg?.cooldown_minutes ?? 15) * 60_000);
+      const existingReuseAlert =
+        typeof transaction.securityAlert?.findFirst === 'function'
+          ? await transaction.securityAlert.findFirst({
+              where: {
+                alert_type: 'REFRESH_TOKEN_REUSE',
+                detected_user_id: session.user_id,
+                status: { in: ['OPEN', 'INVESTIGATING'] },
+                detected_at: { gte: cooldownStart },
+              },
+              select: { id: true },
+            })
+          : null;
+      let alertId = existingReuseAlert?.id;
+      if (!alertId) {
+        alertId = randomUUID();
+        await transaction.securityAlert.create({
+          data: {
+            id: alertId,
+            alert_type: 'REFRESH_TOKEN_REUSE',
+            severity: ruleCfg?.severity ?? 'HIGH',
+            title: 'Cảnh báo: Tái sử dụng Refresh Token đã thu hồi',
+            description:
+              'Phát hiện nỗ lực sử dụng lại Refresh Token đã xoay vòng hoặc thu hồi. Toàn bộ họ phiên đăng nhập đã bị thu hồi tức thì.',
+            detected_user_id: session.user_id,
+          },
+        });
+      }
+      return { kind: 'reuse', userId: session.user_id, sessionId: session.id, alertId };
     }
     if (current.expires_at <= now || session.expires_at <= now || session.status !== 'ACTIVE') {
       return { kind: 'invalid' };
@@ -271,17 +296,19 @@ export async function rotateSessionRefreshToken(
     });
     if (claimed.count !== 1) {
       await revokeTokenFamily(transaction, current.token_family_id, session.id, 'REFRESH_REUSE');
+      const alertId = randomUUID();
       await transaction.securityAlert.create({
         data: {
-          id: randomUUID(),
+          id: alertId,
           alert_type: 'REFRESH_TOKEN_REUSE',
           severity: 'HIGH',
-          title: 'Concurrent refresh token reuse detected',
-          description: 'A refresh token lost an atomic rotation race.',
+          title: 'Cảnh báo: Tranh chấp xoay vòng Refresh Token đồng thời',
+          description:
+            'Refresh Token không vượt qua kiểm tra xoay vòng nguyên tử (phát hiện gửi đồng thời hoặc phát lại). Toàn bộ họ phiên đã bị thu hồi.',
           detected_user_id: session.user_id,
         },
       });
-      return { kind: 'reuse', userId: session.user_id, sessionId: session.id };
+      return { kind: 'reuse', userId: session.user_id, sessionId: session.id, alertId };
     }
     await transaction.refreshToken.create({
       data: {

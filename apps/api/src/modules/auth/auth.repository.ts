@@ -37,6 +37,7 @@ import {
   consumeMfaRecoveryCode,
   consumeMfaRecoveryCodeAtomic,
   createUserMfaEnrollment,
+  disableSingleUserMfaMethod,
   disableUserMfaMethods,
   enableUserMfaMethod,
   findPendingMfaMethod,
@@ -379,6 +380,12 @@ export class AuthRepository {
   async disableMfa(userId: bigint): Promise<boolean> {
     const disabled = await disableUserMfaMethods(this.database, userId);
     await this.invalidateSessionCache(userId);
+    return disabled;
+  }
+
+  async disableSingleMfaMethod(userId: bigint, methodId: string): Promise<boolean> {
+    const disabled = await disableSingleUserMfaMethod(this.database, userId, methodId);
+    if (disabled) await this.invalidateSessionCache(userId);
     return disabled;
   }
 }

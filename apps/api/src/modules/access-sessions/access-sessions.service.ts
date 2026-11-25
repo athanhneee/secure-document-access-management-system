@@ -61,26 +61,34 @@ export class AccessSessionsService {
   }
 
   /**
-   * Thuật toán: Truy Vấn Phiên Truy Cập Có Giới Hạn Trần Kèm Cô Lập Cây Con Phòng Ban (`Scope-Isolated Bounded Session Listing`).
+   * Thuật toán: Truy Vấn Phiên Truy Cập Có Giới Hạn Trần, Đếm Tổng & Đang Hoạt Động Kèm Cô Lập Cây Con Phòng Ban (`Scope-Isolated Bounded Session Listing`).
    */
   async listSessions(
     options?: {
-      status?: session_status;
-      limit?: number;
-      page?: number;
+      status?: session_status | 'ALL' | undefined;
+      search?: string | undefined;
+      limit?: number | undefined;
+      page?: number | undefined;
     },
     actor?: AuthPrincipal,
-  ): Promise<{ data: AccessSessionDto[] }> {
-    const status = options?.status ?? 'ACTIVE';
+  ): Promise<{
+    data: AccessSessionDto[];
+    total: number;
+    activeCount: number;
+    meta: {
+      page: number;
+      pageSize: number;
+      total: number;
+      totalPages: number;
+      hasMore: boolean;
+    };
+  }> {
+    const requestedStatus = options?.status ?? 'ACTIVE';
     const limit = Math.min(Math.max(options?.limit ?? 50, 1), 100);
     const page = Math.max(options?.page ?? 1, 1);
     const skip = (page - 1) * limit;
 
-    const where: Prisma.AccessSessionWhereInput = {};
-    if (status) {
-      where.status = status;
-    }
-
+    const scopeWhere: Prisma.AccessSessionWhereInput = {};
     if (
       this.authorization &&
       actor &&
@@ -92,28 +100,62 @@ export class AccessSessionsService {
         'TERMINATE',
       );
       if (visibleDepts !== null) {
-        where.document_versions = {
+        scopeWhere.document_versions = {
           document: { department_id: { in: visibleDepts } },
         };
       }
     }
 
-    const sessions = await this.database.accessSession.findMany({
-      where,
-      take: limit,
-      ...(skip > 0 ? { skip } : {}),
-      orderBy: { started_at: 'desc' },
-      include: {
-        users: { select: { id: true, username: true, full_name: true } },
-        document_versions: {
-          select: {
-            id: true,
-            version_no: true,
-            document: { select: { id: true, document_code: true, title: true } },
+    const where: Prisma.AccessSessionWhereInput = { ...scopeWhere };
+    if (requestedStatus !== 'ALL') {
+      where.status = requestedStatus;
+    }
+    if (options?.search && options.search.trim().length > 0) {
+      const term = options.search.trim();
+      where.OR = [
+        { ip_address: { contains: term, mode: 'insensitive' } },
+        { users: { username: { contains: term, mode: 'insensitive' } } },
+        { users: { full_name: { contains: term, mode: 'insensitive' } } },
+        {
+          document_versions: {
+            document: {
+              OR: [
+                { title: { contains: term, mode: 'insensitive' } },
+                { document_code: { contains: term, mode: 'insensitive' } },
+              ],
+            },
           },
         },
-      },
-    });
+      ];
+    }
+
+    const [sessions, filteredTotal, totalAllCount, activeTotalCount] = await Promise.all([
+      this.database.accessSession.findMany({
+        where,
+        take: limit,
+        ...(skip > 0 ? { skip } : {}),
+        orderBy: { started_at: 'desc' },
+        include: {
+          users: { select: { id: true, username: true, full_name: true } },
+          document_versions: {
+            select: {
+              id: true,
+              version_no: true,
+              document: { select: { id: true, document_code: true, title: true } },
+            },
+          },
+        },
+      }),
+      typeof this.database.accessSession.count === 'function'
+        ? this.database.accessSession.count({ where })
+        : Promise.resolve<number | null>(null),
+      typeof this.database.accessSession.count === 'function'
+        ? this.database.accessSession.count({ where: scopeWhere })
+        : Promise.resolve<number | null>(null),
+      typeof this.database.accessSession.count === 'function'
+        ? this.database.accessSession.count({ where: { ...scopeWhere, status: 'ACTIVE' } })
+        : Promise.resolve<number | null>(null),
+    ]);
 
     const data: AccessSessionDto[] = sessions.map((s) => ({
       id: s.id,
@@ -135,7 +177,23 @@ export class AccessSessionsService {
       terminatedReason: s.terminated_reason,
     }));
 
-    return { data };
+    const matchedTotal = filteredTotal ?? data.length;
+    const total = totalAllCount ?? matchedTotal;
+    const activeCount = activeTotalCount ?? data.filter((item) => item.status === 'ACTIVE').length;
+    const totalPages = Math.max(1, Math.ceil(matchedTotal / limit));
+
+    return {
+      data,
+      total,
+      activeCount,
+      meta: {
+        page,
+        pageSize: limit,
+        total: matchedTotal,
+        totalPages,
+        hasMore: page * limit < matchedTotal,
+      },
+    };
   }
 
   /**
@@ -256,20 +314,126 @@ export class AccessSessionsService {
         );
       }
 
-      return { id, status: 'TERMINATED' };
+      return {
+        id,
+        status: 'TERMINATED',
+        targetUserId:
+          sessionMeta.user_id !== undefined && sessionMeta.user_id !== null
+            ? sessionMeta.user_id.toString()
+            : null,
+        documentId: sessionMeta.document_versions?.document_id ?? null,
+      };
     };
 
-    const result =
+    const txResult =
       typeof this.database?.$transaction === 'function'
         ? await this.database.$transaction((tx) => executeInTx(tx))
         : await executeInTx(this.database);
 
     this.logger.warn(`Access session ${id} terminated manually. Reason: ${reason}`);
+    // CONFLICT-RESOLVED: Phát đồng thời sự kiện ACCESS_SESSION_UPDATED tới cả SOC và chủ phiên để trình xem tài liệu đóng tức thì khi bị ngắt phiên (V-05).
     this.realtime?.publish({
       type: 'ACCESS_SESSION_UPDATED',
       targetRoles: ['SECURITY_OFFICER'],
-      payload: { id: result.id, status: result.status, action: 'TERMINATED' },
+      ...(txResult.targetUserId ? { targetUserIds: [txResult.targetUserId] } : {}),
+      payload: {
+        id: txResult.id,
+        sessionId: txResult.id,
+        documentId: txResult.documentId,
+        status: txResult.status,
+        action: 'TERMINATED',
+        reason,
+      },
     });
-    return result;
+    return { id: txResult.id, status: txResult.status };
+  }
+
+  /**
+   * Thuật toán: Đóng Sạch Phiên Đọc Của Chính Người Dùng Khi Đóng Hộp Thoại Xem Tài Liệu (`endOwnSession`).
+   * Mục đích: Ngăn phiên `ACTIVE` tồn đọng trên bảng giám sát SOC sau khi người xem đã nhấn Đóng (V-10), chỉ cho phép chủ sở hữu phiên tự kết thúc (`user_id = principal.userId`, trạng thái `ENDED`).
+   */
+  async endOwnSession(
+    id: string,
+    principal: AuthPrincipal,
+    context?: Partial<RequestContext>,
+  ): Promise<{ id: string; status: string }> {
+    if (!SESSION_UUID_REGEX.test(id)) {
+      throw new BadRequestException('Session identifier must be a valid UUID.');
+    }
+
+    const session = await this.database.accessSession.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        user_id: true,
+        status: true,
+        document_versions: { select: { document_id: true } },
+      },
+    });
+
+    if (!session || session.user_id !== principal.userId) {
+      throw new NotFoundException(`Session ${id} not found.`);
+    }
+
+    if (session.status !== 'ACTIVE') {
+      return { id, status: session.status };
+    }
+
+    const now = new Date();
+    if (typeof this.database.accessSession.updateMany === 'function') {
+      await this.database.accessSession.updateMany({
+        where: { id, user_id: principal.userId, status: 'ACTIVE' },
+        data: {
+          status: 'ENDED',
+          ended_at: now,
+          last_activity_at: now,
+          terminated_reason: 'Closed by reader',
+        },
+      });
+    } else {
+      await this.database.accessSession.update({
+        where: { id },
+        data: {
+          status: 'ENDED',
+          ended_at: now,
+          last_activity_at: now,
+          terminated_reason: 'Closed by reader',
+        },
+      });
+    }
+
+    if (this.auditWriter) {
+      await this.auditWriter
+        .writeLog(
+          {
+            action: 'ACCESS_SESSION_ENDED',
+            outcome: 'SUCCESS',
+            objectType: 'ACCESS_SESSION',
+            objectId: id,
+            accessSessionId: id,
+            documentId: session.document_versions?.document_id ?? null,
+            actorUserId: principal.userId,
+            actorUsername: principal.username,
+            chainPartition: 'SECURITY',
+            details: { reason: 'Closed by user' },
+          },
+          context,
+        )
+        .catch(() => undefined);
+    }
+
+    this.realtime?.publish({
+      type: 'ACCESS_SESSION_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: {
+        id,
+        sessionId: id,
+        documentId: session.document_versions?.document_id ?? null,
+        status: 'ENDED',
+        action: 'ENDED',
+      },
+    });
+
+    return { id, status: 'ENDED' };
   }
 }

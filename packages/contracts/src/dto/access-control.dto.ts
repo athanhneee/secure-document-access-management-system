@@ -104,7 +104,7 @@ export const DecideAccessRequestSchema = z
   .object({
     decision: z.enum(['APPROVED', 'REJECTED']),
     decisionNote: z.string().trim().max(1000).optional(),
-    validDays: z.coerce.number().int().min(1).max(365).default(7),
+    validDays: z.coerce.number().int().min(1).max(365).optional(),
     permissions: z
       .array(z.enum(['VIEW', 'DOWNLOAD']))
       .min(1)
@@ -156,7 +156,9 @@ export const WatermarkTokenParamSchema = z
 
 export const ListAccessSessionsSchema = z
   .object({
-    status: z.enum(['ACTIVE', 'EXPIRED', 'REVOKED', 'TERMINATED', 'COMPLETED']).optional(),
+    // CONFLICT-RESOLVED: Đồng bộ miền trạng thái phiên đọc với Prisma enum session_status (ACTIVE | ENDED | TERMINATED) và bổ sung ALL để xem lịch sử (#20).
+    status: z.enum(['ALL', 'ACTIVE', 'ENDED', 'TERMINATED']).optional(),
+    search: z.string().trim().max(120).optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),
     page: z.coerce.number().int().min(1).default(1),
   })

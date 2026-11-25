@@ -22,7 +22,7 @@ import type { FastifyRequest } from 'fastify';
 import { ListAccessSessionsSchema, TerminateAccessSessionSchema } from '@sda/contracts';
 import type { session_status } from '@sda/database';
 import { CsrfService } from '../auth/csrf.service.js';
-import { RequirePermission } from '../rbac/require-permission.js';
+import { AllowAuthenticatedSelf, RequirePermission } from '../rbac/require-permission.js';
 import { AccessSessionsService, SESSION_UUID_REGEX } from './access-sessions.service.js';
 
 @ApiTags('access-sessions')
@@ -50,7 +50,8 @@ export class AccessSessionsController {
     }
     return this.accessSessionsService.listSessions(
       {
-        status: parsed.data.status as session_status,
+        status: parsed.data.status as session_status | 'ALL' | undefined,
+        search: parsed.data.search,
         limit: parsed.data.limit,
         page: parsed.data.page,
       },
@@ -86,6 +87,33 @@ export class AccessSessionsController {
     }
     const rawUa = request.headers?.['user-agent'];
     return this.accessSessionsService.terminateSession(id, reason, request.auth, {
+      ip: request.ip,
+      ...(typeof rawUa === 'string' ? { userAgent: rawUa } : {}),
+      ...(typeof request.correlationId === 'string'
+        ? { correlationId: request.correlationId }
+        : {}),
+    });
+  }
+
+  /**
+   * Thuật toán: Cho phép chủ sở hữu phiên truy cập tự kết thúc phiên `ACTIVE` sang `ENDED` khi đóng trình xem (V-10).
+   */
+  @Post(':id/end')
+  @HttpCode(HttpStatus.OK)
+  @AllowAuthenticatedSelf()
+  @ApiOperation({ summary: 'End current user own active document access session' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Session ended' })
+  async endOwnSession(
+    @Param('id') id: string,
+    @Req() request: FastifyRequest,
+  ): Promise<{ id: string; status: string }> {
+    this.csrf.assertRequest(request);
+    if (!request.auth) throw new UnauthorizedException('Authentication required.');
+    if (!SESSION_UUID_REGEX.test(id)) {
+      throw new BadRequestException('Session identifier must be a valid UUID.');
+    }
+    const rawUa = request.headers?.['user-agent'];
+    return this.accessSessionsService.endOwnSession(id, request.auth, {
       ip: request.ip,
       ...(typeof rawUa === 'string' ? { userAgent: rawUa } : {}),
       ...(typeof request.correlationId === 'string'

@@ -215,6 +215,7 @@ export class DocumentPepService {
       now,
       principal,
       context,
+      deviceFingerprint: pepContext.deviceFingerprint,
       documentRank,
       departmentId: document.department_id,
       documentStatus: document.status,

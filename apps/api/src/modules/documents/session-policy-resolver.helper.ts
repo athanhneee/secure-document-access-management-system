@@ -9,6 +9,7 @@ import { ForbiddenException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AbacService } from '../abac/abac.service.js';
+import { evaluatePepSessionRisk } from '../abac/session-risk-scorer.helper.js';
 import type { AppConfigService } from '../../config/config.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { DistributedStateService } from '../concurrency/distributed-state.service.js';
@@ -29,6 +30,7 @@ export interface SessionRecordForPolicyCheck {
   user_id?: bigint | undefined;
   ip_address?: string | null | undefined;
   user_agent?: string | null | undefined;
+  device_fingerprint?: string | null | undefined;
   started_at?: Date | string | null;
   document_versions?: {
     document_id: string;
@@ -155,15 +157,28 @@ export async function resolveAndEnforceSessionPolicy(
       doc.owner_id !== undefined &&
       typeof doc.status === 'string'
     ) {
-      const subjectAttributes = await buildPepSubjectAttributes(database, principal.userId, now);
       const currentClass = doc.classification_history?.[0];
+      const classificationRank = currentClass?.classification_levels?.rank ?? 0;
+      const trustedNetwork = resolvePepTrustedNetwork(params.config, context.ip);
+      const [subjectAttributes, riskAssessment] = await Promise.all([
+        buildPepSubjectAttributes(database, principal.userId, now),
+        evaluatePepSessionRisk({
+          database,
+          principal,
+          context,
+          trustedNetwork,
+          classificationRank,
+          deviceFingerprint: session.device_fingerprint,
+          now,
+        }),
+      ]);
       const evalAction = persistedPolicy ? persistedPolicy.grantedAction : requiredAction;
       const abacResult = await abac.evaluate({
         resourceType: 'DOCUMENT',
         action: evalAction,
         subject: subjectAttributes,
         resource: {
-          classificationRank: currentClass?.classification_levels?.rank ?? 0,
+          classificationRank,
           departmentId: doc.department_id?.toString() ?? null,
           ownerId: doc.owner_id.toString(),
           category: currentClass?.business_categories?.code ?? null,
@@ -172,14 +187,20 @@ export async function resolveAndEnforceSessionPolicy(
         environment: {
           currentTime: now.toISOString(),
           ip: context.ip,
-          trustedNetwork: resolvePepTrustedNetwork(params.config, context.ip),
-          deviceTrust: false,
+          trustedNetwork,
+          deviceTrust: riskAssessment.deviceTrust,
           mfa: principal.mfa,
-          riskScore: 0,
+          riskScore: riskAssessment.riskScore,
         },
       });
 
       if (abacResult.decision === 'DENY') {
+        if (abacResult.reasonCode === 'STEP_UP_MFA_REQUIRED' && !principal.mfa) {
+          throw new ForbiddenException({
+            errorCode: AppErrorCode.STEP_UP_MFA_REQUIRED,
+            message: 'Access policy requires multi-factor authentication for this document.',
+          });
+        }
         throw new ForbiddenException({
           errorCode: AppErrorCode.POLICY_DENIED,
           message: `Access denied by active ABAC policy: ${abacResult.reasonCode}`,

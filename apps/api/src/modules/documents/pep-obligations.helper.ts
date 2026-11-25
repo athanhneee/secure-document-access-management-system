@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AbacService } from '../abac/abac.service.js';
+import { evaluatePepSessionRisk } from '../abac/session-risk-scorer.helper.js';
 import type { AppConfigService } from '../../config/config.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { DistributedStateService } from '../concurrency/distributed-state.service.js';
@@ -32,6 +33,8 @@ export interface PepPolicyObligationOutcome {
   maxSessionMinutes: number | null;
   expiresAtMs: number | null;
   obligationTypes: string[];
+  riskScore: number;
+  riskFactors: string[];
 }
 
 /**
@@ -45,6 +48,7 @@ export async function evaluatePepPolicyAndObligations(params: {
   now: Date;
   principal: AuthPrincipal;
   context: RequestContext;
+  deviceFingerprint?: string | undefined;
   documentRank: number;
   departmentId: bigint | null | undefined;
   documentStatus: string;
@@ -62,6 +66,7 @@ export async function evaluatePepPolicyAndObligations(params: {
     now,
     principal,
     context,
+    deviceFingerprint,
     documentRank,
     departmentId,
     documentStatus,
@@ -72,7 +77,19 @@ export async function evaluatePepPolicyAndObligations(params: {
     deny,
   } = params;
 
-  const subjectAttributes = await buildPepSubjectAttributes(database, principal.userId, now);
+  const trustedNetwork = resolvePepTrustedNetwork(config, context.ip);
+  const [subjectAttributes, riskAssessment] = await Promise.all([
+    buildPepSubjectAttributes(database, principal.userId, now),
+    evaluatePepSessionRisk({
+      database,
+      principal,
+      context,
+      trustedNetwork,
+      classificationRank: documentRank,
+      deviceFingerprint,
+      now,
+    }),
+  ]);
   const abacResult = await abac.evaluate({
     resourceType: 'DOCUMENT',
     action,
@@ -87,14 +104,30 @@ export async function evaluatePepPolicyAndObligations(params: {
     environment: {
       currentTime: now.toISOString(),
       ip: context.ip,
-      trustedNetwork: resolvePepTrustedNetwork(config, context.ip),
-      deviceTrust: false,
+      trustedNetwork,
+      deviceTrust: riskAssessment.deviceTrust,
       mfa: principal.mfa,
-      riskScore: 0,
+      riskScore: riskAssessment.riskScore,
     },
   });
 
   if (abacResult.decision === 'DENY') {
+    if (abacResult.reasonCode === 'STEP_UP_MFA_REQUIRED' && !principal.mfa) {
+      await deny(
+        effectiveGrantId,
+        AppErrorCode.STEP_UP_MFA_REQUIRED,
+        'Access policy requires multi-factor authentication for this document.',
+      );
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.STEP_UP_MFA_REQUIRED,
+        message: 'Access policy requires multi-factor authentication for this document.',
+        details: {
+          reasonCode: abacResult.reasonCode,
+          riskScore: riskAssessment.riskScore,
+        },
+      });
+    }
+
     const missingAttributes: string[] = [];
     if (abacResult.reasonCode === 'MISSING_REQUIRED_ATTRIBUTE') {
       if (subjectAttributes.departmentId === null) missingAttributes.push('SUBJECT_DEPARTMENT');
@@ -112,6 +145,8 @@ export async function evaluatePepPolicyAndObligations(params: {
       message: `Access denied by policy: ${denialSummary}`,
       details: {
         reasonCode: abacResult.reasonCode,
+        riskScore: riskAssessment.riskScore,
+        ...(riskAssessment.factors.length > 0 ? { riskFactors: riskAssessment.factors } : {}),
         ...(missingAttributes.length > 0 ? { missingAttributes } : {}),
       },
     });
@@ -161,6 +196,8 @@ export async function evaluatePepPolicyAndObligations(params: {
     maxSessionMinutes,
     expiresAtMs,
     obligationTypes: obligations.map((o) => o.type),
+    riskScore: riskAssessment.riskScore,
+    riskFactors: riskAssessment.factors,
   };
 }
 
@@ -244,6 +281,10 @@ export async function finalizePermittedAccessSession(params: {
         maxSessionMinutes: policyOutcome.maxSessionMinutes,
         expiresAtMs: policyOutcome.expiresAtMs,
         obligations: policyOutcome.obligationTypes.join(','),
+        riskScore: policyOutcome.riskScore,
+        ...(policyOutcome.riskFactors.length > 0
+          ? { riskFactors: policyOutcome.riskFactors.join(',') }
+          : {}),
       },
     },
     principal,

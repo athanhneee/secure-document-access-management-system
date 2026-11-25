@@ -193,6 +193,23 @@ export async function executeControlledDownload(params: {
     context,
   );
 
+  // Thuật toán: Tự động chuyển phiên tải xuống sang trạng thái `ENDED` sau khi đã hoàn tất xuất tệp để không để lại phiên ảo trên SOC (V-10).
+  if (typeof database?.accessSession?.updateMany === 'function') {
+    await database.accessSession
+      .updateMany({
+        where: { id: sessionId, status: 'ACTIVE' },
+        data: { status: 'ENDED', ended_at: now, last_activity_at: now },
+      })
+      .catch(() => undefined);
+  } else if (typeof database?.accessSession?.update === 'function') {
+    await database.accessSession
+      .update({
+        where: { id: sessionId },
+        data: { status: 'ENDED', ended_at: now, last_activity_at: now },
+      })
+      .catch(() => undefined);
+  }
+
   return {
     buffer: fileBuffer,
     mimeType,

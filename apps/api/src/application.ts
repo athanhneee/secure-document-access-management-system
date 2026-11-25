@@ -33,7 +33,8 @@ export async function createApplication(): Promise<NestFastifyApplication> {
       logger: false,
       trustProxy: resolveTrustProxyConfig(bootstrapEnv.TRUST_PROXY),
       bodyLimit: 1_048_576, // 1MB payload limit
-      requestTimeout: 15_000, // 15s request timeout
+      // CONFLICT-RESOLVED: Đồng bộ requestTimeout = 60_000ms khớp với proxyTimeout của Next.js để tránh cắt ngang chuyển đổi Office/PDF lớn (V-42).
+      requestTimeout: 60_000,
       connectionTimeout: 15_000, // Slowloris defense
       keepAliveTimeout: 10_000,
     }),
@@ -52,7 +53,8 @@ export async function createApplication(): Promise<NestFastifyApplication> {
     origin: config.corsOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['content-type', 'x-csrf-token', 'x-correlation-id'],
+    allowedHeaders: ['content-type', 'x-csrf-token', 'x-correlation-id', 'x-access-session-id'],
+    exposedHeaders: ['Content-Disposition', 'X-Total-Pages', 'X-Correlation-Id'],
   });
   registerFastifyHooks(fastify as unknown as Parameters<typeof registerFastifyHooks>[0]);
   application.useGlobalFilters(new HttpExceptionFilter());

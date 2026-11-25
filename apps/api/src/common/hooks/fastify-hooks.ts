@@ -93,7 +93,10 @@ export function registerFastifyHooks(fastify: FastifyInstance): void {
   fastify.addHook('onSend', async (_request, reply, payload) => {
     reply.header('x-content-type-options', 'nosniff');
     reply.header('x-frame-options', 'DENY');
-    reply.header('referrer-policy', 'strict-origin-when-cross-origin');
+    // CONFLICT-RESOLVED: Bảo toàn Referrer-Policy chặt hơn do route đặt sẵn (ví dụ no-referrer trên endpoint vé tải) thay vì ghi đè ngược (V-02).
+    if (!reply.getHeader('referrer-policy')) {
+      reply.header('referrer-policy', 'strict-origin-when-cross-origin');
+    }
     reply.header('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=()');
     reply.header('content-security-policy', "default-src 'none'; frame-ancestors 'none'; sandbox");
     reply.header('cross-origin-opener-policy', 'same-origin');

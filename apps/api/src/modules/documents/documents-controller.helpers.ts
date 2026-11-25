@@ -135,6 +135,7 @@ export function sendAttachmentDownloadReply(reply: FastifyReply, result: Deliver
     .type(result.mimeType)
     .header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
     .header('Pragma', 'no-cache')
+    .header('Access-Control-Expose-Headers', 'Content-Disposition, X-Total-Pages')
     .header('Content-Disposition', `attachment; filename="${safeFilename}"`)
     .send(result.buffer);
 }

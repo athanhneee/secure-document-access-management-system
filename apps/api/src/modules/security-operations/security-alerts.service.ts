@@ -60,36 +60,64 @@ export class SecurityAlertsService {
     page: number;
     pageSize: number;
     hasMore: boolean;
+    total: number;
+    meta: {
+      page: number;
+      pageSize: number;
+      total: number;
+      totalPages: number;
+      hasMore: boolean;
+    };
   }> {
     const allowedDepts = await resolveAlertDepartmentScope(this.authorization, actor, 'VIEW');
     const where = applyAlertScopeToWhere(buildSecurityAlertsWhere(query), allowedDepts);
     const orderBy =
       query.sort === 'severity' ? { severity: query.order } : { detected_at: query.order };
 
-    const alerts = await this.database.securityAlert.findMany({
-      where,
-      orderBy,
-      take: query.pageSize + 1,
-      skip: (query.page - 1) * query.pageSize,
-      include: {
-        users_security_alerts_detected_user_idTousers: {
-          select: { id: true, username: true, full_name: true, employee_code: true },
+    const [alerts, totalCount] = await Promise.all([
+      this.database.securityAlert.findMany({
+        where,
+        orderBy,
+        take: query.pageSize + 1,
+        skip: (query.page - 1) * query.pageSize,
+        include: {
+          users_security_alerts_detected_user_idTousers: {
+            select: { id: true, username: true, full_name: true, employee_code: true },
+          },
+          users_security_alerts_assigned_toTousers: {
+            select: { id: true, username: true, full_name: true },
+          },
+          alert_audit_links: {
+            take: 3,
+            select: { audit_logs: { select: { ip_address: true } } },
+          },
+          _count: { select: { alert_audit_links: true } },
         },
-        users_security_alerts_assigned_toTousers: {
-          select: { id: true, username: true, full_name: true },
-        },
-        _count: { select: { alert_audit_links: true } },
-      },
-    });
+      }),
+      typeof this.database.securityAlert.count === 'function'
+        ? this.database.securityAlert.count({ where })
+        : Promise.resolve<number | null>(null),
+    ]);
 
     const hasMore = alerts.length > query.pageSize;
     const items = hasMore ? alerts.slice(0, query.pageSize) : alerts;
+    const total =
+      totalCount ?? (query.page - 1) * query.pageSize + items.length + (hasMore ? 1 : 0);
+    const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
 
     return {
       data: items.map(mapAlertBaseDetail),
       page: query.page,
       pageSize: query.pageSize,
       hasMore,
+      total,
+      meta: {
+        page: query.page,
+        pageSize: query.pageSize,
+        total,
+        totalPages,
+        hasMore,
+      },
     };
   }
 
@@ -145,7 +173,8 @@ export class SecurityAlertsService {
   }
 
   /**
-   * Thuật toán: Cập nhật trạng thái cảnh báo theo đồ thị chuyển trạng thái hợp lệ và bắt buộc ghi chú khi đóng cảnh báo.
+   * Thuật toán: Cập nhật nguyên tử trạng thái cảnh báo theo đồ thị chuyển trạng thái hợp lệ, bắt buộc ghi chú kết luận khi đóng cảnh báo
+   * và gộp luôn `investigationNote` (nếu có) vào cùng lệnh ghi CSDL để chống lệch trạng thái bán phần (#09).
    */
   async updateAlertStatus(
     id: string,
@@ -155,6 +184,11 @@ export class SecurityAlertsService {
     await assertAlertInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const alert = await this.requireAlert(id);
     const { resolvedAt, resolutionNote } = validateAlertStatusTransition(alert.status, input);
+    const trimmedInvNote = input.investigationNote?.trim();
+    const nextDescription =
+      trimmedInvNote && trimmedInvNote.length > 0
+        ? `${alert.description ?? ''}\n[${new Date().toISOString()}] ${actor.username}: ${trimmedInvNote}`
+        : undefined;
 
     const updated = await this.database.securityAlert.update({
       where: { id },
@@ -162,6 +196,7 @@ export class SecurityAlertsService {
         status: input.status,
         resolved_at: resolvedAt,
         resolution_note: resolutionNote,
+        ...(nextDescription !== undefined ? { description: nextDescription } : {}),
       },
     });
 
@@ -178,6 +213,7 @@ export class SecurityAlertsService {
           previousStatus: alert.status,
           newStatus: input.status,
           resolutionNote,
+          ...(trimmedInvNote ? { investigationNoteAdded: true } : {}),
         },
       });
     }

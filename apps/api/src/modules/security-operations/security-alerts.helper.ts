@@ -11,6 +11,13 @@ import {
   type UpdateAlertStatusInput,
 } from '@sda/contracts';
 
+export interface AlertNoteDto {
+  id: string;
+  authorName: string;
+  note: string;
+  createdAt: string;
+}
+
 export interface AlertDetail {
   id: string;
   alertType: string;
@@ -18,6 +25,8 @@ export interface AlertDetail {
   status: alert_status;
   title: string;
   description: string;
+  ipAddress: string | null;
+  notes: AlertNoteDto[];
   detectedUserId: string | null;
   detectedUser?: {
     id: string;
@@ -52,6 +61,75 @@ export interface AlertDetail {
   }>;
 }
 
+const APPENDED_NOTE_LINE_RE =
+  /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\]\s+([^\s:]+):\s*(.*)$/u;
+const IPV4_EXTRACT_RE = /\b((?:\d{1,3}\.){3}\d{1,3})\b/u;
+
+/**
+ * Thuật toán: Tách Bạch Mô Tả Kỹ Thuật Gốc & Nhật Ký Ghi Chú Điều Tra Có Cấu Trúc (`parseAlertDescriptionAndNotes`)
+ * Mục đích: Khôi phục đầy đủ danh sách ghi chú điều tra đã nối bằng `POST /security-alerts/:id/notes` (`[ISO-8601] username: nội dung`)
+ *   sang mảng `notes[]` tường minh mà vẫn bảo toàn nguyên vẹn phần mô tả gốc `description` (không cắt nhầm thẻ `[Network DLP]` hay `[BLOCKED]`) (#01, #02).
+ */
+export function parseAlertDescriptionAndNotes(
+  rawDescription: string | null | undefined,
+  alertId = '',
+): { baseDescription: string; notes: AlertNoteDto[] } {
+  const source = rawDescription ?? '';
+  if (!source) return { baseDescription: '', notes: [] };
+
+  const lines = source.split(/\r?\n/u);
+  const baseLines: string[] = [];
+  const notes: AlertNoteDto[] = [];
+
+  for (const line of lines) {
+    const match = APPENDED_NOTE_LINE_RE.exec(line.trim());
+    if (match && match[1] && match[2]) {
+      const text = (match[3] ?? '').trim();
+      if (text.length > 0) {
+        notes.push({
+          id: `${alertId || 'alert'}-note-${notes.length + 1}`,
+          createdAt: match[1],
+          authorName: match[2],
+          note: text,
+        });
+      }
+      continue;
+    }
+    if (notes.length > 0 && line.trim().length > 0) {
+      const last = notes[notes.length - 1]!;
+      last.note = `${last.note}\n${line}`;
+    } else if (notes.length === 0) {
+      baseLines.push(line);
+    }
+  }
+
+  return {
+    baseDescription: baseLines.join('\n').trim(),
+    notes,
+  };
+}
+
+/**
+ * Thuật toán: Trích Xuất Địa Chỉ IP Nguồn Từ Nhật Ký Liên Kết Hoặc Mô Tả Kỹ Thuật DLP (`extractAlertSourceIp`)
+ * Mục đích: Loại bỏ tình trạng cột IP luôn hiển thị `—` bằng cách ưu tiên `alert_audit_links[].audit_logs.ip_address` và dự phòng IPv4 trong mô tả (#03).
+ */
+export function extractAlertSourceIp(
+  links?: ReadonlyArray<{ audit_logs?: { ip_address?: string | null } | null }> | null,
+  rawDescription?: string | null,
+): string | null {
+  if (Array.isArray(links)) {
+    for (const link of links) {
+      const ip = link.audit_logs?.ip_address?.trim();
+      if (ip) return ip;
+    }
+  }
+  if (rawDescription) {
+    const match = IPV4_EXTRACT_RE.exec(rawDescription);
+    if (match && match[1]) return match[1];
+  }
+  return null;
+}
+
 const VALID_ALERT_TRANSITIONS: Record<alert_status, alert_status[]> = {
   OPEN: ['INVESTIGATING', 'RESOLVED', 'FALSE_POSITIVE'],
   INVESTIGATING: ['RESOLVED', 'FALSE_POSITIVE', 'OPEN'],
@@ -72,6 +150,22 @@ export function buildSecurityAlertsWhere(
   if (query.detectedUserId) where.detected_user_id = query.detectedUserId;
   if (query.documentId) where.document_id = query.documentId;
   if (query.assignedTo) where.assigned_to = query.assignedTo;
+  if (query.search && query.search.trim().length > 0) {
+    const term = query.search.trim();
+    where.OR = [
+      { title: { contains: term, mode: 'insensitive' } },
+      { description: { contains: term, mode: 'insensitive' } },
+      { alert_type: { contains: term, mode: 'insensitive' } },
+      {
+        users_security_alerts_detected_user_idTousers: {
+          OR: [
+            { username: { contains: term, mode: 'insensitive' } },
+            { full_name: { contains: term, mode: 'insensitive' } },
+          ],
+        },
+      },
+    ];
+  }
 
   if (query.from || query.to) {
     where.detected_at = {
@@ -137,20 +231,29 @@ interface BaseAlertRow {
   } | null;
   resolved_at: Date | null;
   resolution_note: string | null;
+  alert_audit_links?: Array<{
+    audit_logs?: {
+      ip_address?: string | null;
+    } | null;
+  }>;
   _count?: { alert_audit_links: number } | null;
 }
 
 /**
- * Thuật toán: Ánh xạ dòng bản ghi `security_alerts` cơ sở sang cấu trúc phản hồi `AlertDetail` chuẩn hóa.
+ * Thuật toán: Ánh xạ dòng bản ghi `security_alerts` cơ sở sang cấu trúc phản hồi `AlertDetail` chuẩn hóa kèm `notes[]` và `ipAddress`.
  */
 export function mapAlertBaseDetail(a: BaseAlertRow): AlertDetail {
+  const { baseDescription, notes } = parseAlertDescriptionAndNotes(a.description, a.id);
+  const ipAddress = extractAlertSourceIp(a.alert_audit_links, baseDescription);
   return {
     id: a.id,
     alertType: a.alert_type,
     severity: a.severity,
     status: a.status,
     title: a.title,
-    description: a.description,
+    description: baseDescription,
+    ipAddress,
+    notes,
     detectedUserId: a.detected_user_id?.toString() ?? null,
     detectedUser: a.users_security_alerts_detected_user_idTousers
       ? {
@@ -180,7 +283,7 @@ export function mapAlertBaseDetail(a: BaseAlertRow): AlertDetail {
  * Thuật toán: Mở rộng `AlertDetail` kèm danh sách nhật ký kiểm toán liên kết (`alert_audit_links`) và biên bản sự cố (`incident_reports`).
  */
 export function mapAlertFullDetail(
-  alert: BaseAlertRow & {
+  alert: Omit<BaseAlertRow, 'alert_audit_links'> & {
     alert_audit_links?: Array<{
       audit_logs?: {
         id: bigint;

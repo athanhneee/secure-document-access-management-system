@@ -68,6 +68,16 @@ test('Access workflow SQL integration — request submission, Redlock-serialized
   );
   assert.equal(createdReq.status, 'PENDING');
 
+  // Verify ACCESS_REQUEST_CREATED notification & outbox persisted in SQL for document owner
+  const ownerReqNotif = await dbHarness.sql.query(
+    `SELECT
+       (SELECT count(*)::int FROM notifications WHERE recipient_id=$1 AND notification_type='ACCESS_REQUEST_CREATED' AND related_object_id=$2) AS in_app_cnt,
+       (SELECT count(*)::int FROM notification_outbox WHERE recipient_id=$1 AND notification_type='ACCESS_REQUEST_CREATED') AS outbox_cnt`,
+    [ownerUser.id, createdReq.id],
+  );
+  assert.equal(ownerReqNotif.rows[0].in_app_cnt, 1);
+  assert.equal(ownerReqNotif.rows[0].outbox_cnt, 1);
+
   // Concurrent owner approvals serialized via Redlock + SQL transaction -> exactly one winner
   const settled = await Promise.allSettled([
     requestsService.decideRequest(

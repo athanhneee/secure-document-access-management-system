@@ -168,7 +168,14 @@ export async function setupAccessWorkflowIntegrationFixture(dbHarness) {
   );
 
   return {
-    requestsService: new AccessRequestsService(grantAudit, grantsService, prisma, redlockService),
+    requestsService: new AccessRequestsService(
+      grantAudit,
+      grantsService,
+      prisma,
+      redlockService,
+      undefined,
+      notificationsService,
+    ),
     grantsService,
     sessionsService: new AccessSessionsService(prisma, auditWriter),
     notificationsService,

@@ -1,5 +1,7 @@
 import type { SharedExportJobSummary, SharedPaginationMeta } from '@sda/contracts';
 
+export type AuditOutcome = 'SUCCESS' | 'DENIED' | 'FAILED';
+
 export interface AuditLogItem {
   id: string;
   occurredAt: string;
@@ -10,7 +12,7 @@ export interface AuditLogItem {
   objectId?: string | null | undefined;
   documentId?: string | null | undefined;
   accessSessionId?: string | null | undefined;
-  outcome: 'SUCCESS' | 'DENIED' | 'FAILED';
+  outcome: AuditOutcome;
   reasonCode?: string | null | undefined;
   ipAddress?: string | undefined;
   userAgent?: string | null | undefined;
@@ -19,6 +21,8 @@ export interface AuditLogItem {
   chainSequence?: number | string | undefined;
   previousHash?: string | null | undefined;
   entryHash?: string | undefined;
+  hmacKeyVersion?: number | undefined;
+  chainAlgorithm?: string | undefined;
   details?: Record<string, unknown> | null | undefined;
 }
 
@@ -38,38 +42,33 @@ export interface AuditLogsPaginatedResponse {
 export interface AuditLogApiDto {
   id?: string;
   occurredAt?: string;
-  occurred_at?: string;
   actorUserId?: string | null;
-  actor_user_id?: string | null;
   actorUsername?: string;
-  actor_username?: string;
   action?: string;
   objectType?: string;
-  object_type?: string;
   objectId?: string | null;
-  object_id?: string | null;
   documentId?: string | null;
-  document_id?: string | null;
   accessSessionId?: string | null;
-  access_session_id?: string | null;
-  outcome?: 'SUCCESS' | 'DENIED' | 'FAILED';
+  outcome?: AuditOutcome;
   reasonCode?: string | null;
-  reason_code?: string | null;
   ipAddress?: string;
-  ip_address?: string;
   userAgent?: string | null;
-  user_agent?: string | null;
   correlationId?: string;
-  correlation_id?: string;
   chainPartition?: string;
-  chain_partition?: string;
   chainSequence?: number | string;
-  chain_sequence?: number | string;
   previousHash?: string | null;
-  previous_hash?: string | null;
   entryHash?: string;
-  entry_hash?: string;
+  hmacKeyVersion?: number;
+  chainAlgorithm?: string;
   details?: Record<string, unknown> | null;
+}
+
+export interface AuditViolationDto {
+  code: string;
+  partition?: string | undefined;
+  sequence?: string | number | undefined;
+  logId?: string | undefined;
+  message: string;
 }
 
 export interface PartitionVerificationResult {
@@ -77,10 +76,12 @@ export interface PartitionVerificationResult {
   valid: boolean;
   totalChecked: number;
   anchorsChecked: number;
-  violations: { code: string; message: string }[];
+  resumedFromAnchorSequence?: string | undefined;
+  violations: AuditViolationDto[];
 }
 
 export type VerifyHashChainResponse =
+  | PartitionVerificationResult
   | Record<string, PartitionVerificationResult>
   | {
       partitions?: PartitionVerificationResult[];
@@ -91,13 +92,28 @@ export type VerifyHashChainResponse =
 export interface ChainVerificationReport {
   isChainValid: boolean;
   totalEntriesChecked: number;
-  tamperingDetected: boolean;
-  brokenSequences: (number | string)[];
+  totalAnchorsChecked: number;
+  resumedFromAnchors: boolean;
+  partitions: PartitionVerificationResult[];
+  brokenSequences: string[];
   verifiedAt: string;
   chainPartition: string;
 }
 
+export interface AuditAnchorItem {
+  id: string;
+  chainPartition: string;
+  anchorSequence: string;
+  entryHash: string;
+  signature: string;
+  signerKeyId?: string | undefined;
+  status?: string | undefined;
+  anchoredAt: string;
+}
+
 export type ExportFormat = 'CSV' | 'JSON' | 'PDF' | 'EXCEL';
+export type ExportReportType =
+  'AUDIT_LOGS' | 'SYSTEM_REPORT' | 'SECURITY_ALERTS' | 'INCIDENT_REPORTS';
 
 export interface ExportJobItem extends Pick<
   SharedExportJobSummary,
@@ -108,11 +124,131 @@ export interface ExportJobItem extends Pick<
   expiresAt?: string | null | undefined;
   isExpired?: boolean | undefined;
   rowCount?: number | null | undefined;
+  fileSizeBytes?: string | null | undefined;
+  sha256Hash?: string | null | undefined;
+  errorMessage?: string | null | undefined;
+  mimeType?: string | null | undefined;
 }
 
 export interface AuditTrailFilters {
   outcomeFilter: string;
   actionFilter: string;
+  partitionFilter: string;
+  actorFilter: string;
   fromDate: string;
   toDate: string;
+  sortOrder: 'desc' | 'asc';
+}
+
+export type AuditorErrorSource = 'logs' | 'exports' | 'verify' | 'download' | 'alerts' | 'general';
+
+export interface AuditorAlertNoteItem {
+  id?: string | undefined;
+  note: string;
+  authorName: string;
+  createdAt: string;
+}
+
+export interface AuditorLinkedAuditLog {
+  id: string;
+  action: string;
+  occurredAt: string;
+  outcome: string;
+  ipAddress: string | null;
+}
+
+export interface AuditorAlertApiDto {
+  id?: string;
+  alertType?: string;
+  ruleCode?: string;
+  title?: string;
+  description?: string;
+  severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  status?: 'OPEN' | 'INVESTIGATING' | 'ESCALATED' | 'RESOLVED' | 'FALSE_POSITIVE';
+  detectedUserId?: string | null;
+  detectedUser?: { fullName?: string; username?: string } | null;
+  ipAddress?: string | null;
+  detectedAt?: string;
+  resolutionNote?: string | null;
+  linkedAuditLogs?: AuditorLinkedAuditLog[];
+  notes?: Array<{
+    id?: string;
+    note?: string;
+    content?: string;
+    authorName?: string;
+    author?: { fullName?: string; username?: string };
+    createdAt?: string;
+  }>;
+}
+
+export interface AuditorAlertItem {
+  id: string;
+  ruleCode: string;
+  title: string;
+  description: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  status: 'OPEN' | 'INVESTIGATING' | 'ESCALATED' | 'RESOLVED' | 'FALSE_POSITIVE';
+  detectedUserName: string;
+  ipAddress: string;
+  detectedAt: string;
+  resolutionNote?: string | null | undefined;
+  linkedAuditLogs?: AuditorLinkedAuditLog[] | undefined;
+  notes?: AuditorAlertNoteItem[] | undefined;
+}
+
+export interface AuditorAlertPaginatedResponse {
+  data: AuditorAlertApiDto[];
+  total?: number | undefined;
+  meta?: SharedPaginationMeta | undefined;
+}
+
+export interface AuditorWatermarkVerifyDto {
+  verified?: boolean;
+  watermarkToken?: string;
+  renderedText?: string;
+  outputSha256Hash?: string | null;
+  documentTitle?: string;
+  documentCode?: string | null;
+  recipientName?: string;
+  employeeCode?: string | null;
+  sessionId?: string;
+  ipAddress?: string;
+  generatedAtUtc?: string;
+  generatedAt?: string;
+  classificationName?: string | null;
+  document?: {
+    title?: string;
+    documentCode?: string | null;
+    classificationName?: string | null;
+    versionNo?: number;
+    originalSha256Hash?: string;
+  };
+  user?: {
+    username?: string;
+    fullName?: string | null;
+    employeeCode?: string | null;
+    email?: string;
+  };
+  session?: { id?: string; ipAddress?: string; userAgent?: string | null };
+  config?: { name?: string; opacityPercent?: number; includeQrCode?: boolean };
+}
+
+export interface AuditorWatermarkProvenance {
+  verified: boolean;
+  watermarkToken: string;
+  renderedText: string;
+  outputSha256Hash: string;
+  originalSha256Hash: string;
+  documentTitle: string;
+  documentCode: string;
+  versionNo: number | null;
+  recipientName: string;
+  recipientEmail: string;
+  employeeCode: string;
+  sessionId: string;
+  ipAddress: string;
+  userAgent: string;
+  generatedAtUtc: string;
+  classificationName: string;
+  configSummary: string;
 }

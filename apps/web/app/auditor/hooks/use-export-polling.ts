@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { apiClient } from '@/lib/api-client';
 import {
   isRealtimeStreamConnected,
   subscribeRealtimeConnectionStatus,
   subscribeRealtimeEvent,
 } from '@/lib/realtime-events';
-import { normalizeExportJob } from '../helpers';
+import { mergeExportJobHistory, normalizeExportJob } from '../helpers';
 import type { ExportFormat, ExportJobItem } from '../types';
 
 export function isAbortError(err: unknown, signal?: AbortSignal): boolean {
@@ -15,21 +15,25 @@ export function isAbortError(err: unknown, signal?: AbortSignal): boolean {
   return err instanceof DOMException && err.name === 'AbortError';
 }
 
-const FALLBACK_POLL_INTERVAL_MS = 15_000;
+const DISCONNECTED_POLL_INTERVAL_MS = 15_000;
+const CONNECTED_SAFETY_POLL_INTERVAL_MS = 30_000;
 
 /**
- * Thuật toán: Đồng Bộ Tiến Độ Xuất Báo Cáo Thời Gian Thực Qua SSE & Fallback An Toàn (`useExportJobsPolling`)
+ * Thuật toán: Đồng Bộ Tiến Độ Xuất Báo Cáo Thời Gian Thực Qua SSE & Đối Soát An Toàn Đơn Yêu Cầu (`useExportJobsPolling`)
  * Mục đích:
- *   - Thay thế hoàn toàn cơ chế polling dồn dập mỗi 2 giây bằng kênh SSE `EXPORT_JOB_UPDATED` để cập nhật tức thời `PENDING` → `PROCESSING` → `COMPLETED` / `FAILED`.
- *   - Chỉ duy trì nhịp kiểm tra dự phòng thưa (`15 giây`) khi luồng SSE tạm mất kết nối và vẫn còn tác vụ đang chạy, đảm bảo không bao giờ kẹt trạng thái.
+ *   - Cập nhật tức thì qua kênh SSE `EXPORT_JOB_UPDATED` (`PENDING` → `PROCESSING` → `COMPLETED` / `FAILED`).
+ *   - Gom đối soát dự phòng về đúng 1 lời gọi `GET /reports/export` (triệt tiêu N+1), tự đối soát khi SSE kết nối lại và duy trì nhịp an toàn để không bao giờ kẹt `PENDING` nếu rơi gói Redis.
  */
 export function useExportJobsPolling(
   exportJobs: ExportJobItem[],
   setExportJobs: Dispatch<SetStateAction<ExportJobItem[]>>,
+  enabled = true,
 ) {
   const [isSseConnected, setIsSseConnected] = useState(() => isRealtimeStreamConnected());
+  const prevSseRef = useRef(isSseConnected);
 
   useEffect(() => {
+    if (!enabled) return;
     const unsubStatus = subscribeRealtimeConnectionStatus(setIsSseConnected);
     const unsubEvent = subscribeRealtimeEvent<Partial<ExportJobItem> & { id?: string }>(
       'EXPORT_JOB_UPDATED',
@@ -56,7 +60,7 @@ export function useExportJobsPolling(
       unsubStatus();
       unsubEvent();
     };
-  }, [setExportJobs]);
+  }, [enabled, setExportJobs]);
 
   const activeJobIdsKey = exportJobs
     .filter((job) => job.status === 'PENDING' || job.status === 'PROCESSING')
@@ -64,46 +68,45 @@ export function useExportJobsPolling(
     .join(',');
 
   useEffect(() => {
-    if (!activeJobIdsKey || isSseConnected) return;
+    const sseTransitioned = prevSseRef.current !== isSseConnected;
+    prevSseRef.current = isSseConnected;
 
-    const activeIds = activeJobIdsKey.split(',').filter(Boolean);
+    if (!enabled || !activeJobIdsKey) return;
+
     let ignore = false;
     const controller = new AbortController();
 
-    const pollPendingJobs = async () => {
+    const syncExportQueue = async () => {
       try {
-        const settled = await Promise.all(
-          activeIds.map((id) =>
-            apiClient<Partial<ExportJobItem> & { id: string }>(`/reports/export/${id}`, {
-              signal: controller.signal,
-            }),
-          ),
-        );
+        const res = await apiClient<
+          { data?: Array<Partial<ExportJobItem> & { id: string }> } | ExportJobItem[]
+        >('/reports/export', { signal: controller.signal });
         if (ignore) return;
-        const updatesById = new Map<string, Partial<ExportJobItem> & { id: string }>();
-        for (const item of settled) {
-          if (item?.id) updatesById.set(item.id, item);
-        }
-        if (updatesById.size === 0) return;
-        setExportJobs((prev) =>
-          prev.map((job) => {
-            const fresh = updatesById.get(job.id);
-            return fresh ? normalizeExportJob({ ...job, ...fresh }, job.format) : job;
-          }),
-        );
+        const rawList = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
+        const normalized = rawList
+          .filter((item): item is Partial<ExportJobItem> & { id: string } => Boolean(item?.id))
+          .map((item) => normalizeExportJob(item, (item.format as ExportFormat) || 'CSV'));
+        setExportJobs((prev) => mergeExportJobHistory(normalized, prev));
       } catch (err) {
         if (ignore || isAbortError(err, controller.signal)) return;
       }
     };
 
+    if (sseTransitioned || !isSseConnected) {
+      void syncExportQueue();
+    }
+
+    const pollIntervalMs = isSseConnected
+      ? CONNECTED_SAFETY_POLL_INTERVAL_MS
+      : DISCONNECTED_POLL_INTERVAL_MS;
     const timer = setInterval(() => {
-      void pollPendingJobs();
-    }, FALLBACK_POLL_INTERVAL_MS);
+      void syncExportQueue();
+    }, pollIntervalMs);
 
     return () => {
       ignore = true;
       clearInterval(timer);
       controller.abort();
     };
-  }, [activeJobIdsKey, isSseConnected, setExportJobs]);
+  }, [activeJobIdsKey, enabled, isSseConnected, setExportJobs]);
 }

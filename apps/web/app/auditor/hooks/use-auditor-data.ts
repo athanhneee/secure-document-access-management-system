@@ -1,18 +1,24 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient, apiDownload, ApiError } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth-context';
 import {
   aggregatePartitionVerifications,
   buildAuditLogsQueryParams,
   extractAuditorPagination,
+  isInvalidDateRange,
+  mergeExportJobHistory,
   normalizeAuditLogDtos,
   normalizeExportJob,
   triggerEphemeralBlobDownload,
 } from '../helpers';
 import type {
+  AuditAnchorItem,
   AuditLogItem,
   AuditLogsPaginatedResponse,
+  AuditorErrorSource,
+  AuditTrailFilters,
   ChainVerificationReport,
   ExportFormat,
   ExportJobItem,
@@ -22,42 +28,67 @@ import { isAbortError, useExportJobsPolling } from './use-export-polling';
 
 const DEFAULT_AUDIT_PAGE_SIZE = 20;
 
-function mergeExportJobHistory(
-  incoming: ExportJobItem[],
-  previous: ExportJobItem[],
-): ExportJobItem[] {
-  if (incoming.length === 0) return previous;
-  const incomingIds = new Set(incoming.map((job) => job.id));
-  const localUnsynced = previous.filter((job) => !incomingIds.has(job.id));
-  return [...localUnsynced, ...incoming];
-}
-
 /**
- * Thuật toán: Quản lý Trạng thái Kiểm toán Fail-Closed, Phân Trang Máy Chủ Linh Hoạt & Debounce 250ms (`useAuditorData`)
- * Mục đích: Đồng bộ phân trang máy chủ (`page`, `pageSize` tùy chọn 10/20/50 dòng) với bộ lọc đa chiều (tự động đưa `page` về `1` khi đổi bộ lọc hoặc kích thước trang), hủy yêu cầu cũ qua `AbortController` và hiển thị minh bạch mọi lỗi API.
+ * Thuật toán: Quản Lý Trạng Thái Kiểm Toán Phân Quyền Nghiêm Ngặt, Lọc Đa Chiều & Khôi Phục Lỗi Theo Ngữ Cảnh (`useAuditorData`)
+ * Mục đích:
+ *   - Chỉ gọi các API mà tài khoản thực sự được cấp quyền (`AUDIT_LOG:VIEW`, `AUDIT_LOG:EXPORT` / `SYSTEM_REPORT:EXPORT`) để tuyệt đối không sinh lỗi 403 oan.
+ *   - Bảo vệ trạng thái bằng `AbortController`, `Promise.allSettled`, kiểm định khoảng ngày `fromDate <= toDate`, xóa sạch thông báo cũ tránh hiện song song banner xanh/đỏ và theo dõi nguồn lỗi cho nút `Thử lại`.
  */
 export function useAuditorData() {
+  const { hasPermission } = useAuth();
+  const canViewAuditLogs = hasPermission('AUDIT_LOG:VIEW');
+  const canExportAuditLogs = hasPermission('AUDIT_LOG:EXPORT');
+  const canExportSystemReport = hasPermission('SYSTEM_REPORT:EXPORT');
+  const canExportReports = canExportAuditLogs || canExportSystemReport;
+
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSizeState] = useState(DEFAULT_AUDIT_PAGE_SIZE);
   const [totalPages, setTotalPages] = useState(1);
   const [totalLogs, setTotalLogs] = useState(0);
 
+  const [anchors, setAnchors] = useState<AuditAnchorItem[]>([]);
   const [exportJobs, setExportJobs] = useState<ExportJobItem[]>([]);
   const [verificationReport, setVerificationReport] = useState<ChainVerificationReport | null>(
     null,
   );
+  const [verifyPartition, setVerifyPartition] = useState<string>('ALL');
 
   const [isLoading, setIsLoading] = useState(true);
+  const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [lastErrorSource, setLastErrorSource] = useState<AuditorErrorSource>('general');
 
   const [outcomeFilter, setOutcomeFilterState] = useState<string>('ALL');
   const [actionFilter, setActionFilterState] = useState('');
+  const [partitionFilter, setPartitionFilterState] = useState<string>('ALL');
+  const [actorFilter, setActorFilterState] = useState('');
   const [fromDate, setFromDateState] = useState('');
   const [toDate, setToDateState] = useState('');
+  const [sortOrder, setSortOrderState] = useState<'desc' | 'asc'>('desc');
   const [isVerifyingChain, setIsVerifyingChain] = useState(false);
-  const prevActionFilterRef = useRef('');
+
+  const prevDebouncedTextRef = useRef('|');
+  const refreshAbortRef = useRef<AbortController | null>(null);
+  const lastFailedDownloadJobRef = useRef<ExportJobItem | null>(null);
+
+  const dateRangeError = isInvalidDateRange(fromDate, toDate)
+    ? 'Ngày bắt đầu không được lớn hơn ngày kết thúc.'
+    : null;
+
+  const activeFilters = useMemo<AuditTrailFilters>(
+    () => ({
+      outcomeFilter,
+      actionFilter,
+      partitionFilter,
+      actorFilter,
+      fromDate,
+      toDate,
+      sortOrder,
+    }),
+    [outcomeFilter, actionFilter, partitionFilter, actorFilter, fromDate, toDate, sortOrder],
+  );
 
   const setOutcomeFilter = useCallback((value: string) => {
     setOutcomeFilterState(value);
@@ -69,6 +100,16 @@ export function useAuditorData() {
     setPage(1);
   }, []);
 
+  const setPartitionFilter = useCallback((value: string) => {
+    setPartitionFilterState(value);
+    setPage(1);
+  }, []);
+
+  const setActorFilter = useCallback((value: string) => {
+    setActorFilterState(value);
+    setPage(1);
+  }, []);
+
   const setFromDate = useCallback((value: string) => {
     setFromDateState(value);
     setPage(1);
@@ -76,6 +117,22 @@ export function useAuditorData() {
 
   const setToDate = useCallback((value: string) => {
     setToDateState(value);
+    setPage(1);
+  }, []);
+
+  const setSortOrder = useCallback((value: 'desc' | 'asc') => {
+    setSortOrderState(value);
+    setPage(1);
+  }, []);
+
+  const resetFilters = useCallback(() => {
+    setOutcomeFilterState('ALL');
+    setActionFilterState('');
+    setPartitionFilterState('ALL');
+    setActorFilterState('');
+    setFromDateState('');
+    setToDateState('');
+    setSortOrderState('desc');
     setPage(1);
   }, []);
 
@@ -99,13 +156,17 @@ export function useAuditorData() {
       .map((item) => normalizeExportJob(item, (item.format as ExportFormat) || 'CSV'));
   }, []);
 
+  const fetchAnchors = useCallback(async (signal?: AbortSignal) => {
+    const res = await apiClient<{ data?: AuditAnchorItem[] }>(
+      '/audit-logs/anchors',
+      signal ? { signal } : undefined,
+    );
+    return Array.isArray(res?.data) ? res.data : [];
+  }, []);
+
   const fetchAuditLogs = useCallback(
     async (signal?: AbortSignal) => {
-      const queryParams = buildAuditLogsQueryParams(
-        { outcomeFilter, actionFilter, fromDate, toDate },
-        page,
-        pageSize,
-      );
+      const queryParams = buildAuditLogsQueryParams(activeFilters, page, pageSize);
       const logsRes = await apiClient<AuditLogsPaginatedResponse>(
         `/audit-logs?${queryParams.toString()}`,
         signal ? { signal } : undefined,
@@ -115,28 +176,99 @@ export function useAuditorData() {
         pagination: extractAuditorPagination(logsRes, page, pageSize),
       };
     },
-    [outcomeFilter, actionFilter, fromDate, toDate, page, pageSize],
+    [activeFilters, page, pageSize],
   );
 
   const refreshData = useCallback(async () => {
-    setIsLoading(true);
-    setErrorMessage(null);
-    try {
-      const [logsResult, nextExports] = await Promise.all([fetchAuditLogs(), fetchExportJobs()]);
-      setLogs(logsResult.items);
-      setTotalPages(logsResult.pagination.totalPages);
-      setTotalLogs(logsResult.pagination.total);
-      setExportJobs((prev) => mergeExportJobHistory(nextExports, prev));
-    } catch (err) {
-      setErrorMessage(
-        err instanceof ApiError ? err.message : 'Không thể tải dữ liệu nhật ký kiểm toán.',
-      );
-    } finally {
-      setIsLoading(false);
+    if (dateRangeError) {
+      setErrorMessage(dateRangeError);
+      setLastErrorSource('logs');
+      return;
     }
-  }, [fetchAuditLogs, fetchExportJobs]);
+    refreshAbortRef.current?.abort();
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
+
+    setIsLoading(true);
+    setMessage(null);
+    setErrorMessage(null);
+
+    try {
+      const tasks: Promise<unknown>[] = [];
+      const logsIdx = canViewAuditLogs ? tasks.push(fetchAuditLogs(controller.signal)) - 1 : -1;
+      const anchorsIdx = canViewAuditLogs ? tasks.push(fetchAnchors(controller.signal)) - 1 : -1;
+      const exportsIdx = canExportReports ? tasks.push(fetchExportJobs(controller.signal)) - 1 : -1;
+
+      const settled = await Promise.allSettled(tasks);
+      if (controller.signal.aborted) return;
+
+      const errors: string[] = [];
+      let source: AuditorErrorSource = 'general';
+
+      if (logsIdx >= 0) {
+        const res = settled[logsIdx];
+        if (res?.status === 'fulfilled') {
+          const logsResult = res.value as {
+            items: AuditLogItem[];
+            pagination: { page: number; pageSize: number; total: number; totalPages: number };
+          };
+          setLogs(logsResult.items);
+          setTotalPages(logsResult.pagination.totalPages);
+          setTotalLogs(logsResult.pagination.total);
+          if (page > logsResult.pagination.totalPages) {
+            setPage(logsResult.pagination.totalPages);
+          }
+        } else if (res?.status === 'rejected' && !isAbortError(res.reason, controller.signal)) {
+          source = 'logs';
+          errors.push(
+            res.reason instanceof ApiError
+              ? res.reason.message
+              : 'Không thể tải nhật ký kiểm toán.',
+          );
+        }
+      }
+
+      if (anchorsIdx >= 0) {
+        const res = settled[anchorsIdx];
+        if (res?.status === 'fulfilled') {
+          setAnchors(res.value as AuditAnchorItem[]);
+        }
+      }
+
+      if (exportsIdx >= 0) {
+        const res = settled[exportsIdx];
+        if (res?.status === 'fulfilled') {
+          const nextExports = res.value as ExportJobItem[];
+          setExportJobs((prev) => mergeExportJobHistory(nextExports, prev));
+        } else if (res?.status === 'rejected' && !isAbortError(res.reason, controller.signal)) {
+          if (source === 'general') source = 'exports';
+          errors.push(
+            res.reason instanceof ApiError
+              ? res.reason.message
+              : 'Không thể tải lịch sử xuất báo cáo.',
+          );
+        }
+      }
+
+      if (errors.length > 0) {
+        setLastErrorSource(source);
+        setErrorMessage(errors.join(' '));
+      }
+    } finally {
+      if (!controller.signal.aborted) setIsLoading(false);
+    }
+  }, [
+    canExportReports,
+    canViewAuditLogs,
+    dateRangeError,
+    fetchAnchors,
+    fetchAuditLogs,
+    fetchExportJobs,
+    page,
+  ]);
 
   useEffect(() => {
+    if (!canExportReports) return;
     let ignore = false;
     const controller = new AbortController();
     void (async () => {
@@ -145,6 +277,7 @@ export function useAuditorData() {
         if (!ignore) setExportJobs((prev) => mergeExportJobHistory(nextExports, prev));
       } catch (err) {
         if (ignore || isAbortError(err, controller.signal)) return;
+        setLastErrorSource('exports');
         setErrorMessage(
           err instanceof ApiError ? err.message : 'Không thể tải lịch sử xuất báo cáo.',
         );
@@ -154,14 +287,53 @@ export function useAuditorData() {
       ignore = true;
       controller.abort();
     };
-  }, [fetchExportJobs]);
+  }, [canExportReports, fetchExportJobs]);
 
   useEffect(() => {
+    if (!canViewAuditLogs) return;
     let ignore = false;
     const controller = new AbortController();
-    const actionChanged = prevActionFilterRef.current !== actionFilter;
-    prevActionFilterRef.current = actionFilter;
-    const delayMs = actionChanged ? 250 : 0;
+    void fetchAnchors(controller.signal)
+      .then((list) => {
+        if (!ignore) setAnchors(list);
+      })
+      .catch(() => {});
+    return () => {
+      ignore = true;
+      controller.abort();
+    };
+  }, [canViewAuditLogs, fetchAnchors]);
+
+  useEffect(() => {
+    if (!canViewAuditLogs) {
+      let ignore = false;
+      void Promise.resolve().then(() => {
+        if (!ignore) setIsLoading(false);
+      });
+      return () => {
+        ignore = true;
+      };
+    }
+    if (dateRangeError) {
+      let ignore = false;
+      void Promise.resolve().then(() => {
+        if (!ignore) {
+          setIsLoading(false);
+          setErrorMessage(dateRangeError);
+          setLastErrorSource('logs');
+        }
+      });
+      return () => {
+        ignore = true;
+      };
+    }
+
+    let ignore = false;
+    const controller = new AbortController();
+    const textSignature = `${actionFilter}|${actorFilter}`;
+    const textChanged = prevDebouncedTextRef.current !== textSignature;
+    prevDebouncedTextRef.current = textSignature;
+    const delayMs = textChanged ? 250 : 0;
 
     const timer = setTimeout(() => {
       void (async () => {
@@ -173,8 +345,12 @@ export function useAuditorData() {
           setLogs(result.items);
           setTotalPages(result.pagination.totalPages);
           setTotalLogs(result.pagination.total);
+          if (page > result.pagination.totalPages) {
+            setPage(result.pagination.totalPages);
+          }
         } catch (err) {
           if (ignore || isAbortError(err, controller.signal)) return;
+          setLastErrorSource('logs');
           setErrorMessage(
             err instanceof ApiError ? err.message : 'Không thể tải nhật ký kiểm toán.',
           );
@@ -189,52 +365,95 @@ export function useAuditorData() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [fetchAuditLogs, actionFilter]);
+  }, [actionFilter, actorFilter, canViewAuditLogs, dateRangeError, fetchAuditLogs, page]);
 
-  useExportJobsPolling(exportJobs, setExportJobs);
+  useExportJobsPolling(exportJobs, setExportJobs, canExportReports);
 
-  async function verifyHashChain() {
-    setIsVerifyingChain(true);
-    setErrorMessage(null);
-    try {
-      const res = await apiClient<VerifyHashChainResponse>('/audit-logs/verify');
-      const { report, partitionCount, violationCount } = aggregatePartitionVerifications(res);
-      setVerificationReport(report);
+  const verifyHashChain = useCallback(
+    async (partitionOverride?: string) => {
+      const targetPartition = partitionOverride ?? verifyPartition;
+      setIsVerifyingChain(true);
+      setMessage(null);
+      setErrorMessage(null);
+      try {
+        const endpoint =
+          targetPartition && targetPartition !== 'ALL'
+            ? `/audit-logs/verify?chainPartition=${encodeURIComponent(targetPartition)}`
+            : '/audit-logs/verify';
+        const res = await apiClient<VerifyHashChainResponse>(endpoint);
+        const { report, partitionCount, violationCount } = aggregatePartitionVerifications(res);
+        setVerificationReport(report);
+        if (canViewAuditLogs) {
+          void fetchAnchors()
+            .then(setAnchors)
+            .catch(() => {});
+        }
 
-      if (report.isChainValid) {
-        setMessage(
-          report.totalEntriesChecked === 0
-            ? 'Chưa có bản ghi nhật ký kiểm toán nào để kiểm tra.'
-            : `Đã hoàn tất kiểm tra tính toàn vẹn trên ${partitionCount} phân vùng (${report.chainPartition}): Toàn vẹn, không phát hiện sai lệch (${report.totalEntriesChecked} bản ghi).`,
+        if (report.isChainValid) {
+          setMessage(
+            report.totalEntriesChecked === 0
+              ? 'Chưa có bản ghi nhật ký kiểm toán nào để kiểm tra.'
+              : `Đã hoàn tất kiểm tra tính toàn vẹn trên ${partitionCount} phân vùng (${report.chainPartition}): Toàn vẹn, không phát hiện sai lệch (${report.totalEntriesChecked} bản ghi, ${report.totalAnchorsChecked} điểm neo).`,
+          );
+        } else {
+          setLastErrorSource('verify');
+          setErrorMessage(`Phát hiện sai lệch tính toàn vẹn tại ${violationCount} vị trí.`);
+        }
+      } catch (err) {
+        setLastErrorSource('verify');
+        setErrorMessage(
+          err instanceof ApiError
+            ? err.message || 'Kiểm tra tính toàn vẹn nhật ký thất bại.'
+            : 'Đã xảy ra lỗi khi kiểm tra tính toàn vẹn nhật ký.',
         );
-      } else {
-        setErrorMessage(`Phát hiện sai lệch tính toàn vẹn tại ${violationCount} vị trí.`);
+      } finally {
+        setIsVerifyingChain(false);
       }
-    } catch (err) {
-      setErrorMessage(
-        err instanceof ApiError
-          ? err.message || 'Kiểm tra tính toàn vẹn nhật ký thất bại.'
-          : 'Đã xảy ra lỗi khi kiểm tra tính toàn vẹn nhật ký.',
-      );
-    } finally {
-      setIsVerifyingChain(false);
-    }
-  }
+    },
+    [canViewAuditLogs, fetchAnchors, verifyPartition],
+  );
 
-  async function downloadExport(job: ExportJobItem) {
+  const downloadExport = useCallback(async (job: ExportJobItem) => {
     setErrorMessage(null);
+    setDownloadingJobId(job.id);
+    lastFailedDownloadJobRef.current = job;
     try {
       const blob = await apiDownload(`/reports/export/${job.id}/download`);
       triggerEphemeralBlobDownload(blob, job);
+      lastFailedDownloadJobRef.current = null;
     } catch (err) {
+      setLastErrorSource('download');
       setErrorMessage(err instanceof ApiError ? err.message : 'Đã xảy ra lỗi khi tải tệp báo cáo.');
+    } finally {
+      setDownloadingJobId((prev) => (prev === job.id ? null : prev));
     }
-  }
+  }, []);
 
-  function prependExportJob(job: ExportJobItem, msg: string) {
+  const retryLastFailedOperation = useCallback(async () => {
+    if (lastErrorSource === 'verify') {
+      await verifyHashChain();
+      return;
+    }
+    if (lastErrorSource === 'download' && lastFailedDownloadJobRef.current) {
+      await downloadExport(lastFailedDownloadJobRef.current);
+      return;
+    }
+    await refreshData();
+  }, [downloadExport, lastErrorSource, refreshData, verifyHashChain]);
+
+  const prependExportJob = useCallback((job: ExportJobItem, msg: string) => {
     setExportJobs((prev) => [job, ...prev.filter((existing) => existing.id !== job.id)]);
+    setErrorMessage(null);
     setMessage(msg);
-  }
+  }, []);
+
+  const reportError = useCallback((msg: string | null, source: AuditorErrorSource = 'general') => {
+    if (msg) {
+      setMessage(null);
+      setLastErrorSource(source);
+    }
+    setErrorMessage(msg);
+  }, []);
 
   return {
     logs,
@@ -244,24 +463,40 @@ export function useAuditorData() {
     setPageSize,
     totalPages,
     totalLogs,
+    anchors,
     exportJobs,
     verificationReport,
+    verifyPartition,
+    setVerifyPartition,
     isLoading,
+    downloadingJobId,
     message,
+    setMessage,
     errorMessage,
-    setErrorMessage,
+    setErrorMessage: reportError,
+    lastErrorSource,
+    dateRangeError,
+    activeFilters,
     outcomeFilter,
     setOutcomeFilter,
     actionFilter,
     setActionFilter,
+    partitionFilter,
+    setPartitionFilter,
+    actorFilter,
+    setActorFilter,
     fromDate,
     setFromDate,
     toDate,
     setToDate,
+    sortOrder,
+    setSortOrder,
+    resetFilters,
     isVerifyingChain,
     refreshData,
     verifyHashChain,
     downloadExport,
+    retryLastFailedOperation,
     prependExportJob,
   };
 }

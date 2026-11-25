@@ -1,24 +1,24 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { Check, Plus } from 'lucide-react';
+import { Calendar, Check, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
-import { formatIncidentActionTypeLabel } from '@/lib/ui-labels';
+import { formatIncidentActionTypeLabel, formatSafeDateVi } from '@/lib/ui-labels';
 import type { IncidentActionItem } from '../types';
 
 interface IncidentActionsPanelProps {
   actions: IncidentActionItem[];
   isClosed: boolean;
-  onAddAction: (actionType: string, recommendation: string) => Promise<boolean>;
+  onAddAction: (actionType: string, recommendation: string, dueAt?: string) => Promise<boolean>;
   onCompleteAction: (actionId: string, completionNote: string) => Promise<boolean>;
   onError: (msg: string) => void;
 }
 
 /**
- * Thuật toán: Quản Lý Danh Sách Hành Động Khắc Phục Sự Cố & Ghi Chú Nghiệm Thu (`IncidentActionsPanel`)
- * Mục đích: Cho phép thêm hành động khắc phục mới (`POST /incidents/:id/actions`) và đánh dấu hoàn tất kèm biên bản nghiệm thu tối thiểu 5 ký tự (`PATCH /incidents/:id/actions/:actionId/complete`).
+ * Thuật toán: Quản Lý Danh Sách Hành Động Khắc Phục Sự Cố Kèm Hạn Chót (`dueAt`) & Ghi Chú Nghiệm Thu (`IncidentActionsPanel`)
+ * Mục đích: Hỗ trợ thêm biện pháp khắc phục có hạn chót (`#25`) và nghiệm thu hoàn thành tối thiểu 5 ký tự.
  */
 export function IncidentActionsPanel({
   actions,
@@ -29,6 +29,7 @@ export function IncidentActionsPanel({
 }: IncidentActionsPanelProps) {
   const [actionType, setActionType] = useState('REVOKE_ACCESS');
   const [recommendation, setRecommendation] = useState('');
+  const [dueAt, setDueAt] = useState('');
   const [isAdding, setIsAdding] = useState(false);
 
   const [completingActionId, setCompletingActionId] = useState<string | null>(null);
@@ -46,8 +47,11 @@ export function IncidentActionsPanel({
     }
     setIsAdding(true);
     try {
-      const ok = await onAddAction(actionType.trim(), recommendation.trim());
-      if (ok) setRecommendation('');
+      const ok = await onAddAction(actionType.trim(), recommendation.trim(), dueAt || undefined);
+      if (ok) {
+        setRecommendation('');
+        setDueAt('');
+      }
     } finally {
       setIsAdding(false);
     }
@@ -95,9 +99,17 @@ export function IncidentActionsPanel({
                   <span className="font-semibold text-[#222222]">
                     {formatIncidentActionTypeLabel(act.actionType)}
                   </span>
-                  <Badge variant={done ? 'success' : 'warning'}>
-                    {done ? 'Đã hoàn thành' : 'Đang thực hiện'}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    {act.dueAt && (
+                      <span className="inline-flex items-center gap-1 text-xs text-[#717171]">
+                        <Calendar size={16} strokeWidth={1.75} aria-hidden="true" />
+                        <span>Hạn: {formatSafeDateVi(act.dueAt)}</span>
+                      </span>
+                    )}
+                    <Badge variant={done ? 'success' : 'warning'}>
+                      {done ? 'Đã hoàn thành' : 'Đang thực hiện'}
+                    </Badge>
+                  </div>
                 </div>
                 <p className="text-[#222222]">{act.recommendation}</p>
                 {done
@@ -119,7 +131,7 @@ export function IncidentActionsPanel({
                             setCompletionNotes((prev) => ({ ...prev, [act.id]: e.target.value }))
                           }
                           placeholder="Ghi chú kết quả thực hiện (tối thiểu 5 ký tự)…"
-                          className="min-h-11 sm:h-9 flex-1 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
+                          className="min-h-11 sm:h-9 flex-1 text-xs rounded-full bg-[#ffffff] border-[#dddddd] placeholder:text-[#717171]"
                         />
                         <InteractiveHoverButton
                           type="button"
@@ -140,7 +152,11 @@ export function IncidentActionsPanel({
       )}
 
       {!isClosed && (
-        <form onSubmit={handleCreateAction} className="space-y-2 border-t border-[#dddddd] pt-3">
+        <form
+          onSubmit={handleCreateAction}
+          className="space-y-2 border-t border-[#dddddd] pt-3"
+          noValidate
+        >
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div>
               <label
@@ -161,7 +177,22 @@ export function IncidentActionsPanel({
                 <option value="FORENSIC_AUDIT">Kiểm tra chuyên sâu</option>
               </select>
             </div>
-            <div className="sm:col-span-2">
+            <div>
+              <label
+                htmlFor="incident-action-due"
+                className="block font-medium text-[#222222] mb-1"
+              >
+                Hạn hoàn thành (tùy chọn)
+              </label>
+              <Input
+                id="incident-action-due"
+                type="date"
+                value={dueAt}
+                onChange={(e) => setDueAt(e.target.value)}
+                className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
+              />
+            </div>
+            <div className="sm:col-span-3">
               <label
                 htmlFor="incident-action-rec"
                 className="block font-medium text-[#222222] mb-1"
@@ -174,7 +205,7 @@ export function IncidentActionsPanel({
                   value={recommendation}
                   onChange={(e) => setRecommendation(e.target.value)}
                   placeholder="Mô tả biện pháp xử lý (tối thiểu 5 ký tự)…"
-                  className="min-h-11 sm:h-9 flex-1 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
+                  className="min-h-11 sm:h-9 flex-1 text-xs rounded-full bg-[#ffffff] border-[#dddddd] placeholder:text-[#717171]"
                 />
                 <InteractiveHoverButton
                   type="submit"

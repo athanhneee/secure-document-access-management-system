@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { Check, Settings } from 'lucide-react';
+import { Check, Lock, Settings } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import {
   Dialog,
@@ -25,8 +25,8 @@ interface EditDetectionRuleModalProps {
 }
 
 /**
- * Thuật toán: Cấu Hình Tham Số Cửa Sổ Trượt Luật Phát Hiện Bất Thường (`EditDetectionRuleModal`)
- * Mục đích: Kiểm định miền giá trị ngưỡng (`thresholdCount -> threshold: 1..1000`), cửa sổ (`windowMinutes: 1..1440`), hạ nhiệt (`cooldownMinutes: 1..1440`) và trạng thái bật/tắt qua `PATCH /security-detection/rules/:ruleCode`.
+ * Thuật toán: Cấu Hình Tham Số Cửa Sổ Trượt, Mức Nghiêm Trọng & Tham Số Giờ Làm Việc Luật Phát Hiện SOC (`EditDetectionRuleModal`)
+ * Mục đích: Kiểm định miền giá trị ngưỡng (`1..1000`), cửa sổ/giãn cách (`1..1440`), chỉnh `startHourUtc`/`endHourUtc` & `minClassificationRank` cho `OFF_HOURS_ACCESS` (#26), khóa bật bắt buộc cho `AUDIT_INTEGRITY_COMPROMISED` (N04) và dùng `noValidate` (N15).
  */
 export function EditDetectionRuleModal({
   open,
@@ -40,7 +40,7 @@ export function EditDetectionRuleModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
+      <DialogContent className="max-w-md max-h-[88vh] overflow-y-auto border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base font-semibold text-[#222222]">
             <Settings size={20} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
@@ -83,10 +83,22 @@ function EditDetectionRuleForm({
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
 }) {
+  const isMandatoryRule = ruleCode === 'AUDIT_INTEGRITY_COMPROMISED';
+  const isOffHoursRule = ruleCode === 'OFF_HOURS_ACCESS';
+  const initialStartUtc = Number(rule.parameters?.['startHourUtc'] ?? 0);
+  const initialEndUtc = Number(rule.parameters?.['endHourUtc'] ?? 11);
+  const initialMinRank = Number(rule.parameters?.['minClassificationRank'] ?? 2);
+
+  const [severity, setSeverity] = useState(rule.severity || 'HIGH');
   const [thresholdCount, setThresholdCount] = useState(rule.threshold ?? rule.thresholdCount ?? 5);
   const [windowMinutes, setWindowMinutes] = useState(rule.windowMinutes ?? 15);
   const [cooldownMinutes, setCooldownMinutes] = useState(rule.cooldownMinutes ?? 30);
-  const [isEnabled, setIsEnabled] = useState(rule.isEnabled !== false);
+  const [startHourVn, setStartHourVn] = useState((initialStartUtc + 7) % 24);
+  const [endHourVn, setEndHourVn] = useState((initialEndUtc + 7) % 24);
+  const [minClassificationRank, setMinClassificationRank] = useState(
+    Number.isFinite(initialMinRank) ? initialMinRank : 2,
+  );
+  const [isEnabled, setIsEnabled] = useState(isMandatoryRule ? true : rule.isEnabled !== false);
   const [isSaving, setIsSaving] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
@@ -108,16 +120,41 @@ function EditDetectionRuleForm({
       return;
     }
 
+    if (
+      isOffHoursRule &&
+      (!Number.isInteger(startHourVn) ||
+        startHourVn < 0 ||
+        startHourVn > 23 ||
+        !Number.isInteger(endHourVn) ||
+        endHourVn < 0 ||
+        endHourVn > 23)
+    ) {
+      onError('Giờ bắt đầu và giờ kết thúc hành chính (giờ Việt Nam) phải nằm trong khoảng 0–23.');
+      return;
+    }
+
     setIsSaving(true);
     onClearError();
     try {
+      const nextParameters = isOffHoursRule
+        ? {
+            ...(rule.parameters ?? {}),
+            startHourUtc: (startHourVn + 24 - 7) % 24,
+            endHourUtc: (endHourVn + 24 - 7) % 24,
+            timezoneOffsetMinutes: 420,
+            minClassificationRank,
+          }
+        : undefined;
+
       await apiClient(`/security-detection/rules/${encodeURIComponent(ruleCode)}`, {
         method: 'PATCH',
         body: JSON.stringify({
+          severity,
           threshold: thresholdCount,
           windowMinutes,
           cooldownMinutes,
-          isEnabled,
+          isEnabled: isMandatoryRule ? true : isEnabled,
+          ...(nextParameters ? { parameters: nextParameters } : {}),
         }),
       });
       onClose();
@@ -130,7 +167,24 @@ function EditDetectionRuleForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3.5 py-2 text-xs">
+    <form onSubmit={handleSubmit} className="space-y-3.5 py-2 text-xs" noValidate>
+      <div className="space-y-1">
+        <label htmlFor="rule-severity" className="font-medium text-[#222222]">
+          Mức độ nghiêm trọng <span className="text-[#C13515]">*</span>
+        </label>
+        <select
+          id="rule-severity"
+          value={severity}
+          onChange={(e) => setSeverity(e.target.value)}
+          className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] cursor-pointer"
+        >
+          <option value="LOW">Thấp</option>
+          <option value="MEDIUM">Trung bình</option>
+          <option value="HIGH">Cao</option>
+          <option value="CRITICAL">Nghiêm trọng</option>
+        </select>
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="space-y-1">
           <label htmlFor="rule-threshold-count" className="font-medium text-[#222222]">
@@ -139,7 +193,6 @@ function EditDetectionRuleForm({
           <Input
             id="rule-threshold-count"
             type="number"
-            required
             min={1}
             max={1000}
             value={thresholdCount}
@@ -154,7 +207,6 @@ function EditDetectionRuleForm({
           <Input
             id="rule-window-minutes"
             type="number"
-            required
             min={1}
             max={1440}
             value={windowMinutes}
@@ -164,12 +216,11 @@ function EditDetectionRuleForm({
         </div>
         <div className="space-y-1">
           <label htmlFor="rule-cooldown-minutes" className="font-medium text-[#222222]">
-            Giãn cách cảnh báo (phút) <span className="text-[#C13515]">*</span>
+            Giãn cách (phút) <span className="text-[#C13515]">*</span>
           </label>
           <Input
             id="rule-cooldown-minutes"
             type="number"
-            required
             min={1}
             max={1440}
             value={cooldownMinutes}
@@ -179,23 +230,85 @@ function EditDetectionRuleForm({
         </div>
       </div>
 
+      {isOffHoursRule && (
+        <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-2.5">
+          <div className="font-semibold text-[#222222]">
+            Khung giờ hành chính cho phép (Múi giờ Việt Nam UTC+7)
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="space-y-1">
+              <label htmlFor="rule-start-vn" className="font-medium text-[#222222]">
+                Từ giờ (0–23)
+              </label>
+              <Input
+                id="rule-start-vn"
+                type="number"
+                min={0}
+                max={23}
+                value={startHourVn}
+                onChange={(e) => setStartHourVn(Number(e.target.value))}
+                className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="rule-end-vn" className="font-medium text-[#222222]">
+                Đến giờ (0–23)
+              </label>
+              <Input
+                id="rule-end-vn"
+                type="number"
+                min={0}
+                max={23}
+                value={endHourVn}
+                onChange={(e) => setEndHourVn(Number(e.target.value))}
+                className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="rule-min-rank" className="font-medium text-[#222222]">
+                Độ mật tối thiểu
+              </label>
+              <select
+                id="rule-min-rank"
+                value={minClassificationRank}
+                onChange={(e) => setMinClassificationRank(Number(e.target.value))}
+                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222]"
+              >
+                <option value={1}>Từ Nội bộ trở lên</option>
+                <option value={2}>Từ Mật trở lên</option>
+                <option value={3}>Từ Tối mật trở lên</option>
+                <option value={4}>Chỉ Tuyệt mật</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+
       <label
         htmlFor="rule-is-enabled"
         aria-label="Bật kiểm tra tự động"
-        className="flex items-center justify-between gap-3 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 cursor-pointer"
+        className={`flex items-center justify-between gap-3 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 ${isMandatoryRule ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'}`}
       >
         <span className="block">
-          <span className="block font-semibold text-[#222222]">Bật kiểm tra tự động</span>
+          <span className="flex items-center gap-1.5 font-semibold text-[#222222]">
+            {isMandatoryRule && (
+              <Lock size={16} strokeWidth={1.75} className="text-[#C13515]" aria-hidden="true" />
+            )}
+            <span>{isMandatoryRule ? 'Quy tắc bắt buộc hệ thống' : 'Bật kiểm tra tự động'}</span>
+          </span>
           <span className="block text-[#717171]">
-            Bật hoặc tạm dừng quy tắc này trong chu kỳ quét an ninh.
+            {isMandatoryRule
+              ? 'Kiểm tra toàn vẹn chuỗi băm kiểm toán không thể tạm dừng theo chính sách tuân thủ.'
+              : 'Bật hoặc tạm dừng quy tắc này trong chu kỳ quét an ninh.'}
           </span>
         </span>
         <input
           id="rule-is-enabled"
           type="checkbox"
+          disabled={isMandatoryRule}
           checked={isEnabled}
           onChange={(e) => setIsEnabled(e.target.checked)}
-          className="h-4 w-4 rounded border-[#dddddd] text-[#FF385C] focus:ring-[#FF385C]"
+          className="h-4 w-4 rounded border-[#dddddd] accent-[#FF385C]"
         />
       </label>
 

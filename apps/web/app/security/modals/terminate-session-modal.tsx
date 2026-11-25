@@ -101,7 +101,7 @@ function TerminateSessionForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3.5 py-2 text-xs">
+    <form onSubmit={handleSubmit} className="space-y-3.5 py-2 text-xs" noValidate>
       <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1">
         <div className="font-semibold text-[#222222]">{session.documentTitle}</div>
         <div className="text-[#717171]">
@@ -116,14 +116,11 @@ function TerminateSessionForm({
         </label>
         <Textarea
           id="terminate-session-reason"
-          required
-          minLength={5}
-          maxLength={500}
           rows={3}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           placeholder="Ví dụ: Phát hiện truy cập bất thường ngoài giờ làm việc, cần ngắt phiên ngay…"
-          className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] focus-visible:border-[#FF385C]"
+          className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C]"
         />
       </div>
 

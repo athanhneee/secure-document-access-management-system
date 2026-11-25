@@ -16,6 +16,14 @@ import {
  * cho tiến trình `@sda/worker`, tích hợp bộ nhớ đệm nhịp tim PostgreSQL có hạn giờ và xác thực Bearer Token hằng thời gian.
  */
 
+export interface WorkerIcapHealthSnapshot {
+  enabled: boolean;
+  listening: boolean;
+  action: 'BLOCK' | 'AUDIT_ONLY';
+  customKeywordsCount: number;
+  metrics?: unknown;
+}
+
 export interface WorkerHealthServerOptions {
   enabled?: boolean | undefined;
   host?: string | undefined;
@@ -24,6 +32,7 @@ export interface WorkerHealthServerOptions {
   maxLoopStaleMs?: number | undefined;
   dbHeartbeatTtlMs?: number | undefined;
   checkDatabase?: (() => Promise<boolean>) | undefined;
+  getIcapStatus?: (() => WorkerIcapHealthSnapshot | null) | undefined;
 }
 
 export interface WorkerHealthServerHandle {
@@ -136,6 +145,7 @@ export function startWorkerHealthServer(
       const workerLoopAlive = loopAgeMs <= maxLoopStaleMs;
       const dbHealthy = await probeDb();
       const healthy = workerLoopAlive && dbHealthy;
+      const icapStatus = options?.getIcapStatus?.() ?? null;
       const payload = JSON.stringify({
         status: healthy ? 'ok' : 'degraded',
         service: 'sda-worker',
@@ -143,6 +153,7 @@ export function startWorkerHealthServer(
         dbHealthy,
         loopHeartbeatAgeMs: loopAgeMs,
         uptimeSeconds: getWorkerUptimeSeconds(),
+        ...(icapStatus ? { icap: icapStatus } : {}),
         timestamp: new Date().toISOString(),
       });
       res.writeHead(healthy ? 200 : 503, {

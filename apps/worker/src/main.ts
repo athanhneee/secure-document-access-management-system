@@ -129,7 +129,8 @@ const EXPORT_PROCESSOR_INTERVAL_MS = resolvePositiveNumberEnv(
 const EXPORT_CLEANUP_INTERVAL_MS = resolvePositiveNumberEnv('EXPORT_CLEANUP_INTERVAL_MS', 300_000);
 
 // Thuật toán: Khởi chạy điều phối song song máy chủ Health/Metrics và 9 tác vụ nền gắn kết chung tín hiệu hủy tập trung
-startWorkerHealthServer(undefined, shutdown.signal);
+const icapServer = startIcapServerJob(undefined, shutdown.signal);
+startWorkerHealthServer({ getIcapStatus: () => icapServer.getStatusSnapshot() }, shutdown.signal);
 startGrantExpiryJob(
   GRANT_EXPIRY_INTERVAL_MS,
   GRANT_AUDIT_HMAC_KEY,
@@ -148,7 +149,6 @@ startSecurityDetectionJob(SECURITY_DETECTION_INTERVAL_MS, shutdown.signal);
 startNotificationOutboxJob(NOTIFICATION_OUTBOX_INTERVAL_MS, shutdown.signal);
 startExportProcessorJob(EXPORT_PROCESSOR_INTERVAL_MS, shutdown.signal);
 startExportCleanupJob(EXPORT_CLEANUP_INTERVAL_MS, shutdown.signal);
-startIcapServerJob(undefined, shutdown.signal);
 
 console.info(
   'Worker initialized with health/metrics server, grant expiry, derivative/session cleanup, audit verification, security detection, notification outbox, export processor, export cleanup, and ICAP Network DLP server.',

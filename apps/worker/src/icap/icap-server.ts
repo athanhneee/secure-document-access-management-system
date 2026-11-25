@@ -105,6 +105,26 @@ export class IcapServer {
     return { ...this.metrics };
   }
 
+  /**
+   * Thuật toán: Chụp trạng thái vận hành thực tế của máy chủ ICAP DLP (`getStatusSnapshot`)
+   * Mục đích: Phản ánh trung thực cờ bật `enabled`, trạng thái socket đang lắng nghe (`listening`) và chế độ thực thi (`BLOCK` / `AUDIT_ONLY`) cho endpoint sức khỏe nội bộ.
+   */
+  public getStatusSnapshot(): {
+    enabled: boolean;
+    listening: boolean;
+    action: 'BLOCK' | 'AUDIT_ONLY';
+    customKeywordsCount: number;
+    metrics: Readonly<IcapServerMetrics>;
+  } {
+    return {
+      enabled: this.config.enabled,
+      listening: Boolean(this.server?.listening),
+      action: this.config.action,
+      customKeywordsCount: this.config.customKeywords.length,
+      metrics: this.getMetrics(),
+    };
+  }
+
   public async start(): Promise<{ host: string; port: number }> {
     if (!this.config.enabled) {
       console.info('[ICAP Server] Disabled by configuration.');

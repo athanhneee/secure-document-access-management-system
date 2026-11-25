@@ -97,6 +97,9 @@ export const SearchDocumentsSchema = z
     status: z.enum(['DRAFT', 'ACTIVE', 'ARCHIVED']).optional(),
     departmentId: PositiveBigIntSchema.optional(),
     classificationLevelId: PositiveBigIntSchema.optional(),
+    classificationCode: z
+      .enum(['INTERNAL', 'RESTRICTED', 'CONFIDENTIAL', 'SECRET', 'TOP_SECRET'])
+      .optional(),
     sort: z.enum(['created_at', 'updated_at', 'title']).default('created_at'),
     order: z.enum(['asc', 'desc']).default('desc'),
     page: z.coerce.number().int().min(1).default(1),

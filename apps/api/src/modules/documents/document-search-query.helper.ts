@@ -34,6 +34,8 @@ export interface SearchResult {
 
 export interface GrantedDocumentItem {
   grantId: string;
+  principalType?: 'USER' | 'ROLE' | undefined;
+  roleName?: string | null | undefined;
   permissions: string[];
   grantStatus: string;
   validFrom: string;
@@ -235,12 +237,21 @@ export function buildSearchWhereClause(params: {
       )`,
     );
   }
+  if (input.classificationCode) {
+    const normalizedCodes =
+      input.classificationCode === 'INTERNAL' || input.classificationCode === 'RESTRICTED'
+        ? ['INTERNAL', 'RESTRICTED']
+        : [input.classificationCode];
+    conditions.push(Prisma.sql`cl."code" = ANY(${normalizedCodes})`);
+  }
   if (sanitizedQuery && sanitizedQuery.length > 0) {
     conditions.push(
       Prisma.sql`(
-        to_tsvector('simple', coalesce(d."title", '') || ' ' || coalesce(d."description", '') || ' ' || coalesce(d."document_code", ''))
+        to_tsvector('simple', coalesce(d."title", '') || ' ' || coalesce(d."description", '') || ' ' || coalesce(d."document_code", '') || ' ' || coalesce(dep."name", ''))
         @@ plainto_tsquery('simple', ${sanitizedQuery})
         OR similarity(d."title", ${sanitizedQuery}) > 0.15
+        OR d."document_code" ILIKE ${'%' + sanitizedQuery + '%'}
+        OR dep."name" ILIKE ${'%' + sanitizedQuery + '%'}
       )`,
     );
   }

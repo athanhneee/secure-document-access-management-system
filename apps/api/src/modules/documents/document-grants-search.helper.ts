@@ -49,6 +49,8 @@ export async function executeGrantedDocumentsQuery(params: {
   const rows = await database.$queryRaw<
     Array<{
       grant_id: string;
+      principal_type?: string | null;
+      role_name?: string | null;
       grant_status: string;
       valid_from: Date;
       valid_until: Date;
@@ -64,13 +66,15 @@ export async function executeGrantedDocumentsQuery(params: {
   >(
     Prisma.sql`
       SELECT
-        ag."id"::text AS "grant_id", ag."status"::text AS "grant_status",
+        ag."id"::text AS "grant_id", ag."principal_type"::text AS "principal_type",
+        r."name" AS "role_name", ag."status"::text AS "grant_status",
         ag."valid_from", ag."valid_until", ag."granted_at",
         d."id"::text AS "doc_id", d."document_code" AS "doc_code",
         d."title" AS "doc_title", d."status"::text AS "doc_status",
         cl."name" AS "cl_name", cl."code" AS "cl_code", cl."allow_download" AS "cl_allow_download"
       FROM access_grants ag
       JOIN documents d ON d.id = ag.document_id
+      LEFT JOIN roles r ON r.id = ag.principal_role_id
       LEFT JOIN document_classification_history dch
         ON dch.document_id = d.id AND dch.effective_to IS NULL
       LEFT JOIN classification_levels cl ON cl.id = dch.classification_level_id
@@ -106,10 +110,12 @@ export async function executeGrantedDocumentsQuery(params: {
     }
   }
 
-  // CONFLICT-RESOLVED: Bổ sung classificationLevelCode và allowDownload cho GrantedDocumentItem.document kèm giá trị dự phòng an toàn cho mock kiểm thử.
+  // CONFLICT-RESOLVED: Bổ sung classificationLevelCode, allowDownload và nguồn cấp quyền (USER/ROLE) cho GrantedDocumentItem (V-43).
   const hasMore = rows.length > input.pageSize;
   const data: GrantedDocumentItem[] = rows.slice(0, input.pageSize).map((row) => ({
     grantId: row.grant_id,
+    principalType: row.principal_type === 'ROLE' ? 'ROLE' : 'USER',
+    roleName: row.role_name ?? null,
     permissions: permissionsByGrant[row.grant_id] ?? [],
     grantStatus: row.grant_status,
     validFrom: row.valid_from.toISOString(),

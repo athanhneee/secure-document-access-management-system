@@ -206,6 +206,8 @@ export async function apiClient<T>(endpoint: string, options: ApiRequestOptions 
   const url = resolveSafeApiUrl(endpoint);
   const csrf = getCsrfToken();
 
+  const method = (fetchInit.method ?? 'GET').toUpperCase();
+  const isStateChangingMethod = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
   const headers: Record<string, string> = {
     Accept: 'application/json',
     ...(fetchInit.headers as Record<string, string>),
@@ -213,7 +215,7 @@ export async function apiClient<T>(endpoint: string, options: ApiRequestOptions 
   if (!(fetchInit.body instanceof FormData) && !headers['Content-Type'] && fetchInit.body) {
     headers['Content-Type'] = 'application/json';
   }
-  if (csrf) headers['x-csrf-token'] = csrf;
+  if (csrf && isStateChangingMethod) headers['x-csrf-token'] = csrf;
 
   const requestStartedAt = Date.now();
   const response = await fetch(url, {
@@ -283,11 +285,9 @@ export async function apiDownload(
 ): Promise<DownloadBlob> {
   const { _retriedAfterRefresh, signal, headers: extraHeaders } = options;
   const url = resolveSafeApiUrl(endpoint);
-  const csrf = getCsrfToken();
 
   const headers: Record<string, string> = {
     ...(extraHeaders ?? {}),
-    ...(csrf ? { 'x-csrf-token': csrf } : {}),
   };
 
   const requestStartedAt = Date.now();

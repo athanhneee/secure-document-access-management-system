@@ -1,13 +1,12 @@
 'use client';
 
 /**
- * Thuật toán: Biểu Mẫu Đăng Ký Khóa Bảo Mật FIDO2 / Passkey Lần Đầu Chuẩn Hệ Thống Thiết Kế (`MfaWebAuthnEnrollPanel`, V-62)
- * Mục đích: Thu thập nhãn gợi nhớ thiết bị (tối đa 80 ký tự), phát hiện địa chỉ IP `127.0.0.1` để nhắc chuyển sang `localhost` và sử dụng `InteractiveHoverButton` chuẩn hệ thống thay cho nút đen đặc tự chế.
+ * Thuật toán: Biểu Mẫu Đăng Ký Khóa Bảo Mật FIDO2 / Passkey Lần Đầu Kèm Cảnh Báo Loopback (`MfaWebAuthnEnrollPanel`)
+ * Mục đích: Thu thập nhãn gợi nhớ thiết bị (tối đa 80 ký tự), phát hiện địa chỉ IP `127.0.0.1` để nhắc chuyển sang `localhost` và kích hoạt luồng tạo cặp khóa công khai WebAuthn (`startRegistration`).
  */
 import type { FormEvent } from 'react';
 import { AlertTriangle, Fingerprint, ShieldCheck } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { useLocalhostSwitchUrl } from './webauthn-binary';
 
 export interface MfaWebAuthnEnrollPanelProps {
@@ -47,8 +46,13 @@ export function MfaWebAuthnEnrollPanel({
 
       {localhostUrl && (
         <output className="block rounded-[16px] border border-[#E07912]/35 bg-[#E07912]/10 p-3 text-xs text-[#222222] space-y-1.5">
-          <div className="flex items-center gap-1.5 font-semibold text-[#E07912]">
-            <AlertTriangle size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+          <div className="flex items-center gap-1.5 font-semibold text-[#222222]">
+            <AlertTriangle
+              size={16}
+              strokeWidth={1.75}
+              className="text-[#E07912] shrink-0"
+              aria-hidden="true"
+            />
             <span>Cần mở bằng tên miền localhost để dùng Passkey</span>
           </div>
           <p className="text-[#717171] leading-relaxed">
@@ -74,19 +78,27 @@ export function MfaWebAuthnEnrollPanel({
           value={deviceLabel}
           onChange={(e) => onChangeLabel(e.target.value)}
           placeholder="VD: Windows Hello Laptop, khóa USB văn phòng…"
-          className="bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
+          className="bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
         />
       </div>
 
-      <InteractiveHoverButton
+      <button
         type="submit"
-        variant="primary"
-        isLoading={isRegistering}
         disabled={isRegistering}
-        icon={<Fingerprint size={16} strokeWidth={2} aria-hidden="true" />}
-        text="Đăng ký khóa bảo mật / Passkey"
-        className="w-full py-2.5 text-xs font-semibold"
-      />
+        className="w-full min-h-11 py-3 px-4 rounded-full border border-[#222222] bg-[#222222] text-[#ffffff] hover:opacity-90 transition-all flex items-center justify-center gap-2 text-xs font-semibold shadow-xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+      >
+        {isRegistering ? (
+          <>
+            <div className="h-4 w-4 rounded-full border-2 border-[#ffffff]/30 border-t-[#ffffff] animate-spin" />
+            <span>Đang chờ xác nhận thiết bị…</span>
+          </>
+        ) : (
+          <>
+            <Fingerprint size={16} strokeWidth={2} className="text-[#ffffff]" aria-hidden="true" />
+            <span>Đăng ký khóa bảo mật / Passkey</span>
+          </>
+        )}
+      </button>
     </form>
   );
 }

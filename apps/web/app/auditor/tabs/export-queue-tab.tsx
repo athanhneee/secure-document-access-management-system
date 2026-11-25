@@ -16,12 +16,14 @@ import type { ExportJobItem } from '../types';
 
 interface ExportQueueTabProps {
   exportJobs: ExportJobItem[];
+  canExport?: boolean;
   onOpenExportModal: () => void;
   onDownloadExport: (job: ExportJobItem) => void;
 }
 
 export function ExportQueueTab({
   exportJobs,
+  canExport = true,
   onOpenExportModal,
   onDownloadExport,
 }: ExportQueueTabProps) {
@@ -31,14 +33,16 @@ export function ExportQueueTab({
         <CardTitle className="text-sm sm:text-base text-[#222222]">
           Hàng đợi xuất báo cáo ({exportJobs.length})
         </CardTitle>
-        <InteractiveHoverButton
-          size="sm"
-          variant="primary"
-          text="Tạo báo cáo mới"
-          icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
-          onClick={onOpenExportModal}
-          className="shrink-0"
-        />
+        {canExport && (
+          <InteractiveHoverButton
+            size="sm"
+            variant="primary"
+            text="Tạo báo cáo mới"
+            icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
+            onClick={onOpenExportModal}
+            className="shrink-0"
+          />
+        )}
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -92,18 +96,15 @@ export function ExportQueueTab({
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
-                      <InteractiveHoverButton
-                        size="sm"
-                        variant="secondary"
-                        text="Tải tệp"
-                        icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
-                        disabled={!canDownload}
-                        onClick={() => {
-                          if (canDownload) {
-                            onDownloadExport(job);
-                          }
-                        }}
-                      />
+                      {canDownload && canExport && (
+                        <InteractiveHoverButton
+                          size="sm"
+                          variant="secondary"
+                          text="Tải tệp"
+                          icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
+                          onClick={() => onDownloadExport(job)}
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 );

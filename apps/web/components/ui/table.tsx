@@ -2,12 +2,25 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 /**
- * Thuật toán: Bảng Dữ Liệu Doanh Nghiệp Cuộn Ngang Mượt Trên Màn Hình Nhỏ (`Table`, `TableHeader`, `TableBody`, `TableRow`, `TableHead`, `TableCell`)
- * Mục đích: Bọc phần tử `<table>` trong khung `overflow-x-auto` tự khử viền kép khi đặt trong `CardContent`, giữ tiêu đề cột trên một dòng (`whitespace-nowrap`) và không gây vỡ trang trên thiết bị `375px`.
+ * Thuật toán: Bảng Dữ Liệu Doanh Nghiệp Cuộn Hai Chiều Có Giới Hạn Chiều Cao & Ghim Tiêu Đề Cột (`Table`, `TableHeader`, `TableBody`, `TableRow`, `TableHead`, `TableCell`)
+ * Mục đích:
+ *   - Bọc phần tử `<table>` trong khung cuộn hai chiều (`overflow-x-auto overflow-y-auto`) có trần chiều cao thích ứng (`max-h-[56dvh] sm:max-h-[450px] xl:max-h-[calc(100dvh-21.5rem)]`) để danh sách nhật ký dài luôn có thanh cuộn riêng, không đẩy văng thanh phân trang hay làm xô lệch bố cục trang.
+ *   - Ghim cố định hàng tiêu đề (`sticky top-0 z-10`) kèm đường kẻ âm (`shadow-[inset_0_-1px_0_#ebebeb]`) không bị mất nét khi cuộn trên cả màn hình desktop và di động `375px`.
  */
-export function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) {
+export interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
+  containerClassName?: string | undefined;
+  containerRef?: React.Ref<HTMLDivElement> | undefined;
+}
+
+export function Table({ className, containerClassName, containerRef, ...props }: TableProps) {
   return (
-    <div className="relative w-full overflow-x-auto rounded-[16px] border border-[#ebebeb] bg-[#ffffff] [[data-card-body]_&]:rounded-none [[data-card-body]_&]:border-0">
+    <div
+      ref={containerRef}
+      className={cn(
+        'sda-table-scroll relative w-full min-h-[200px] max-h-[52dvh] lg:max-h-[calc(100dvh-29rem)] overflow-x-auto overflow-y-auto overscroll-contain rounded-[16px] border border-[#ebebeb] bg-[#ffffff] [[data-card-body]_&]:rounded-none [[data-card-body]_&]:border-0',
+        containerClassName,
+      )}
+    >
       <table className={cn('w-full caption-bottom text-xs', className)} {...props} />
     </div>
   );
@@ -19,7 +32,10 @@ export function TableHeader({
 }: React.HTMLAttributes<HTMLTableSectionElement>) {
   return (
     <thead
-      className={cn('bg-[#f7f7f7] border-b border-[#ebebeb] [&_tr]:border-b-0', className)}
+      className={cn(
+        'sticky top-0 z-10 bg-[#f7f7f7] shadow-[inset_0_-1px_0_#ebebeb] [&_tr]:border-b-0',
+        className,
+      )}
       {...props}
     />
   );

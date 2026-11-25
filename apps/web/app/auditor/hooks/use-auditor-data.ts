@@ -20,7 +20,7 @@ import type {
 } from '../types';
 import { isAbortError, useExportJobsPolling } from './use-export-polling';
 
-const AUDIT_PAGE_SIZE = 20;
+const DEFAULT_AUDIT_PAGE_SIZE = 20;
 
 function mergeExportJobHistory(
   incoming: ExportJobItem[],
@@ -33,12 +33,13 @@ function mergeExportJobHistory(
 }
 
 /**
- * Thuật toán: Quản lý Trạng thái Kiểm toán Fail-Closed, Phân Trang Máy Chủ & Debounce 250ms (`useAuditorData`)
- * Mục đích: Đồng bộ phân trang máy chủ (`page`, `pageSize`) với bộ lọc đa chiều (tự động đưa `page` về `1` khi đổi bộ lọc), hủy yêu cầu cũ qua `AbortController` và hiển thị minh bạch mọi lỗi API.
+ * Thuật toán: Quản lý Trạng thái Kiểm toán Fail-Closed, Phân Trang Máy Chủ Linh Hoạt & Debounce 250ms (`useAuditorData`)
+ * Mục đích: Đồng bộ phân trang máy chủ (`page`, `pageSize` tùy chọn 10/20/50 dòng) với bộ lọc đa chiều (tự động đưa `page` về `1` khi đổi bộ lọc hoặc kích thước trang), hủy yêu cầu cũ qua `AbortController` và hiển thị minh bạch mọi lỗi API.
  */
 export function useAuditorData() {
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSizeState] = useState(DEFAULT_AUDIT_PAGE_SIZE);
   const [totalPages, setTotalPages] = useState(1);
   const [totalLogs, setTotalLogs] = useState(0);
 
@@ -78,6 +79,12 @@ export function useAuditorData() {
     setPage(1);
   }, []);
 
+  const setPageSize = useCallback((nextSize: number) => {
+    const normalized = [10, 20, 50].includes(nextSize) ? nextSize : DEFAULT_AUDIT_PAGE_SIZE;
+    setPageSizeState(normalized);
+    setPage(1);
+  }, []);
+
   const fetchExportJobs = useCallback(async (signal?: AbortSignal) => {
     const exportsRes = await apiClient<
       { data?: Array<Partial<ExportJobItem> & { id: string }> } | ExportJobItem[]
@@ -97,7 +104,7 @@ export function useAuditorData() {
       const queryParams = buildAuditLogsQueryParams(
         { outcomeFilter, actionFilter, fromDate, toDate },
         page,
-        AUDIT_PAGE_SIZE,
+        pageSize,
       );
       const logsRes = await apiClient<AuditLogsPaginatedResponse>(
         `/audit-logs?${queryParams.toString()}`,
@@ -105,10 +112,10 @@ export function useAuditorData() {
       );
       return {
         items: normalizeAuditLogDtos(logsRes.data || []),
-        pagination: extractAuditorPagination(logsRes, page, AUDIT_PAGE_SIZE),
+        pagination: extractAuditorPagination(logsRes, page, pageSize),
       };
     },
-    [outcomeFilter, actionFilter, fromDate, toDate, page],
+    [outcomeFilter, actionFilter, fromDate, toDate, page, pageSize],
   );
 
   const refreshData = useCallback(async () => {
@@ -233,6 +240,8 @@ export function useAuditorData() {
     logs,
     page,
     setPage,
+    pageSize,
+    setPageSize,
     totalPages,
     totalLogs,
     exportJobs,

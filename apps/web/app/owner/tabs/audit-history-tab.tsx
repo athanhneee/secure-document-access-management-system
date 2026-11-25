@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { RefreshCw, Info, ChevronLeft, ChevronRight } from 'lucide-react';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -24,6 +25,10 @@ interface AuditHistoryTabProps {
   onInspectLog: (log: AuditLogItem) => void;
 }
 
+/**
+ * Thuật toán: Bảng Nhật Ký Truy Vết Tài Liệu Cuộn Có Trần Chiều Cao & Chống Xô Lệch Cột (`AuditHistoryTab`)
+ * Mục đích: Đặt danh sách sự kiện truy cập tài liệu của Chủ sở hữu trong khung cuộn cố định tiêu đề cột, cắt gọn các chuỗi mã dài kèm `title` và tự động cuộn về đầu bảng khi chuyển trang.
+ */
 export function AuditHistoryTab({
   auditLogs,
   auditPage,
@@ -33,6 +38,12 @@ export function AuditHistoryTab({
   onLoadPage,
   onInspectLog,
 }: AuditHistoryTabProps) {
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    tableScrollRef.current?.scrollTo({ top: 0 });
+  }, [auditPage]);
+
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -57,16 +68,16 @@ export function AuditHistoryTab({
         />
       </CardHeader>
       <CardContent className="p-0">
-        <Table>
-          <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+        <Table containerRef={tableScrollRef} className="min-w-[840px] table-fixed">
+          <TableHeader>
             <TableRow>
-              <TableHead className="text-xs text-[#717171]">Thời điểm</TableHead>
-              <TableHead className="text-xs text-[#717171]">Người thực hiện</TableHead>
-              <TableHead className="text-xs text-[#717171]">Hành động</TableHead>
+              <TableHead className="w-[172px] text-xs text-[#717171]">Thời điểm</TableHead>
+              <TableHead className="w-[140px] text-xs text-[#717171]">Người thực hiện</TableHead>
+              <TableHead className="w-[185px] text-xs text-[#717171]">Hành động</TableHead>
               <TableHead className="text-xs text-[#717171]">Tài liệu / Phiên</TableHead>
-              <TableHead className="text-xs text-[#717171]">Địa chỉ IP</TableHead>
-              <TableHead className="text-xs text-[#717171]">Kết quả</TableHead>
-              <TableHead className="text-xs text-[#717171] text-right">Chi tiết</TableHead>
+              <TableHead className="w-[115px] text-xs text-[#717171]">Địa chỉ IP</TableHead>
+              <TableHead className="w-[100px] text-xs text-[#717171]">Kết quả</TableHead>
+              <TableHead className="w-[92px] text-xs text-[#717171] text-right">Chi tiết</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -91,46 +102,55 @@ export function AuditHistoryTab({
             ) : (
               auditLogs.map((log) => (
                 <TableRow key={log.id} className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60">
-                  <TableCell className="text-xs text-[#222222] whitespace-nowrap">
+                  <TableCell className="text-xs text-[#222222] whitespace-nowrap tabular-nums truncate">
                     {new Date(log.occurredAt).toLocaleString('vi-VN')}
                   </TableCell>
                   <TableCell>
-                    <div className="text-xs font-semibold text-[#222222]">
+                    <div
+                      title={log.actorUsername || 'system'}
+                      className="text-xs font-semibold text-[#222222] truncate"
+                    >
                       {log.actorUsername || 'system'}
                     </div>
                     {log.actorUserId && (
-                      <div className="text-[13px] text-[#717171]">ID: {log.actorUserId}</div>
+                      <div className="text-xs text-[#717171] truncate">ID: {log.actorUserId}</div>
                     )}
                   </TableCell>
-                  <TableCell>
-                    <Badge variant="secondary" className="text-[13px]">
+                  <TableCell title={log.action} className="truncate">
+                    <Badge variant="secondary" className="text-xs max-w-full truncate">
                       {log.action}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-xs text-[#222222]">
+                  <TableCell className="text-xs text-[#222222] truncate">
                     {log.documentId && (
-                      <div className="text-xs font-mono text-[#717171]">
+                      <div
+                        title={log.documentId}
+                        className="text-xs font-mono text-[#717171] truncate"
+                      >
                         Doc: {log.documentId.slice(0, 8)}...
                       </div>
                     )}
                     {log.accessSessionId && (
-                      <div className="text-[13px] text-[#008489]">
+                      <div title={log.accessSessionId} className="text-xs text-[#008489] truncate">
                         Sess: {log.accessSessionId.slice(0, 12)}
                       </div>
                     )}
                   </TableCell>
-                  <TableCell className="text-xs text-[#717171] font-mono">
+                  <TableCell
+                    title={log.ipAddress || '—'}
+                    className="text-xs text-[#717171] font-mono whitespace-nowrap tabular-nums truncate"
+                  >
                     {log.ipAddress || '—'}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="whitespace-nowrap">
                     <Badge
                       variant={log.outcome === 'SUCCESS' ? 'success' : 'destructive'}
-                      className="text-[13px]"
+                      className="text-xs"
                     >
                       {log.outcome}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right whitespace-nowrap">
                     <InteractiveHoverButton
                       variant="ghost"
                       size="sm"
@@ -145,8 +165,10 @@ export function AuditHistoryTab({
           </TableBody>
         </Table>
 
-        <div className="p-3 border-t border-[#ebebeb] flex flex-wrap items-center justify-between gap-2 text-xs text-[#717171]">
-          <span>Tổng số: {auditTotal} bản ghi</span>
+        <div className="px-4 py-2.5 border-t border-[#ebebeb] bg-[#f7f7f7]/60 flex flex-wrap items-center justify-between gap-2 text-xs text-[#717171]">
+          <span>
+            Tổng số: <strong className="text-[#222222]">{auditTotal}</strong> bản ghi
+          </span>
           <div className="flex items-center gap-2">
             <InteractiveHoverButton
               variant="secondary"
@@ -156,7 +178,7 @@ export function AuditHistoryTab({
               disabled={auditPage <= 1 || isLoadingAudit}
               onClick={() => onLoadPage(auditPage - 1)}
             />
-            <span>
+            <span className="font-semibold text-[#222222] whitespace-nowrap tabular-nums">
               Trang {auditPage} / {Math.max(1, auditTotalPages)}
             </span>
             <InteractiveHoverButton

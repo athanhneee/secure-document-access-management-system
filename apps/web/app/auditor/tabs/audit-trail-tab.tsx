@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Eye, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,6 +19,7 @@ import type { AuditLogItem } from '../types';
 interface AuditTrailTabProps {
   logs: AuditLogItem[];
   page: number;
+  pageSize: number;
   totalPages: number;
   totalLogs: number;
   isLoading: boolean;
@@ -26,6 +28,7 @@ interface AuditTrailTabProps {
   fromDate: string;
   toDate: string;
   onPageChange: (nextPage: number) => void;
+  onPageSizeChange: (nextPageSize: number) => void;
   onOutcomeFilterChange: (value: string) => void;
   onActionFilterChange: (value: string) => void;
   onFromDateChange: (value: string) => void;
@@ -34,12 +37,15 @@ interface AuditTrailTabProps {
 }
 
 /**
- * Thuật toán: Bảng Tra Cứu Nhật Ký Kiểm Toán Phân Trang & Xem Siêu Dữ Liệu Pháp Chứng (`AuditTrailTab`)
- * Mục đích: Kết hợp bộ lọc đa chiều, điều hướng phân trang máy chủ (`Trang trước`, `Trang X / Y`, `Trang sau`) và mở `<dialog>` chi tiết pháp chứng Read-Only trên từng bản ghi.
+ * Thuật toán: Bảng Tra Cứu Nhật Ký Kiểm Toán Cuộn Có Trần Chiều Cao, Chống Xô Lệch Cột & Phân Trang (`AuditTrailTab`)
+ * Mục đích:
+ *   - Đặt bảng nhật ký trong khung cuộn hai chiều có thanh cuộn rõ ràng (`containerRef`), ghim cố định tiêu đề cột và tự động đưa vị trí cuộn về đầu bảng khi chuyển trang hoặc đổi bộ lọc.
+ *   - Khóa bề rộng cột tối thiểu (`min-w-[860px]`) kết hợp cắt gọn `truncate` kèm `title` cho các chuỗi dài (`action`, `actorUsername`, `correlationId`) nhằm triệt tiêu hiện tượng nhảy/xô lệch cột khi nhật ký dài.
  */
 export function AuditTrailTab({
   logs,
   page,
+  pageSize,
   totalPages,
   totalLogs,
   isLoading,
@@ -48,6 +54,7 @@ export function AuditTrailTab({
   fromDate,
   toDate,
   onPageChange,
+  onPageSizeChange,
   onOutcomeFilterChange,
   onActionFilterChange,
   onFromDateChange,
@@ -55,6 +62,11 @@ export function AuditTrailTab({
   onSelectLog,
 }: AuditTrailTabProps) {
   const safeTotalPages = Math.max(1, totalPages);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    tableScrollRef.current?.scrollTo({ top: 0 });
+  }, [page, pageSize, outcomeFilter, actionFilter, fromDate, toDate]);
 
   return (
     <Card>
@@ -143,16 +155,16 @@ export function AuditTrailTab({
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <Table>
-          <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+        <Table containerRef={tableScrollRef} className="min-w-[880px] table-fixed">
+          <TableHeader>
             <TableRow>
-              <TableHead className="text-xs text-[#717171]">Thời gian (UTC)</TableHead>
-              <TableHead className="text-xs text-[#717171]">Người thực hiện</TableHead>
-              <TableHead className="text-xs text-[#717171]">Hành động</TableHead>
-              <TableHead className="text-xs text-[#717171]">Kết quả</TableHead>
-              <TableHead className="text-xs text-[#717171]">Địa chỉ IP</TableHead>
+              <TableHead className="w-[172px] text-xs text-[#717171]">Thời gian (UTC)</TableHead>
+              <TableHead className="w-[138px] text-xs text-[#717171]">Người thực hiện</TableHead>
+              <TableHead className="w-[195px] text-xs text-[#717171]">Hành động</TableHead>
+              <TableHead className="w-[105px] text-xs text-[#717171]">Kết quả</TableHead>
+              <TableHead className="w-[115px] text-xs text-[#717171]">Địa chỉ IP</TableHead>
               <TableHead className="text-xs text-[#717171]">Correlation ID / Hash</TableHead>
-              <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
+              <TableHead className="w-[96px] text-xs text-[#717171] text-right">Thao tác</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -163,55 +175,95 @@ export function AuditTrailTab({
                 </TableCell>
               </TableRow>
             ) : (
-              logs.map((log) => (
-                <TableRow key={log.id} className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60">
-                  <TableCell className="font-bold text-xs text-[#717171] whitespace-nowrap">
-                    {log.occurredAt
-                      ? new Date(log.occurredAt).toISOString().replace('T', ' ').slice(0, 19)
-                      : '—'}
-                  </TableCell>
-                  <TableCell className="font-semibold text-xs text-[#222222]">
-                    {log.actorUsername}
-                  </TableCell>
-                  <TableCell className="font-bold text-xs text-[#008489]">{log.action}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        log.outcome === 'SUCCESS'
-                          ? 'success'
-                          : log.outcome === 'DENIED'
-                            ? 'warning'
-                            : 'destructive'
-                      }
+              logs.map((log) => {
+                const formattedUtc = log.occurredAt
+                  ? new Date(log.occurredAt).toISOString().replace('T', ' ').slice(0, 19)
+                  : '—';
+                return (
+                  <TableRow
+                    key={log.id}
+                    className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
+                  >
+                    <TableCell
+                      title={formattedUtc}
+                      className="font-bold text-xs text-[#717171] whitespace-nowrap tabular-nums truncate"
                     >
-                      {log.outcome}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="font-bold text-xs text-[#717171]">
-                    {log.ipAddress || '—'}
-                  </TableCell>
-                  <TableCell className="font-bold text-xs text-[#717171] max-w-xs truncate">
-                    {log.correlationId}
-                  </TableCell>
-                  <TableCell className="text-right whitespace-nowrap">
-                    <InteractiveHoverButton
-                      size="sm"
-                      variant="secondary"
-                      text="Xem"
-                      icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
-                      onClick={() => onSelectLog(log)}
-                    />
-                  </TableCell>
-                </TableRow>
-              ))
+                      {formattedUtc}
+                    </TableCell>
+                    <TableCell
+                      title={log.actorUsername}
+                      className="font-semibold text-xs text-[#222222] truncate"
+                    >
+                      {log.actorUsername}
+                    </TableCell>
+                    <TableCell
+                      title={log.action}
+                      className="font-bold text-xs text-[#008489] truncate"
+                    >
+                      {log.action}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <Badge
+                        variant={
+                          log.outcome === 'SUCCESS'
+                            ? 'success'
+                            : log.outcome === 'DENIED'
+                              ? 'warning'
+                              : 'destructive'
+                        }
+                      >
+                        {log.outcome}
+                      </Badge>
+                    </TableCell>
+                    <TableCell
+                      title={log.ipAddress || '—'}
+                      className="font-bold text-xs text-[#717171] whitespace-nowrap tabular-nums truncate"
+                    >
+                      {log.ipAddress || '—'}
+                    </TableCell>
+                    <TableCell
+                      title={log.correlationId}
+                      className="font-bold text-xs text-[#717171] truncate"
+                    >
+                      {log.correlationId}
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">
+                      <InteractiveHoverButton
+                        size="sm"
+                        variant="secondary"
+                        text="Xem"
+                        icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        onClick={() => onSelectLog(log)}
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
 
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t border-[#ebebeb] bg-[#f7f7f7]/50 px-4 py-2.5 text-xs text-[#717171]">
-          <div>
-            Tổng cộng <strong className="text-[#222222]">{totalLogs}</strong> bản ghi · Hiển thị{' '}
-            <strong className="text-[#222222]">{logs.length}</strong> dòng
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-t border-[#ebebeb] bg-[#f7f7f7]/60 px-4 py-2.5 text-xs text-[#717171]">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span>
+              Tổng cộng <strong className="text-[#222222]">{totalLogs}</strong> bản ghi · Hiển thị{' '}
+              <strong className="text-[#222222]">{logs.length}</strong> dòng
+            </span>
+            <div className="inline-flex items-center gap-1.5">
+              <label htmlFor="auditor-page-size" className="sr-only">
+                Số dòng mỗi trang nhật ký
+              </label>
+              <select
+                id="auditor-page-size"
+                value={pageSize}
+                onChange={(e) => onPageSizeChange(Number(e.target.value))}
+                className="min-h-9 sm:h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs font-medium text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+              >
+                <option value={10}>10 dòng / trang</option>
+                <option value={20}>20 dòng / trang</option>
+                <option value={50}>50 dòng / trang</option>
+              </select>
+            </div>
           </div>
           <div className="flex items-center justify-between sm:justify-end gap-2">
             <InteractiveHoverButton
@@ -223,7 +275,7 @@ export function AuditTrailTab({
               disabled={isLoading || page <= 1}
               onClick={() => onPageChange(Math.max(1, page - 1))}
             />
-            <span className="px-2 font-semibold text-[#222222] whitespace-nowrap">
+            <span className="px-2 font-semibold text-[#222222] whitespace-nowrap tabular-nums">
               Trang {page} / {safeTotalPages}
             </span>
             <InteractiveHoverButton

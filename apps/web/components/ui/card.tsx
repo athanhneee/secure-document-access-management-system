@@ -2,14 +2,14 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 /**
- * Thuật toán: Các Thành Phần Khung Thẻ Bề Mặt Chuẩn Hóa Bo Góc `20px` (`Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`)
- * Mục đích: Đồng bộ khoảng đệm thích ứng di động (`p-4 sm:p-5`) và gắn cờ `data-card-body` để bảng dữ liệu lồng bên trong tự động khử viền kép.
+ * Thuật toán: Các Thành Phần Khung Thẻ Bề Mặt Chuẩn Hóa Bo Góc `20px` & Chống Tràn Nội Dung (`Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`)
+ * Mục đích: Đồng bộ khoảng đệm thích ứng di động (`p-4 sm:p-5`), khóa `min-w-0 overflow-hidden` giữ bo góc chuẩn khi lồng vùng cuộn bảng dữ liệu lớn và gắn cờ `data-card-body` để khử viền kép.
  */
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        'rounded-[20px] border border-[#ebebeb] bg-[#ffffff] text-[#222222] shadow-[0_2px_10px_rgba(0,0,0,0.03)]',
+        'min-w-0 overflow-hidden rounded-[20px] border border-[#ebebeb] bg-[#ffffff] text-[#222222] shadow-[0_2px_10px_rgba(0,0,0,0.03)]',
         className,
       )}
       {...props}

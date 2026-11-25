@@ -55,7 +55,7 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
       {
         path: '/auditor',
         redirectRe: /\/login\?redirect=%2Fauditor/,
-        button: 'Xuất báo cáo kiểm toán',
+        button: 'Xuất báo cáo tuân thủ',
       },
       {
         path: '/sessions',
@@ -165,7 +165,7 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
       page.getByRole('heading', { name: 'Kiểm toán toàn vẹn và báo cáo tuân thủ', level: 1 }),
     ).toBeVisible();
     await expect(page.getByText(/Chế độ chỉ đọc:/i)).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Xuất báo cáo kiểm toán' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Xuất báo cáo tuân thủ' })).toBeVisible();
     expect(errors).toEqual([]);
   });
 

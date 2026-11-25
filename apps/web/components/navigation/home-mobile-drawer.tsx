@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, type MouseEvent as ReactMouseEvent } from 'react';
 import Link from 'next/link';
 import {
   FileText,
@@ -80,9 +80,31 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
   const onCloseRef = useRef(onClose);
   const titleId = useId();
 
-  function handleAnchorClose() {
+  /**
+   * Thuật toán: Cuộn Tới Neo Nội Dung Sau Khi Giải Phóng Top-Layer `<dialog>` & Khóa Cuộn Nền (`handleAnchorNavigate`)
+   * Mục đích: Đóng `<dialog>` và khôi phục `document.body.style.overflow` trước khi gọi `scrollIntoView`, tránh trình duyệt di động nuốt thao tác nhảy neo `#vai-tro` / `#kien-truc` / `#tieu-chuan` khi nền đang ở trạng thái `inert` + `overflow: hidden`.
+   */
+  function handleAnchorNavigate(event: ReactMouseEvent<HTMLAnchorElement>, targetId: string) {
+    event.preventDefault();
     skipRestoreFocusRef.current = true;
+    const dialogEl = dialogRef.current;
+    if (dialogEl?.open && typeof dialogEl.close === 'function') {
+      try {
+        dialogEl.close();
+      } catch {
+        // Bỏ qua nếu hộp thoại đã đóng
+      }
+    }
+    document.body.style.overflow = '';
     onClose();
+    window.requestAnimationFrame(() => {
+      const targetEl = document.getElementById(targetId);
+      if (targetEl) {
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        targetEl.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+        window.history.replaceState(null, '', `#${targetId}`);
+      }
+    });
   }
 
   const visibleRoles =
@@ -221,7 +243,7 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
           </div>
           <a
             href="#vai-tro"
-            onClick={handleAnchorClose}
+            onClick={(e) => handleAnchorNavigate(e, 'vai-tro')}
             className="flex min-h-11 items-center justify-between rounded-full px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
           >
             <span className="flex items-center gap-2.5">
@@ -243,7 +265,7 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
 
           <a
             href="#kien-truc"
-            onClick={handleAnchorClose}
+            onClick={(e) => handleAnchorNavigate(e, 'kien-truc')}
             className="flex min-h-11 items-center justify-between rounded-full px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
           >
             <span className="flex items-center gap-2.5">
@@ -260,7 +282,7 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
 
           <a
             href="#tieu-chuan"
-            onClick={handleAnchorClose}
+            onClick={(e) => handleAnchorNavigate(e, 'tieu-chuan')}
             className="flex min-h-11 items-center justify-between rounded-full px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
           >
             <span className="flex items-center gap-2.5">

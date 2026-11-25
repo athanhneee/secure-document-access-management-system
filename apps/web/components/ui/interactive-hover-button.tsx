@@ -218,6 +218,21 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
             (onClick as unknown as (e: React.MouseEvent<HTMLAnchorElement>) => void)(event);
           }
         : undefined;
+      if (href.startsWith('#')) {
+        return (
+          <a
+            href={href}
+            className={baseClasses}
+            {...(linkOnClick ? { onClick: linkOnClick } : {})}
+            {...(props['aria-label'] !== undefined ? { 'aria-label': props['aria-label'] } : {})}
+            {...(props.title !== undefined ? { title: props.title } : {})}
+            {...(props.id !== undefined ? { id: props.id } : {})}
+            {...(props.tabIndex !== undefined ? { tabIndex: props.tabIndex } : {})}
+          >
+            {innerContent}
+          </a>
+        );
+      }
       return (
         <Link
           href={href}

@@ -8,9 +8,26 @@ import type {
   WatermarkVerifyDto,
 } from './types';
 
+const WATERMARK_CLASSIFICATION_LABELS: Readonly<Record<string, string>> = {
+  PUBLIC: 'Công khai',
+  UNCLASSIFIED: 'Không mật',
+  INTERNAL: 'Nội bộ',
+  RESTRICTED: 'Nội bộ hạn chế',
+  CONFIDENTIAL: 'Mật',
+  SECRET: 'Tối mật',
+  TOP_SECRET: 'Tuyệt mật',
+};
+
+function formatWatermarkClassification(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return 'Chưa phân loại';
+  const normalized = trimmed.toUpperCase().replace(/[\s-]+/gu, '_');
+  return WATERMARK_CLASSIFICATION_LABELS[normalized] ?? trimmed;
+}
+
 /**
- * Thuật toán: Chuẩn hóa Dữ liệu Cảnh báo, Lịch sử Ghi chú Điều tra & Sự cố An ninh Không Bịa đặt (`mapAlertDto`)
- * Mục đích: Ánh xạ trung thực dữ liệu cảnh báo từ máy chủ kèm `resolutionNote` và danh sách `notes` điều tra; khi trường tùy chọn vắng mặt, hiển thị nhãn trung tính `'—'`.
+ * Thuật toán: Chuẩn hóa Dữ liệu Cảnh báo, Mô tả Kỹ thuật, IP Nguồn & Lịch sử Ghi chú Điều tra (`mapAlertDto`)
+ * Mục đích: Ánh xạ trung thực `description`, `ipAddress`, `resolutionNote`, `notes[]` và `linkedAuditLogs` từ máy chủ (#01, #02, #03).
  */
 export function mapAlertDto(a: AlertApiDto): SecurityAlertItem {
   const detailResolution =
@@ -31,21 +48,29 @@ export function mapAlertDto(a: AlertApiDto): SecurityAlertItem {
     id: a.id || '—',
     ruleCode: a.alertType || a.ruleCode || a.alert_type || 'ANOMALY_DETECTION',
     title: a.title || 'Phát hiện hành vi bất thường',
+    description: (a.description || '').trim(),
     severity: a.severity || 'HIGH',
     status: a.status || 'OPEN',
-    detectedUserId: a.detectedUserId,
+    detectedUserId: a.detectedUserId ?? undefined,
     detectedUserName:
       a.detectedUser?.fullName ||
+      a.detectedUser?.username ||
       (a.detectedUserId ? `Người dùng #${a.detectedUserId}` : 'Chưa định danh'),
-    documentId: a.documentId,
-    ipAddress: a.ipAddress || '—',
+    documentId: a.documentId ?? undefined,
+    ipAddress: a.ipAddress?.trim() || '—',
     detectedAt: a.detectedAt || '',
     resolutionNote: a.resolutionNote ?? a.resolution_note ?? detailResolution,
+    linkedAuditLogsCount: a.linkedAuditLogsCount ?? a.linkedAuditLogs?.length ?? 0,
+    linkedAuditLogs: a.linkedAuditLogs,
+    incidentReports: a.incidentReports,
     details: a.details,
     notes: normalizedNotes,
   };
 }
 
+/**
+ * Thuật toán: Ánh xạ DTO Hồ Sơ Sự Cố Kèm Tách Riêng `closingNote` & Người Nhận Trình Duyệt (`mapIncidentDto`).
+ */
 export function mapIncidentDto(inc: IncidentApiDto): IncidentItem {
   return {
     id: inc.id || '—',
@@ -53,10 +78,13 @@ export function mapIncidentDto(inc: IncidentApiDto): IncidentItem {
     alertId: inc.alertId ?? null,
     title: inc.title || 'Hồ sơ sự cố an ninh',
     summary: inc.summary || '',
+    closingNote: inc.closingNote ?? null,
     findings: inc.findings ?? '',
     impactAssessment: inc.impactAssessment ?? '',
     status: inc.status || 'DRAFT',
     severity: inc.severity || 'HIGH',
+    submittedToOwner: inc.submittedToOwner ?? null,
+    submittedToAdmin: inc.submittedToAdmin ?? null,
     createdAt: inc.createdAt || '',
     submittedAt: inc.submittedAt ?? null,
     closedAt: inc.closedAt ?? null,
@@ -80,33 +108,48 @@ export function filterSecurityAlerts(
 }
 
 /**
- * Thuật toán: Chuẩn Hóa & Kiểm Định Định Dạng Token Watermark Phía Máy Khách (`normalizeWatermarkTokenInput`)
- * Mục đích: Tự động ghép tiền tố `WM-` nếu chuyên viên SOC dán chuỗi hex 12–48 ký tự từ PDF thiếu `WM-`; từ chối sớm bằng thông báo tiếng Việt nếu sai định dạng để tránh lỗi `400`.
+ * Thuật toán: Chuẩn Hóa & Trích Xuất Token Watermark Hỗ Trợ Dán QR JSON & Dải 12–64 Ký Tự Hex (`normalizeWatermarkTokenInput`)
+ * Mục đích:
+ *   - Tự động trích xuất `token` nếu cán bộ SOC quét mã QR từ PDF rò rỉ và dán nguyên chuỗi JSON `{"token":"WM-...","u":"..."}` (N14).
+ *   - Tự động ghép tiền tố `WM-` nếu dán chuỗi hex 12–64 ký tự từ văn bản PDF; đồng bộ biên độ `{12,64}` với Backend (#47).
  */
 export function normalizeWatermarkTokenInput(
   raw: string,
 ): { valid: true; token: string } | { valid: false; error: string } {
-  const trimmed = raw.trim();
-  if (!trimmed) {
+  let candidate = raw.trim();
+  if (!candidate) {
     return { valid: false, error: 'Vui lòng nhập mã watermark cần đối soát.' };
   }
-  if (/^[0-9a-fA-F]{12,48}$/u.test(trimmed)) {
-    return { valid: true, token: `WM-${trimmed.toLowerCase()}` };
+
+  if (candidate.startsWith('{') && candidate.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      if (typeof parsed['token'] === 'string' && parsed['token'].trim()) {
+        candidate = parsed['token'].trim();
+      }
+    } catch {
+      // Fall through to inline token extraction / regex rejection
+    }
   }
-  const prefixedMatch = /^WM-([0-9a-fA-F]{12,48})$/iu.exec(trimmed);
-  if (prefixedMatch && prefixedMatch[1]) {
-    return { valid: true, token: `WM-${prefixedMatch[1].toLowerCase()}` };
+
+  const embeddedMatch = /\bWM-([0-9a-fA-F]{12,64})\b/iu.exec(candidate);
+  if (embeddedMatch && embeddedMatch[1]) {
+    return { valid: true, token: `WM-${embeddedMatch[1].toLowerCase()}` };
   }
+
+  if (/^[0-9a-fA-F]{12,64}$/u.test(candidate)) {
+    return { valid: true, token: `WM-${candidate.toLowerCase()}` };
+  }
+
   return {
     valid: false,
     error:
-      'Mã watermark không đúng định dạng. Vui lòng nhập mã bắt đầu bằng WM- (ví dụ: WM-2e59958fa6c7) hoặc dán chuỗi mã trích xuất từ tài liệu PDF.',
+      'Mã watermark không đúng định dạng. Vui lòng nhập mã WM- (12–64 ký tự hex), dán nội dung mã QR hoặc dải chữ watermark trích xuất từ tài liệu PDF.',
   };
 }
 
 /**
  * Thuật toán: Lọc Phân loại Cảnh báo Rò rỉ Dữ liệu Mạng (`filterNetworkDlpAlerts`)
- * Mục đích: Tách riêng các cảnh báo vi phạm chính sách cổng kiểm soát luồng ra ICAP RFC 3507 khỏi tập cảnh báo SOC chung.
  */
 export function filterNetworkDlpAlerts(alerts: SecurityAlertItem[]): SecurityAlertItem[] {
   return alerts.filter(
@@ -118,20 +161,35 @@ export function filterNetworkDlpAlerts(alerts: SecurityAlertItem[]): SecurityAle
 }
 
 /**
- * Thuật toán: Chuẩn hóa Bằng chứng Watermark Pháp chứng Chế độ Fail-Closed (`mapWatermarkVerifyDto`)
- * Mục đích: Bắt buộc `res.verified === true` tường minh từ máy chủ; mọi phản hồi thiếu cờ xác thực đều bị đánh dấu `verified: false`.
+ * Thuật toán: Chuẩn hóa Đầy Đủ 8 Trường Pháp Chứng Watermark Chế độ Fail-Closed (`mapWatermarkVerifyDto`)
+ * Mục đích: Bảo toàn toàn bộ bằng chứng `outputSha256Hash`, `originalSha256Hash`, `renderedText`, `userAgent`, `email`, cấu hình watermark và Việt hóa độ mật (#21, #41).
  */
 export function mapWatermarkVerifyDto(res: WatermarkVerifyDto): WatermarkProvenance {
+  const rawClassification = res.classificationName || res.document?.classificationName || '';
+  const cfg = res.config;
+  const configSummary = cfg?.name
+    ? `${cfg.name} (độ mờ ${cfg.opacityPercent ?? '—'}% · ${cfg.includeQrCode ? 'có mã QR' : 'không QR'})`
+    : '—';
+
   return {
     verified: res.verified === true,
+    watermarkToken: res.watermarkToken || '—',
+    renderedText: res.renderedText || '—',
+    outputSha256Hash: res.outputSha256Hash || '—',
+    originalSha256Hash: res.document?.originalSha256Hash || '—',
     documentTitle: res.document?.title || res.documentTitle || 'Chưa ghi nhận',
     documentCode: res.document?.documentCode || res.documentCode || '—',
+    versionNo: typeof res.document?.versionNo === 'number' ? res.document.versionNo : null,
     recipientName: res.user?.fullName || res.user?.username || res.recipientName || 'Chưa ghi nhận',
+    recipientEmail: res.user?.email || '—',
     employeeCode: res.user?.employeeCode || res.employeeCode || '—',
     sessionId: res.session?.id || res.sessionId || '—',
     ipAddress: res.session?.ipAddress || res.ipAddress || '—',
+    userAgent: res.session?.userAgent || '—',
     generatedAtUtc: res.generatedAt || res.generatedAtUtc || '—',
-    classificationName:
-      res.classificationName || res.document?.classificationName || 'Chưa phân loại',
+    classificationName: rawClassification
+      ? formatWatermarkClassification(rawClassification)
+      : 'Chưa phân loại',
+    configSummary,
   };
 }

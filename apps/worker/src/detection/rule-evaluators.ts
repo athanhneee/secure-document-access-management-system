@@ -2,6 +2,7 @@ import {
   SECURITY_DETECTION_ACTIONS,
   isOffHoursTimestampUtc,
   isUntrustedAuditEvent,
+  resolveMinClassificationRank,
 } from '@sda/contracts';
 import type { DetectionRuleConfig, PrismaClient } from './rule-defaults.js';
 import { emitPerUserThresholdAlerts, emitAggregateThresholdAlert } from './alert-correlators.js';
@@ -51,15 +52,43 @@ export async function evaluateDetectionRule(
   }
 
   if (rule.ruleCode === 'OFF_HOURS_ACCESS') {
+    const minRank = resolveMinClassificationRank(rule.parameters);
     const logs = await database.auditLog.findMany({
       where: {
         action: { in: [...SECURITY_DETECTION_ACTIONS.OFF_HOURS_ACCESS] },
         occurred_at: { gte: windowStart, lte: now },
         actor_user_id: { not: null },
       },
-      select: { id: true, actor_user_id: true, occurred_at: true },
+      select: {
+        id: true,
+        actor_user_id: true,
+        document_id: true,
+        occurred_at: true,
+        documents: {
+          select: {
+            classification_history: {
+              where: { effective_to: null },
+              take: 1,
+              select: { classification_levels: { select: { rank: true } } },
+            },
+          },
+        },
+      },
     });
-    const offHoursLogs = logs.filter((l) => isOffHoursTimestampUtc(l.occurred_at, rule.parameters));
+    const offHoursLogs = logs.filter((l) => {
+      if (!isOffHoursTimestampUtc(l.occurred_at, rule.parameters)) return false;
+      const docRank = (
+        l as {
+          documents?: {
+            classification_history?: Array<{
+              classification_levels?: { rank?: number } | null;
+            }>;
+          } | null;
+        }
+      ).documents?.classification_history?.[0]?.classification_levels?.rank;
+      if (typeof docRank === 'number' && docRank < minRank) return false;
+      return true;
+    });
     return emitPerUserThresholdAlerts(
       database,
       rule,
@@ -67,8 +96,8 @@ export async function evaluateDetectionRule(
       now,
       cooldownStart,
       (count) => ({
-        title: 'Cảnh báo: Truy cập ngoài giờ quy định',
-        description: `Phát hiện ${count} hành động ngoài khung giờ cho phép trong ${rule.windowMinutes} phút.`,
+        title: 'Cảnh báo: Truy cập tài liệu mật ngoài giờ quy định',
+        description: `Phát hiện ${count} hành động truy cập tài liệu mật ngoài khung giờ cho phép trong ${rule.windowMinutes} phút.`,
       }),
     );
   }

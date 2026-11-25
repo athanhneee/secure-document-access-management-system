@@ -6,15 +6,25 @@ import type { DetectionRuleConfig, PrismaClient } from './rule-defaults.js';
 export interface MinimalAuditLog {
   id: bigint;
   actor_user_id: bigint | null;
+  document_id?: string | null | undefined;
   occurred_at: Date;
 }
 
+async function linkNewEvidenceToExistingAlert(
+  database: PrismaClient,
+  alertId: string,
+  logs: readonly MinimalAuditLog[],
+): Promise<void> {
+  if (logs.length === 0 || typeof database.alertAuditLink?.createMany !== 'function') return;
+  await database.alertAuditLink.createMany({
+    data: logs.map((l) => ({ alert_id: alertId, audit_log_id: l.id })),
+    skipDuplicates: true,
+  });
+}
+
 /**
- * Algorithm / Thuật toán: Gom Nhóm Tần Suất Theo Chủ Thể & Luồng Ẩn Danh Kèm Giảm Chấn Cooldown Độc Lập
- * (Per-User & Unattributed Sliding-Window Correlation with Isolated Cooldown Suppression)
- * Mục đích: Phân hoạch danh sách sự kiện kiểm toán theo `actor_user_id` bằng `groupAuditLogsByActor` trong `O(N)`
- *   (và tách riêng nhóm `actor_user_id == null` khi có `formatAnonymousAlert`) để cooldown của một người dùng
- *   không bao giờ che khuất cảnh báo xâm nhập trên người dùng khác hoặc luồng ẩn danh.
+ * Algorithm / Thuật toán: Gom Nhóm Tần Suất Theo Chủ Thể & Luồng Ẩn Danh Kèm Giảm Chấn Cooldown Độc Lập Đồng Bộ API
+ * (Per-User & Unattributed Sliding-Window Correlation with Active-Status Cooldown & Incremental Evidence Linking — N09)
  */
 export async function emitPerUserThresholdAlerts(
   database: PrismaClient,
@@ -25,7 +35,7 @@ export async function emitPerUserThresholdAlerts(
   formatAlert: (count: number, actorUserId: bigint) => { title: string; description: string },
   formatAnonymousAlert?: (count: number) => { title: string; description: string },
 ): Promise<number> {
-  // CONFLICT-RESOLVED: Đánh giá ngưỡng và giảm chấn cooldown độc lập cho từng actor_user_id (cùng nhánh ẩn danh detected_user_id: null) tránh triệt tiêu chéo cảnh báo giữa các tài khoản bị xâm nhập.
+  // CONFLICT-RESOLVED: Đồng bộ chặt với API — chỉ suppress cooldown trên cảnh báo còn OPEN/INVESTIGATING, luôn gắn thêm alert_audit_links và lưu document_id (N09).
   const userGroups = groupAuditLogsByActor(logs);
   let created = 0;
 
@@ -36,13 +46,19 @@ export async function emitPerUserThresholdAlerts(
       where: {
         alert_type: rule.ruleCode,
         detected_user_id: actorUserId,
+        status: { in: ['OPEN', 'INVESTIGATING'] },
         detected_at: { gte: cooldownStart },
       },
+      orderBy: { detected_at: 'desc' },
     });
-    if (existingAlert) continue;
+    if (existingAlert) {
+      await linkNewEvidenceToExistingAlert(database, existingAlert.id, userLogs);
+      continue;
+    }
 
     const alertId = randomUUID();
     const { title, description } = formatAlert(userLogs.length, actorUserId);
+    const primaryDocumentId = userLogs.find((l) => Boolean(l.document_id))?.document_id ?? null;
     await database.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.securityAlert.create({
         data: {
@@ -53,6 +69,7 @@ export async function emitPerUserThresholdAlerts(
           title,
           description,
           detected_user_id: actorUserId,
+          document_id: primaryDocumentId,
           detected_at: now,
         },
       });
@@ -71,10 +88,14 @@ export async function emitPerUserThresholdAlerts(
         where: {
           alert_type: rule.ruleCode,
           detected_user_id: null,
+          status: { in: ['OPEN', 'INVESTIGATING'] },
           detected_at: { gte: cooldownStart },
         },
+        orderBy: { detected_at: 'desc' },
       });
-      if (!existingAnonymousAlert) {
+      if (existingAnonymousAlert) {
+        await linkNewEvidenceToExistingAlert(database, existingAnonymousAlert.id, unattributedLogs);
+      } else {
         const alertId = randomUUID();
         const { title, description } = formatAnonymousAlert(unattributedLogs.length);
         await database.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -105,7 +126,7 @@ export async function emitPerUserThresholdAlerts(
 
 /**
  * Algorithm / Thuật toán: Tương Quan Sự Kiện Cấp Hệ Thống Có Giảm Chấn Cooldown (`detected_user_id: null`)
- * Mục đích: Phát cảnh báo nghiêm trọng phạm vi toàn hệ thống (như `AUDIT_INTEGRITY_COMPROMISED`) khi đạt ngưỡng mà chưa có cảnh báo trong khoảng `cooldownStart`.
+ * Mục đích: Phát cảnh báo nghiêm trọng phạm vi toàn hệ thống (như `AUDIT_INTEGRITY_COMPROMISED`) khi đạt ngưỡng mà chưa có cảnh báo `OPEN`/`INVESTIGATING` trong khoảng `cooldownStart`.
  */
 export async function emitAggregateThresholdAlert(
   database: PrismaClient,
@@ -122,10 +143,15 @@ export async function emitAggregateThresholdAlert(
     where: {
       alert_type: rule.ruleCode,
       detected_user_id: null,
+      status: { in: ['OPEN', 'INVESTIGATING'] },
       detected_at: { gte: cooldownStart },
     },
+    orderBy: { detected_at: 'desc' },
   });
-  if (existingAlert) return 0;
+  if (existingAlert) {
+    await linkNewEvidenceToExistingAlert(database, existingAlert.id, logs);
+    return 0;
+  }
 
   const alertId = randomUUID();
   await database.$transaction(async (tx: Prisma.TransactionClient) => {

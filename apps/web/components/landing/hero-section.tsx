@@ -36,7 +36,7 @@ const HERO_METRICS = [
 
 export function HeroSection() {
   const { isAuthenticated, user } = useAuth();
-  const primaryHref = isAuthenticated ? resolveDefaultPortalForRoles(user?.roles) : '/login';
+  const primaryHref = isAuthenticated ? resolveDefaultPortalForRoles(user) : '/login';
   const primaryText = isAuthenticated ? 'Vào phân hệ làm việc' : 'Bắt đầu ngay';
 
   return (

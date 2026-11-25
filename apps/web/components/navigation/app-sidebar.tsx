@@ -117,7 +117,7 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
         className="hidden lg:flex w-60 shrink-0 flex-col border-r border-[#ebebeb] bg-[#ffffff] p-3"
         aria-label="Thanh điều hướng phân hệ"
       >
-        <SidebarDirectory pathname={pathname} userRoles={user?.roles} />
+        <SidebarDirectory pathname={pathname} user={user} userRoles={user?.roles} />
       </aside>
 
       {isOpen && (
@@ -139,6 +139,7 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
           >
             <SidebarDirectory
               pathname={pathname}
+              user={user}
               userRoles={user?.roles}
               onNavigate={onClose}
               headingId={mobileHeadingId}

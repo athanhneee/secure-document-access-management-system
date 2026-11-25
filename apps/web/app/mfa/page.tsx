@@ -39,7 +39,7 @@ function MfaContent() {
    * Mục đích: Đưa người dùng đến đúng phân hệ nghiệp vụ sau khi hoàn tất xác thực MFA mà vẫn ngăn chặn Open Redirect và bẫy `403` chéo vai trò.
    */
   function handlePostAuthRedirect(user: AuthUser | null) {
-    router.push(resolveAuthorizedRedirectPath(redirectTarget, user?.roles));
+    router.push(resolveAuthorizedRedirectPath(redirectTarget, user));
   }
 
   async function completeAuthWithProfile(inlineUser?: AuthUser | null) {

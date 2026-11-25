@@ -19,7 +19,8 @@ import {
   ExternalLink,
   X,
 } from 'lucide-react';
-import type { RoleType } from '@/lib/auth-context';
+import type { AuthUser, RoleType } from '@/lib/auth-context';
+import { canAccessPortal } from '@/lib/role-permissions';
 
 interface NavItem {
   title: string;
@@ -69,7 +70,8 @@ const NAV_ITEMS: readonly NavItem[] = [
 
 export interface SidebarDirectoryProps {
   pathname: string | null;
-  userRoles: readonly string[] | undefined;
+  user?: AuthUser | null | undefined;
+  userRoles?: readonly string[] | undefined;
   onNavigate?: (() => void) | undefined;
   headingId?: string | undefined;
   onCloseButton?: (() => void) | undefined;
@@ -77,12 +79,15 @@ export interface SidebarDirectoryProps {
 
 export function SidebarDirectory({
   pathname,
+  user,
   userRoles,
   onNavigate,
   headingId,
   onCloseButton,
 }: SidebarDirectoryProps) {
-  const authorizedItems = NAV_ITEMS.filter((item) => Boolean(userRoles?.includes(item.role)));
+  const authorizedItems = NAV_ITEMS.filter((item) =>
+    user ? canAccessPortal(user, item.role) : Boolean(userRoles?.includes(item.role)),
+  );
 
   return (
     <>

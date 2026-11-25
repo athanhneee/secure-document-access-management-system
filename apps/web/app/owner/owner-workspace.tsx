@@ -43,7 +43,7 @@ import { RequestsTab } from './tabs/requests-tab';
  */
 export function OwnerWorkspace() {
   return (
-    <AuthGuard requiredRole="DOCUMENT_OWNER">
+    <AuthGuard requiredPortal="DOCUMENT_OWNER">
       <AppLayout>
         <OwnerWorkspaceContent />
       </AppLayout>

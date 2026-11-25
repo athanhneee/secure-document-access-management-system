@@ -28,7 +28,7 @@ import { MyRequestsTab } from './tabs/my-requests-tab';
  */
 export function ReaderWorkspace() {
   return (
-    <AuthGuard requiredRole="DOCUMENT_READER">
+    <AuthGuard requiredPortal="DOCUMENT_READER">
       <AppLayout>
         <ReaderWorkspaceContent />
       </AppLayout>

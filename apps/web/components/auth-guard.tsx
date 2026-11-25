@@ -16,18 +16,26 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 
 interface AuthGuardProps {
   children: React.ReactNode;
+  requiredPortal?: RoleType;
   requiredRole?: RoleType;
   requiredPermission?: string;
 }
 
 /**
- * Thuật toán: Cổng Kiểm Soát Truy Cập Tuyến Đường Theo Máy Trạng Thái RBAC Bảo Toàn Phiên (`AuthGuard`)
+ * Thuật toán: Cổng Kiểm Soát Truy Cập Tuyến Đường Theo Quyền Thực Tế Bảo Toàn Phiên (`AuthGuard`)
  * Mục đích:
- *   - Chặn thực thi và dựng giao diện trái phép (bao gồm các hook gọi API con) khi tài khoản chưa xác thực hoặc thiếu vai trò/quyền tối thiểu (Least Privilege).
- *   - Khi gặp `403` (truy cập trực tiếp URL chéo vai trò), giữ nguyên khung điều hướng `AppLayout` và phiên đăng nhập hiện tại, đồng thời điều hướng người dùng quay về đúng phân hệ được cấp (`resolveDefaultPortalForRoles`) thay vì đẩy ra màn hình đăng xuất.
+ *   - Chặn thực thi và dựng giao diện trái phép (bao gồm các hook gọi API con) khi tài khoản chưa xác thực hoặc thiếu quyền truy cập phân hệ (`requiredPortal`) / vai trò (`requiredRole`) / quyền nguyên tử (`requiredPermission`).
+ *   - Cho phép tài khoản vai trò tùy chỉnh (Custom Role) vào đúng phân hệ tương ứng với tập quyền được cấp; đồng thời chặn ngay nếu vai trò bị gỡ sạch quyền (`permissions: []`).
+ *   - Khi gặp `403`, giữ nguyên khung điều hướng `AppLayout` và phiên đăng nhập hiện tại.
  */
-export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGuardProps) {
-  const { user, isLoading, isAuthenticated, hasRole, hasPermission, refreshUser } = useAuth();
+export function AuthGuard({
+  children,
+  requiredPortal,
+  requiredRole,
+  requiredPermission,
+}: AuthGuardProps) {
+  const { user, isLoading, isAuthenticated, hasRole, hasPermission, canAccessPortal, refreshUser } =
+    useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -60,12 +68,14 @@ export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGu
     return null;
   }
 
+  const isPortalAllowed = requiredPortal ? canAccessPortal(requiredPortal) : true;
   const isRoleAllowed = requiredRole ? hasRole(requiredRole) : true;
   const isPermissionAllowed = requiredPermission ? hasPermission(requiredPermission) : true;
 
-  if (!isRoleAllowed || !isPermissionAllowed) {
-    const fallbackWorkspace = resolveDefaultPortalForRoles(user.roles);
+  if (!isPortalAllowed || !isRoleAllowed || !isPermissionAllowed) {
+    const fallbackWorkspace = resolveDefaultPortalForRoles(user);
     const fallbackLabel = fallbackWorkspace === '/' ? 'Về trang chủ' : 'Về phân hệ làm việc';
+    const targetPortal = requiredPortal ?? requiredRole;
 
     return (
       <AppLayout>
@@ -89,11 +99,13 @@ export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGu
                   <span className="text-[#717171]">Tài khoản</span>
                   <span className="font-semibold text-[#222222]">{user.username}</span>
                 </div>
-                {requiredRole && (
+                {targetPortal && (
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-[#717171]">Vai trò yêu cầu</span>
+                    <span className="text-[#717171]">
+                      {requiredPortal ? 'Phân hệ yêu cầu' : 'Vai trò yêu cầu'}
+                    </span>
                     <span className="font-semibold text-[#C13515]">
-                      {ROLE_LABELS[requiredRole]}
+                      {ROLE_LABELS[targetPortal]}
                     </span>
                   </div>
                 )}
@@ -111,6 +123,14 @@ export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGu
                     {user.roles.length > 0
                       ? user.roles.map((r) => ROLE_LABELS[r as RoleType] ?? r).join(', ')
                       : 'Chưa gán'}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[#717171]">Quyền hiệu lực</span>
+                  <span className="text-[#222222]">
+                    {user.permissions.length > 0
+                      ? `${user.permissions.length} quyền`
+                      : 'Chưa có quyền nào'}
                   </span>
                 </div>
               </div>

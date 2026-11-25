@@ -15,7 +15,7 @@ export function HomeHeader() {
   const { isAuthenticated, user } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const ctaHref = isAuthenticated && user ? resolveDefaultPortalForRoles(user.roles) : '/login';
+  const ctaHref = isAuthenticated && user ? resolveDefaultPortalForRoles(user) : '/login';
   const desktopCtaText = isAuthenticated && user ? 'Vào phân hệ làm việc' : 'Đăng nhập hệ thống';
   const mobileCtaText = isAuthenticated && user ? 'Phân hệ' : 'Đăng nhập';
 

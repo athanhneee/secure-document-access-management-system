@@ -31,7 +31,7 @@ import type { DetectionRuleItem, IncidentItem, SecurityAlertItem } from './types
  */
 export function SecurityWorkspace() {
   return (
-    <AuthGuard requiredRole="SECURITY_OFFICER">
+    <AuthGuard requiredPortal="SECURITY_OFFICER">
       <AppLayout>
         <SecurityWorkspaceContent />
       </AppLayout>

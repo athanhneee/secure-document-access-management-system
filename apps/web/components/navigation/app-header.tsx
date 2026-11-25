@@ -46,7 +46,15 @@ const ROLE_NAV_ITEMS: ReadonlyArray<{
  *   - Chỉ hiển thị biểu tượng chuông thông báo (`NotificationBellDialog`) khi tài khoản thực sự có quyền `NOTIFICATION:VIEW`.
  */
 export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
-  const { user, activeRole, setActiveRole, logout, isAuthenticated, hasPermission } = useAuth();
+  const {
+    user,
+    activeRole,
+    setActiveRole,
+    logout,
+    isAuthenticated,
+    hasPermission,
+    canAccessPortal,
+  } = useAuth();
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -74,7 +82,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
   }, [roleMenuOpen]);
 
   const authorizedRoleItems = user
-    ? ROLE_NAV_ITEMS.filter((item) => user.roles.includes(item.role))
+    ? ROLE_NAV_ITEMS.filter((item) => canAccessPortal(item.role))
     : [];
   const canViewNotifications = hasPermission('NOTIFICATION:VIEW');
   const singleRoleLabel =

@@ -34,7 +34,7 @@ import type { AuditLogItem } from './types';
  */
 export function AuditorWorkspace() {
   return (
-    <AuthGuard requiredRole="AUDITOR">
+    <AuthGuard requiredPortal="AUDITOR">
       <AppLayout>
         <AuditorWorkspaceContent />
       </AppLayout>

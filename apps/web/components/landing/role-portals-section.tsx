@@ -93,12 +93,12 @@ const STAGGER_DELAYS = [
 ] as const;
 
 export function RolePortalsSection() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, canAccessPortal } = useAuth();
 
   const visiblePortals =
     isAuthenticated && user
       ? rolePortals.filter(
-          (portal) => portal.role === 'DEVICE_SESSIONS' || user.roles.includes(portal.role),
+          (portal) => portal.role === 'DEVICE_SESSIONS' || canAccessPortal(portal.role),
         )
       : rolePortals;
 

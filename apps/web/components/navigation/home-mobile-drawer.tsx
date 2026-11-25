@@ -73,7 +73,7 @@ interface HomeMobileDrawerProps {
  *   - Khi người dùng đã đăng nhập, chỉ hiển thị các lối tắt phân hệ khớp với `user.roles` và nút vào phân hệ/đăng xuất, tuyệt đối không hiển thị phân hệ không có quyền.
  */
 export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
-  const { isAuthenticated, user, logout } = useAuth();
+  const { isAuthenticated, user, logout, canAccessPortal } = useAuth();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -81,9 +81,9 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
 
   const visibleRoles =
     isAuthenticated && user
-      ? QUICK_ROLES.filter((item) => user.roles.includes(item.role))
+      ? QUICK_ROLES.filter((item) => canAccessPortal(item.role))
       : QUICK_ROLES;
-  const workspaceHref = resolveDefaultPortalForRoles(user?.roles);
+  const workspaceHref = resolveDefaultPortalForRoles(user);
 
   useEffect(() => {
     onCloseRef.current = onClose;

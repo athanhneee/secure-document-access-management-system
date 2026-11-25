@@ -4,6 +4,7 @@
  *   cho các bài kiểm thử trình duyệt thực thi trên cổng độc lập Next.js Standalone.
  */
 import type { Page } from '@playwright/test';
+import { ROLE_DEFAULT_PERMISSIONS } from '../apps/web/lib/role-permissions';
 
 export type RoleName =
   'SYSTEM_ADMIN' | 'DOCUMENT_OWNER' | 'DOCUMENT_READER' | 'SECURITY_OFFICER' | 'AUDITOR';
@@ -35,7 +36,7 @@ export async function mockAuthenticatedRoleSession(page: Page, role: RoleName): 
           status: 'ACTIVE',
           version: 1,
           roles: [role],
-          permissions: [],
+          permissions: [...ROLE_DEFAULT_PERMISSIONS[role]],
         }),
       });
       return;

@@ -15,7 +15,7 @@ import {
   systemRoleAllows,
 } from './permission-matrix.js';
 import type { RbacAuditService } from './rbac-audit.service.js';
-import { actorHoldsActiveRole } from './rbac-assignments.helper.js';
+import { actorHoldsActiveRole, isGlobalSystemAdminRoleManager } from './rbac-assignments.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 type SerializableTransaction = Parameters<Parameters<typeof withSerializableTransaction>[0]>[0];
@@ -70,6 +70,7 @@ export async function executeReplaceRolePermissions(params: {
   const uniquePermissionIds = [...new Set(permissionIds.map((id) => id.toString()))].map((id) =>
     BigInt(id),
   );
+  const bypassDelegationSubset = await isGlobalSystemAdminRoleManager(authorization, principal);
   const result = await withSerializableTransaction(
     async (transaction) => {
       const role = await transaction.role.findUnique({
@@ -87,7 +88,10 @@ export async function executeReplaceRolePermissions(params: {
       if (permissions.length !== uniquePermissionIds.length) {
         throw new NotFoundException('Permission not found.');
       }
-      await authorization.assertCanDelegate(principal, uniquePermissionIds, null);
+      // CONFLICT-RESOLVED: Cho phép SYSTEM_ADMIN toàn cục có ROLE_MANAGE toàn cục phân quyền cho vai trò hệ thống khác và Custom Role nghiệp vụ (do SoD đã tách quyền nghiệp vụ khỏi SYSTEM_ADMIN), đồng thời giữ nguyên trần ủy quyền assertCanDelegate cho mọi quản trị viên cấp thấp/scoped và giữ nguyên chốt chặn actorHoldsActiveRole + systemRoleAllows + SoD.
+      if (!bypassDelegationSubset) {
+        await authorization.assertCanDelegate(principal, uniquePermissionIds, null);
+      }
       if (
         role.is_system_role &&
         !systemRoleAllows(

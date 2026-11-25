@@ -2,9 +2,23 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { apiClient, ApiError, getCsrfToken, sanitizeRedirectPath } from './api-client';
-import { disconnectRealtimeStream } from './realtime-events';
-import { checkEffectivePermission, type SystemRoleType } from './role-permissions';
+import {
+  apiClient,
+  ApiError,
+  getCsrfToken,
+  sanitizeRedirectPath,
+  subscribeSessionExpired,
+} from './api-client';
+import { disconnectRealtimeStream, subscribeRealtimeEvent } from './realtime-events';
+import {
+  canAccessPortal as evaluatePortalAccess,
+  checkEffectivePermission,
+  getAccessiblePortals,
+  PORTAL_PATHS,
+  resolveDefaultPortalForUser,
+  type PermissionPrincipalLike,
+  type SystemRoleType,
+} from './role-permissions';
 
 export interface AuthUser {
   id: string;
@@ -32,46 +46,43 @@ export const ROLE_LABELS: Record<RoleType, string> = {
   AUDITOR: 'Kiểm toán viên độc lập',
 };
 
-export const ROLE_PATHS: Record<RoleType, string> = {
-  SYSTEM_ADMIN: '/admin',
-  DOCUMENT_OWNER: '/owner',
-  DOCUMENT_READER: '/reader',
-  SECURITY_OFFICER: '/security',
-  AUDITOR: '/auditor',
-};
-
-const ROLE_PRIORITY_ORDER: readonly RoleType[] = [
-  'SYSTEM_ADMIN',
-  'DOCUMENT_OWNER',
-  'SECURITY_OFFICER',
-  'AUDITOR',
-  'DOCUMENT_READER',
-];
+export const ROLE_PATHS: Record<RoleType, string> = PORTAL_PATHS;
 
 /**
- * Thuật toán: Suy Diễn Cổng Làm Việc Mặc Định & Chống Bẫy Chuyển Hướng Chéo Vai Trò (`resolveDefaultPortalForRoles`, `resolveAuthorizedRedirectPath`)
+ * Thuật toán: Suy Diễn Cổng Làm Việc Mặc Định & Chống Bẫy Chuyển Hướng Chéo Phân Hệ Theo Quyền Thực Tế (`resolveDefaultPortalForRoles`, `resolveAuthorizedRedirectPath`)
  * Mục đích:
- *   - Ngăn chặn tình huống người dùng đăng nhập qua liên kết `?redirect=/admin` (hoặc cổng vai trò khác) nhưng tài khoản thực tế thuộc vai trò khác (như `DOCUMENT_READER`) bị đẩy thẳng vào màn hình `403`.
- *   - Nếu đường dẫn `redirect` thuộc một trong 5 tiền tố cổng phân quyền mà tài khoản không sở hữu vai trò tương ứng, tự động chuyển về cổng mặc định đúng với vai trò của tài khoản.
+ *   - Cho phép tài khoản vai trò tùy chỉnh (Custom Role như `HR_MANAGER` có `USER:MANAGE`) tự động vào đúng phân hệ được cấp quyền (`/admin`) thay vì bị đẩy nhầm vào `/reader` và nhận lỗi `403`.
+ *   - Khi tài khoản bị gỡ sạch quyền (`permissions: []`), trả về `'/'` thay vì ép vào một phân hệ không còn quyền truy cập.
  */
-export function resolveDefaultPortalForRoles(roles: readonly string[] | undefined): string {
-  if (!roles || roles.length === 0) return '/';
-  for (const candidate of ROLE_PRIORITY_ORDER) {
-    if (roles.includes(candidate)) {
-      return ROLE_PATHS[candidate];
+export function resolveDefaultPortalForRoles(
+  userOrRoles: PermissionPrincipalLike | readonly string[] | null | undefined,
+): string {
+  if (!userOrRoles) return '/';
+  if (Array.isArray(userOrRoles)) {
+    // Tương thích ngược nếu caller cũ truyền mảng roles thô
+    const fallbackOrder: readonly RoleType[] = [
+      'SYSTEM_ADMIN',
+      'DOCUMENT_OWNER',
+      'SECURITY_OFFICER',
+      'AUDITOR',
+      'DOCUMENT_READER',
+    ];
+    for (const candidate of fallbackOrder) {
+      if (userOrRoles.includes(candidate)) return ROLE_PATHS[candidate];
     }
+    return '/';
   }
-  return ROLE_PATHS.DOCUMENT_READER;
+  return resolveDefaultPortalForUser(userOrRoles as PermissionPrincipalLike);
 }
 
 export function resolveAuthorizedRedirectPath(
   rawRedirect: string | null | undefined,
-  roles: readonly string[] | undefined,
+  userOrRoles: PermissionPrincipalLike | readonly string[] | null | undefined,
 ): string {
   const safeRedirect = sanitizeRedirectPath(rawRedirect, '/');
-  const defaultPortal = resolveDefaultPortalForRoles(roles);
+  const defaultPortal = resolveDefaultPortalForRoles(userOrRoles);
 
-  if (!roles || roles.length === 0) {
+  if (!userOrRoles) {
     return safeRedirect;
   }
   if (safeRedirect === '/') {
@@ -86,8 +97,11 @@ export function resolveAuthorizedRedirectPath(
   );
 
   if (matchedPortal) {
-    const [requiredRole] = matchedPortal;
-    return roles.includes(requiredRole) ? safeRedirect : defaultPortal;
+    const [portalKey] = matchedPortal;
+    const isAllowed = Array.isArray(userOrRoles)
+      ? userOrRoles.includes(portalKey)
+      : evaluatePortalAccess(userOrRoles as PermissionPrincipalLike, portalKey);
+    return isAllowed ? safeRedirect : defaultPortal;
   }
 
   return safeRedirect;
@@ -96,6 +110,7 @@ export function resolveAuthorizedRedirectPath(
 interface AuthContextValue {
   user: AuthUser | null;
   activeRole: RoleType | null;
+  accessiblePortals: RoleType[];
   isLoading: boolean;
   isAuthenticated: boolean;
   setActiveRole: (role: RoleType) => void;
@@ -104,6 +119,7 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
   hasRole: (role: RoleType) => boolean;
+  canAccessPortal: (portal: RoleType) => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -149,6 +165,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const forceExpireSession = useCallback(
+    (reason: 'locked' | 'disabled' | 'session_revoked') => {
+      disconnectRealtimeStream();
+      setUser(null);
+      setRoleOverride(null);
+      router.replace(`/login?reason=${reason}`);
+    },
+    [router],
+  );
+
   useEffect(() => {
     if (!getCsrfToken()) {
       // oxlint-disable-next-line react/set-state-in-effect
@@ -158,28 +184,66 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void refreshUser();
   }, [refreshUser]);
 
+  /**
+   * Thuật toán: Cưỡng Chế Đăng Xuất Tức Thì Khi Tài Khoản Bị Khóa/Vô Hiệu Qua SSE `USER_SESSION_REVOKED` Hoặc Lỗi `401` Hết Phiên (`AuthProvider`)
+   * Mục đích: Khi quản trị viên khóa (`LOCKED`) hoặc vô hiệu hóa (`DISABLED`) tài khoản, lập tức ngắt luồng SSE, xóa trạng thái phiên cục bộ và chuyển hướng trình duyệt về `/login?reason=...` mà không cần tải lại trang; tuyệt đối không tự đăng xuất khi gặp `403 Forbidden`.
+   */
+  const authenticatedUserId = user?.id ?? null;
+  useEffect(() => {
+    if (!authenticatedUserId) {
+      return;
+    }
+    const unsubscribeSse = subscribeRealtimeEvent<{
+      userId?: string;
+      status?: string;
+      reason?: string;
+    }>('USER_SESSION_REVOKED', (event) => {
+      const targetUserId = event.payload?.userId;
+      if (targetUserId && targetUserId !== authenticatedUserId) {
+        return;
+      }
+      const status = String(event.payload?.status ?? '').toUpperCase();
+      if (status === 'DISABLED') {
+        forceExpireSession('disabled');
+      } else if (status === 'LOCKED') {
+        forceExpireSession('locked');
+      } else {
+        forceExpireSession('session_revoked');
+      }
+    });
+    const unsubscribe401 = subscribeSessionExpired(() => {
+      forceExpireSession('session_revoked');
+    });
+    return () => {
+      unsubscribeSse();
+      unsubscribe401();
+    };
+  }, [authenticatedUserId, forceExpireSession]);
+
+  const accessiblePortals = useMemo<RoleType[]>(() => getAccessiblePortals(user), [user]);
+
   const activeRole = useMemo<RoleType | null>(() => {
-    if (!user || !user.roles || user.roles.length === 0) {
+    if (!user || accessiblePortals.length === 0) {
       return null;
     }
     if (
       roleOverride &&
       roleOverride.fromPath === pathname &&
-      user.roles.includes(roleOverride.role)
+      accessiblePortals.includes(roleOverride.role)
     ) {
       return roleOverride.role;
     }
     const pathRole = Object.entries(ROLE_PATHS).find(([, path]) =>
       pathname?.startsWith(path),
     )?.[0] as RoleType | undefined;
-    if (pathRole && user.roles.includes(pathRole)) {
+    if (pathRole && accessiblePortals.includes(pathRole)) {
       return pathRole;
     }
-    if (roleOverride && user.roles.includes(roleOverride.role)) {
+    if (roleOverride && accessiblePortals.includes(roleOverride.role)) {
       return roleOverride.role;
     }
-    return user.roles[0] as RoleType;
-  }, [user, pathname, roleOverride]);
+    return accessiblePortals[0] ?? null;
+  }, [user, accessiblePortals, pathname, roleOverride]);
 
   const setActiveRole = useCallback(
     (role: RoleType) => {
@@ -214,10 +278,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [user],
   );
 
+  const canAccessPortal = useCallback(
+    (portal: RoleType) => evaluatePortalAccess(user, portal),
+    [user],
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
       activeRole,
+      accessiblePortals,
       isLoading,
       isAuthenticated: Boolean(user),
       setActiveRole,
@@ -226,10 +296,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout,
       hasPermission,
       hasRole,
+      canAccessPortal,
     }),
     [
       user,
       activeRole,
+      accessiblePortals,
       isLoading,
       setActiveRole,
       hydrateUser,
@@ -237,6 +309,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout,
       hasPermission,
       hasRole,
+      canAccessPortal,
     ],
   );
 

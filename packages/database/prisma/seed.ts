@@ -104,11 +104,11 @@ async function seed(): Promise<void> {
       }
 
       const permissionByCode = new Map<string, bigint>();
-      for (const [code, resource_type, action] of permissions) {
+      for (const [code, resource_type, action, name] of permissions) {
         const permission = await transaction.permission.upsert({
           where: { code },
-          update: { name: code, resource_type, action },
-          create: { code, name: code, resource_type, action },
+          update: { name, resource_type, action },
+          create: { code, name, resource_type, action },
         });
         permissionByCode.set(code, permission.id);
       }

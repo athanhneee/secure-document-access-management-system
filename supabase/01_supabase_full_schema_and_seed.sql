@@ -1558,7 +1558,7 @@ SET
 INSERT INTO public.roles (code, name, description, is_system_role, is_active, created_by)
 VALUES
   ('SYSTEM_ADMIN', 'Quản trị viên hệ thống', 'Quản trị người dùng, phòng ban, vai trò, thuộc tính và chính sách; không có quyền xem nội dung tài liệu mật', TRUE, TRUE, (SELECT id FROM public.users WHERE username = 'system.seed')),
-  ('SECURITY_OFFICER', 'Nhân viên bảo mật', 'Giám sát cảnh báo SOC, truy vết thủy vân pháp y, quản lý sự cố và ngắt phiên khẩn cấp', TRUE, TRUE, (SELECT id FROM public.users WHERE username = 'system.seed')),
+  ('SECURITY_OFFICER', 'Nhân viên bảo mật', 'Giám sát cảnh báo SOC, truy vết watermark pháp y, quản lý sự cố và ngắt phiên khẩn cấp', TRUE, TRUE, (SELECT id FROM public.users WHERE username = 'system.seed')),
   ('AUDITOR', 'Kiểm toán viên', 'Tra cứu nhật ký kiểm toán bất biến, xác minh chuỗi HMAC và xuất báo cáo độc lập (chỉ đọc)', TRUE, TRUE, (SELECT id FROM public.users WHERE username = 'system.seed')),
   ('DOCUMENT_OWNER', 'Chủ sở hữu tài liệu', 'Tải lên, phân loại độ mật, phát hành phiên bản và phê duyệt/thu hồi quyền truy cập tài liệu sở hữu', TRUE, TRUE, (SELECT id FROM public.users WHERE username = 'system.seed')),
   ('DOCUMENT_READER', 'Người đọc tài liệu', 'Tìm kiếm tài liệu được phép khám phá, gửi yêu cầu cấp quyền và xem/tải tài liệu trong thời hạn hiệu lực', TRUE, TRUE, (SELECT id FROM public.users WHERE username = 'system.seed'))
@@ -1573,40 +1573,40 @@ SET
 -- CONFLICT-RESOLVED: Bổ sung quyền SYSTEM_HEALTH_MANAGE và DOCUMENT_MANAGE đồng bộ với Prisma seed-catalog và bộ quyền RBAC tầng API.
 INSERT INTO public.permissions (code, name, resource_type, action)
 VALUES
-  ('USER_MANAGE', 'USER_MANAGE', 'USER', 'MANAGE'),
-  ('DEPARTMENT_MANAGE', 'DEPARTMENT_MANAGE', 'DEPARTMENT', 'MANAGE'),
-  ('ROLE_MANAGE', 'ROLE_MANAGE', 'ROLE', 'MANAGE'),
-  ('ATTRIBUTE_MANAGE', 'ATTRIBUTE_MANAGE', 'ATTRIBUTE', 'MANAGE'),
-  ('POLICY_MANAGE', 'POLICY_MANAGE', 'POLICY', 'MANAGE'),
-  ('POLICY_SIMULATE', 'POLICY_SIMULATE', 'POLICY', 'SIMULATE'),
-  ('WATERMARK_CONFIG_MANAGE', 'WATERMARK_CONFIG_MANAGE', 'WATERMARK_CONFIG', 'MANAGE'),
-  ('SYSTEM_HEALTH_VIEW', 'SYSTEM_HEALTH_VIEW', 'SYSTEM_HEALTH', 'VIEW'),
-  ('SYSTEM_HEALTH_MANAGE', 'SYSTEM_HEALTH_MANAGE', 'SYSTEM_HEALTH', 'MANAGE'),
-  ('DOCUMENT_UPLOAD', 'DOCUMENT_UPLOAD', 'DOCUMENT', 'UPLOAD'),
-  ('DOCUMENT_CLASSIFY', 'DOCUMENT_CLASSIFY', 'DOCUMENT', 'CLASSIFY'),
-  ('DOCUMENT_VERSION_CREATE', 'DOCUMENT_VERSION_CREATE', 'DOCUMENT_VERSION', 'CREATE'),
-  ('DOCUMENT_ARCHIVE', 'DOCUMENT_ARCHIVE', 'DOCUMENT', 'ARCHIVE'),
-  ('DOCUMENT_MANAGE', 'DOCUMENT_MANAGE', 'DOCUMENT', 'MANAGE'),
-  ('DOCUMENT_DISCOVER', 'DOCUMENT_DISCOVER', 'DOCUMENT', 'DISCOVER'),
-  ('DOCUMENT_VIEW', 'DOCUMENT_VIEW', 'DOCUMENT', 'VIEW'),
-  ('DOCUMENT_DOWNLOAD', 'DOCUMENT_DOWNLOAD', 'DOCUMENT', 'DOWNLOAD'),
-  ('ACCESS_REQUEST_CREATE', 'ACCESS_REQUEST_CREATE', 'ACCESS_REQUEST', 'CREATE'),
-  ('ACCESS_REQUEST_VIEW_OWN', 'ACCESS_REQUEST_VIEW_OWN', 'ACCESS_REQUEST', 'VIEW_OWN'),
-  ('ACCESS_REQUEST_CANCEL', 'ACCESS_REQUEST_CANCEL', 'ACCESS_REQUEST', 'CANCEL'),
-  ('ACCESS_REQUEST_DECIDE', 'ACCESS_REQUEST_DECIDE', 'ACCESS_REQUEST', 'DECIDE'),
-  ('ACCESS_GRANT_CREATE', 'ACCESS_GRANT_CREATE', 'ACCESS_GRANT', 'CREATE'),
-  ('ACCESS_GRANT_REVOKE', 'ACCESS_GRANT_REVOKE', 'ACCESS_GRANT', 'REVOKE'),
-  ('ACCESS_GRANT_VIEW', 'ACCESS_GRANT_VIEW', 'ACCESS_GRANT', 'VIEW'),
-  ('AUDIT_VIEW', 'AUDIT_VIEW', 'AUDIT_LOG', 'VIEW'),
-  ('AUDIT_EXPORT', 'AUDIT_EXPORT', 'AUDIT_LOG', 'EXPORT'),
-  ('ALERT_VIEW', 'ALERT_VIEW', 'SECURITY_ALERT', 'VIEW'),
-  ('ALERT_MANAGE', 'ALERT_MANAGE', 'SECURITY_ALERT', 'MANAGE'),
-  ('WATERMARK_TRACE', 'WATERMARK_TRACE', 'WATERMARK_INSTANCE', 'TRACE'),
-  ('INCIDENT_CREATE', 'INCIDENT_CREATE', 'INCIDENT_REPORT', 'CREATE'),
-  ('INCIDENT_MANAGE', 'INCIDENT_MANAGE', 'INCIDENT_REPORT', 'MANAGE'),
-  ('NOTIFICATION_VIEW', 'NOTIFICATION_VIEW', 'NOTIFICATION', 'VIEW'),
-  ('SYSTEM_REPORT_EXPORT', 'SYSTEM_REPORT_EXPORT', 'SYSTEM_REPORT', 'EXPORT'),
-  ('ACCESS_SESSION_TERMINATE', 'ACCESS_SESSION_TERMINATE', 'ACCESS_SESSION', 'TERMINATE')
+  ('USER_MANAGE', 'Quản lý người dùng', 'USER', 'MANAGE'),
+  ('DEPARTMENT_MANAGE', 'Quản lý phòng ban', 'DEPARTMENT', 'MANAGE'),
+  ('ROLE_MANAGE', 'Quản lý vai trò RBAC', 'ROLE', 'MANAGE'),
+  ('ATTRIBUTE_MANAGE', 'Quản lý thuộc tính ABAC', 'ATTRIBUTE', 'MANAGE'),
+  ('POLICY_MANAGE', 'Quản lý chính sách ABAC', 'POLICY', 'MANAGE'),
+  ('POLICY_SIMULATE', 'Mô phỏng chính sách ABAC', 'POLICY', 'SIMULATE'),
+  ('WATERMARK_CONFIG_MANAGE', 'Quản lý cấu hình watermark', 'WATERMARK_CONFIG', 'MANAGE'),
+  ('SYSTEM_HEALTH_VIEW', 'Xem sức khỏe hệ thống', 'SYSTEM_HEALTH', 'VIEW'),
+  ('SYSTEM_HEALTH_MANAGE', 'Quản trị sức khỏe hệ thống', 'SYSTEM_HEALTH', 'MANAGE'),
+  ('DOCUMENT_UPLOAD', 'Tải lên tài liệu', 'DOCUMENT', 'UPLOAD'),
+  ('DOCUMENT_CLASSIFY', 'Phân loại độ mật tài liệu', 'DOCUMENT', 'CLASSIFY'),
+  ('DOCUMENT_VERSION_CREATE', 'Tạo phiên bản tài liệu', 'DOCUMENT_VERSION', 'CREATE'),
+  ('DOCUMENT_ARCHIVE', 'Lưu trữ tài liệu', 'DOCUMENT', 'ARCHIVE'),
+  ('DOCUMENT_MANAGE', 'Quản lý tài liệu', 'DOCUMENT', 'MANAGE'),
+  ('DOCUMENT_DISCOVER', 'Tra cứu danh mục tài liệu', 'DOCUMENT', 'DISCOVER'),
+  ('DOCUMENT_VIEW', 'Xem nội dung tài liệu', 'DOCUMENT', 'VIEW'),
+  ('DOCUMENT_DOWNLOAD', 'Tải xuống tài liệu', 'DOCUMENT', 'DOWNLOAD'),
+  ('ACCESS_REQUEST_CREATE', 'Gửi yêu cầu cấp quyền', 'ACCESS_REQUEST', 'CREATE'),
+  ('ACCESS_REQUEST_VIEW_OWN', 'Xem yêu cầu truy cập cá nhân', 'ACCESS_REQUEST', 'VIEW_OWN'),
+  ('ACCESS_REQUEST_CANCEL', 'Hủy yêu cầu cấp quyền', 'ACCESS_REQUEST', 'CANCEL'),
+  ('ACCESS_REQUEST_DECIDE', 'Phê duyệt yêu cầu cấp quyền', 'ACCESS_REQUEST', 'DECIDE'),
+  ('ACCESS_GRANT_CREATE', 'Cấp quyền truy cập', 'ACCESS_GRANT', 'CREATE'),
+  ('ACCESS_GRANT_REVOKE', 'Thu hồi quyền truy cập', 'ACCESS_GRANT', 'REVOKE'),
+  ('ACCESS_GRANT_VIEW', 'Xem danh sách cấp quyền', 'ACCESS_GRANT', 'VIEW'),
+  ('AUDIT_VIEW', 'Xem nhật ký kiểm toán', 'AUDIT_LOG', 'VIEW'),
+  ('AUDIT_EXPORT', 'Xuất nhật ký kiểm toán', 'AUDIT_LOG', 'EXPORT'),
+  ('ALERT_VIEW', 'Xem cảnh báo an ninh', 'SECURITY_ALERT', 'VIEW'),
+  ('ALERT_MANAGE', 'Xử lý cảnh báo an ninh', 'SECURITY_ALERT', 'MANAGE'),
+  ('WATERMARK_TRACE', 'Truy vết watermark', 'WATERMARK_INSTANCE', 'TRACE'),
+  ('INCIDENT_CREATE', 'Tạo hồ sơ sự cố', 'INCIDENT_REPORT', 'CREATE'),
+  ('INCIDENT_MANAGE', 'Quản lý & điều tra sự cố', 'INCIDENT_REPORT', 'MANAGE'),
+  ('NOTIFICATION_VIEW', 'Xem thông báo', 'NOTIFICATION', 'VIEW'),
+  ('SYSTEM_REPORT_EXPORT', 'Xuất báo cáo hệ thống', 'SYSTEM_REPORT', 'EXPORT'),
+  ('ACCESS_SESSION_TERMINATE', 'Ngắt phiên truy cập khẩn cấp', 'ACCESS_SESSION', 'TERMINATE')
 ON CONFLICT (code) DO UPDATE
 SET name = EXCLUDED.name, resource_type = EXCLUDED.resource_type, action = EXCLUDED.action;
 
@@ -1836,7 +1836,7 @@ SET
   operator = EXCLUDED.operator,
   expected_value = EXCLUDED.expected_value;
 
--- 9.10. Cấu hình Đóng dấu Thủy vân Pháp y Mặc định & Theo Cấp độ Mật (Ngăn lỗi FK 23503)
+-- 9.10. Cấu hình Đóng dấu Watermark Pháp y Mặc định & Theo Cấp độ Mật (Ngăn lỗi FK 23503)
 INSERT INTO public.watermark_configs (
   name, classification_level_id, is_default, is_visible, template_text,
   opacity_percent, rotation_degrees, font_size, color_hex, include_qr_code, is_active, created_by

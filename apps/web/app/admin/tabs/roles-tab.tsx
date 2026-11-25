@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { resolvePermissionLabel } from '@/lib/permission-labels';
 import type { RoleRow } from '../types';
 
 interface RolesTabProps {
@@ -49,9 +50,9 @@ export function RolesTab({
 
       <div className="grid gap-3.5 md:grid-cols-2 lg:grid-cols-3">
         {roles.map((role) => (
-          <Card key={role.id} className="flex flex-col justify-between">
+          <Card key={role.id} className="flex flex-col justify-between min-w-0">
             <CardHeader className="pb-2.5">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2 min-w-0">
                 <CardTitle className="text-sm font-semibold text-[#222222] truncate">
                   {role.name}
                 </CardTitle>
@@ -73,14 +74,15 @@ export function RolesTab({
               <div className="text-xs font-medium text-[#717171]">
                 Quyền hạn ({role.permissions.length})
               </div>
-              <div className="flex flex-wrap gap-x-2.5 gap-y-1 max-h-20 overflow-y-auto pr-1">
+              <div className="flex flex-wrap gap-x-3 gap-y-1.5 max-h-24 overflow-y-auto pr-1">
                 {role.permissions.map((p, idx) => (
                   <span
-                    key={idx}
-                    className="staff-badge inline-flex items-center gap-1 font-mono text-xs text-[#008489]"
+                    key={p.id ?? `${p.code}-${idx}`}
+                    title={p.code}
+                    className="staff-badge inline-flex items-center gap-1.5 font-medium text-xs text-[#008489] min-w-0"
                   >
-                    <span className="dot dot-info" aria-hidden="true" />
-                    <span>{p.code}</span>
+                    <span className="dot dot-info shrink-0" aria-hidden="true" />
+                    <span className="break-words">{resolvePermissionLabel(p)}</span>
                   </span>
                 ))}
               </div>

@@ -26,7 +26,13 @@ export function presentRoleDto(role: {
   is_active: boolean;
   version: number;
   role_permissions: Array<{
-    permissions: { id: bigint; code: string; resource_type: string; action: string };
+    permissions: {
+      id: bigint;
+      code: string;
+      name?: string | undefined;
+      resource_type: string;
+      action: string;
+    };
   }>;
 }) {
   return {
@@ -41,6 +47,7 @@ export function presentRoleDto(role: {
       .map((mapping) => ({
         id: mapping.permissions.id.toString(),
         code: mapping.permissions.code,
+        ...(mapping.permissions.name !== undefined ? { name: mapping.permissions.name } : {}),
         resource: mapping.permissions.resource_type,
         action: mapping.permissions.action,
       }))

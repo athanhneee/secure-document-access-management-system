@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { resolvePermissionLabel, resolvePermissionScopeLabel } from '@/lib/permission-labels';
 import { resolveRolePermissionIds } from '../helpers';
 import type { PermissionRow, RoleRow } from '../types';
 
@@ -112,12 +113,15 @@ function RolePermissionsForm({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {permissions.map((perm) => {
             const isChecked = selectedPermIds.includes(perm.id);
+            const permLabel = resolvePermissionLabel(perm);
+            const permScopeLabel = resolvePermissionScopeLabel(perm);
             return (
               <label
                 key={perm.id}
                 htmlFor={`role-perm-${perm.id}`}
-                aria-label={perm.code}
-                className={`flex items-start gap-2 p-2 rounded-[16px] border cursor-pointer transition-colors ${
+                aria-label={permLabel}
+                title={perm.code}
+                className={`flex items-start gap-2.5 min-h-11 p-2.5 rounded-[16px] border cursor-pointer transition-colors min-w-0 ${
                   isChecked
                     ? 'border-[#FF385C] bg-[#FF385C]/5'
                     : 'border-[#ebebeb] hover:bg-[#f7f7f7]'
@@ -134,13 +138,13 @@ function RolePermissionsForm({
                       setSelectedPermIds((prev) => prev.filter((id) => id !== perm.id));
                     }
                   }}
-                  className="mt-0.5 rounded border-[#dddddd] text-[#FF385C] focus:ring-[#FF385C]"
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#dddddd] text-[#FF385C] focus:ring-[#FF385C]"
                 />
-                <div>
-                  <div className="font-mono font-bold text-xs text-[#222222]">{perm.code}</div>
-                  <div className="text-[13px] text-[#717171]">
-                    {perm.resource || perm.resourceType} : {perm.action}
+                <div className="min-w-0">
+                  <div className="font-semibold text-[13px] text-[#222222] leading-snug break-words">
+                    {permLabel}
                   </div>
+                  <div className="text-xs text-[#717171] mt-0.5 break-words">{permScopeLabel}</div>
                 </div>
               </label>
             );

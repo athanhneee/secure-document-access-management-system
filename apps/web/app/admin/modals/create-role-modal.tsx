@@ -78,14 +78,14 @@ export function CreateRoleModal({
             Tạo vai trò mới
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Mã vai trò gồm chữ in hoa và gạch dưới (ví dụ: AUDIT_SPECIALIST)
+            Mã vai trò gồm chữ in hoa và dấu gạch dưới (ví dụ: AUDIT_SPECIALIST).
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleCreateRole} className="space-y-3.5 py-2 text-xs">
           <div className="space-y-1">
             <label htmlFor="role-code" className="font-medium text-[#222222]">
-              Mã vai trò (Code) <span className="text-[#C13515]">*</span>
+              Mã vai trò <span className="text-[#C13515]">*</span>
             </label>
             <Input
               id="role-code"
@@ -106,7 +106,7 @@ export function CreateRoleModal({
               required
               value={newRoleName}
               onChange={(e) => setNewRoleName(e.target.value)}
-              placeholder="Cán bộ Giám sát Tuân thủ"
+              placeholder="Chuyên viên kiểm soát tuân thủ"
               className="min-h-11 sm:h-9 text-xs rounded-full"
             />
           </div>
@@ -120,7 +120,7 @@ export function CreateRoleModal({
               rows={3}
               value={newRoleDesc}
               onChange={(e) => setNewRoleDesc(e.target.value)}
-              placeholder="Nhiệm vụ và phạm vi thẩm quyền của vai trò..."
+              placeholder="Nhiệm vụ và phạm vi quyền hạn của vai trò…"
               className="text-xs rounded-[20px]"
             />
           </div>

@@ -16,15 +16,33 @@ interface AbacAttributesPanelProps {
   attributes: AttributeDefinitionRow[];
 }
 
+const ATTRIBUTE_DATA_TYPE_LABELS: Readonly<Record<string, string>> = {
+  STRING: 'Chuỗi ký tự',
+  NUMBER: 'Số',
+  INTEGER: 'Số nguyên',
+  BOOLEAN: 'Đúng / Sai',
+  ENUM: 'Danh mục',
+  ARRAY: 'Danh sách',
+  STRING_ARRAY: 'Danh sách chuỗi',
+  IP_CIDR: 'Dải địa chỉ IP',
+  TIME_RANGE: 'Khung thời gian',
+};
+
+function formatAttributeDataTypeLabel(raw?: string | null): string {
+  const key = (raw ?? 'STRING').trim().toUpperCase();
+  return ATTRIBUTE_DATA_TYPE_LABELS[key] ?? raw ?? 'Chuỗi ký tự';
+}
+
 export function AbacAttributesPanel({ attributes }: AbacAttributesPanelProps) {
   return (
     <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)]">
       <CardHeader>
         <CardTitle className="text-base text-[#222222]">
-          Định nghĩa Thuộc tính Kiểm soát Quyền (Attribute Definitions)
+          Định nghĩa thuộc tính kiểm soát truy cập
         </CardTitle>
         <CardDescription className="text-xs text-[#717171]">
-          Các thuộc tính Subject, Resource và Environment phục vụ đánh giá quy chế bảo mật
+          Các thuộc tính của người dùng, tài liệu và bối cảnh truy cập phục vụ đánh giá chính sách
+          bảo mật.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
@@ -35,9 +53,7 @@ export function AbacAttributesPanel({ attributes }: AbacAttributesPanelProps) {
                 <TableHead className="text-xs text-[#717171]">Mã thuộc tính</TableHead>
                 <TableHead className="text-xs text-[#717171]">Tên thuộc tính</TableHead>
                 <TableHead className="text-xs text-[#717171]">Kiểu dữ liệu</TableHead>
-                <TableHead className="text-xs text-[#717171]">
-                  Các tùy chọn &amp; Thứ tự bậc (Rank)
-                </TableHead>
+                <TableHead className="text-xs text-[#717171]">Các tùy chọn và thứ tự cấp</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -50,7 +66,7 @@ export function AbacAttributesPanel({ attributes }: AbacAttributesPanelProps) {
                     {attr.name}
                   </TableCell>
                   <TableCell className="text-xs text-[#717171]">
-                    {attr.data_type || 'STRING'}
+                    {formatAttributeDataTypeLabel(attr.data_type)}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -62,7 +78,7 @@ export function AbacAttributesPanel({ attributes }: AbacAttributesPanelProps) {
                             : opt.name || opt.code}{' '}
                           {opt.numeric_rank !== null &&
                             opt.numeric_rank !== undefined &&
-                            `(Rank ${opt.numeric_rank})`}
+                            `(Cấp ${opt.numeric_rank})`}
                         </Badge>
                       ))}
                     </div>

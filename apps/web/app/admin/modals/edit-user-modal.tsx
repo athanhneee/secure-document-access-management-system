@@ -48,8 +48,7 @@ export function EditUserModal({
             Chỉnh sửa tài khoản: @{user?.username}
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Cập nhật họ tên, email, mã nhân viên, đơn vị công tác và cấp độ thẩm tra (phiên bản v
-            {user?.version ?? 0})
+            Cập nhật họ tên, email, mã nhân viên, phòng ban trực thuộc và cấp thẩm quyền bảo mật.
           </DialogDescription>
         </DialogHeader>
 
@@ -111,6 +110,10 @@ function EditUserForm({
       onError('Vui lòng nhập đầy đủ họ tên và địa chỉ email hợp lệ.');
       return;
     }
+    if (!departmentId) {
+      onError('Vui lòng chọn phòng ban trực thuộc cho tài khoản.');
+      return;
+    }
 
     setIsSubmitting(true);
     onClearError();
@@ -122,7 +125,7 @@ function EditUserForm({
           fullName: fullName.trim(),
           email: email.trim(),
           employeeCode: employeeCode.trim() ? employeeCode.trim() : null,
-          departmentId: departmentId ? departmentId : null,
+          departmentId,
           clearanceOptionId: clearanceOptionId ? clearanceOptionId : null,
         }),
       });
@@ -173,29 +176,32 @@ function EditUserForm({
 
       <div className="space-y-1">
         <label htmlFor="edit-user-empcode" className="font-medium text-[#222222]">
-          Mã nhân viên (Employee Code)
+          Mã nhân viên
         </label>
         <Input
           id="edit-user-empcode"
           maxLength={50}
           value={employeeCode}
           onChange={(e) => setEmployeeCode(e.target.value)}
-          placeholder="VD: EMP-00102"
+          placeholder="VD: NV-00102"
           className="min-h-11 sm:h-9 text-xs font-mono rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
         />
       </div>
 
       <div className="space-y-1">
         <label htmlFor="edit-user-department" className="font-medium text-[#222222]">
-          Phòng ban trực thuộc
+          Phòng ban trực thuộc <span className="text-[#C13515]">*</span>
         </label>
         <select
           id="edit-user-department"
+          required
           value={departmentId}
           onChange={(e) => setDepartmentId(e.target.value)}
           className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
         >
-          <option value="">Không gán phòng ban</option>
+          <option value="" disabled>
+            Chọn phòng ban trực thuộc…
+          </option>
           {departments
             .filter((d) => d.isActive || String(d.id) === departmentId)
             .map((d) => (
@@ -204,11 +210,25 @@ function EditUserForm({
               </option>
             ))}
         </select>
+        {!departmentId && (
+          <div className="mt-1.5 rounded-[16px] border border-[#E07912]/40 bg-[#f7f7f7] p-2.5 flex items-start gap-2 text-[11px] text-[#717171]">
+            <AlertTriangle
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#E07912] mt-0.5"
+              aria-hidden="true"
+            />
+            <span>
+              Tài khoản chưa được gán phòng ban nên sẽ bị chính sách bảo mật từ chối truy cập tài
+              liệu. Vui lòng chọn phòng ban trước khi lưu.
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="space-y-1">
         <label htmlFor="edit-user-clearance" className="font-medium text-[#222222]">
-          Cấp độ thẩm tra an ninh (CLEARANCE_LEVEL)
+          Cấp thẩm quyền bảo mật
         </label>
         <select
           id="edit-user-clearance"
@@ -216,10 +236,10 @@ function EditUserForm({
           onChange={(e) => setClearanceOptionId(e.target.value)}
           className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
         >
-          <option value="">Chưa cấp / Thu hồi thẩm quyền (Rank 0)</option>
+          <option value="">Chưa cấp / Thu hồi thẩm quyền (Cấp 0)</option>
           {clearanceOptions.map((opt) => (
             <option key={opt.id} value={String(opt.id)}>
-              {opt.name} ({opt.code}) · Rank {opt.rank}
+              {opt.name} · Cấp {opt.rank}
             </option>
           ))}
         </select>
@@ -232,8 +252,8 @@ function EditUserForm({
               aria-hidden="true"
             />
             <span>
-              Hạ bậc thẩm tra (R{currentRank} → R{nextRank}) sẽ tự động thu hồi giấy phép và ngắt
-              phiên xem tài liệu có độ mật cao hơn Rank {nextRank}.
+              Hạ cấp thẩm quyền (Cấp {currentRank} → Cấp {nextRank}) sẽ tự động thu hồi quyền truy
+              cập và ngắt các phiên đọc tài liệu có mức độ mật cao hơn Cấp {nextRank}.
             </span>
           </div>
         )}
@@ -255,7 +275,7 @@ function EditUserForm({
           text="Lưu thay đổi"
           icon={<Check size={16} strokeWidth={2} aria-hidden="true" />}
           isLoading={isSubmitting}
-          disabled={isSubmitting}
+          disabled={isSubmitting || !departmentId}
         />
       </DialogFooter>
     </form>

@@ -40,7 +40,7 @@ export function EditRoleModal({
             Chỉnh sửa vai trò: {role?.code}
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Cập nhật tên hiển thị và phần mô tả nghiệp vụ
+            Cập nhật tên hiển thị và mô tả nghiệp vụ của vai trò.
           </DialogDescription>
         </DialogHeader>
 

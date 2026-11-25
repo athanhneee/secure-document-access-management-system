@@ -29,6 +29,7 @@ import { RolesTab } from './tabs/roles-tab';
 import { SystemHealthTab } from './tabs/system-health-tab';
 import { UsersTab } from './tabs/users-tab';
 import { WatermarkTab } from './tabs/watermark-tab';
+import type { AdminTab, UserRow } from './types';
 import { DEFAULT_USER_LIST_QUERY, type UserListQueryState } from './users-query';
 
 /**
@@ -60,29 +61,39 @@ function AdminWorkspaceContent() {
   const canManageHealth = hasPermission('SYSTEM_HEALTH:MANAGE');
   const canViewHealth = hasPermission('SYSTEM_HEALTH:VIEW') || canManageHealth;
 
-  const permittedTabs = [
-    canManageUsers ? 'users' : null,
-    canManageDepartments ? 'departments' : null,
-    canManageRoles ? 'rbac' : null,
-    canManageAbac ? 'abac' : null,
-    canManageWatermark ? 'watermark' : null,
-    canViewHealth ? 'health' : null,
-  ].filter((t): t is string => t !== null);
+  const permittedTabs: AdminTab[] = [
+    canManageUsers ? ('users' as const) : null,
+    canManageDepartments ? ('departments' as const) : null,
+    canManageRoles ? ('rbac' as const) : null,
+    canManageAbac ? ('abac' as const) : null,
+    canManageWatermark ? ('watermark' as const) : null,
+    canViewHealth ? ('health' as const) : null,
+  ].filter((t): t is AdminTab => t !== null);
 
-  const [selectedTab, setSelectedTab] = useState('users');
-  const activeTab = permittedTabs.includes(selectedTab)
+  const [selectedTab, setSelectedTab] = useState<AdminTab>('users');
+  const activeTab: AdminTab = permittedTabs.includes(selectedTab)
     ? selectedTab
     : (permittedTabs[0] ?? 'users');
   const [userQuery, setUserQuery] = useState<UserListQueryState>(DEFAULT_USER_LIST_QUERY);
 
-  const data = useAdminData();
+  const data = useAdminData(activeTab);
   const clearError = () => data.setErrorMessage(null);
   const modals = useAdminModalState(clearError);
+
+  function handleOpenCreateUser() {
+    void data.ensureTabLoaded('users');
+    modals.openCreateUser();
+  }
+
+  function handleOpenAssignRole(targetUser: UserRow) {
+    void data.ensureTabLoaded('rbac');
+    modals.openAssignRole(targetUser);
+  }
 
   async function handleModalSuccess(msg: string) {
     data.setErrorMessage(null);
     data.setMessage(msg);
-    await data.refresh({ silent: true });
+    await data.refresh({ silent: true, tab: activeTab });
   }
 
   return (
@@ -93,9 +104,9 @@ function AdminWorkspaceContent() {
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="min-w-0">
-            <Badge variant="success">System Admin</Badge>
+            <Badge variant="success">Quản trị viên hệ thống</Badge>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
-              Users · RBAC · ABAC · Watermark
+              Quản trị hệ thống
             </h1>
           </div>
 
@@ -121,7 +132,7 @@ function AdminWorkspaceContent() {
                 size="sm"
                 text="Tạo tài khoản"
                 icon={<UserPlus size={16} strokeWidth={1.75} aria-hidden="true" />}
-                onClick={modals.openCreateUser}
+                onClick={handleOpenCreateUser}
               />
             )}
           </div>
@@ -152,42 +163,52 @@ function AdminWorkspaceContent() {
         )}
 
         {permittedTabs.length > 0 && (
-          <Tabs value={activeTab} onValueChange={setSelectedTab} className="space-y-3.5">
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => setSelectedTab(value as AdminTab)}
+            className="space-y-3.5"
+          >
             <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 xl:inline-flex xl:w-auto h-auto min-h-10 rounded-[18px] xl:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
               {canManageUsers && (
                 <TabsTrigger value="users" className="flex items-center gap-1.5 text-xs">
                   <Users size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Tài khoản ({data.users.length})</span>
+                  <span>
+                    {data.loadedTabs.users ? `Tài khoản (${data.users.length})` : 'Tài khoản'}
+                  </span>
                 </TabsTrigger>
               )}
               {canManageDepartments && (
                 <TabsTrigger value="departments" className="flex items-center gap-1.5 text-xs">
                   <Building2 size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Phòng ban ({data.departments.length})</span>
+                  <span>
+                    {data.loadedTabs.departments
+                      ? `Phòng ban (${data.departments.length})`
+                      : 'Phòng ban'}
+                  </span>
                 </TabsTrigger>
               )}
               {canManageRoles && (
                 <TabsTrigger value="rbac" className="flex items-center gap-1.5 text-xs">
                   <ShieldAlert size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Vai trò RBAC ({data.roles.length})</span>
+                  <span>{data.loadedTabs.rbac ? `Vai trò (${data.roles.length})` : 'Vai trò'}</span>
                 </TabsTrigger>
               )}
               {canManageAbac && (
                 <TabsTrigger value="abac" className="flex items-center gap-1.5 text-xs">
                   <Scale size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Chính sách ABAC</span>
+                  <span>Chính sách truy cập</span>
                 </TabsTrigger>
               )}
               {canManageWatermark && (
                 <TabsTrigger value="watermark" className="flex items-center gap-1.5 text-xs">
                   <Stamp size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Cấu hình Watermark</span>
+                  <span>Watermark bảo mật</span>
                 </TabsTrigger>
               )}
               {canViewHealth && (
                 <TabsTrigger value="health" className="flex items-center gap-1.5 text-xs">
                   <Activity size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>System Health</span>
+                  <span>Tình trạng hệ thống</span>
                 </TabsTrigger>
               )}
             </TabsList>
@@ -201,7 +222,7 @@ function AdminWorkspaceContent() {
                   onQueryChange={setUserQuery}
                   onOpenEditUser={modals.openEditUser}
                   onOpenUpdateClearance={modals.openUpdateClearance}
-                  onOpenAssignRole={modals.openAssignRole}
+                  onOpenAssignRole={handleOpenAssignRole}
                   onChangeStatus={data.changeUserStatus}
                   onClearError={clearError}
                 />

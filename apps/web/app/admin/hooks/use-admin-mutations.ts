@@ -7,8 +7,11 @@ import {
   applyOptimisticRoleDisable,
   applyOptimisticUserStatus,
 } from '@/lib/optimistic-state';
+import { formatServiceHealthLabel } from '@/lib/ui-labels';
 import type { VisualPolicyRule } from '@/components/abac/abac-models';
+import { normalizeAbacPolicyRow } from '../helpers';
 import type {
+  AbacPolicyApiDto,
   AbacPolicyRow,
   HealthStatusLabel,
   RoleRow,
@@ -18,16 +21,13 @@ import type {
 } from '../types';
 
 interface UseAdminMutationsParams {
-  users: UserRow[];
   setUsers: Dispatch<SetStateAction<UserRow[]>>;
-  roles: RoleRow[];
   setRoles: Dispatch<SetStateAction<RoleRow[]>>;
   policies: AbacPolicyRow[];
   setPolicies: Dispatch<SetStateAction<AbacPolicyRow[]>>;
   healthData: SystemHealthData | null;
   setMessage: (msg: string | null) => void;
   setErrorMessage: (msg: string | null) => void;
-  refresh: (options?: { silent?: boolean }) => Promise<void>;
 }
 
 function mapSnapshotStatus(status: HealthStatusLabel | undefined): 'HEALTHY' | 'DEGRADED' | 'DOWN' {
@@ -37,8 +37,11 @@ function mapSnapshotStatus(status: HealthStatusLabel | undefined): 'HEALTHY' | '
 }
 
 /**
- * Thuật toán: Giao Tác Ghi Quản Trị Xác Thực Máy Chủ Trước Khi Phản Hồi Giao Diện (`useAdminMutations`)
- * Mục đích: Mọi thao tác ghi (`POST`/`PUT`/`PATCH`) bắt buộc `await` phản hồi thành công từ máy chủ trước khi cập nhật trạng thái bảng, đóng hộp thoại hoặc hiển thị thông báo thành công.
+ * Thuật toán: Giao Tác Ghi Quản Trị Cập Nhật State Trực Tiếp & Optimistic UI Có Hoàn Tác Nguyên Tử (`useAdminMutations`)
+ * Mục đích:
+ *   - Loại bỏ hoàn toàn vòng gọi lại 10 API sau mỗi thao tác ghi ở `/admin`.
+ *   - Áp dụng Optimistic UI `< 16ms` cho thao tác khóa/mở/vô hiệu tài khoản, vô hiệu vai trò và kích hoạt chính sách ABAC kèm hoàn tác bản ghi nguyên vẹn nếu máy chủ từ chối (`400`/`403`/`409`/`500`).
+ *   - Cập nhật trực tiếp bảng chính sách ABAC từ phản hồi chuẩn hóa của `POST`/`PUT /abac/policies`.
  */
 export function useAdminMutations({
   setUsers,
@@ -48,24 +51,23 @@ export function useAdminMutations({
   healthData,
   setMessage,
   setErrorMessage,
-  refresh,
 }: UseAdminMutationsParams) {
   async function changeUserStatus(targetUser: UserRow, action: UserStatusAction): Promise<boolean> {
     setErrorMessage(null);
+    setUsers((prev) => applyOptimisticUserStatus(prev, targetUser.id, action));
     try {
       await apiClient(`/users/${targetUser.id}/${action}`, {
         method: 'POST',
         body: JSON.stringify({ expectedVersion: targetUser.version }),
       });
-      setUsers((prev) => applyOptimisticUserStatus(prev, targetUser.id, action));
       setMessage(
         action === 'unlock' && targetUser.status === 'DISABLED'
           ? `Đã kích hoạt lại tài khoản @${targetUser.username} thành công.`
           : `Đã cập nhật trạng thái tài khoản @${targetUser.username} thành công.`,
       );
-      void refresh({ silent: true });
       return true;
     } catch (err) {
+      setUsers((prev) => prev.map((user) => (user.id === targetUser.id ? targetUser : user)));
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể cập nhật trạng thái tài khoản.'
@@ -81,16 +83,16 @@ export function useAdminMutations({
       return false;
     }
     setErrorMessage(null);
+    setRoles((prev) => applyOptimisticRoleDisable(prev, role.id));
     try {
       await apiClient(`/rbac/roles/${role.id}/disable`, {
         method: 'POST',
         body: JSON.stringify({ expectedVersion: role.version }),
       });
-      setRoles((prev) => applyOptimisticRoleDisable(prev, role.id));
       setMessage(`Đã vô hiệu hóa vai trò "${role.name}" thành công.`);
-      void refresh({ silent: true });
       return true;
     } catch (err) {
+      setRoles((prev) => prev.map((item) => (item.id === role.id ? role : item)));
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể vô hiệu hóa vai trò.'
@@ -103,16 +105,19 @@ export function useAdminMutations({
   async function activatePolicy(policyId: string): Promise<boolean> {
     setErrorMessage(null);
     if (!/^\d+$/u.test(policyId)) {
-      setErrorMessage('Quy tắc nháp cục bộ chưa được đồng bộ lên máy chủ PDP.');
+      setErrorMessage('Quy tắc nháp chưa được lưu trên hệ thống.');
       return false;
     }
+    const previousPolicy = policies.find((item) => item.id === policyId);
+    setPolicies((prev) => applyOptimisticPolicyActivate(prev, policyId));
     try {
       await apiClient(`/abac/policies/${policyId}/activate`, { method: 'POST' });
-      setPolicies((prev) => applyOptimisticPolicyActivate(prev, policyId));
-      setMessage('Đã kích hoạt chính sách ABAC thành công.');
-      void refresh({ silent: true });
+      setMessage('Đã kích hoạt chính sách truy cập thành công.');
       return true;
     } catch (err) {
+      if (previousPolicy) {
+        setPolicies((prev) => prev.map((item) => (item.id === policyId ? previousPolicy : item)));
+      }
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể kích hoạt chính sách.'
@@ -140,30 +145,34 @@ export function useAdminMutations({
       /^\d+$/u.test(savedRule.id) && policies.some((p) => p.id === savedRule.id);
 
     try {
-      if (isExistingDbPolicy) {
-        await apiClient(`/abac/policies/${savedRule.id}`, {
-          method: 'PUT',
-          body: JSON.stringify(payload),
-        });
-      } else {
-        await apiClient('/abac/policies', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-      }
+      const savedDto = isExistingDbPolicy
+        ? await apiClient<AbacPolicyApiDto>(`/abac/policies/${savedRule.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          })
+        : await apiClient<AbacPolicyApiDto>('/abac/policies', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+
+      const normalized = normalizeAbacPolicyRow(savedDto);
+      setPolicies((prev) =>
+        isExistingDbPolicy
+          ? prev.map((item) => (item.id === normalized.id ? normalized : item))
+          : [normalized, ...prev.filter((item) => item.id !== normalized.id)],
+      );
 
       setMessage(
         isExistingDbPolicy
-          ? `Đã cập nhật chính sách ABAC [${savedRule.code}] lên máy chủ PDP.`
-          : `Đã tạo mới chính sách ABAC [${savedRule.code}] trên máy chủ PDP.`,
+          ? `Đã cập nhật chính sách truy cập [${savedRule.code}] thành công.`
+          : `Đã tạo mới chính sách truy cập [${savedRule.code}] thành công.`,
       );
-      await refresh({ silent: true });
       return true;
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
-          ? err.message || 'Không thể lưu chính sách ABAC lên máy chủ.'
-          : 'Đã xảy ra lỗi khi lưu chính sách ABAC.',
+          ? err.message || 'Không thể lưu chính sách truy cập.'
+          : 'Đã xảy ra lỗi khi lưu chính sách truy cập.',
       );
       return false;
     }
@@ -189,14 +198,15 @@ export function useAdminMutations({
           },
         }),
       });
-      setMessage(`Đã chụp và lưu bản ghi sức khỏe hệ thống (${status}) thành công.`);
-      void refresh({ silent: true });
+      setMessage(
+        `Đã lưu bản ghi tình trạng hệ thống (${formatServiceHealthLabel(status)}) thành công.`,
+      );
       return true;
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
-          ? err.message || 'Không thể chụp bản ghi sức khỏe hệ thống.'
-          : 'Đã xảy ra lỗi khi chụp bản ghi sức khỏe hệ thống.',
+          ? err.message || 'Không thể lưu bản ghi tình trạng hệ thống.'
+          : 'Đã xảy ra lỗi khi lưu bản ghi tình trạng hệ thống.',
       );
       return false;
     }

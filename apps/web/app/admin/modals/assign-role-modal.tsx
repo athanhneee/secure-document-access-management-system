@@ -39,10 +39,10 @@ export function AssignRoleModal({
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Gán vai trò cho: {targetUser?.fullName}
+            Gán vai trò: {targetUser?.fullName}
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Gán vai trò RBAC có thời hạn hiệu lực cho nhân sự
+            Gán vai trò và thời hạn hiệu lực cho tài khoản người dùng.
           </DialogDescription>
         </DialogHeader>
 
@@ -79,7 +79,8 @@ function AssignRoleForm({
   onSuccess,
   onError,
 }: AssignRoleFormProps) {
-  const [assignRoleId, setAssignRoleId] = useState(() => roles[0]?.id ?? '');
+  const [assignRoleId, setAssignRoleId] = useState<string>('');
+  const effectiveRoleId = assignRoleId || roles[0]?.id || '';
   const [assignValidFrom, setAssignValidFrom] = useState(
     () => getDefaultRoleAssignmentWindow().validFrom,
   );
@@ -90,7 +91,7 @@ function AssignRoleForm({
 
   async function handleAssignUserRole(e: FormEvent) {
     e.preventDefault();
-    if (!assignRoleId) {
+    if (!effectiveRoleId) {
       onError('Vui lòng chọn vai trò để gán.');
       return;
     }
@@ -101,7 +102,7 @@ function AssignRoleForm({
       await apiClient(`/rbac/users/${targetUser.id}/roles`, {
         method: 'POST',
         body: JSON.stringify({
-          roleId: assignRoleId,
+          roleId: effectiveRoleId,
           scopeDepartmentId: null,
           validFrom: assignValidFrom
             ? new Date(assignValidFrom).toISOString()
@@ -131,22 +132,27 @@ function AssignRoleForm({
         </label>
         <select
           id="assign-role-id"
-          value={assignRoleId}
+          value={effectiveRoleId}
           onChange={(e) => setAssignRoleId(e.target.value)}
-          className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+          disabled={roles.length === 0}
+          className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:opacity-60"
         >
-          {roles.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name} ({r.code})
-            </option>
-          ))}
+          {roles.length === 0 ? (
+            <option value="">Đang tải danh sách vai trò…</option>
+          ) : (
+            roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name} ({r.code})
+              </option>
+            ))
+          )}
         </select>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1">
           <label htmlFor="assign-valid-from" className="font-medium text-[#222222]">
-            Bắt đầu:
+            Bắt đầu
           </label>
           <Input
             id="assign-valid-from"
@@ -158,7 +164,7 @@ function AssignRoleForm({
         </div>
         <div className="space-y-1">
           <label htmlFor="assign-valid-to" className="font-medium text-[#222222]">
-            Kết thúc:
+            Kết thúc
           </label>
           <Input
             id="assign-valid-to"

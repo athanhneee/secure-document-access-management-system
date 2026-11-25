@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import {
   mapHealthReadyResponse,
@@ -10,6 +10,7 @@ import {
 import type {
   AbacPolicyApiDto,
   AbacPolicyRow,
+  AdminTab,
   AttributeDefinitionApiDto,
   AttributeDefinitionRow,
   ClearanceOptionRow,
@@ -25,11 +26,24 @@ import type {
 import { useAdminMutations } from './use-admin-mutations';
 import { useWatermarkSettings } from './use-watermark-settings';
 
+function buildOfflineHealthData(): SystemHealthData {
+  return {
+    status: 'OFFLINE',
+    database: { status: 'OFFLINE' },
+    cache: { status: 'OFFLINE' },
+    storage: { status: 'OFFLINE' },
+    uptimeSeconds: 0,
+  };
+}
+
 /**
- * Thuật toán: Đồng bộ Song song Chịu lỗi Đa Phân hệ Quản trị (`useAdminData`)
- * Mục đích: Tải đồng thời các nguồn dữ liệu quản trị độc lập qua `Promise.allSettled` và xử lý trung thực phản hồi sức khỏe hạ tầng (bao gồm mã `503`).
+ * Thuật toán: Tải Lười Theo Tab Phân Hệ Quản Trị & Loại Bỏ Gọi Trùng `/health/ready` (`useAdminData`)
+ * Mục đích:
+ *   - Thay thế fan-out 10 API đồng loạt khi mở `/admin` bằng tải theo yêu cầu đúng tab đang hiển thị (`users` chỉ gọi 3 API lần đầu, mỗi tab khác 1–2 API).
+ *   - Loại bỏ lời gọi trùng `/health/ready` vì `/health/dashboard` đã chứa đầy đủ `dependencies.checks` (`database`, `redis`, `storage`) và số liệu tiến trình.
+ *   - Khử trùng lặp yêu cầu đồng thời (`inFlightTabsRef`) và chỉ làm mới đúng phạm vi tab được yêu cầu sau thao tác hộp thoại.
  */
-export function useAdminData() {
+export function useAdminData(activeTab: AdminTab) {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [clearanceOptions, setClearanceOptions] = useState<ClearanceOptionRow[]>([]);
   const [departments, setDepartments] = useState<DepartmentRow[]>([]);
@@ -39,13 +53,17 @@ export function useAdminData() {
   const [attributes, setAttributes] = useState<AttributeDefinitionRow[]>([]);
   const [healthData, setHealthData] = useState<SystemHealthData | null>(null);
 
+  const [loadedTabs, setLoadedTabs] = useState<Partial<Record<AdminTab, boolean>>>({});
+  const loadedTabsRef = useRef<Set<AdminTab>>(new Set());
+  const departmentsLoadedRef = useRef(false);
+  const clearanceLoadedRef = useRef(false);
+  const inFlightTabsRef = useRef<Map<AdminTab, Promise<void>>>(new Map());
+
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const wm = useWatermarkSettings({
-    onRefresh: async () => setRefreshTrigger((n) => n + 1),
     onSuccess: (msg) => {
       setErrorMessage(null);
       setMessage(msg);
@@ -54,111 +72,179 @@ export function useAdminData() {
   });
   const { hydrateConfigs } = wm;
 
-  const refresh = useCallback(
-    async (options?: { silent?: boolean }) => {
+  const markTabLoaded = useCallback((tab: AdminTab) => {
+    if (!loadedTabsRef.current.has(tab)) {
+      loadedTabsRef.current.add(tab);
+      setLoadedTabs((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
+    }
+  }, []);
+
+  const loadTab = useCallback(
+    async (tab: AdminTab, options?: { silent?: boolean; force?: boolean }) => {
+      if (!options?.force && loadedTabsRef.current.has(tab)) {
+        return;
+      }
+
+      const existingInFlight = inFlightTabsRef.current.get(tab);
+      if (existingInFlight && !options?.force) {
+        await existingInFlight;
+        return;
+      }
+
       if (!options?.silent) {
         setIsLoading(true);
       }
       setErrorMessage(null);
 
-      const [
-        usersRes,
-        clearanceOptsRes,
-        deptsRes,
-        rolesRes,
-        permsRes,
-        policiesRes,
-        attrsRes,
-        wmConfigsRes,
-        healthRes,
-        dashboardRes,
-      ] = await Promise.allSettled([
-        apiClient<{ data: UserRow[] }>('/users'),
-        apiClient<{ data: ClearanceOptionRow[] }>('/users/clearance-options'),
-        apiClient<{ data: DepartmentRow[] }>('/departments'),
-        apiClient<{ data: RoleRow[] }>('/rbac/roles'),
-        apiClient<{ data: PermissionRow[] }>('/rbac/permissions'),
-        apiClient<{ data: AbacPolicyApiDto[] }>('/abac/policies'),
-        apiClient<{ data: AttributeDefinitionApiDto[] }>('/abac/attributes'),
-        apiClient<{ data: WatermarkConfigRow[] }>('/watermarks/configs'),
-        apiClient<HealthReadyResponse>('/health/ready'),
-        apiClient<HealthDashboardResponse>('/health/dashboard'),
-      ]);
+      const task = (async () => {
+        if (tab === 'users') {
+          const needDepartments =
+            !departmentsLoadedRef.current || (!options?.silent && options?.force);
+          const needClearance = !clearanceLoadedRef.current || (!options?.silent && options?.force);
 
-      if (usersRes.status === 'fulfilled') setUsers(usersRes.value.data || []);
-      if (deptsRes.status === 'fulfilled') setDepartments(deptsRes.value.data || []);
-      if (rolesRes.status === 'fulfilled') setRoles(rolesRes.value.data || []);
-      if (permsRes.status === 'fulfilled') setPermissions(permsRes.value.data || []);
-      if (policiesRes.status === 'fulfilled') {
-        setPolicies((policiesRes.value.data || []).map(normalizeAbacPolicyRow));
-      }
-      const normalizedAttrs =
-        attrsRes.status === 'fulfilled'
-          ? (attrsRes.value.data || []).map(normalizeAttributeDefinitionRow)
-          : null;
-      if (normalizedAttrs !== null) {
-        setAttributes(normalizedAttrs);
-      }
-      if (clearanceOptsRes.status === 'fulfilled') {
-        setClearanceOptions(clearanceOptsRes.value.data || []);
-      } else if (normalizedAttrs !== null) {
-        const clearanceDef = normalizedAttrs.find((a) => a.code === 'CLEARANCE_LEVEL');
-        if (clearanceDef) {
-          setClearanceOptions(
-            clearanceDef.attribute_options
-              .map((opt) => ({
-                id: opt.id,
-                code: opt.code,
-                name: opt.name,
-                rank: opt.numeric_rank ?? 0,
-              }))
-              .sort((a, b) => a.rank - b.rank),
-          );
+          const [usersRes, deptsRes, clearanceOptsRes] = await Promise.allSettled([
+            apiClient<{ data: UserRow[] }>('/users'),
+            needDepartments
+              ? apiClient<{ data: DepartmentRow[] }>('/departments')
+              : Promise.resolve(null),
+            needClearance
+              ? apiClient<{ data: ClearanceOptionRow[] }>('/users/clearance-options')
+              : Promise.resolve(null),
+          ]);
+
+          if (usersRes.status === 'fulfilled') setUsers(usersRes.value.data || []);
+          if (deptsRes.status === 'fulfilled' && deptsRes.value) {
+            setDepartments(deptsRes.value.data || []);
+            departmentsLoadedRef.current = true;
+            markTabLoaded('departments');
+          }
+          if (clearanceOptsRes.status === 'fulfilled' && clearanceOptsRes.value) {
+            setClearanceOptions(clearanceOptsRes.value.data || []);
+            clearanceLoadedRef.current = true;
+          }
+          markTabLoaded('users');
+          return;
         }
-      }
-      if (wmConfigsRes.status === 'fulfilled') {
-        hydrateConfigs(wmConfigsRes.value.data || []);
-      }
 
-      const dashboardData = dashboardRes.status === 'fulfilled' ? dashboardRes.value : null;
-      if (healthRes.status === 'fulfilled') {
-        setHealthData(mapHealthReadyResponse(healthRes.value, dashboardData));
-      } else {
-        const err = healthRes.reason;
-        if (
-          err instanceof ApiError &&
-          err.response &&
-          typeof err.response === 'object' &&
-          ('checks' in err.response || 'status' in err.response)
-        ) {
-          setHealthData(
-            mapHealthReadyResponse(err.response as unknown as HealthReadyResponse, dashboardData),
-          );
-        } else {
-          setHealthData({
-            status: 'OFFLINE',
-            database: { status: 'OFFLINE' },
-            cache: { status: 'OFFLINE' },
-            storage: { status: 'OFFLINE' },
-            uptimeSeconds: dashboardData?.process?.uptimeSeconds ?? 0,
-            ...(dashboardData?.process
-              ? {
-                  memory: {
-                    heapUsedMb: dashboardData.process.heapUsedMb,
-                    heapTotalMb: dashboardData.process.heapTotalMb,
-                    rssMb: dashboardData.process.rssMb,
-                  },
-                }
-              : {}),
-          });
+        if (tab === 'departments') {
+          const [deptsRes] = await Promise.allSettled([
+            apiClient<{ data: DepartmentRow[] }>('/departments'),
+          ]);
+          if (deptsRes.status === 'fulfilled') {
+            setDepartments(deptsRes.value.data || []);
+            departmentsLoadedRef.current = true;
+          }
+          markTabLoaded('departments');
+          return;
         }
-      }
 
-      if (!options?.silent) {
-        setIsLoading(false);
+        if (tab === 'rbac') {
+          const [rolesRes, permsRes] = await Promise.allSettled([
+            apiClient<{ data: RoleRow[] }>('/rbac/roles'),
+            apiClient<{ data: PermissionRow[] }>('/rbac/permissions'),
+          ]);
+          if (rolesRes.status === 'fulfilled') setRoles(rolesRes.value.data || []);
+          if (permsRes.status === 'fulfilled') setPermissions(permsRes.value.data || []);
+          markTabLoaded('rbac');
+          return;
+        }
+
+        if (tab === 'abac') {
+          const [policiesRes, attrsRes] = await Promise.allSettled([
+            apiClient<{ data: AbacPolicyApiDto[] }>('/abac/policies'),
+            apiClient<{ data: AttributeDefinitionApiDto[] }>('/abac/attributes'),
+          ]);
+          if (policiesRes.status === 'fulfilled') {
+            setPolicies((policiesRes.value.data || []).map(normalizeAbacPolicyRow));
+          }
+          if (attrsRes.status === 'fulfilled') {
+            const normalizedAttrs = (attrsRes.value.data || []).map(
+              normalizeAttributeDefinitionRow,
+            );
+            setAttributes(normalizedAttrs);
+            if (!clearanceLoadedRef.current) {
+              const clearanceDef = normalizedAttrs.find((a) => a.code === 'CLEARANCE_LEVEL');
+              if (clearanceDef) {
+                setClearanceOptions(
+                  clearanceDef.attribute_options
+                    .map((opt) => ({
+                      id: opt.id,
+                      code: opt.code,
+                      name: opt.name,
+                      rank: opt.numeric_rank ?? 0,
+                    }))
+                    .sort((a, b) => a.rank - b.rank),
+                );
+                clearanceLoadedRef.current = true;
+              }
+            }
+          }
+          markTabLoaded('abac');
+          return;
+        }
+
+        if (tab === 'watermark') {
+          const [wmConfigsRes] = await Promise.allSettled([
+            apiClient<{ data: WatermarkConfigRow[] }>('/watermarks/configs'),
+          ]);
+          if (wmConfigsRes.status === 'fulfilled') {
+            hydrateConfigs(wmConfigsRes.value.data || []);
+          }
+          markTabLoaded('watermark');
+          return;
+        }
+
+        if (tab === 'health') {
+          try {
+            const dashboardData = await apiClient<HealthDashboardResponse>('/health/dashboard');
+            setHealthData(mapHealthReadyResponse(null, dashboardData));
+          } catch (err) {
+            if (err instanceof ApiError && err.response && typeof err.response === 'object') {
+              const raw = err.response as Record<string, unknown>;
+              if ('dependencies' in raw || 'process' in raw) {
+                setHealthData(
+                  mapHealthReadyResponse(null, raw as unknown as HealthDashboardResponse),
+                );
+              } else if ('checks' in raw || 'status' in raw) {
+                setHealthData(mapHealthReadyResponse(raw as unknown as HealthReadyResponse, null));
+              } else {
+                setHealthData(buildOfflineHealthData());
+              }
+            } else {
+              setHealthData(buildOfflineHealthData());
+            }
+          }
+          markTabLoaded('health');
+        }
+      })();
+
+      inFlightTabsRef.current.set(tab, task);
+      try {
+        await task;
+      } finally {
+        if (inFlightTabsRef.current.get(tab) === task) {
+          inFlightTabsRef.current.delete(tab);
+        }
+        if (!options?.silent) {
+          setIsLoading(false);
+        }
       }
     },
-    [hydrateConfigs],
+    [hydrateConfigs, markTabLoaded],
+  );
+
+  const ensureTabLoaded = useCallback(
+    (tab: AdminTab) => loadTab(tab, { silent: true, force: false }),
+    [loadTab],
+  );
+
+  const refresh = useCallback(
+    (options?: { silent?: boolean; tab?: AdminTab }) =>
+      loadTab(options?.tab ?? activeTab, {
+        ...(options?.silent !== undefined ? { silent: options.silent } : {}),
+        force: true,
+      }),
+    [activeTab, loadTab],
   );
 
   useEffect(() => {
@@ -166,26 +252,27 @@ export function useAdminData() {
     const run = async () => {
       await Promise.resolve();
       if (!ignore) {
-        void refresh();
+        if (loadedTabsRef.current.has(activeTab)) {
+          setIsLoading(false);
+        } else {
+          void loadTab(activeTab, { silent: false, force: false });
+        }
       }
     };
     void run();
     return () => {
       ignore = true;
     };
-  }, [refresh, refreshTrigger]);
+  }, [activeTab, loadTab]);
 
   const mutations = useAdminMutations({
-    users,
     setUsers,
-    roles,
     setRoles,
     policies,
     setPolicies,
     healthData,
     setMessage,
     setErrorMessage,
-    refresh,
   });
 
   return {
@@ -198,11 +285,13 @@ export function useAdminData() {
     attributes,
     healthData,
     watermark: wm,
+    loadedTabs,
     isLoading,
     message,
     setMessage,
     errorMessage,
     setErrorMessage,
+    ensureTabLoaded,
     refresh,
     ...mutations,
   };

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { AlertTriangle, Camera, CheckCircle2, HardDrive, XCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { formatServiceHealthLabel } from '@/lib/ui-labels';
 import type { HealthStatusLabel, SystemHealthData } from '../types';
 
 interface SystemHealthTabProps {
@@ -31,9 +32,9 @@ function formatUptimeDuration(seconds: number | undefined): string {
   const hrs = Math.floor(seconds / 3600);
   const mins = Math.floor((seconds % 3600) / 60);
   const secs = Math.floor(seconds % 60);
-  if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
-  if (mins > 0) return `${mins}m ${secs}s`;
-  return `${secs}s`;
+  if (hrs > 0) return `${hrs} giờ ${mins} phút ${secs} giây`;
+  if (mins > 0) return `${mins} phút ${secs} giây`;
+  return `${secs} giây`;
 }
 
 export function SystemHealthTab({
@@ -76,14 +77,14 @@ export function SystemHealthTab({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[20px] border border-[#ebebeb] bg-[#ffffff] p-4">
         <div className="min-w-0">
           <h3 className="text-sm sm:text-base font-semibold text-[#222222]">
-            Giám sát hạ tầng &amp; tiến trình
+            Tình trạng dịch vụ và tài nguyên
           </h3>
         </div>
         {canManageHealth && (
           <InteractiveHoverButton
             variant="primary"
             size="sm"
-            text="Chụp bản ghi sức khỏe"
+            text="Lưu bản ghi tình trạng"
             icon={<Camera size={16} strokeWidth={1.75} aria-hidden="true" />}
             isLoading={isCapturing}
             disabled={isCapturing}
@@ -96,37 +97,39 @@ export function SystemHealthTab({
       <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <Card>
           <CardHeader className="pb-1.5">
-            <CardDescription className="text-xs text-[#717171]">API Gateway</CardDescription>
+            <CardDescription className="text-xs text-[#717171]">Cổng dịch vụ</CardDescription>
             <CardTitle
-              className={`text-lg font-bold flex items-center gap-1.5 ${gatewayTheme.textClass}`}
+              className={`text-sm font-bold flex items-center gap-1.5 ${gatewayTheme.textClass}`}
             >
               <GatewayIcon
                 size={20}
                 strokeWidth={1.75}
-                className={gatewayTheme.iconClass}
+                className={`shrink-0 ${gatewayTheme.iconClass}`}
                 aria-hidden="true"
               />
-              <span>{gatewayStatus}</span>
+              <span>{formatServiceHealthLabel(gatewayStatus)}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-[#717171]">
-            {gatewayStatus === 'ONLINE' ? 'PEP / PDP sẵn sàng' : 'Cảnh báo kết nối'}
+            {gatewayStatus === 'ONLINE'
+              ? 'Dịch vụ kiểm soát truy cập sẵn sàng'
+              : 'Cảnh báo kết nối dịch vụ'}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-1.5">
-            <CardDescription className="text-xs text-[#717171]">PostgreSQL</CardDescription>
+            <CardDescription className="text-xs text-[#717171]">Cơ sở dữ liệu</CardDescription>
             <CardTitle
-              className={`text-lg font-bold flex items-center gap-1.5 ${dbTheme.textClass}`}
+              className={`text-sm font-bold flex items-center gap-1.5 ${dbTheme.textClass}`}
             >
               <DbIcon
                 size={20}
                 strokeWidth={1.75}
-                className={dbTheme.iconClass}
+                className={`shrink-0 ${dbTheme.iconClass}`}
                 aria-hidden="true"
               />
-              <span>{dbStatus}</span>
+              <span>{formatServiceHealthLabel(dbStatus)}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-[#717171]">
@@ -139,25 +142,25 @@ export function SystemHealthTab({
 
         <Card>
           <CardHeader className="pb-1.5">
-            <CardDescription className="text-xs text-[#717171]">Redis Cache</CardDescription>
+            <CardDescription className="text-xs text-[#717171]">Bộ nhớ đệm phiên</CardDescription>
             <CardTitle
-              className={`text-lg font-bold flex items-center gap-1.5 ${cacheTheme.textClass}`}
+              className={`text-sm font-bold flex items-center gap-1.5 ${cacheTheme.textClass}`}
             >
               <CacheIcon
                 size={20}
                 strokeWidth={1.75}
-                className={cacheTheme.iconClass}
+                className={`shrink-0 ${cacheTheme.iconClass}`}
                 aria-hidden="true"
               />
-              <span>{cacheStatus}</span>
+              <span>{formatServiceHealthLabel(cacheStatus)}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-[#717171]">
             {healthData?.cache?.latencyMs !== undefined
               ? `Độ trễ: ${healthData.cache.latencyMs}ms`
               : cacheStatus === 'ONLINE'
-                ? 'Phiên & Rate-limit sẵn sàng'
-                : 'Bộ đệm gián đoạn'}
+                ? 'Quản lý phiên và giới hạn truy cập sẵn sàng'
+                : 'Bộ nhớ đệm gián đoạn'}
           </CardContent>
         </Card>
 
@@ -170,18 +173,18 @@ export function SystemHealthTab({
                 className="text-[#717171] shrink-0"
                 aria-hidden="true"
               />
-              <span>Lưu trữ S3 / R2</span>
+              <span>Kho lưu trữ tệp</span>
             </CardDescription>
             <CardTitle
-              className={`text-lg font-bold flex items-center gap-1.5 ${storageTheme.textClass}`}
+              className={`text-sm font-bold flex items-center gap-1.5 ${storageTheme.textClass}`}
             >
               <StorageIcon
                 size={20}
                 strokeWidth={1.75}
-                className={storageTheme.iconClass}
+                className={`shrink-0 ${storageTheme.iconClass}`}
                 aria-hidden="true"
               />
-              <span>{storageStatus}</span>
+              <span>{formatServiceHealthLabel(storageStatus)}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-[#717171]">
@@ -195,15 +198,15 @@ export function SystemHealthTab({
         <Card>
           <CardHeader className="pb-1.5">
             <CardDescription className="text-xs text-[#717171]">
-              Uptime &amp; Bộ nhớ
+              Thời gian hoạt động &amp; Bộ nhớ
             </CardDescription>
-            <CardTitle className="text-lg font-bold text-[#222222]">
+            <CardTitle className="text-base font-bold text-[#222222]">
               {formatUptimeDuration(healthData?.uptimeSeconds)}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-[#717171] space-y-0.5">
             <div>
-              Heap:{' '}
+              Bộ nhớ ứng dụng:{' '}
               <span className="font-semibold text-[#222222]">
                 {heapUsed !== undefined && heapTotal !== undefined
                   ? `${heapUsed} / ${heapTotal} MB`
@@ -211,7 +214,7 @@ export function SystemHealthTab({
               </span>
             </div>
             <div>
-              RSS:{' '}
+              Tổng bộ nhớ tiến trình:{' '}
               <span className="font-semibold text-[#222222]">
                 {rssMb !== undefined ? `${rssMb} MB` : '—'}
               </span>

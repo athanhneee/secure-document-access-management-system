@@ -25,6 +25,10 @@ interface CreateUserModalProps {
   onError: (errorMessage: string) => void;
 }
 
+/**
+ * Thuật toán: Tạo Tài Khoản Người Dùng Bắt Buộc Gán Phòng Ban ABAC (`CreateUserModal`)
+ * Mục đích: Đồng bộ trường `departmentId` bắt buộc với thuộc tính `SUBJECT_DEPARTMENT` (`is_required = true`) của chính sách ABAC để ngăn tạo tài khoản không thể mở xem tài liệu.
+ */
 export function CreateUserModal({
   open,
   onOpenChange,
@@ -39,7 +43,10 @@ export function CreateUserModal({
   const [newFullName, setNewFullName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [newDepartmentId, setNewDepartmentId] = useState('');
+  const activeDepartments = departments.filter((d) => d.isActive);
+  const defaultDepartmentId = activeDepartments[0]?.id ? String(activeDepartments[0].id) : '';
+  const [newDepartmentId, setNewDepartmentId] = useState<string | null>(null);
+  const effectiveDepartmentId = newDepartmentId === null ? defaultDepartmentId : newDepartmentId;
   const defaultClearanceId =
     clearanceOptions.find((opt) => opt.code === 'INTERNAL')?.id ?? clearanceOptions[0]?.id ?? '';
   const [newClearanceOptionId, setNewClearanceOptionId] = useState<string | null>(null);
@@ -48,6 +55,10 @@ export function CreateUserModal({
 
   async function handleCreateUser(e: FormEvent) {
     e.preventDefault();
+    if (!effectiveDepartmentId) {
+      onError('Vui lòng chọn phòng ban trực thuộc cho tài khoản.');
+      return;
+    }
     setCreateSubmitting(true);
     onClearError();
 
@@ -59,7 +70,7 @@ export function CreateUserModal({
           email: newEmail.trim(),
           fullName: newFullName.trim(),
           password: newPassword,
-          departmentId: newDepartmentId ? newDepartmentId : null,
+          departmentId: effectiveDepartmentId,
           clearanceOptionId: effectiveClearanceOptionId ? effectiveClearanceOptionId : null,
         }),
       });
@@ -69,7 +80,7 @@ export function CreateUserModal({
       setNewFullName('');
       setNewEmail('');
       setNewPassword('');
-      setNewDepartmentId('');
+      setNewDepartmentId(null);
       setNewClearanceOptionId(null);
       await onSuccess('Đã tạo tài khoản mới thành công.');
     } catch (err) {
@@ -88,10 +99,10 @@ export function CreateUserModal({
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Khởi tạo tài khoản người dùng mới
+            Tạo tài khoản người dùng mới
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Điền thông tin định danh và phòng ban trực thuộc. Mật khẩu phải từ 15 ký tự trở lên.
+            Nhập thông tin tài khoản và phòng ban trực thuộc. Mật khẩu tối thiểu 15 ký tự.
           </DialogDescription>
         </DialogHeader>
 
@@ -134,14 +145,14 @@ export function CreateUserModal({
               required
               value={newEmail}
               onChange={(e) => setNewEmail(e.target.value)}
-              placeholder="a.nguyen@tochuc.gov.vn"
+              placeholder="a.nguyen@doanhnghiep.vn"
               className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
             />
           </div>
 
           <div className="space-y-1">
             <label htmlFor="modal-password" className="text-xs font-medium text-[#222222]">
-              Mật khẩu khởi tạo (Tối thiểu 15 ký tự) <span className="text-[#C13515]">*</span>
+              Mật khẩu khởi tạo (tối thiểu 15 ký tự) <span className="text-[#C13515]">*</span>
             </label>
             <Input
               id="modal-password"
@@ -157,28 +168,38 @@ export function CreateUserModal({
 
           <div className="space-y-1">
             <label htmlFor="modal-department" className="text-xs font-medium text-[#222222]">
-              Phòng ban trực thuộc
+              Phòng ban trực thuộc <span className="text-[#C13515]">*</span>
             </label>
             <select
               id="modal-department"
-              value={newDepartmentId}
+              required
+              value={effectiveDepartmentId}
               onChange={(e) => setNewDepartmentId(e.target.value)}
               className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
-              <option value="">Không gán phòng ban</option>
-              {departments
-                .filter((d) => d.isActive)
-                .map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} ({d.code})
-                  </option>
-                ))}
+              {activeDepartments.length === 0 ? (
+                <option value="" disabled>
+                  Chưa có phòng ban đang hoạt động
+                </option>
+              ) : (
+                <option value="" disabled>
+                  Chọn phòng ban trực thuộc…
+                </option>
+              )}
+              {activeDepartments.map((d) => (
+                <option key={d.id} value={String(d.id)}>
+                  {d.name} ({d.code})
+                </option>
+              ))}
             </select>
+            <p className="text-[11px] text-[#717171]">
+              Bắt buộc theo chính sách bảo mật để tài khoản được phép tải lên và xem tài liệu.
+            </p>
           </div>
 
           <div className="space-y-1">
             <label htmlFor="modal-clearance" className="text-xs font-medium text-[#222222]">
-              Cấp độ thẩm tra an ninh (CLEARANCE_LEVEL)
+              Cấp thẩm quyền bảo mật
             </label>
             <select
               id="modal-clearance"
@@ -186,10 +207,10 @@ export function CreateUserModal({
               onChange={(e) => setNewClearanceOptionId(e.target.value)}
               className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
-              <option value="">Chưa cấp (Rank 0 — Không thể thao tác tài liệu mật)</option>
+              <option value="">Chưa cấp (Cấp 0 — Không được truy cập tài liệu mật)</option>
               {clearanceOptions.map((opt) => (
                 <option key={opt.id} value={opt.id}>
-                  {opt.name} ({opt.code}) · Rank {opt.rank}
+                  {opt.name} · Cấp {opt.rank}
                 </option>
               ))}
             </select>
@@ -210,7 +231,7 @@ export function CreateUserModal({
               text="Tạo tài khoản"
               icon={<UserPlus size={16} strokeWidth={1.75} aria-hidden="true" />}
               isLoading={createSubmitting}
-              disabled={createSubmitting}
+              disabled={createSubmitting || !effectiveDepartmentId}
             />
           </DialogFooter>
         </form>

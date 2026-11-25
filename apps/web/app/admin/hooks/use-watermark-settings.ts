@@ -8,14 +8,14 @@ export const DEFAULT_WATERMARK_TEMPLATE =
   '{username} · {employeeCode} | {documentCode} · {timestamp} | {shortToken}';
 
 interface UseWatermarkSettingsOptions {
-  onRefresh: () => Promise<void>;
+  onRefresh?: () => Promise<void>;
   onSuccess: (msg: string) => void;
   onError: (msg: string | null) => void;
 }
 
 /**
- * Thuật toán: Quản Lý Trạng Thái Hồ Sơ Thủy Ấn Động & Đồng Bộ Lưu Trữ Máy Chủ (`useWatermarkSettings`)
- * Mục đích: Đồng bộ tham số độ mờ, cỡ chữ, cờ mã QR và mẫu chuỗi `templateText` từ `/watermarks/configs` và cập nhật qua `PATCH /watermarks/configs/:id`.
+ * Thuật toán: Quản Lý Trạng Thái Hồ Sơ Thủy Ấn Động & Cập Nhật Trực Tiếp Từ Phản Hồi PATCH (`useWatermarkSettings`)
+ * Mục đích: Đồng bộ tham số độ mờ, cỡ chữ, cờ mã QR và mẫu chuỗi `templateText` từ `/watermarks/configs`, cập nhật ngay mảng cấu hình cục bộ từ phản hồi `PATCH /watermarks/configs/:id` mà không gọi tải lại toàn bộ trang quản trị.
  */
 export function useWatermarkSettings({
   onRefresh,
@@ -33,11 +33,15 @@ export function useWatermarkSettings({
   const hydrateConfigs = useCallback((loaded: WatermarkConfigRow[]) => {
     setConfigs(loaded);
     if (loaded.length > 0 && loaded[0]) {
-      setActiveConfigId(loaded[0].id);
-      setOpacity(loaded[0].opacityPercent);
-      setFontSize(loaded[0].fontSize);
-      setShowQr(loaded[0].includeQrCode);
-      setTemplateText(loaded[0].templateText || DEFAULT_WATERMARK_TEMPLATE);
+      setActiveConfigId((prevId) => {
+        const matched = prevId ? loaded.find((item) => item.id === prevId) : undefined;
+        const chosen = matched ?? loaded[0]!;
+        setOpacity(chosen.opacityPercent);
+        setFontSize(chosen.fontSize);
+        setShowQr(chosen.includeQrCode);
+        setTemplateText(chosen.templateText || DEFAULT_WATERMARK_TEMPLATE);
+        return chosen.id;
+      });
     }
   }, []);
 
@@ -54,7 +58,7 @@ export function useWatermarkSettings({
 
   async function saveConfig() {
     if (!activeConfigId) {
-      onError('Không tìm thấy cấu hình watermark hợp lệ trên hệ thống.');
+      onError('Không tìm thấy cấu hình watermark bảo mật hợp lệ trên hệ thống.');
       return;
     }
     setIsSaving(true);
@@ -73,19 +77,37 @@ export function useWatermarkSettings({
       ) {
         payload['templateText'] = templateText.trim();
       }
-      await apiClient(`/watermarks/configs/${activeConfigId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      });
-      onSuccess(
-        'Đã lưu cấu hình Watermark thành công lên máy chủ. Mọi phiên xem trước và tải xuống tiếp theo sẽ áp dụng thiết lập này.',
+      const updated = await apiClient<Partial<WatermarkConfigRow>>(
+        `/watermarks/configs/${activeConfigId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        },
       );
-      await onRefresh();
+      setConfigs((prev) =>
+        prev.map((item) =>
+          item.id === activeConfigId
+            ? {
+                ...item,
+                opacityPercent: updated.opacityPercent ?? opacity,
+                fontSize: updated.fontSize ?? fontSize,
+                includeQrCode: updated.includeQrCode ?? showQr,
+                templateText: updated.templateText ?? templateText.trim(),
+              }
+            : item,
+        ),
+      );
+      onSuccess(
+        'Đã lưu cấu hình watermark bảo mật thành công. Mọi phiên xem trước và tải về tiếp theo sẽ áp dụng thiết lập này.',
+      );
+      if (onRefresh) {
+        await onRefresh();
+      }
     } catch (err) {
       onError(
         err instanceof ApiError
-          ? err.message || 'Không thể lưu cấu hình Watermark.'
-          : 'Đã xảy ra lỗi khi lưu cấu hình watermark.',
+          ? err.message || 'Không thể lưu cấu hình watermark bảo mật.'
+          : 'Đã xảy ra lỗi khi lưu cấu hình watermark bảo mật.',
       );
     } finally {
       setIsSaving(false);

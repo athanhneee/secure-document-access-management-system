@@ -59,9 +59,9 @@ function renderWatermarkTemplateLines(
 ): string[] {
   const sampleValues: Record<string, string> = {
     username: (currentUsername || 'nguyen.vana').toUpperCase(),
-    employeeCode: 'EMP-882190',
-    documentCode: 'DOC-TOPSECRET-001',
-    timestamp: '2026-09-23 12:45:00 UTC',
+    employeeCode: 'NV-001248',
+    documentCode: 'TL-2026-001',
+    timestamp: '25/11/2026 14:30',
     shortToken: 'WM-2e59958fa6c7',
   };
   const source = rawTemplate.trim() || DEFAULT_WATERMARK_TEMPLATE;
@@ -96,11 +96,9 @@ export function WatermarkPreviewCard({
   return (
     <Card className="border-[#ebebeb] bg-[#ffffff] shadow-[0_6px_20px_rgba(0,0,0,0.04)] flex flex-col">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base text-[#222222]">
-          Xem trước trực quan (Live Canvas Preview)
-        </CardTitle>
+        <CardTitle className="text-base text-[#222222]">Xem trước watermark</CardTitle>
         <CardDescription className="text-xs text-[#717171]">
-          Mô phỏng hình ảnh watermark thực thi bởi Watermark Engine
+          Minh họa cách hiển thị watermark bảo mật trên trang tài liệu.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex-1 flex items-center justify-center p-4 sm:p-6">

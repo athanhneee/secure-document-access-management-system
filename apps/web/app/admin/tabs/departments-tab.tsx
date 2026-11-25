@@ -4,6 +4,7 @@ import { Pencil, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { formatActiveBooleanLabel } from '@/lib/ui-labels';
 import {
   Table,
   TableBody,
@@ -60,7 +61,7 @@ export function DepartmentsTab({
             {departments.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-center py-8 text-xs text-[#717171]">
-                  Chưa có phòng ban nào được khởi tạo
+                  Chưa có phòng ban nào được tạo.
                 </TableCell>
               </TableRow>
             ) : (
@@ -77,7 +78,7 @@ export function DepartmentsTab({
                   </TableCell>
                   <TableCell>
                     <Badge variant={dept.isActive ? 'success' : 'secondary'}>
-                      {dept.isActive ? 'Active' : 'Inactive'}
+                      {formatActiveBooleanLabel(dept.isActive)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">

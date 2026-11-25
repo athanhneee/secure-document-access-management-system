@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { ClassificationBadge } from '@/components/classification-badge';
 import { Badge } from '@/components/ui/badge';
+import { formatUserStatusLabel } from '@/lib/ui-labels';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
@@ -188,7 +189,7 @@ export function UsersTab({
               <Input
                 id="admin-users-search"
                 type="text"
-                placeholder="Tìm tên, username, email, mã NV..."
+                placeholder="Tìm theo họ tên, tên đăng nhập, email, mã nhân viên…"
                 value={query.searchQuery}
                 onChange={(e) => updateQuery({ searchQuery: e.target.value })}
                 className="pl-9 min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
@@ -212,15 +213,11 @@ export function UsersTab({
                 }`}
               >
                 <option value="ALL">Tất cả trạng thái ({users.length})</option>
-                <option value="ACTIVE">ACTIVE · Hoạt động ({facets.statusCounts.ACTIVE})</option>
-                <option value="LOCKED">LOCKED · Đang khóa ({facets.statusCounts.LOCKED})</option>
-                <option value="DISABLED">
-                  DISABLED · Đã vô hiệu ({facets.statusCounts.DISABLED})
-                </option>
+                <option value="ACTIVE">Đang hoạt động ({facets.statusCounts.ACTIVE})</option>
+                <option value="LOCKED">Tạm khóa ({facets.statusCounts.LOCKED})</option>
+                <option value="DISABLED">Vô hiệu hóa ({facets.statusCounts.DISABLED})</option>
                 {(facets.statusCounts.PENDING > 0 || query.statusFilter === 'PENDING') && (
-                  <option value="PENDING">
-                    PENDING · Chờ kích hoạt ({facets.statusCounts.PENDING})
-                  </option>
+                  <option value="PENDING">Chờ kích hoạt ({facets.statusCounts.PENDING})</option>
                 )}
               </select>
             </div>
@@ -266,7 +263,9 @@ export function UsersTab({
                 }`}
               >
                 <option value="ALL">Tất cả thao tác</option>
-                <option value="DISABLE">Thao tác: Vô hiệu ({facets.actionCounts.DISABLE})</option>
+                <option value="DISABLE">
+                  Thao tác: Vô hiệu hóa ({facets.actionCounts.DISABLE})
+                </option>
                 <option value="LOCK">Thao tác: Khóa ({facets.actionCounts.LOCK})</option>
                 <option value="UNLOCK">Thao tác: Mở khóa ({facets.actionCounts.UNLOCK})</option>
                 <option value="REACTIVATE">
@@ -358,14 +357,14 @@ export function UsersTab({
                   <button
                     type="button"
                     onClick={() => handleHeaderSort('clearance')}
-                    title="Sắp xếp theo cấp độ thẩm tra (Clearance)"
+                    title="Sắp xếp theo cấp thẩm quyền bảo mật"
                     className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
                       query.sortField === 'clearance'
                         ? 'text-[#222222]'
                         : 'text-[#717171] hover:text-[#222222]'
                     }`}
                   >
-                    <span>Độ mật</span>
+                    <span>Cấp thẩm quyền</span>
                     {renderSortIcon('clearance')}
                   </button>
                 </TableHead>
@@ -388,7 +387,7 @@ export function UsersTab({
                   <button
                     type="button"
                     onClick={() => handleHeaderSort('action')}
-                    title="Sắp xếp theo nhóm thao tác (Vô hiệu / Kích hoạt)"
+                    title="Sắp xếp theo nhóm thao tác (Vô hiệu hóa / Kích hoạt)"
                     className={`ml-auto inline-flex items-center justify-end gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
                       query.sortField === 'action'
                         ? 'text-[#222222]'
@@ -408,8 +407,8 @@ export function UsersTab({
                     <div className="flex flex-col items-center gap-2.5">
                       <span>
                         {filtersActive
-                          ? 'Không tìm thấy tài khoản nào khớp với bộ lọc hiện tại'
-                          : 'Không tìm thấy tài khoản nào'}
+                          ? 'Không tìm thấy tài khoản nào khớp với bộ lọc hiện tại.'
+                          : 'Chưa có tài khoản nào trong hệ thống.'}
                       </span>
                       {filtersActive && (
                         <button
@@ -433,14 +432,26 @@ export function UsersTab({
 
                   return (
                     <TableRow key={u.id}>
-                      <TableCell>
-                        <div className="font-semibold text-xs text-[#222222]">{u.fullName}</div>
-                        <div className="text-xs text-[#717171]">
-                          @{u.username}
-                          {u.employeeCode ? ` · ${u.employeeCode}` : ''}
+                      <TableCell className="min-w-[200px] sm:min-w-[230px] max-w-[280px]">
+                        <div
+                          className="font-semibold text-xs text-[#222222] truncate"
+                          title={`${u.fullName} (@${u.username})`}
+                        >
+                          {u.fullName}
                         </div>
+                        {u.employeeCode && (
+                          <div
+                            className="text-[11px] text-[#717171] truncate tabular-nums"
+                            title={`Mã nhân viên: ${u.employeeCode}`}
+                          >
+                            {u.employeeCode}
+                          </div>
+                        )}
                       </TableCell>
-                      <TableCell className="text-xs text-[#717171] max-w-[220px] truncate">
+                      <TableCell
+                        className="text-xs text-[#717171] max-w-[220px] truncate"
+                        title={u.email}
+                      >
                         {u.email}
                       </TableCell>
                       <TableCell className="text-xs text-[#222222] whitespace-nowrap">
@@ -452,15 +463,16 @@ export function UsersTab({
                             code={u.clearanceCode}
                             rank={u.clearanceRank ?? 0}
                             showRank
+                            subject="user"
                             size="sm"
                           />
                         ) : (
                           <span
                             className="staff-badge bg-transparent border-0 p-0 inline-flex items-center gap-1 text-xs font-semibold text-[#C13515]"
-                            title="Chưa gán cấp thẩm tra an ninh (Rank 0)"
+                            title="Chưa gán cấp thẩm quyền bảo mật (Cấp 0)"
                           >
                             <ShieldAlert size={16} strokeWidth={1.75} aria-hidden="true" />
-                            <span>CHƯA CẤP · R0</span>
+                            <span>CHƯA CẤP · Cấp 0</span>
                           </span>
                         )}
                       </TableCell>
@@ -476,7 +488,7 @@ export function UsersTab({
                                   : 'destructive'
                           }
                         >
-                          {u.status}
+                          {formatUserStatusLabel(u.status)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
@@ -491,7 +503,7 @@ export function UsersTab({
                           <InteractiveHoverButton
                             variant="secondary"
                             size="sm"
-                            text="Độ mật"
+                            text="Thẩm quyền"
                             icon={<ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
                             onClick={() => onOpenUpdateClearance(u)}
                           />
@@ -540,7 +552,7 @@ export function UsersTab({
                             <InteractiveHoverButton
                               variant="danger"
                               size="sm"
-                              text="Vô hiệu"
+                              text="Vô hiệu hóa"
                               icon={<Ban size={16} strokeWidth={1.75} aria-hidden="true" />}
                               onClick={() => {
                                 onClearError();

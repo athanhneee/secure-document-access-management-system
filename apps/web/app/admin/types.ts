@@ -200,3 +200,5 @@ export interface HealthDashboardResponse {
 }
 
 export type UserStatusAction = 'lock' | 'unlock' | 'disable';
+
+export type AdminTab = 'users' | 'departments' | 'rbac' | 'abac' | 'watermark' | 'health';

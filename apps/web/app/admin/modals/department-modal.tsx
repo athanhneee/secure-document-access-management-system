@@ -47,12 +47,12 @@ export function DepartmentModal({
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            {isEdit ? `Chỉnh sửa phòng ban: ${department?.code}` : 'Thêm phòng ban tổ chức mới'}
+            {isEdit ? `Chỉnh sửa phòng ban: ${department?.code}` : 'Thêm phòng ban mới'}
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
             {isEdit
-              ? `Cập nhật tên gọi và đơn vị cấp trên (phiên bản v${department?.version ?? 0}).`
-              : 'Mã phòng ban từ 2–30 ký tự, gồm chữ in hoa A-Z, chữ số 0-9 hoặc dấu gạch dưới.'}
+              ? 'Cập nhật tên gọi và phòng ban cấp trên.'
+              : 'Mã phòng ban từ 2–30 ký tự, gồm chữ in hoa A–Z, chữ số 0–9 hoặc dấu gạch dưới.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -158,7 +158,7 @@ function DepartmentForm({
     <form onSubmit={handleSubmit} className="space-y-3.5 py-2 text-xs">
       <div className="space-y-1">
         <label htmlFor="dept-modal-code" className="font-medium text-[#222222]">
-          Mã phòng ban (Code) <span className="text-[#C13515]">*</span>
+          Mã phòng ban <span className="text-[#C13515]">*</span>
         </label>
         <Input
           id="dept-modal-code"
@@ -189,7 +189,7 @@ function DepartmentForm({
 
       <div className="space-y-1">
         <label htmlFor="dept-modal-parent" className="font-medium text-[#222222]">
-          Đơn vị cấp trên (Parent Department)
+          Phòng ban cấp trên
         </label>
         <select
           id="dept-modal-parent"

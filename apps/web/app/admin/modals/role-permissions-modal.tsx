@@ -42,7 +42,7 @@ export function RolePermissionsModal({
             Phân quyền cho vai trò: {role?.name} ({role?.code})
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Chọn các thẩm quyền hành động gắn liền với vai trò này
+            Chọn các quyền hạn áp dụng cho vai trò này.
           </DialogDescription>
         </DialogHeader>
 
@@ -95,7 +95,7 @@ function RolePermissionsForm({
       });
 
       onClose();
-      await onSuccess(`Đã cập nhật ma trận quyền hạn cho vai trò "${role.name}".`);
+      await onSuccess(`Đã cập nhật danh sách quyền hạn cho vai trò "${role.name}".`);
     } catch (err) {
       if (err instanceof ApiError) {
         onError(err.message || 'Không thể cập nhật quyền.');

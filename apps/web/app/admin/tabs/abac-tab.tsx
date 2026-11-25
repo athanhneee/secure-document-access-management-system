@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { formatPolicyEffectLabel } from '@/lib/ui-labels';
 import {
   Table,
   TableBody,
@@ -93,7 +94,7 @@ export function AbacTab({
           <Card>
             <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <CardTitle className="text-sm sm:text-base text-[#222222]">
-                Chính sách thuộc tính ABAC
+                Chính sách kiểm soát truy cập
               </CardTitle>
               <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
                 <Button
@@ -112,7 +113,7 @@ export function AbacTab({
                     className="text-[#008A05] fill-current"
                     aria-hidden="true"
                   />
-                  <span>Mô phỏng PDP</span>
+                  <span>Mô phỏng chính sách</span>
                 </Button>
                 <Button
                   type="button"
@@ -135,7 +136,7 @@ export function AbacTab({
                   <TableRow>
                     <TableHead className="text-xs text-[#717171]">Tên quy tắc</TableHead>
                     <TableHead className="text-xs text-[#717171]">Mô tả hành vi</TableHead>
-                    <TableHead className="text-xs text-[#717171]">Hiệu lực (Effect)</TableHead>
+                    <TableHead className="text-xs text-[#717171]">Hiệu lực</TableHead>
                     <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
                     <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
                   </TableRow>
@@ -154,7 +155,7 @@ export function AbacTab({
                       </TableCell>
                       <TableCell>
                         <Badge variant={p.effect === 'PERMIT' ? 'success' : 'destructive'}>
-                          {p.effect}
+                          {formatPolicyEffectLabel(p.effect)}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -200,7 +201,7 @@ export function AbacTab({
                             }}
                             className="text-xs rounded-full hover:bg-[#f7f7f7] text-[#E31C5F] font-semibold"
                           >
-                            Sửa Trực quan
+                            Sửa trực quan
                           </Button>
                         </div>
                       </TableCell>

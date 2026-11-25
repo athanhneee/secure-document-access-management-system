@@ -57,7 +57,7 @@ export interface UserFilterFacets {
   unassignedDepartmentCount: number;
 }
 
-export const UNASSIGNED_DEPARTMENT_LABEL = 'Chưa gán';
+export const UNASSIGNED_DEPARTMENT_LABEL = 'Chưa gán phòng ban';
 
 export const DEFAULT_USER_LIST_QUERY: UserListQueryState = {
   searchQuery: '',
@@ -69,13 +69,13 @@ export const DEFAULT_USER_LIST_QUERY: UserListQueryState = {
 };
 
 export const USER_SORT_OPTIONS: readonly UserSortOption[] = [
-  { value: 'status:asc', label: 'Trạng thái: ACTIVE → Vô hiệu' },
-  { value: 'status:desc', label: 'Trạng thái: Vô hiệu → ACTIVE' },
-  { value: 'clearance:desc', label: 'Độ mật: Cao → Thấp' },
-  { value: 'clearance:asc', label: 'Độ mật: Thấp → Cao' },
+  { value: 'status:asc', label: 'Trạng thái: Đang hoạt động → Vô hiệu hóa' },
+  { value: 'status:desc', label: 'Trạng thái: Vô hiệu hóa → Đang hoạt động' },
+  { value: 'clearance:desc', label: 'Cấp thẩm quyền: Cao → Thấp' },
+  { value: 'clearance:asc', label: 'Cấp thẩm quyền: Thấp → Cao' },
   { value: 'department:asc', label: 'Phòng ban: A → Z' },
   { value: 'department:desc', label: 'Phòng ban: Z → A' },
-  { value: 'action:asc', label: 'Thao tác: Vô hiệu trước' },
+  { value: 'action:asc', label: 'Thao tác: Vô hiệu hóa trước' },
   { value: 'action:desc', label: 'Thao tác: Kích hoạt trước' },
   { value: 'fullName:asc', label: 'Tài khoản: A → Z' },
   { value: 'fullName:desc', label: 'Tài khoản: Z → A' },

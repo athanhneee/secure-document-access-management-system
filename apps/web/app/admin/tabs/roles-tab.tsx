@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { resolvePermissionLabel } from '@/lib/permission-labels';
+import { formatActiveBooleanLabel } from '@/lib/ui-labels';
 import type { RoleRow } from '../types';
 
 interface RolesTabProps {
@@ -36,7 +37,7 @@ export function RolesTab({
     <div className="space-y-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm sm:text-base font-semibold text-[#222222]">
-          Vai trò &amp; Quyền hạn RBAC ({roles.length})
+          Vai trò và quyền hạn ({roles.length})
         </h3>
         <InteractiveHoverButton
           variant="primary"
@@ -59,7 +60,7 @@ export function RolesTab({
                 <div className="flex items-center gap-2 shrink-0">
                   {role.isSystemRole && <Badge variant="secondary">Hệ thống</Badge>}
                   <Badge variant={role.isActive ? 'success' : 'destructive'}>
-                    {role.isActive ? 'Active' : 'Disabled'}
+                    {formatActiveBooleanLabel(role.isActive)}
                   </Badge>
                 </div>
               </div>
@@ -108,7 +109,7 @@ export function RolesTab({
                       <InteractiveHoverButton
                         variant="danger"
                         size="sm"
-                        text="Vô hiệu"
+                        text="Vô hiệu hóa"
                         icon={<Ban size={16} strokeWidth={1.75} aria-hidden="true" />}
                         onClick={() => {
                           onClearError();
@@ -129,8 +130,8 @@ export function RolesTab({
         onOpenChange={(open) => {
           if (!open && !isDisabling) setRoleToDisable(null);
         }}
-        title="Xác nhận vô hiệu hóa vai trò RBAC"
-        description={`Vai trò "${roleToDisable?.name ?? ''}" (${roleToDisable?.code ?? ''}) sẽ ngưng cấp quyền cho mọi nhân sự đang liên kết.`}
+        title="Xác nhận vô hiệu hóa vai trò"
+        description={`Vai trò "${roleToDisable?.name ?? ''}" (${roleToDisable?.code ?? ''}) sẽ ngừng cấp quyền cho mọi tài khoản đang được gán.`}
         confirmLabel="Xác nhận vô hiệu hóa"
         variant="danger"
         isLoading={isDisabling}

@@ -43,11 +43,10 @@ export function UpdateClearanceModal({
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Cấp độ thẩm tra (Clearance): @{user?.username}
+            Cấp thẩm quyền bảo mật: @{user?.username}
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Thiết lập trần độ mật Bell-LaPadula cho {user?.fullName} (phiên bản v
-            {user?.version ?? 0})
+            Thiết lập cấp thẩm quyền truy cập tài liệu mật cho {user?.fullName}.
           </DialogDescription>
         </DialogHeader>
 
@@ -115,11 +114,11 @@ function UpdateClearanceForm({
       });
 
       const label = res.clearanceName
-        ? `${res.clearanceName} (R${res.clearanceRank ?? nextRank})`
-        : 'Chưa cấp (R0)';
+        ? `${res.clearanceName} (Cấp ${res.clearanceRank ?? nextRank})`
+        : 'Chưa cấp (Cấp 0)';
       const cascadeParts: string[] = [];
       if ((res.revokedGrantsCount ?? 0) > 0) {
-        cascadeParts.push(`thu hồi ${res.revokedGrantsCount} giấy phép`);
+        cascadeParts.push(`thu hồi ${res.revokedGrantsCount} quyền truy cập`);
       }
       if ((res.terminatedSessionsCount ?? 0) > 0) {
         cascadeParts.push(`ngắt ${res.terminatedSessionsCount} phiên đọc vượt thẩm quyền`);
@@ -129,13 +128,13 @@ function UpdateClearanceForm({
 
       onClose();
       await onSuccess(
-        `Đã cập nhật cấp độ thẩm tra của @${user.username} thành ${label}${cascadeNote}`,
+        `Đã cập nhật cấp thẩm quyền bảo mật của @${user.username} thành ${label}${cascadeNote}`,
       );
     } catch (err) {
       onError(
         err instanceof ApiError
-          ? err.message || 'Không thể cập nhật cấp độ thẩm tra an ninh.'
-          : 'Đã xảy ra lỗi khi cập nhật cấp độ thẩm tra an ninh.',
+          ? err.message || 'Không thể cập nhật cấp thẩm quyền bảo mật.'
+          : 'Đã xảy ra lỗi khi cập nhật cấp thẩm quyền bảo mật.',
       );
     } finally {
       setIsSubmitting(false);
@@ -145,20 +144,20 @@ function UpdateClearanceForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-3.5 py-2 text-xs">
       <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 flex items-center justify-between gap-2">
-        <span className="text-[#717171]">Mức thẩm tra hiện tại:</span>
+        <span className="text-[#717171]">Cấp thẩm quyền hiện tại</span>
         {user.clearanceCode ? (
-          <ClassificationBadge code={user.clearanceCode} showRank size="sm" />
+          <ClassificationBadge code={user.clearanceCode} showRank subject="user" size="sm" />
         ) : (
           <span className="inline-flex items-center gap-1 font-semibold text-[#C13515]">
             <ShieldAlert size={16} strokeWidth={1.75} aria-hidden="true" />
-            <span>CHƯA CẤP · R0</span>
+            <span>CHƯA CẤP · Cấp 0</span>
           </span>
         )}
       </div>
 
       <div className="space-y-1">
         <label htmlFor="clearance-option-select" className="font-medium text-[#222222]">
-          Cấp độ thẩm tra mới (CLEARANCE_LEVEL)
+          Cấp thẩm quyền mới
         </label>
         <select
           id="clearance-option-select"
@@ -166,16 +165,16 @@ function UpdateClearanceForm({
           onChange={(e) => setSelectedOptionId(e.target.value)}
           className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
         >
-          <option value="">Chưa cấp / Thu hồi thẩm quyền (Rank 0)</option>
+          <option value="">Chưa cấp / Thu hồi thẩm quyền (Cấp 0)</option>
           {clearanceOptions.map((opt) => (
             <option key={opt.id} value={opt.id}>
-              {opt.name} ({opt.code}) · Rank {opt.rank}
+              {opt.name} · Cấp {opt.rank}
             </option>
           ))}
         </select>
         <p className="text-[11px] text-[#717171] leading-relaxed pt-0.5">
-          Theo nguyên tắc Bell-LaPadula, nhân sự chỉ có thể tải lên, đọc hoặc được cấp quyền đối với
-          tài liệu có bậc mật nhỏ hơn hoặc bằng cấp độ thẩm tra được gán.
+          Người dùng chỉ có thể tải lên, đọc hoặc được cấp quyền đối với tài liệu có mức độ mật thấp
+          hơn hoặc bằng cấp thẩm quyền hiện tại.
         </p>
       </div>
 
@@ -189,11 +188,11 @@ function UpdateClearanceForm({
           />
           <div className="space-y-0.5 leading-relaxed">
             <div className="font-semibold text-[#C13515]">
-              Cảnh báo hạ bậc thẩm tra (R{currentRank} → R{nextRank})
+              Cảnh báo hạ cấp thẩm quyền (Cấp {currentRank} → Cấp {nextRank})
             </div>
             <p className="text-[#717171]">
-              Mọi giấy phép truy cập trực tiếp và phiên xem tài liệu đang mở có độ mật cao hơn{' '}
-              <strong className="text-[#222222]">Rank {nextRank}</strong> sẽ bị hệ thống tự động thu
+              Mọi quyền truy cập trực tiếp và phiên đọc tài liệu đang mở có mức độ mật cao hơn{' '}
+              <strong className="text-[#222222]">Cấp {nextRank}</strong> sẽ bị hệ thống tự động thu
               hồi ngay lập tức.
             </p>
           </div>
@@ -204,7 +203,7 @@ function UpdateClearanceForm({
         <div className="rounded-[18px] border border-[#008A05]/25 bg-[#008A05]/5 p-3 flex items-center gap-2 text-[#008A05] font-medium">
           <ShieldCheck size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
           <span>
-            Cho phép thao tác tài liệu đến mức <strong>{selectedOption.name}</strong> (Rank ≤{' '}
+            Cho phép thao tác tài liệu đến mức <strong>{selectedOption.name}</strong> (tối đa Cấp{' '}
             {selectedOption.rank}).
           </span>
         </div>

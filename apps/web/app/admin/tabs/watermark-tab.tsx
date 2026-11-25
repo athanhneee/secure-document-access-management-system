@@ -50,12 +50,12 @@ export function WatermarkTab({
       <Card>
         <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <CardTitle className="text-sm sm:text-base text-[#222222]">
-            Cấu hình Watermark động
+            Cấu hình watermark bảo mật
           </CardTitle>
           <InteractiveHoverButton
             variant="primary"
             size="sm"
-            text={isSaving ? 'Đang lưu...' : 'Lưu cấu hình'}
+            text={isSaving ? 'Đang lưu…' : 'Lưu cấu hình'}
             icon={<Stamp size={16} strokeWidth={1.75} aria-hidden="true" />}
             onClick={onSaveConfig}
             disabled={isSaving || !activeConfigId}
@@ -86,7 +86,7 @@ export function WatermarkTab({
 
           <div className="space-y-1">
             <label htmlFor="wm-template-text" className="font-medium text-[#222222]">
-              Mẫu văn bản Watermark
+              Mẫu văn bản watermark
             </label>
             <Input
               id="wm-template-text"
@@ -97,9 +97,10 @@ export function WatermarkTab({
               className="min-h-11 sm:h-9 text-xs font-mono"
             />
             <p className="text-xs text-[#717171]">
-              Biến: <code>{'{username}'}</code>, <code>{'{employeeCode}'}</code>,{' '}
-              <code>{'{documentCode}'}</code>, <code>{'{timestamp}'}</code>,{' '}
-              <code>{'{shortToken}'}</code>
+              Biến hỗ trợ: <code>{'{username}'}</code> (tên đăng nhập),{' '}
+              <code>{'{employeeCode}'}</code> (mã nhân viên), <code>{'{documentCode}'}</code> (mã
+              tài liệu), <code>{'{timestamp}'}</code> (thời điểm xem), <code>{'{shortToken}'}</code>{' '}
+              (mã truy vết).
             </p>
           </div>
 
@@ -119,7 +120,7 @@ export function WatermarkTab({
           <div className="space-y-1.5">
             <div className="flex justify-between">
               <label htmlFor="wm-opacity" className="font-medium text-[#222222]">
-                Độ đậm / mờ (Opacity):
+                Độ đậm / mờ
               </label>
               <span className="font-bold text-[#222222]">{opacity}%</span>
             </div>
@@ -137,7 +138,7 @@ export function WatermarkTab({
           <div className="space-y-1.5">
             <div className="flex justify-between">
               <label htmlFor="wm-font-size" className="font-medium text-[#222222]">
-                Cỡ chữ (Font size):
+                Cỡ chữ
               </label>
               <span className="font-bold text-[#222222]">{fontSize}px</span>
             </div>

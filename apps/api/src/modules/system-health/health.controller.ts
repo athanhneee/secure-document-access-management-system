@@ -212,7 +212,11 @@ export class HealthController {
       return;
     }
 
-    if (this.config?.isProduction && !isPrivateOrLoopbackIp(request.ip)) {
+    // CONFLICT-RESOLVED: Khóa chặn truy cập /health/metrics từ IP công cộng ở mọi môi trường ngoài test khi không cấu hình METRICS_SCRAPE_TOKEN (N12).
+    const enforcePrivateGate =
+      this.config?.isProduction ||
+      (this.config !== undefined && process.env['NODE_ENV'] !== 'test');
+    if (enforcePrivateGate && !isPrivateOrLoopbackIp(request.ip)) {
       throw new ForbiddenException(
         'Metrics scraping requires METRICS_SCRAPE_TOKEN or internal scraper network.',
       );

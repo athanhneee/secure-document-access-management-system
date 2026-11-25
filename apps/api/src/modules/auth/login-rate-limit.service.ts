@@ -9,6 +9,14 @@ import { DistributedStateService } from '../concurrency/distributed-state.servic
 
 const LOGIN_WINDOW_MS = 15 * 60_000;
 
+function resolveMaxLoginDelayMs(): number {
+  const configured = Number(process.env['LOGIN_RATE_LIMIT_MAX_DELAY_MS']);
+  if (Number.isFinite(configured) && configured >= 1_000 && configured <= 300_000) {
+    return Math.trunc(configured);
+  }
+  return process.env['NODE_ENV'] === 'test' ? 5_000 : 30_000;
+}
+
 interface BlockState {
   blockedUntil: number;
 }
@@ -92,7 +100,8 @@ export class LoginRateLimitService {
         key,
         LOGIN_WINDOW_MS,
       );
-      const progressiveDelay = Math.min(5_000, count < 3 ? 0 : 250 * 2 ** (count - 3));
+      const maxDelayMs = resolveMaxLoginDelayMs();
+      const progressiveDelay = Math.min(maxDelayMs, count < 3 ? 0 : 250 * 2 ** (count - 3));
       if (progressiveDelay > 0) {
         await this.stateStore.putEphemeral<BlockState>(
           'login-block',

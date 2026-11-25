@@ -15,6 +15,7 @@ import type { StoredWebAuthnCredential, WebAuthnService } from './webauthn.servi
 
 export interface AuthWebAuthnDeps extends AuthMfaDeps {
   webauthn: WebAuthnService;
+  onSecurityAlertCreated?: ((alertType: string, alertId?: string) => void) | undefined;
 }
 
 /**
@@ -101,31 +102,21 @@ export async function executeVerifyWebAuthnEnrollment(
 }
 
 /**
- * Algorithm / Thuật toán: Tạo thử thách xác thực FIDO2/WebAuthn chống dò tài khoản khi gọi không phiên.
+ * Algorithm / Thuật toán: Tạo thử thách xác thực FIDO2/WebAuthn yêu cầu phiên tiền-MFA đã xác thực bước 1, triệt tiêu hoàn toàn Oracle dò tài khoản bật Passkey (N05).
  */
 export async function executeGetWebAuthnAuthOptions(
   deps: AuthWebAuthnDeps,
   principal: AuthPrincipal | undefined,
-  username: string | undefined,
+  _username: string | undefined,
   context: RequestContext,
 ) {
-  let userId: bigint | undefined = principal?.userId;
-  const normalizedUsername = username?.normalize('NFKC').trim().toLowerCase();
-  if (!userId && normalizedUsername) {
-    await deps.rateLimit.assertAllowed(context.ip, `webauthn-opt:${normalizedUsername}`);
-    const user = await deps.repository.findUserByIdentifier(normalizedUsername);
-    if (user && user.status === 'ACTIVE') userId = user.id;
+  // CONFLICT-RESOLVED: Chặn truy vấn không phiên theo username để đóng lỗ hổng Passkey Enumeration Oracle (N05).
+  if (!principal) {
+    throw new UnauthorizedException(
+      'Authentication required before initiating WebAuthn verification.',
+    );
   }
-
-  if (!userId) {
-    if (!principal && normalizedUsername) {
-      await deps.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
-      throw new BadRequestException(
-        'Unable to initiate WebAuthn authentication for the supplied identifier.',
-      );
-    }
-    throw new BadRequestException('User identification is required for WebAuthn authentication.');
-  }
+  const userId = principal.userId;
 
   const activeMethods = await deps.repository.getActiveMfaMethods(userId);
   const webauthnCreds = activeMethods
@@ -133,12 +124,6 @@ export async function executeGetWebAuthnAuthOptions(
     .filter((c): c is StoredWebAuthnCredential => c !== null);
 
   if (webauthnCreds.length === 0) {
-    if (!principal && normalizedUsername) {
-      await deps.rateLimit.recordFailure(context.ip, `webauthn-opt:${normalizedUsername}`);
-      throw new BadRequestException(
-        'Unable to initiate WebAuthn authentication for the supplied identifier.',
-      );
-    }
     throw new BadRequestException('No WebAuthn security keys found for this account.');
   }
 
@@ -232,10 +217,11 @@ export async function executeVerifyWebAuthnAuth(
     await deps.repository.recordSecurityAlert({
       alertType: 'WEBAUTHN_CLONE_DETECTED',
       severity: 'CRITICAL',
-      title: 'FIDO2 / WebAuthn clone attack detected',
-      description: `Authenticator counter rollback or cloned key detected for user ID ${principal.userId}.`,
+      title: 'Cảnh báo khẩn cấp: Phát hiện dấu hiệu nhân bản khóa FIDO2 / Passkey',
+      description: `Phát hiện lùi bộ đếm chữ ký hoặc nhân bản khóa bảo mật WebAuthn trên tài khoản #${principal.userId}.`,
       detectedUserId: principal.userId,
     });
+    deps.onSecurityAlertCreated?.('WEBAUTHN_CLONE_DETECTED');
     await deps.audit.record(
       {
         action: 'MFA_WEBAUTHN_VERIFY',

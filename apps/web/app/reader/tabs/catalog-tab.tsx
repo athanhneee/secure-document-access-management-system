@@ -119,7 +119,16 @@ export function CatalogTab({
               variant="secondary"
               text="Xin gia hạn"
               icon={<Send size={16} strokeWidth={1.75} aria-hidden="true" />}
-              onClick={() => onOpenRequestModal(doc, 'VIEW')}
+              onClick={() =>
+                onOpenRequestModal(
+                  doc,
+                  grantedDoc.permissions.includes('DOWNLOAD') &&
+                    doc.allowDownload &&
+                    canDownloadDocument
+                    ? 'DOWNLOAD'
+                    : 'VIEW',
+                )
+              }
             />
           ) : hasPendingRequest ? (
             <span className="staff-badge bg-transparent border-0 p-0 inline-flex items-center gap-1.5 text-xs font-semibold text-[#E07912]">

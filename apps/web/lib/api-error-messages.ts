@@ -142,7 +142,8 @@ const SPECIFIC_ERROR_CODE_MAP: Readonly<Record<string, string>> = {
   GRANT_REVOKED: 'Quyền truy cập tài liệu đã bị thu hồi.',
   GRANT_ALREADY_REVOKED: 'Quyền truy cập này đã được thu hồi trước đó.',
   GRANT_NOT_FOUND: 'Không tìm thấy quyền truy cập tương ứng.',
-  GRANT_OVERLAP_EXISTS: 'Đã tồn tại quyền truy cập trùng khoảng thời gian hiệu lực.',
+  GRANT_OVERLAP_EXISTS:
+    'Người nhận đang có quyền truy cập còn hiệu lực với phạm vi rộng hơn hoặc không tương thích cho tài liệu này. Vui lòng thu hồi quyền hiện tại trước khi cấp quyền mức khác.',
   GRANT_DOWNLOAD_FORBIDDEN: 'Mức độ mật của tài liệu không cho phép cấp quyền tải về.',
   GRANT_DURATION_EXCEEDED: 'Thời hạn cấp quyền vượt quá giới hạn tối đa theo quy định.',
   GRANT_TIME_RANGE_INVALID: 'Khoảng thời gian hiệu lực của quyền truy cập không hợp lệ.',

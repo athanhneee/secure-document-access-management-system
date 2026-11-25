@@ -128,6 +128,73 @@ test('Access workflow SQL integration — request submission, Redlock-serialized
   );
   assert.equal(activeGrantsInSql.rows[0].cnt, 1);
 
+  // Reader with active VIEW grant submits DOWNLOAD upgrade request -> Owner approves -> upgrades existing grant in-place
+  const upgradeReq = await requestsService.createRequest(
+    {
+      documentId: docId,
+      requestedAction: 'DOWNLOAD',
+      reason: 'Cần tải bản sao có watermark để báo cáo tổng kết diễn tập Quý 4.',
+      requestedUntil: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+    },
+    readerPrincipal,
+    ctx,
+  );
+  assert.equal(upgradeReq.status, 'PENDING');
+
+  const upgradeDecision = await requestsService.decideRequest(
+    upgradeReq.id,
+    { decision: 'APPROVED', validDays: 14, permissions: ['VIEW', 'DOWNLOAD'] },
+    ownerPrincipal,
+    ctx,
+  );
+  assert.equal(upgradeDecision.status, 'APPROVED');
+  assert.equal(upgradeDecision.grantId, coalesced.id);
+
+  const upgradedSql = await dbHarness.sql.query(
+    `SELECT
+       (SELECT count(*)::int FROM access_grants WHERE document_id=$1 AND principal_user_id=$2 AND status='ACTIVE') AS active_cnt,
+       (SELECT array_agg(permission::text ORDER BY permission::text) FROM access_grant_permissions WHERE access_grant_id=$3) AS perms,
+       (SELECT status::text FROM access_requests WHERE id=$4) AS req_status,
+       (SELECT count(*)::int FROM audit_logs WHERE action='GRANT_UPGRADED' AND object_id=$3::text) AS upgrade_audits,
+       (SELECT count(*)::int FROM notifications WHERE recipient_id=$2 AND notification_type='ACCESS_GRANT_ISSUED') AS grant_notifs`,
+    [docId, readerUser.id, coalesced.id, upgradeReq.id],
+  );
+  assert.equal(upgradedSql.rows[0].active_cnt, 1);
+  assert.deepEqual(upgradedSql.rows[0].perms, ['DOWNLOAD', 'VIEW']);
+  assert.equal(upgradedSql.rows[0].req_status, 'APPROVED');
+  assert.equal(upgradedSql.rows[0].upgrade_audits, 1);
+  assert.ok(
+    upgradedSql.rows[0].grant_notifs >= 2,
+    'Upgraded grant must emit a new ACCESS_GRANT_ISSUED notification with incremented version',
+  );
+
+  // Upgraded grant now permits DOWNLOAD access in real-time enforcement
+  const downloadCheck = await grantsService.assertGrantValidForAccess(
+    coalesced.id,
+    readerUser.id,
+    'DOWNLOAD',
+    new Date(),
+    docId,
+  );
+  assert.equal(downloadCheck.grant.id, coalesced.id);
+
+  // Attempting to downgrade active VIEW + DOWNLOAD back to VIEW alone still fails closed with 409 GRANT_OVERLAP_EXISTS
+  await assert.rejects(
+    () =>
+      grantsService.createGrant(
+        {
+          documentId: docId,
+          principalType: 'USER',
+          principalUserId: readerUser.id,
+          permissions: ['VIEW'],
+          validUntil: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+        },
+        ownerPrincipal,
+        ctx,
+      ),
+    (err) => err.response?.errorCode === AppErrorCode.GRANT_OVERLAP_EXISTS,
+  );
+
   // Create two active sessions: terminate one manually via AccessSessionsService, cascade-terminate the other via revokeGrant
   const manualSessId = randomUUID();
   const cascadeSessId = randomUUID();

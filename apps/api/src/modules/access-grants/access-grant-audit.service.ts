@@ -16,6 +16,7 @@ import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 export type GrantAuditAction =
   | 'GRANT_CREATED'
   | 'GRANT_EXTENDED'
+  | 'GRANT_UPGRADED'
   | 'GRANT_REVOKED'
   | 'GRANT_EXPIRED'
   | 'GRANT_SESSIONS_TERMINATED'

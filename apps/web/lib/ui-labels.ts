@@ -221,6 +221,7 @@ const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   ACCESS_GRANT_CREATE: 'Cấp quyền truy cập',
   GRANT_CREATED: 'Cấp quyền truy cập',
   GRANT_EXTENDED: 'Gia hạn quyền truy cập',
+  GRANT_UPGRADED: 'Nâng cấp quyền truy cập',
   GRANT_EXPIRED: 'Hết hạn quyền truy cập',
   GRANT_REVOKED: 'Thu hồi quyền truy cập',
   ACCESS_GRANT_REVOKE: 'Thu hồi quyền truy cập',

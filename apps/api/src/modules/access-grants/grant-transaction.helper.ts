@@ -26,9 +26,12 @@ export interface ExecuteCreateGrantTxParams {
 }
 
 /**
- * Algorithm / Thuật toán: Giao dịch cô lập `Serializable` kèm `SELECT ... FOR UPDATE` và Hợp nhất khoảng hiệu lực (Interval Coalescing).
- *   - Nếu đã tồn tại grant `ACTIVE` cùng tập quyền: hợp nhất khoảng thời gian `[min(validFrom, existing.valid_from), max(validUntil, existing.valid_until)]`.
- *   - Nếu tồn tại grant `ACTIVE` khác tập quyền: từ chối `409 GRANT_OVERLAP_EXISTS`.
+ * Algorithm / Thuật toán: Giao dịch cô lập `Serializable` kèm `SELECT ... FOR UPDATE`, Hợp nhất khoảng hiệu lực (Interval Coalescing) & Nâng cấp Tập quyền Nguyên tử.
+ *   - Nếu tồn tại grant `ACTIVE` nhưng đã quá hạn đồng hồ (`valid_until <= now`): chuyển sang `EXPIRED` kèm log `GRANT_EXPIRED`, rồi cấp mới grant `ACTIVE`.
+ *   - Nếu tồn tại grant `ACTIVE` còn hạn cùng tập quyền HOẶC tập quyền mới là tập cha thực sự (nâng cấp quyền, ví dụ `VIEW` -> `VIEW + DOWNLOAD`):
+ *     hợp nhất khoảng thời gian `[min(validFrom, existing.valid_from), max(validUntil, existing.valid_until)]`, bổ sung quyền thiếu vào `access_grant_permissions`,
+ *     tăng `version`, ghi nhật ký `GRANT_UPGRADED` / `GRANT_EXTENDED` và đánh dấu `accessRequestId` sang `APPROVED`.
+ *   - Nếu tồn tại grant `ACTIVE` còn hạn có tập quyền rộng hơn hoặc không tương thích (ví dụ hạ từ `VIEW + DOWNLOAD` xuống `VIEW`): từ chối `409 GRANT_OVERLAP_EXISTS` để bảo toàn nguyên tắc thu hồi tường minh.
  *   - Nếu chưa tồn tại: khởi tạo grant mới, ghi chuỗi kiểm toán HMAC và cập nhật yêu cầu `accessRequestId` sang `APPROVED`.
  */
 export async function executeCreateOrExtendGrantTx(
@@ -70,16 +73,47 @@ export async function executeCreateOrExtendGrantTx(
         include: { access_grant_permissions: true },
       });
 
-      if (existingGrant) {
-        const existingPerms = existingGrant.access_grant_permissions.map((p) => p.permission);
+      if (existingGrant && existingGrant.valid_until <= now) {
+        await tx.accessGrant.update({
+          where: { id: existingGrant.id },
+          data: { status: 'EXPIRED', version: { increment: 1 } },
+        });
+        await audit.record(
+          {
+            action: 'GRANT_EXPIRED',
+            outcome: 'SUCCESS',
+            objectId: existingGrant.id,
+            documentId: input.documentId,
+            details: {
+              principalType: input.principalType,
+              principalId: (input.principalUserId ?? input.principalRoleId)?.toString() ?? null,
+              expiredAt: existingGrant.valid_until.toISOString(),
+              replacedByNewGrant: true,
+            },
+          },
+          principal,
+          context,
+          tx,
+        );
+      } else if (existingGrant) {
+        const existingPerms = [
+          ...new Set(existingGrant.access_grant_permissions.map((p) => p.permission)),
+        ].sort();
+        const existingPermSet = new Set<string>(existingPerms);
         const requestedPerms = [...new Set(input.permissions)].sort();
-        const samePerms = existingPerms.sort().join(',') === requestedPerms.join(',');
+        const requestedPermSet = new Set<string>(requestedPerms);
+        const samePerms = existingPerms.join(',') === requestedPerms.join(',');
+        const addedPerms = requestedPerms.filter((p) => !existingPermSet.has(p));
+        const isPermissionUpgrade =
+          !samePerms &&
+          addedPerms.length > 0 &&
+          existingPerms.every((p) => requestedPermSet.has(p));
 
-        if (!samePerms) {
+        if (!samePerms && !isPermissionUpgrade) {
           throw new ConflictException({
             errorCode: AppErrorCode.GRANT_OVERLAP_EXISTS,
             message:
-              'An active grant with different permissions already exists for this document and principal. Revoke the existing grant first.',
+              'An active grant with broader or incompatible permissions already exists for this document and principal. Revoke the existing grant first.',
           });
         }
 
@@ -104,9 +138,27 @@ export async function executeCreateOrExtendGrantTx(
           },
         });
 
+        if (addedPerms.length > 0) {
+          if (typeof tx.accessGrantPermission?.createMany === 'function') {
+            await tx.accessGrantPermission.createMany({
+              data: addedPerms.map((permission) => ({
+                access_grant_id: existingGrant.id,
+                permission,
+              })),
+              skipDuplicates: true,
+            });
+          } else if (typeof tx.accessGrantPermission?.create === 'function') {
+            for (const permission of addedPerms) {
+              await tx.accessGrantPermission.create({
+                data: { access_grant_id: existingGrant.id, permission },
+              });
+            }
+          }
+        }
+
         await audit.record(
           {
-            action: 'GRANT_EXTENDED',
+            action: isPermissionUpgrade ? 'GRANT_UPGRADED' : 'GRANT_EXTENDED',
             outcome: 'SUCCESS',
             objectId: existingGrant.id,
             documentId: input.documentId,
@@ -117,6 +169,14 @@ export async function executeCreateOrExtendGrantTx(
               newValidUntil: newValidUntil.toISOString(),
               previousValidFrom: existingGrant.valid_from.toISOString(),
               newValidFrom: newValidFrom.toISOString(),
+              ...(isPermissionUpgrade
+                ? {
+                    previousPermissions: existingPerms.join(','),
+                    newPermissions: requestedPerms.join(','),
+                    addedPermissions: addedPerms.join(','),
+                    accessRequestId: input.accessRequestId ?? null,
+                  }
+                : {}),
             },
           },
           principal,

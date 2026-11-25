@@ -363,6 +363,13 @@ describe('/owner DTO Mappers, Permission Inclusion, Pagination & Wizard Defaults
     });
     assert.match(roleGrantClearanceMsg, /vai trò này.*thành viên.*cấp thẩm quyền bảo mật/i);
 
+    const grantOverlapMsg = localizeApiErrorMessage(409, {
+      errorCode: 'GRANT_OVERLAP_EXISTS',
+      message:
+        'An active grant with broader or incompatible permissions already exists for this document and principal. Revoke the existing grant first.',
+    });
+    assert.match(grantOverlapMsg, /thu hồi quyền hiện tại/i);
+
     const createUserModalTsx = fs.readFileSync(
       path.join(webRoot, 'app/admin/modals/create-user-modal.tsx'),
       'utf8',

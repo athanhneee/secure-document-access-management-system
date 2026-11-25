@@ -226,6 +226,7 @@ describe('UI Labels — 100% Real Backend Audit Actions, Object Types, Partition
       'ACCESS_REQUEST_CANCELLED',
       'GRANT_CREATED',
       'GRANT_EXTENDED',
+      'GRANT_UPGRADED',
       'GRANT_EXPIRED',
       'GRANT_REVOKED',
       'ACCESS_SESSION_ENDED',

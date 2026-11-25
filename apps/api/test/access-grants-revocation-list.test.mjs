@@ -456,3 +456,263 @@ test('AccessGrantsService — rejects owner self-grant and past validUntil while
   );
   assert.deepEqual(capturedWhere?.NOT, { principal_type: 'USER', principal_user_id: 10n });
 });
+
+test('createGrant — upgrades active VIEW grant to VIEW + DOWNLOAD atomically when approving upgrade access request, and rejects downgrade', async () => {
+  const docId = randomUUID();
+  const grantId = randomUUID();
+  const reqId = randomUUID();
+  const userId = 50n;
+  const now = new Date();
+  const initialUntil = new Date(now.getTime() + 3 * 86_400_000);
+  const upgradedUntil = new Date(now.getTime() + 7 * 86_400_000);
+
+  const storedPermissions = [{ permission: 'VIEW' }];
+  let grantVersion = 0;
+  let grantValidUntil = initialUntil;
+  let updatedRequestStatus = '';
+  let createdDecision = null;
+  const auditActions = [];
+
+  const mockDb = {
+    document: {
+      findUnique: async () => ({
+        id: docId,
+        owner_id: 1n,
+        department_id: 10n,
+        status: 'ACTIVE',
+        title: 'Báo cáo nội bộ',
+        document_code: 'DOC-UPGRADE-01',
+        classification_history: [
+          {
+            classification_levels: { rank: 2, allow_download: true },
+          },
+        ],
+      }),
+    },
+    user: { findUnique: async () => ({ id: userId, status: 'ACTIVE' }) },
+    userAttributeAssignment: {
+      findFirst: async () => ({ attribute_options: { numeric_rank: 3, is_active: true } }),
+    },
+    accessGrant: {
+      findFirst: async () => ({
+        id: grantId,
+        document_id: docId,
+        principal_type: 'USER',
+        principal_user_id: userId,
+        principal_role_id: null,
+        source: 'ACCESS_REQUEST',
+        access_request_id: randomUUID(),
+        valid_from: now,
+        valid_until: grantValidUntil,
+        status: 'ACTIVE',
+        granted_by: 1n,
+        granted_at: now,
+        revoked_by: null,
+        revoked_at: null,
+        revoke_reason: null,
+        version: grantVersion,
+        access_grant_permissions: [...storedPermissions],
+      }),
+      update: async ({ data }) => {
+        if (data.valid_until) grantValidUntil = data.valid_until;
+        if (data.version?.increment) grantVersion += data.version.increment;
+        return {};
+      },
+      findUnique: async () => ({
+        id: grantId,
+        document_id: docId,
+        principal_type: 'USER',
+        principal_user_id: userId,
+        principal_role_id: null,
+        source: 'ACCESS_REQUEST',
+        access_request_id: null,
+        valid_from: now,
+        valid_until: grantValidUntil,
+        status: 'ACTIVE',
+        granted_by: 1n,
+        granted_at: now,
+        revoked_by: null,
+        revoked_at: null,
+        revoke_reason: null,
+        version: grantVersion,
+        access_grant_permissions: [...storedPermissions],
+      }),
+    },
+    accessGrantPermission: {
+      createMany: async ({ data }) => {
+        for (const item of data) {
+          if (!storedPermissions.some((p) => p.permission === item.permission)) {
+            storedPermissions.push({ permission: item.permission });
+          }
+        }
+        return { count: data.length };
+      },
+    },
+    accessRequest: {
+      findUnique: async () => ({
+        id: reqId,
+        document_id: docId,
+        requester_id: userId,
+        status: 'PENDING',
+      }),
+      updateMany: async ({ data }) => {
+        updatedRequestStatus = data.status;
+        return { count: 1 };
+      },
+    },
+    accessRequestDecision: {
+      create: async ({ data }) => {
+        createdDecision = data;
+      },
+    },
+    $executeRawUnsafe: async () => {},
+    $transaction: async (fn) => fn(mockDb),
+  };
+
+  const service = new AccessGrantsService(
+    {
+      record: async (event) => {
+        auditActions.push(event);
+      },
+    },
+    { hasPermission: async () => true },
+    { invalidateUser: () => {} },
+    { evaluate: async () => ({ decision: 'PERMIT' }) },
+    { get: () => 30 },
+    mockDb,
+  );
+
+  const ownerPrincipal = { userId: 1n, username: 'owner1', roles: ['DOCUMENT_OWNER'], mfa: true };
+  const ctx = { ip: '127.0.0.1' };
+
+  // 1. Upgrade VIEW -> VIEW + DOWNLOAD succeeds in-place and marks linked request APPROVED
+  const upgraded = await service.createGrant(
+    {
+      documentId: docId,
+      principalType: 'USER',
+      principalUserId: userId,
+      permissions: ['VIEW', 'DOWNLOAD'],
+      validFrom: now.toISOString(),
+      validUntil: upgradedUntil.toISOString(),
+      accessRequestId: reqId,
+    },
+    ownerPrincipal,
+    ctx,
+  );
+
+  assert.equal(upgraded.id, grantId);
+  assert.deepEqual([...upgraded.permissions].sort(), ['DOWNLOAD', 'VIEW']);
+  assert.equal(upgraded.version, 1);
+  assert.equal(updatedRequestStatus, 'APPROVED');
+  assert.equal(createdDecision?.access_request_id, reqId);
+  assert.equal(createdDecision?.decision, 'APPROVED');
+  assert.equal(auditActions[0]?.action, 'GRANT_UPGRADED');
+  assert.equal(auditActions[0]?.details?.addedPermissions, 'DOWNLOAD');
+
+  // 2. Downgrading active VIEW + DOWNLOAD -> VIEW still fails closed with 409 GRANT_OVERLAP_EXISTS
+  await assert.rejects(
+    () =>
+      service.createGrant(
+        {
+          documentId: docId,
+          principalType: 'USER',
+          principalUserId: userId,
+          permissions: ['VIEW'],
+          validFrom: now.toISOString(),
+          validUntil: upgradedUntil.toISOString(),
+        },
+        ownerPrincipal,
+        ctx,
+      ),
+    (err) => err.status === 409 && err.response?.errorCode === 'GRANT_OVERLAP_EXISTS',
+  );
+});
+
+test('createGrant — lazily expires stale wall-clock-expired ACTIVE grant before issuing fresh grant with different permissions', async () => {
+  const docId = randomUUID();
+  const staleGrantId = randomUUID();
+  const userId = 51n;
+  const now = new Date();
+  let staleMarkedStatus = '';
+  let createdGrantData = null;
+
+  const mockDb = {
+    document: {
+      findUnique: async () => ({
+        id: docId,
+        owner_id: 1n,
+        department_id: 10n,
+        status: 'ACTIVE',
+        classification_history: [{ classification_levels: { rank: 1, allow_download: true } }],
+      }),
+    },
+    user: { findUnique: async () => ({ id: userId, status: 'ACTIVE' }) },
+    userAttributeAssignment: {
+      findFirst: async () => ({ attribute_options: { numeric_rank: 2, is_active: true } }),
+    },
+    accessGrant: {
+      findFirst: async () => ({
+        id: staleGrantId,
+        document_id: docId,
+        principal_type: 'USER',
+        principal_user_id: userId,
+        principal_role_id: null,
+        source: 'DIRECT',
+        access_request_id: null,
+        valid_from: new Date(now.getTime() - 10 * 86_400_000),
+        valid_until: new Date(now.getTime() - 60_000),
+        status: 'ACTIVE',
+        granted_by: 1n,
+        granted_at: new Date(now.getTime() - 10 * 86_400_000),
+        revoked_by: null,
+        revoked_at: null,
+        revoke_reason: null,
+        version: 0,
+        access_grant_permissions: [{ permission: 'VIEW' }, { permission: 'DOWNLOAD' }],
+      }),
+      update: async ({ where, data }) => {
+        if (where.id === staleGrantId) staleMarkedStatus = data.status;
+        return {};
+      },
+      create: async ({ data }) => {
+        createdGrantData = data;
+        return {
+          ...data,
+          revoked_by: null,
+          revoked_at: null,
+          revoke_reason: null,
+          access_grant_permissions: [{ permission: 'VIEW' }],
+        };
+      },
+    },
+    $executeRawUnsafe: async () => {},
+    $transaction: async (fn) => fn(mockDb),
+  };
+
+  const service = new AccessGrantsService(
+    { record: async () => {} },
+    { hasPermission: async () => true },
+    { invalidateUser: () => {} },
+    { evaluate: async () => ({ decision: 'PERMIT' }) },
+    { get: () => 30 },
+    mockDb,
+  );
+
+  const fresh = await service.createGrant(
+    {
+      documentId: docId,
+      principalType: 'USER',
+      principalUserId: userId,
+      permissions: ['VIEW'],
+      validFrom: now.toISOString(),
+      validUntil: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+    },
+    { userId: 1n, username: 'owner1', roles: ['DOCUMENT_OWNER'], mfa: true },
+    { ip: '127.0.0.1' },
+  );
+
+  assert.equal(staleMarkedStatus, 'EXPIRED');
+  assert.ok(createdGrantData);
+  assert.notEqual(fresh.id, staleGrantId);
+  assert.deepEqual(fresh.permissions, ['VIEW']);
+});

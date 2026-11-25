@@ -141,7 +141,7 @@ export async function buildRoleGrantSubjectAttributes(
     where: {
       role_id: roleId,
       OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-      users: { status: { not: 'DISABLED' } },
+      users_user_roles_user_idTousers: { status: { not: 'DISABLED' } },
     },
     select: { user_id: true },
   });

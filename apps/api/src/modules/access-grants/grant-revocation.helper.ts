@@ -14,6 +14,7 @@ import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { NotificationsService } from '../notifications/notifications.service.js';
 import type { AuthorizationCache } from '../rbac/authorization-cache.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
+import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { isPureTechnicalOrAuditRole } from '../documents/document-access-guard.helper.js';
 import type { AccessGrantAuditService } from './access-grant-audit.service.js';
 import { toGrantDetail, type GrantDetail } from './access-grants.types.js';
@@ -30,6 +31,7 @@ export interface ExecuteRevokeGrantParams {
   cache: AuthorizationCache;
   audit: AccessGrantAuditService;
   notifications?: NotificationsService | undefined;
+  realtime?: RealtimeEventsService | undefined;
 }
 
 /**
@@ -42,7 +44,8 @@ export interface ExecuteRevokeGrantParams {
 export async function executeRevokeGrantWorkflow(
   params: ExecuteRevokeGrantParams,
 ): Promise<GrantDetail> {
-  const { grantId, input, principal, context, database, cache, audit, notifications } = params;
+  const { grantId, input, principal, context, database, cache, audit, notifications, realtime } =
+    params;
   const start = performance.now();
   const now = new Date();
 
@@ -57,7 +60,15 @@ export async function executeRevokeGrantWorkflow(
     where: { id: grantId },
     include: {
       access_grant_permissions: true,
-      documents: { select: { owner_id: true, department_id: true, status: true } },
+      documents: {
+        select: {
+          owner_id: true,
+          department_id: true,
+          status: true,
+          title: true,
+          document_code: true,
+        },
+      },
     },
   });
 
@@ -203,13 +214,16 @@ export async function executeRevokeGrantWorkflow(
     if (grant.principal_user_id) {
       recipients.add(grant.principal_user_id);
     }
+    const docTitle = grant.documents?.title;
+    const docCode = grant.documents?.document_code;
+    const docLabel = docTitle ? `"${docTitle}"${docCode ? ` (${docCode})` : ''}` : 'được chỉ định';
     for (const recipientId of recipients) {
       try {
         await notifications.sendNotification({
           recipientId,
           notificationType: 'ACCESS_GRANT_REVOKED',
           title: 'Quyền truy cập tài liệu đã bị thu hồi',
-          body: `Quyền truy cập đối với tài liệu ${grant.document_id} đã bị thu hồi. Lý do: ${input.reason}`,
+          body: `Quyền truy cập đối với tài liệu ${docLabel} đã bị thu hồi. Lý do: ${input.reason}`,
           relatedObjectType: 'ACCESS_GRANT',
           relatedObjectId: grantId,
           deduplicationKey: `ACCESS_GRANT_REVOKED:${recipientId}:${grantId}:v${updated?.version ?? grant.version + 1}`,
@@ -232,6 +246,30 @@ export async function executeRevokeGrantWorkflow(
     MetricsService.getInstance().recordGrantRevocation(durationSeconds, true);
   } catch {
     // Metrics optional in isolated unit tests
+  }
+
+  if (didTransitionToRevoked && realtime) {
+    const targetUserIds = new Set<string>([principal.userId.toString()]);
+    for (const userId of affectedUserIds) targetUserIds.add(userId.toString());
+    if (grant.principal_user_id) targetUserIds.add(grant.principal_user_id.toString());
+    realtime.publish({
+      type: 'ACCESS_GRANT_UPDATED',
+      targetUserIds: [...targetUserIds],
+      ...(grant.principal_type === 'ROLE' ? { targetRoles: ['DOCUMENT_READER'] } : {}),
+      payload: {
+        id: grantId,
+        documentId: grant.document_id,
+        status: 'REVOKED',
+        action: 'REVOKED',
+      },
+    });
+    if (terminatedSessionCount > 0) {
+      realtime.publish({
+        type: 'ACCESS_SESSION_UPDATED',
+        targetRoles: ['SECURITY_OFFICER'],
+        payload: { grantId, terminatedSessions: terminatedSessionCount, action: 'GRANT_REVOKED' },
+      });
+    }
   }
 
   return toGrantDetail(updated!);

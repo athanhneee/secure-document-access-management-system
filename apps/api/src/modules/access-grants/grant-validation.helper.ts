@@ -42,9 +42,13 @@ export interface ValidateCreateGrantParams {
  *   3. Xác minh chủ thể đích (`USER`/`ROLE`), quy tắc Phân tách nhiệm vụ (SoD), và `accessRequestId`.
  *   4. Kiểm tra bất biến độ mật Bell-LaPadula (`userRank >= documentRank`), cờ `allow_download` và chính sách ABAC cho mọi quyền.
  */
-export async function validateCreateGrantPreconditions(
-  params: ValidateCreateGrantParams,
-): Promise<{ validFrom: Date; validUntil: Date; maxMs: number }> {
+export async function validateCreateGrantPreconditions(params: ValidateCreateGrantParams): Promise<{
+  validFrom: Date;
+  validUntil: Date;
+  maxMs: number;
+  documentTitle?: string | undefined;
+  documentCode?: string | undefined;
+}> {
   const { input, principal, now, maxDurationDays, database, abac } = params;
   const validFrom = input.validFrom ? new Date(input.validFrom) : now;
   const validUntil = new Date(input.validUntil);
@@ -64,6 +68,13 @@ export async function validateCreateGrantPreconditions(
     throw new BadRequestException({
       errorCode: AppErrorCode.GRANT_TIME_RANGE_INVALID,
       message: 'validUntil must be after validFrom.',
+    });
+  }
+
+  if (validUntil <= now) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.GRANT_TIME_RANGE_INVALID,
+      message: 'validUntil must be in the future.',
     });
   }
 
@@ -97,6 +108,14 @@ export async function validateCreateGrantPreconditions(
     throw new ForbiddenException({
       errorCode: AppErrorCode.FORBIDDEN,
       message: 'Only the document owner can grant access to this document.',
+    });
+  }
+
+  if (input.principalType === 'USER' && input.principalUserId === document.owner_id) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.GRANT_PRINCIPAL_INVALID,
+      message:
+        'Document owner already has ownership access and cannot create a direct access grant to themselves.',
     });
   }
 
@@ -186,12 +205,34 @@ export async function validateCreateGrantPreconditions(
       environment: staticIssuanceEnvironment,
     });
     if (abacResult.decision === 'DENY') {
+      const missingAttributes: string[] = [];
+      if (abacResult.reasonCode === 'MISSING_REQUIRED_ATTRIBUTE') {
+        if (subjectAttributes.departmentId === null) missingAttributes.push('SUBJECT_DEPARTMENT');
+        if (subjectAttributes.clearanceRank === null) missingAttributes.push('CLEARANCE_LEVEL');
+        if (subjectAttributes.employmentStatus === null)
+          missingAttributes.push('EMPLOYMENT_STATUS');
+        if (resourceAttributes.classificationRank === null)
+          missingAttributes.push('CLASSIFICATION_RANK');
+        if (resourceAttributes.category === null) missingAttributes.push('RESOURCE_CATEGORY');
+      }
+      const missingSuffix =
+        missingAttributes.length > 0 ? ` (${missingAttributes.join(', ')})` : '';
       throw new ForbiddenException({
         errorCode: AppErrorCode.GRANT_ABAC_DENIED,
-        message: `ABAC policy denied ${permission} access: ${abacResult.reasonCode}.`,
+        message: `ABAC policy denied ${permission} access: ${abacResult.reasonCode}${missingSuffix}.`,
+        details: {
+          reasonCode: abacResult.reasonCode,
+          ...(missingAttributes.length > 0 ? { missingAttributes } : {}),
+        },
       });
     }
   }
 
-  return { validFrom, validUntil, maxMs };
+  return {
+    validFrom,
+    validUntil,
+    maxMs,
+    documentTitle: document.title,
+    documentCode: document.document_code,
+  };
 }

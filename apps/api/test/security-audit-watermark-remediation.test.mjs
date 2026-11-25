@@ -92,10 +92,14 @@ test('Grant ABAC context uses neutral static environment and bulk O(1) role-hold
 
   let userQueryCalls = 0;
   let attrQueryCalls = 0;
+  let capturedRoleFilterWhere = null;
   const roleProfile = await buildRoleGrantSubjectAttributes(
     {
       userRole: {
-        findMany: async () => [{ user_id: 11n }, { user_id: 12n }, { user_id: 13n }],
+        findMany: async ({ where } = {}) => {
+          if (!capturedRoleFilterWhere) capturedRoleFilterWhere = where;
+          return [{ user_id: 11n }, { user_id: 12n }, { user_id: 13n }];
+        },
       },
       user: {
         findMany: async ({ where }) => {
@@ -137,6 +141,10 @@ test('Grant ABAC context uses neutral static environment and bulk O(1) role-hold
   );
   assert.equal(userQueryCalls, 1);
   assert.equal(attrQueryCalls, 1);
+  assert.equal('users' in (capturedRoleFilterWhere ?? {}), false);
+  assert.deepEqual(capturedRoleFilterWhere?.users_user_roles_user_idTousers, {
+    status: { not: 'DISABLED' },
+  });
   assert.equal(roleProfile.clearanceRank, 3);
   assert.equal(roleProfile.holderCount, 3);
 });

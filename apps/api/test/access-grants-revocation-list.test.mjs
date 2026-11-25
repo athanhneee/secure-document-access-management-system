@@ -347,15 +347,112 @@ test('AccessGrantsService Anti-BOLA — peer DOCUMENT_OWNER cannot self-grant, i
   );
   assert.deepEqual(peerOwnedByDoc.data, []);
 
-  // 5. listGrants with scope=owned without documentId strictly scopes to documents.owner_id = principal.userId
+  // 5. listGrants with scope=owned without documentId strictly scopes to documents.owner_id = principal.userId and excludes owner self-grants
   await service.listGrants(
     { scope: 'owned', page: 1, pageSize: 20, sort: 'granted_at', order: 'desc' },
     peerOwner,
   );
   assert.equal(lastListWhere?.documents?.owner_id, 30n);
+  assert.deepEqual(lastListWhere?.NOT, { principal_type: 'USER', principal_user_id: 30n });
   assert.equal('OR' in (lastListWhere ?? {}), false);
 
   // 6. ListAccessGrantsSchema accepts scope=owned and rejects forged ownerId
   assert.equal(ListAccessGrantsSchema.safeParse({ scope: 'owned' }).success, true);
   assert.equal(ListAccessGrantsSchema.safeParse({ ownerId: '9' }).success, false);
+});
+
+test('AccessGrantsService — rejects owner self-grant and past validUntil while excluding self-grant from owned list', async () => {
+  const docId = randomUUID();
+  const now = new Date();
+  let capturedWhere = null;
+
+  const mockDb = {
+    document: {
+      findUnique: async () => ({
+        id: docId,
+        owner_id: 10n,
+        department_id: 2n,
+        status: 'ACTIVE',
+        classification_history: [
+          {
+            classification_levels: { rank: 3, allow_download: false },
+            business_categories: { code: 'FIN' },
+          },
+        ],
+      }),
+    },
+    user: { findUnique: async () => ({ id: 20n, status: 'ACTIVE', department_id: 2n }) },
+    userRole: { findMany: async () => [] },
+    userAttributeAssignment: {
+      findFirst: async () => ({ attribute_options: { numeric_rank: 3, is_active: true } }),
+      findMany: async () => [],
+    },
+    accessGrant: {
+      findMany: async ({ where }) => {
+        capturedWhere = where;
+        return [];
+      },
+    },
+  };
+
+  const service = new AccessGrantsService(
+    { record: async () => {} },
+    { hasPermission: async () => true },
+    { invalidateUser: () => {} },
+    { evaluate: async () => ({ decision: 'PERMIT' }) },
+    { get: () => 30 },
+    mockDb,
+  );
+
+  const ownerPrincipal = {
+    userId: 10n,
+    sessionId: 's-owner',
+    username: 'athanhnee',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  };
+  const ctx = { ip: '127.0.0.1' };
+
+  // 1. Direct grant to self (owner_id === principalUserId) is rejected with 400 GRANT_PRINCIPAL_INVALID
+  await assert.rejects(
+    () =>
+      service.createGrant(
+        {
+          documentId: docId,
+          principalType: 'USER',
+          principalUserId: 10n,
+          permissions: ['VIEW'],
+          validFrom: now.toISOString(),
+          validUntil: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+        },
+        ownerPrincipal,
+        ctx,
+      ),
+    (err) => err.status === 400 && err.response?.errorCode === 'GRANT_PRINCIPAL_INVALID',
+  );
+
+  // 2. Grant whose validUntil is already in the past is rejected with 400 GRANT_TIME_RANGE_INVALID
+  await assert.rejects(
+    () =>
+      service.createGrant(
+        {
+          documentId: docId,
+          principalType: 'USER',
+          principalUserId: 20n,
+          permissions: ['VIEW'],
+          validFrom: new Date(now.getTime() - 2 * 86_400_000).toISOString(),
+          validUntil: new Date(now.getTime() - 60_000).toISOString(),
+        },
+        ownerPrincipal,
+        ctx,
+      ),
+    (err) => err.status === 400 && err.response?.errorCode === 'GRANT_TIME_RANGE_INVALID',
+  );
+
+  // 3. listGrants(scope='owned', documentId) excludes owner's auto-created technical self-grant
+  await service.listGrants(
+    { scope: 'owned', documentId: docId, page: 1, pageSize: 50, sort: 'granted_at', order: 'desc' },
+    ownerPrincipal,
+  );
+  assert.deepEqual(capturedWhere?.NOT, { principal_type: 'USER', principal_user_id: 10n });
 });

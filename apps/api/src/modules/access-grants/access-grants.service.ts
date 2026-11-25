@@ -22,6 +22,7 @@ import { RedlockService } from '../concurrency/redlock.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { AuthorizationCache } from '../rbac/authorization-cache.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { isPureTechnicalOrAuditRole } from '../documents/document-access-guard.helper.js';
 import { AccessGrantAuditService } from './access-grant-audit.service.js';
 import { toGrantDetail, type GrantDetail, type GrantListResult } from './access-grants.types.js';
@@ -31,6 +32,22 @@ import { executeCreateOrExtendGrantTx } from './grant-transaction.helper.js';
 import { validateCreateGrantPreconditions } from './grant-validation.helper.js';
 
 export type { GrantDetail, GrantListResult } from './access-grants.types.js';
+
+function formatGrantPermissionsVi(permissions: readonly string[]): string {
+  const normalized = permissions.map((p) => p.trim().toUpperCase());
+  const hasView = normalized.includes('VIEW');
+  const hasDownload = normalized.includes('DOWNLOAD');
+  if (hasView && hasDownload) return 'Xem & Tải về';
+  if (hasDownload) return 'Tải về';
+  if (hasView) return 'Chỉ xem';
+  return permissions.join(', ');
+}
+
+function formatGrantExpiryVi(isoValue: string): string {
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) return isoValue;
+  return parsed.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+}
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -48,6 +65,7 @@ export class AccessGrantsService {
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly redlock?: RedlockService,
     @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -66,17 +84,18 @@ export class AccessGrantsService {
     context: RequestContext,
   ): Promise<GrantDetail> {
     const now = new Date();
-    const { validFrom, validUntil, maxMs } = await validateCreateGrantPreconditions({
-      input,
-      principal,
-      context,
-      now,
-      maxDurationDays: this.maxDurationDays,
-      database: this.database,
-      authorization: this.authorization,
-      abac: this.abac,
-      config: this.config,
-    });
+    const { validFrom, validUntil, maxMs, documentTitle, documentCode } =
+      await validateCreateGrantPreconditions({
+        input,
+        principal,
+        context,
+        now,
+        maxDurationDays: this.maxDurationDays,
+        database: this.database,
+        authorization: this.authorization,
+        abac: this.abac,
+        config: this.config,
+      });
 
     const runTx = () =>
       executeCreateOrExtendGrantTx({
@@ -101,12 +120,17 @@ export class AccessGrantsService {
       : await runTx();
 
     if (this.notifications && created.principalType === 'USER' && created.principalUserId) {
+      const docLabel = documentTitle
+        ? `"${documentTitle}"${documentCode ? ` (${documentCode})` : ''}`
+        : 'được chỉ định';
+      const permissionLabel = formatGrantPermissionsVi(created.permissions);
+      const expiryLabel = formatGrantExpiryVi(created.validUntil);
       try {
         await this.notifications.sendNotification({
           recipientId: BigInt(created.principalUserId),
           notificationType: 'ACCESS_GRANT_ISSUED',
           title: 'Bạn vừa được cấp quyền truy cập tài liệu',
-          body: `Quyền truy cập (${created.permissions.join(', ')}) đối với tài liệu ${created.documentId} có hiệu lực đến ${created.validUntil}.`,
+          body: `Quyền truy cập (${permissionLabel}) đối với tài liệu ${docLabel} có hiệu lực đến ${expiryLabel}.`,
           relatedObjectType: 'ACCESS_GRANT',
           relatedObjectId: created.id,
           deduplicationKey: `ACCESS_GRANT_ISSUED:${created.principalUserId}:${created.id}:v${created.version}`,
@@ -121,6 +145,21 @@ export class AccessGrantsService {
         // Non-fatal post-commit notification dispatch
       }
     }
+
+    this.realtime?.publish({
+      type: 'ACCESS_GRANT_UPDATED',
+      targetUserIds: [
+        principal.userId.toString(),
+        ...(created.principalUserId ? [created.principalUserId] : []),
+      ],
+      ...(created.principalType === 'ROLE' ? { targetRoles: ['DOCUMENT_READER'] } : {}),
+      payload: {
+        id: created.id,
+        documentId: created.documentId,
+        status: created.status,
+        action: 'CREATED',
+      },
+    });
 
     return created;
   }
@@ -144,6 +183,7 @@ export class AccessGrantsService {
       cache: this.cache,
       audit: this.audit,
       notifications: this.notifications,
+      realtime: this.realtime,
     });
   }
 
@@ -217,6 +257,8 @@ export class AccessGrantsService {
           return { data: [], page: input.page, pageSize: input.pageSize, hasMore: false };
         }
         where['document_id'] = input.documentId;
+        // Loại bỏ bản ghi cấp quyền kỹ thuật tự sinh cho chính chủ sở hữu (pep-clearance.helper) khỏi danh sách quyền đã cấp.
+        where['NOT'] = { principal_type: 'USER', principal_user_id: principal.userId };
       } else if (scope === 'received' || !isOwner) {
         where['document_id'] = input.documentId;
         where['principal_type'] = 'USER';
@@ -226,6 +268,8 @@ export class AccessGrantsService {
       }
     } else if (scope === 'owned') {
       where['documents'] = { owner_id: principal.userId, status: { not: 'DELETED' } };
+      // Loại bỏ bản ghi cấp quyền kỹ thuật tự sinh cho chính chủ sở hữu khỏi tab "Quyền truy cập đã cấp".
+      where['NOT'] = { principal_type: 'USER', principal_user_id: principal.userId };
     } else if (scope === 'received') {
       where['principal_type'] = 'USER';
       where['principal_user_id'] = principal.userId;

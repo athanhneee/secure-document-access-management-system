@@ -27,6 +27,10 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { executeAccessRequestDecision } from './access-request-decision.helper.js';
 import {
+  notifyOwnerOfAccessRequestCancelled,
+  notifyOwnerOfAccessRequestCreated,
+} from './access-request-notification.helper.js';
+import {
   mapAccessRequestDetail,
   validateCreateAccessRequestPreconditions,
 } from './access-request-validation.helper.js';
@@ -131,6 +135,20 @@ export class AccessRequestsService {
 
     const detail = mapAccessRequestDetail(created, input.requestedAction);
     const ownerId = (created as { documents?: { owner_id?: bigint | null } }).documents?.owner_id;
+    await notifyOwnerOfAccessRequestCreated({
+      notifications: this.notifications,
+      ownerId,
+      requesterId: principal.userId,
+      requestId: detail.id,
+      documentId: detail.documentId,
+      documentTitle: detail.documentTitle,
+      documentCode: detail.documentCode,
+      requestorName: detail.requestorName,
+      requestorUsername: detail.requestorUsername,
+      requestorDepartment: detail.requestorDepartment,
+      requestedAction: detail.requestedAction,
+      justification: detail.justification,
+    });
     const targets = [principal.userId.toString(), ...(ownerId ? [ownerId.toString()] : [])];
     this.realtime?.publish({
       type: 'ACCESS_REQUEST_UPDATED',
@@ -188,7 +206,10 @@ export class AccessRequestsService {
       const now = new Date();
       const request = await this.database.accessRequest.findUnique({
         where: { id },
-        include: { documents: { select: { owner_id: true } } },
+        include: {
+          documents: { select: { owner_id: true, title: true, document_code: true } },
+          users: { select: { full_name: true, username: true } },
+        },
       });
 
       if (!request) {
@@ -260,7 +281,26 @@ export class AccessRequestsService {
         );
       });
 
-      const ownerId = (request as { documents?: { owner_id?: bigint | null } }).documents?.owner_id;
+      const requestMeta = request as {
+        documents?: {
+          owner_id?: bigint | null;
+          title?: string | null;
+          document_code?: string | null;
+        } | null;
+        users?: { full_name?: string | null; username?: string | null } | null;
+      };
+      const ownerId = requestMeta.documents?.owner_id;
+      await notifyOwnerOfAccessRequestCancelled({
+        notifications: this.notifications,
+        ownerId,
+        requesterId: principal.userId,
+        requestId: id,
+        documentId: request.document_id,
+        documentTitle: requestMeta.documents?.title,
+        documentCode: requestMeta.documents?.document_code,
+        requestorName: requestMeta.users?.full_name || principal.username,
+        requestorUsername: requestMeta.users?.username || principal.username,
+      });
       this.realtime?.publish({
         type: 'ACCESS_REQUEST_UPDATED',
         targetUserIds: [principal.userId.toString(), ...(ownerId ? [ownerId.toString()] : [])],

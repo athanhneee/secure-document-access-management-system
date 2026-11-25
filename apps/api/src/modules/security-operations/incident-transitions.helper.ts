@@ -149,6 +149,34 @@ export async function executeSubmitIncidentReport(
     });
   }
 
+  // CONFLICT-RESOLVED: Xác minh tồn tại người nhận trước khi lưu khóa ngoại submitted_to_owner / submitted_to_admin (N13).
+  if (typeof database.user?.findUnique === 'function') {
+    if (input.submittedToOwner !== undefined) {
+      const ownerUser = await database.user.findUnique({
+        where: { id: input.submittedToOwner },
+        select: { id: true },
+      });
+      if (!ownerUser) {
+        throw new NotFoundException({
+          errorCode: AppErrorCode.RESOURCE_NOT_FOUND,
+          message: `Submitted owner user ${input.submittedToOwner.toString()} was not found.`,
+        });
+      }
+    }
+    if (input.submittedToAdmin !== undefined) {
+      const adminUser = await database.user.findUnique({
+        where: { id: input.submittedToAdmin },
+        select: { id: true },
+      });
+      if (!adminUser) {
+        throw new NotFoundException({
+          errorCode: AppErrorCode.RESOURCE_NOT_FOUND,
+          message: `Submitted admin user ${input.submittedToAdmin.toString()} was not found.`,
+        });
+      }
+    }
+  }
+
   const updated = await database.incidentReport.update({
     where: { id },
     data: {
@@ -167,7 +195,37 @@ export async function executeSubmitIncidentReport(
 }
 
 /**
- * Algorithm: Terminal Incident Closure (`* -> CLOSED`)
+ * Algorithm: Incident Review State Transition (`SUBMITTED -> IN_REVIEW`) (#18)
+ * Thuật toán: Chuyển hồ sơ sự cố đã đệ trình sang trạng thái đang thẩm định `IN_REVIEW` kèm ghi vết kiểm toán.
+ */
+export async function executeReviewIncidentReport(
+  database: PrismaClient,
+  auditWriter: AuditWriterService | undefined,
+  id: string,
+  actor: AuthPrincipal,
+): Promise<string> {
+  assertActorCanMutateIncidents(actor);
+  const report = await requireIncidentRow(database, id);
+  if (report.status !== 'SUBMITTED') {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.INCIDENT_INVALID_TRANSITION,
+      message: `Cannot move incident report from ${report.status} to IN_REVIEW; submit it first.`,
+    });
+  }
+
+  const updated = await database.incidentReport.update({
+    where: { id },
+    data: { status: 'IN_REVIEW' },
+  });
+  await writeIncidentAudit(auditWriter, actor, 'INCIDENT_REPORT_IN_REVIEW', id, {
+    incidentCode: report.incident_code,
+    previousStatus: report.status,
+  });
+  return updated.id;
+}
+
+/**
+ * Algorithm: Terminal Incident Closure (`SUBMITTED | IN_REVIEW -> CLOSED`) with Remediation Action Completion Gate (#15, N13)
  */
 export async function executeCloseIncidentReport(
   database: PrismaClient,
@@ -178,8 +236,8 @@ export async function executeCloseIncidentReport(
 ): Promise<string> {
   assertActorCanMutateIncidents(actor);
   const report = await requireIncidentRow(database, id);
-  // CONFLICT-RESOLVED: Chỉ cho phép đóng báo cáo sự cố đã ở trạng thái SUBMITTED (DRAFT -> SUBMITTED -> CLOSED) (HIGH-12)
-  if (report.status !== 'SUBMITTED') {
+  // CONFLICT-RESOLVED: Cho phép đóng hồ sơ sự cố từ SUBMITTED hoặc IN_REVIEW và bắt buộc hoàn tất mọi hành động khắc phục trừ khi forceClose có ghi chú giải trình (HIGH-12, #15, N13).
+  if (report.status !== 'SUBMITTED' && report.status !== 'IN_REVIEW') {
     throw new BadRequestException({
       errorCode: AppErrorCode.INCIDENT_INVALID_TRANSITION,
       message:
@@ -187,6 +245,20 @@ export async function executeCloseIncidentReport(
           ? 'Incident report is already closed.'
           : `Cannot close incident report currently in ${report.status} status; submit it first.`,
     });
+  }
+
+  if (typeof database.incidentAction?.count === 'function') {
+    const incompleteActionsCount = await database.incidentAction.count({
+      where: { incident_report_id: id, completed_at: null },
+    });
+    if (incompleteActionsCount > 0) {
+      if (!input.forceClose || !input.closingNote || input.closingNote.trim().length < 5) {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.INCIDENT_INVALID_TRANSITION,
+          message: `Còn ${incompleteActionsCount} hành động khắc phục chưa hoàn tất. Vui lòng hoàn thành trước khi đóng hồ sơ hoặc chọn đóng ngoại lệ kèm ghi chú kết luận.`,
+        });
+      }
+    }
   }
 
   const updated = await database.incidentReport.update({
@@ -202,6 +274,7 @@ export async function executeCloseIncidentReport(
   await writeIncidentAudit(auditWriter, actor, 'INCIDENT_REPORT_CLOSED', id, {
     incidentCode: report.incident_code,
     closingNote: input.closingNote ?? null,
+    forceClose: Boolean(input.forceClose),
   });
   return updated.id;
 }

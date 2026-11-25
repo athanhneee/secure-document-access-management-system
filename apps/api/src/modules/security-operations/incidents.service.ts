@@ -19,6 +19,7 @@ import {
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import {
   executeAddIncidentAction,
   executeCompleteIncidentAction,
@@ -32,6 +33,7 @@ import {
 import {
   executeCloseIncidentReport,
   executeCreateIncidentReport,
+  executeReviewIncidentReport,
   executeSubmitIncidentReport,
   executeUpdateIncidentReport,
 } from './incident-transitions.helper.js';
@@ -55,6 +57,7 @@ export class IncidentsService {
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
     @Optional() private readonly authorization?: AuthorizationService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -62,6 +65,14 @@ export class IncidentsService {
       this.database = (databaseClient ?? null) as unknown as PrismaClient;
     }
     this.logger.log('IncidentsService initialized');
+  }
+
+  private emitIncidentUpdated(id: string, action: string, status?: string): void {
+    this.realtime?.publish({
+      type: 'INCIDENT_REPORT_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: { id, action, ...(status ? { status } : {}) },
+    });
   }
 
   /**
@@ -81,11 +92,13 @@ export class IncidentsService {
       );
     }
     const id = await executeCreateIncidentReport(this.database, this.auditWriter, input, actor);
-    return this.getIncidentReportById(id, actor);
+    const detail = await this.getIncidentReportById(id, actor);
+    this.emitIncidentUpdated(detail.id, 'CREATED', detail.status);
+    return detail;
   }
 
   /**
-   * Thuật toán: Liệt kê danh sách biên bản sự cố phân trang nhìn trước `pageSize + 1` có lọc theo phạm vi phòng ban.
+   * Thuật toán: Liệt kê danh sách biên bản sự cố phân trang nhìn trước `pageSize + 1` kèm tổng số bản ghi thực (`total`) theo phạm vi phòng ban.
    */
   async listIncidentReports(
     query: QueryIncidentReportsInput,
@@ -95,31 +108,49 @@ export class IncidentsService {
     page: number;
     pageSize: number;
     hasMore: boolean;
+    total: number;
+    meta: {
+      page: number;
+      pageSize: number;
+      total: number;
+      totalPages: number;
+      hasMore: boolean;
+    };
   }> {
     const allowedDepts = await resolveIncidentDepartmentScope(this.authorization, actor, 'VIEW');
     const where = applyIncidentScopeToWhere(buildIncidentQueryWhere(query), allowedDepts);
-    const reports = await this.database.incidentReport.findMany({
-      where,
-      orderBy: { [query.sort]: query.order },
-      take: query.pageSize + 1,
-      skip: (query.page - 1) * query.pageSize,
-      include: {
-        users_incident_reports_prepared_byTousers: {
-          select: { id: true, username: true, full_name: true },
+    const [reports, totalCount] = await Promise.all([
+      this.database.incidentReport.findMany({
+        where,
+        orderBy: { [query.sort]: query.order },
+        take: query.pageSize + 1,
+        skip: (query.page - 1) * query.pageSize,
+        include: {
+          users_incident_reports_prepared_byTousers: {
+            select: { id: true, username: true, full_name: true },
+          },
+          incident_actions: {
+            include: { users: { select: { id: true, username: true, full_name: true } } },
+          },
         },
-        incident_actions: {
-          include: { users: { select: { id: true, username: true, full_name: true } } },
-        },
-      },
-    });
+      }),
+      typeof this.database.incidentReport.count === 'function'
+        ? this.database.incidentReport.count({ where })
+        : Promise.resolve<number | null>(null),
+    ]);
 
     const hasMore = reports.length > query.pageSize;
     const items = hasMore ? reports.slice(0, query.pageSize) : reports;
+    const total =
+      totalCount ?? (query.page - 1) * query.pageSize + items.length + (hasMore ? 1 : 0);
+    const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
     return {
       data: items.map(mapIncidentReportToDetail),
       page: query.page,
       pageSize: query.pageSize,
       hasMore,
+      total,
+      meta: { page: query.page, pageSize: query.pageSize, total, totalPages, hasMore },
     };
   }
 
@@ -167,7 +198,9 @@ export class IncidentsService {
       input,
       actor,
     );
-    return this.getIncidentReportById(updatedId, actor);
+    const detail = await this.getIncidentReportById(updatedId, actor);
+    this.emitIncidentUpdated(detail.id, 'UPDATED', detail.status);
+    return detail;
   }
 
   /**
@@ -186,11 +219,24 @@ export class IncidentsService {
       input,
       actor,
     );
-    return this.getIncidentReportById(updatedId, actor);
+    const detail = await this.getIncidentReportById(updatedId, actor);
+    this.emitIncidentUpdated(detail.id, 'SUBMITTED', detail.status);
+    return detail;
   }
 
   /**
-   * Thuật toán: Đóng biên bản sự cố (`SUBMITTED -> CLOSED`) có xác minh điều kiện hoàn tất các hành động khắc phục.
+   * Thuật toán: Chuyển biên bản sự cố đã đệ trình sang trạng thái đang thẩm định (`SUBMITTED -> IN_REVIEW`) (#18).
+   */
+  async reviewIncidentReport(id: string, actor: AuthPrincipal): Promise<IncidentReportDetail> {
+    await assertIncidentInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
+    const updatedId = await executeReviewIncidentReport(this.database, this.auditWriter, id, actor);
+    const detail = await this.getIncidentReportById(updatedId, actor);
+    this.emitIncidentUpdated(detail.id, 'IN_REVIEW', detail.status);
+    return detail;
+  }
+
+  /**
+   * Thuật toán: Đóng biên bản sự cố (`SUBMITTED | IN_REVIEW -> CLOSED`) có xác minh điều kiện hoàn tất các hành động khắc phục (N13).
    */
   async closeIncidentReport(
     id: string,
@@ -205,7 +251,9 @@ export class IncidentsService {
       input,
       actor,
     );
-    return this.getIncidentReportById(updatedId, actor);
+    const detail = await this.getIncidentReportById(updatedId, actor);
+    this.emitIncidentUpdated(detail.id, 'CLOSED', detail.status);
+    return detail;
   }
 
   /**
@@ -223,13 +271,15 @@ export class IncidentsService {
       incidentReportId,
       'MANAGE',
     );
-    return executeAddIncidentAction(
+    const created = await executeAddIncidentAction(
       this.database,
       this.auditWriter,
       incidentReportId,
       input,
       actor,
     );
+    this.emitIncidentUpdated(incidentReportId, 'ACTION_ADDED');
+    return created;
   }
 
   /**
@@ -250,7 +300,7 @@ export class IncidentsService {
         'MANAGE',
       );
     }
-    return executeCompleteIncidentAction(
+    const completed = await executeCompleteIncidentAction(
       this.database,
       this.auditWriter,
       actionId,
@@ -258,5 +308,9 @@ export class IncidentsService {
       actor,
       expectedIncidentId,
     );
+    if (expectedIncidentId) {
+      this.emitIncidentUpdated(expectedIncidentId, 'ACTION_COMPLETED');
+    }
+    return completed;
   }
 }

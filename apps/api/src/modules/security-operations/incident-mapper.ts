@@ -29,6 +29,7 @@ export interface IncidentReportDetail {
   alertId: string | null;
   title: string;
   summary: string;
+  closingNote: string | null;
   findings: string | null;
   impactAssessment: string | null;
   status: incident_status;
@@ -79,6 +80,26 @@ export function generateIncidentCode(): string {
   return `INC-${year}-${suffix}`;
 }
 
+const CLOSED_NOTE_MARKER = '\n[CLOSED NOTE]: ';
+
+/**
+ * Thuật toán: Tách Bạch Nội Dung Tóm Tắt Gốc & Ghi Chú Nghiệm Thu Đóng Hồ Sơ (`splitIncidentSummaryAndClosingNote`)
+ * Mục đích: Không làm bẩn trường `summary` khi hiển thị hồ sơ đã đóng và trả riêng trường `closingNote` mà không đòi hỏi thay đổi lược đồ CSDL (#19).
+ */
+export function splitIncidentSummaryAndClosingNote(rawSummary: string): {
+  cleanSummary: string;
+  closingNote: string | null;
+} {
+  const idx = rawSummary.lastIndexOf(CLOSED_NOTE_MARKER);
+  if (idx === -1) {
+    return { cleanSummary: rawSummary, closingNote: null };
+  }
+  return {
+    cleanSummary: rawSummary.slice(0, idx).trim(),
+    closingNote: rawSummary.slice(idx + CLOSED_NOTE_MARKER.length).trim() || null,
+  };
+}
+
 export function buildIncidentQueryWhere(
   query: QueryIncidentReportsInput,
 ): Prisma.IncidentReportWhereInput {
@@ -86,6 +107,14 @@ export function buildIncidentQueryWhere(
   if (query.status) where.status = query.status;
   if (query.preparedBy) where.prepared_by = query.preparedBy;
   if (query.alertId) where.alert_id = query.alertId;
+  if (query.search && query.search.trim().length > 0) {
+    const term = query.search.trim();
+    where.OR = [
+      { title: { contains: term, mode: 'insensitive' } },
+      { summary: { contains: term, mode: 'insensitive' } },
+      { incident_code: { contains: term, mode: 'insensitive' } },
+    ];
+  }
 
   if (query.from || query.to) {
     where.created_at = {};
@@ -147,12 +176,14 @@ export function mapIncidentReportToDetail(report: {
   closed_at: Date | null;
   incident_actions?: Array<Parameters<typeof mapIncidentActionToDetail>[0]>;
 }): IncidentReportDetail {
+  const { cleanSummary, closingNote } = splitIncidentSummaryAndClosingNote(report.summary);
   return {
     id: report.id,
     incidentCode: report.incident_code,
     alertId: report.alert_id,
     title: report.title,
-    summary: report.summary,
+    summary: cleanSummary,
+    closingNote,
     findings: report.findings ?? '',
     impactAssessment: report.impact_assessment,
     status: report.status,

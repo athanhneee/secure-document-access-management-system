@@ -113,12 +113,17 @@ export async function resolveIncidentDepartmentScope(
   if (mode === 'MANAGE') {
     return authorization.visibleDepartmentIds(actor, 'INCIDENT_REPORT', 'MANAGE');
   }
-  const [viewScope, manageScope] = await Promise.all([
+  const [viewScope, createScope, manageScope] = await Promise.all([
     authorization.visibleDepartmentIds(actor, 'SECURITY_ALERT', 'VIEW'),
+    authorization.visibleDepartmentIds(actor, 'INCIDENT_REPORT', 'CREATE'),
     authorization.visibleDepartmentIds(actor, 'INCIDENT_REPORT', 'MANAGE'),
   ]);
-  if (viewScope === null || manageScope === null) return null;
-  return [...new Map([...viewScope, ...manageScope].map((id) => [id.toString(), id])).values()];
+  if (viewScope === null || createScope === null || manageScope === null) return null;
+  return [
+    ...new Map(
+      [...viewScope, ...createScope, ...manageScope].map((id) => [id.toString(), id]),
+    ).values(),
+  ];
 }
 
 /**

@@ -3,7 +3,18 @@
  * Thuật toán: Điều phối API Trung tâm Điều hành An ninh (SOC) cho cảnh báo xâm nhập, báo cáo sự cố
  * và quy tắc tương quan cửa sổ trượt với bảo vệ CSRF bắt buộc và phân quyền nguyên tử.
  */
-import { Controller, Get, Post, Patch, Param, Query, Body, Req, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Query,
+  Body,
+  Req,
+  HttpStatus,
+  Optional,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 import {
@@ -22,10 +33,11 @@ import {
   RunDetectionInputSchema,
 } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
-import { RequirePermission } from '../rbac/require-permission.js';
+import { RequireAnyPermission, RequirePermission } from '../rbac/require-permission.js';
 import { SecurityAlertsService } from './security-alerts.service.js';
 import { IncidentsService } from './incidents.service.js';
 import { SecurityDetectionService } from './security-detection.service.js';
+import { DlpStatusService } from './dlp-status.service.js';
 import {
   parseActionIdParam,
   parseUuidParam,
@@ -44,7 +56,29 @@ export class SecurityOperationsController {
     private readonly incidentsService: IncidentsService,
     private readonly detectionService: SecurityDetectionService,
     private readonly csrf: CsrfService,
+    @Optional() private readonly dlpStatusService?: DlpStatusService,
   ) {}
+
+  @Get('security-operations/dlp-status')
+  @RequirePermission('SECURITY_ALERT', 'VIEW')
+  @ApiOperation({ summary: 'Get real-time ICAP Network DLP worker status and enforcement mode' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Real ICAP Network DLP gateway status' })
+  async getNetworkDlpStatus(@Req() req: FastifyRequest) {
+    const auth = requireAuthenticatedPrincipal(req);
+    if (!this.dlpStatusService) {
+      return {
+        gatewayHealth: 'OFFLINE',
+        workerReachable: false,
+        icapEnabled: false,
+        icapListening: false,
+        enforcementMode: 'OFFLINE',
+        totalDlpAlerts: 0,
+        openDlpAlerts: 0,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+    return this.dlpStatusService.getNetworkDlpStatus(auth);
+  }
 
   @Get('security-alerts')
   @RequirePermission('SECURITY_ALERT', 'VIEW')
@@ -104,7 +138,12 @@ export class SecurityOperationsController {
   }
 
   @Get('incidents')
-  @RequirePermission('SECURITY_ALERT', 'VIEW')
+  // CONFLICT-RESOLVED: Cho phép cả vai trò xem cảnh báo (AUDITOR/SOC) lẫn vai trò tùy chỉnh chỉ có INCIDENT_REPORT:CREATE/MANAGE truy cập danh sách sự cố (N07).
+  @RequireAnyPermission([
+    { resource: 'SECURITY_ALERT', action: 'VIEW' },
+    { resource: 'INCIDENT_REPORT', action: 'CREATE' },
+    { resource: 'INCIDENT_REPORT', action: 'MANAGE' },
+  ])
   @ApiOperation({ summary: 'List incident reports with filters and pagination' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Paginated incident reports list' })
   async listIncidents(@Query() query: unknown, @Req() req: FastifyRequest) {
@@ -116,7 +155,11 @@ export class SecurityOperationsController {
   }
 
   @Get('incidents/:id')
-  @RequirePermission('SECURITY_ALERT', 'VIEW')
+  @RequireAnyPermission([
+    { resource: 'SECURITY_ALERT', action: 'VIEW' },
+    { resource: 'INCIDENT_REPORT', action: 'CREATE' },
+    { resource: 'INCIDENT_REPORT', action: 'MANAGE' },
+  ])
   @ApiOperation({ summary: 'Get incident report details by ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Incident report details' })
   async getIncidentById(@Param('id') id: string, @Req() req: FastifyRequest) {
@@ -160,6 +203,15 @@ export class SecurityOperationsController {
       parseZodPayload(SubmitIncidentReportSchema, body),
       auth,
     );
+  }
+
+  @Post('incidents/:id/review')
+  @RequirePermission('INCIDENT_REPORT', 'MANAGE')
+  @ApiOperation({ summary: 'Move submitted incident report into IN_REVIEW status' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Incident report moved to IN_REVIEW' })
+  async reviewIncident(@Param('id') id: string, @Req() req: FastifyRequest) {
+    const auth = requireMutatingPrincipal(this.csrf, req);
+    return this.incidentsService.reviewIncidentReport(parseUuidParam(id, 'incident'), auth);
   }
 
   @Post('incidents/:id/close')
@@ -244,6 +296,6 @@ export class SecurityOperationsController {
   async runDetection(@Body() body: unknown, @Req() req: FastifyRequest) {
     requireMutatingPrincipal(this.csrf, req);
     const data = parseZodPayload(RunDetectionInputSchema, body);
-    return this.detectionService.runAllDetections(data.windowMinutes);
+    return this.detectionService.runAllDetections(data.windowMinutes, data.ruleCodes);
   }
 }

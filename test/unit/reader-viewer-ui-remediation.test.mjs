@@ -182,7 +182,8 @@ describe('DOCUMENT_READER (qa.view) 66-Finding Remediation Regression Suite', ()
     assert.match(bell, /Tải thêm thông báo/);
     assert.match(bell, /chưa đọc\)/);
 
-    assert.match(sidebar, /Bảo mật &amp; MFA/);
+    assert.match(sidebar, /href="\/sessions"/);
+    assert.doesNotMatch(sidebar, /Bảo mật &amp; MFA/);
     assert.match(sidebar, /ClassificationBadge/);
     assert.doesNotMatch(sidebar, /ExternalLink/);
     assert.match(appSidebar, /bg-transparent/);

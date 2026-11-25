@@ -5,7 +5,7 @@
  * Mục đích:
  *   - Chỉ dựng các liên kết phân hệ vai trò mà tài khoản hiện tại thực sự được cấp quyền qua `canAccessPortal`.
  *   - Hiển thị thẻ tóm tắt tài khoản (họ tên, phòng ban, cấp thẩm quyền bảo mật, trạng thái MFA) để người dùng di động (`<1024px`) luôn tra cứu được danh tính và thẩm quyền của mình (`V-30`, `V-59`).
- *   - Cung cấp lối vào trực tiếp `Bảo mật & MFA` (`/sessions#bao-mat-mfa`, `V-09`, `V-48`), gán `aria-current="page"` thống nhất (`V-65`) và thay icon `ExternalLink` sai ngữ nghĩa bằng `Home` (`V-63`).
+ *   - Cung cấp liên kết tới `Phiên & thiết bị` (`/sessions`, tích hợp quản lý MFA/Passkey) và `Trang giới thiệu` (`/`), gán `aria-current="page"` thống nhất (`V-65`) và thay icon `ExternalLink` sai ngữ nghĩa bằng `Home` (`V-63`).
  */
 import type React from 'react';
 import Link from 'next/link';
@@ -17,7 +17,6 @@ import {
   FileCheck,
   Laptop,
   Shield,
-  ShieldCheck,
   Home,
   User,
   X,
@@ -198,15 +197,6 @@ export function SidebarDirectory({
         >
           <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
           <span className="truncate">Phiên &amp; thiết bị</span>
-        </Link>
-
-        <Link
-          href="/sessions#bao-mat-mfa"
-          onClick={() => onNavigate?.()}
-          className="flex min-h-11 sm:min-h-9 items-center gap-2.5 rounded-full border border-transparent px-3 py-1.5 text-xs font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors"
-        >
-          <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
-          <span className="truncate">Bảo mật &amp; MFA</span>
         </Link>
 
         <Link

@@ -33,11 +33,16 @@ const securityHeaders = [
   },
 ];
 
+const distDir = process.env['NEXT_DIST_DIR']?.trim() || '.next';
+
 const nextConfig: NextConfig = {
+  distDir,
   output: 'standalone',
   poweredByHeader: false,
   reactStrictMode: true,
+  devIndicators: false,
   experimental: {
+    agentUpgrade: false,
     proxyTimeout: 60_000,
     proxyClientMaxBodySize: '64mb',
   },

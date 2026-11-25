@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
+const webDistDir = process.env['NEXT_DIST_DIR']?.trim() || '.next';
 const webPort = parsePort(process.env['E2E_WEB_PORT'], 3100);
 const apiPort = parsePort(process.env['E2E_API_PORT'], 3101);
 const webUrl = `http://127.0.0.1:${webPort}`;
@@ -38,7 +39,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'node apps/web/.next/standalone/apps/web/server.js',
+      command: `node apps/web/${webDistDir}/standalone/apps/web/server.js`,
       cwd: repositoryRoot,
       url: webUrl,
       timeout: 60_000,

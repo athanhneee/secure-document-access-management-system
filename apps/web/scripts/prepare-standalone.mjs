@@ -7,11 +7,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const webRoot = fileURLToPath(new URL('../', import.meta.url));
-const standaloneWebDir = path.join(webRoot, '.next', 'standalone', 'apps', 'web');
+const distDir = process.env['NEXT_DIST_DIR']?.trim() || '.next';
+const standaloneWebDir = path.join(webRoot, distDir, 'standalone', 'apps', 'web');
 
 if (fs.existsSync(standaloneWebDir)) {
-  const staticSrc = path.join(webRoot, '.next', 'static');
-  const staticDest = path.join(standaloneWebDir, '.next', 'static');
+  const staticSrc = path.join(webRoot, distDir, 'static');
+  const staticDest = path.join(standaloneWebDir, distDir, 'static');
   if (fs.existsSync(staticSrc)) {
     fs.cpSync(staticSrc, staticDest, { recursive: true, force: true });
   }

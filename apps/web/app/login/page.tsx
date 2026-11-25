@@ -84,8 +84,8 @@ function LoginForm() {
       });
 
       if (result.mfaRequired) {
-        const enrollPrefix = result.enrollmentRequired ? 'enroll=1&' : '';
-        router.push(`/mfa?${enrollPrefix}redirect=${encodeURIComponent(redirectTarget)}`);
+        const enrollFlag = result.enrollmentRequired ? 'enroll=1&' : 'enroll=0&';
+        router.push(`/mfa?${enrollFlag}redirect=${encodeURIComponent(redirectTarget)}`);
         return;
       }
 

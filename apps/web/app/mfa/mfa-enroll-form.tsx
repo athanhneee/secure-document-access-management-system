@@ -1,8 +1,8 @@
 'use client';
 
-import type { FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import Image from 'next/image';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
@@ -23,8 +23,10 @@ interface MfaEnrollFormProps {
 }
 
 /**
- * Thuật toán: Biểu Mẫu Quét Mã QR, Sao Chép Khóa Base32 & Xác Thực Đồng Bộ TOTP (`MfaEnrollForm`)
- * Mục đích: Tách riêng giao diện hiển thị khóa bí mật RFC 6238 và xác nhận mã OTP 6 chữ số với vùng chạm tối thiểu `44x44px`.
+ * Thuật toán: Biểu Mẫu Quét Mã QR, Che Khóa Base32 / URI Mặc Định & Xác Thực Đồng Bộ TOTP (`MfaEnrollForm`, V-13)
+ * Mục đích:
+ *   - Che mặc định giá trị khóa bí mật Base32 và `otpauth://` URI bằng `type="password"` (kèm nút Hiện/Ẩn chuẩn WCAG) tránh lộ bí mật qua nhìn trộm màn hình (`V-13`).
+ *   - Khóa nút kích hoạt khi chưa đủ đúng 6 chữ số TOTP.
  */
 export function MfaEnrollForm({
   enrollData,
@@ -35,11 +37,18 @@ export function MfaEnrollForm({
   onChangeCode,
   onSubmit,
 }: MfaEnrollFormProps) {
+  const [revealed, setRevealed] = useState<{ secret: boolean; uri: boolean }>({
+    secret: false,
+    uri: false,
+  });
+
   const copyItems: Array<{
     key: 'secret' | 'uri';
     id: string;
     label: string;
     aria: string;
+    toggleAriaShow: string;
+    toggleAriaHide: string;
     value: string;
   }> = [
     {
@@ -47,6 +56,8 @@ export function MfaEnrollForm({
       id: 'mfa-enroll-secret',
       label: 'Khóa thiết lập thủ công',
       aria: 'Sao chép khóa thiết lập thủ công',
+      toggleAriaShow: 'Hiện khóa thiết lập thủ công',
+      toggleAriaHide: 'Ẩn khóa thiết lập thủ công',
       value: enrollData.secret,
     },
     {
@@ -54,6 +65,8 @@ export function MfaEnrollForm({
       id: 'mfa-enroll-uri',
       label: 'Đường dẫn cấu hình ứng dụng xác thực',
       aria: 'Sao chép đường dẫn cấu hình ứng dụng xác thực',
+      toggleAriaShow: 'Hiện đường dẫn cấu hình ứng dụng xác thực',
+      toggleAriaHide: 'Ẩn đường dẫn cấu hình ứng dụng xác thực',
       value: enrollData.uri,
     },
   ];
@@ -73,34 +86,52 @@ export function MfaEnrollForm({
         </div>
       )}
 
-      {copyItems.map((item) => (
-        <div key={item.key} className="space-y-1.5">
-          <label htmlFor={item.id} className="block text-xs font-semibold text-[#222222]">
-            {item.label}
-          </label>
-          <div className="flex items-center gap-2">
-            <Input
-              id={item.id}
-              readOnly
-              value={item.value}
-              className="font-mono text-xs bg-[#f7f7f7]"
-            />
-            <button
-              type="button"
-              aria-label={item.aria}
-              onClick={() => onCopyText(item.value, item.key)}
-              className="shrink-0 min-h-11 rounded-full border border-[#dddddd] bg-[#ffffff] hover:bg-[#f7f7f7] px-3.5 py-2 text-xs font-semibold text-[#222222] flex items-center gap-1 cursor-pointer"
-            >
-              {copiedField === item.key ? (
-                <Check size={16} strokeWidth={2} className="text-[#008A05]" aria-hidden="true" />
-              ) : (
-                <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
-              )}
-              <span>{copiedField === item.key ? 'Đã sao chép' : 'Sao chép'}</span>
-            </button>
+      {copyItems.map((item) => {
+        const isShown = revealed[item.key];
+        return (
+          <div key={item.key} className="space-y-1.5">
+            <label htmlFor={item.id} className="block text-xs font-semibold text-[#222222]">
+              {item.label}
+            </label>
+            <div className="flex items-center gap-1.5">
+              <div className="relative flex-1 min-w-0">
+                <Input
+                  id={item.id}
+                  type={isShown ? 'text' : 'password'}
+                  readOnly
+                  value={item.value}
+                  className="font-mono text-xs bg-[#f7f7f7] pr-11"
+                />
+                <button
+                  type="button"
+                  aria-label={isShown ? item.toggleAriaHide : item.toggleAriaShow}
+                  onClick={() => setRevealed((prev) => ({ ...prev, [item.key]: !prev[item.key] }))}
+                  className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] cursor-pointer"
+                >
+                  {isShown ? (
+                    <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" />
+                  ) : (
+                    <Eye size={16} strokeWidth={1.75} aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              <button
+                type="button"
+                aria-label={item.aria}
+                onClick={() => onCopyText(item.value, item.key)}
+                className="shrink-0 min-h-11 rounded-full border border-[#dddddd] bg-[#ffffff] hover:bg-[#f7f7f7] px-3 py-2 text-xs font-semibold text-[#222222] flex items-center gap-1 cursor-pointer"
+              >
+                {copiedField === item.key ? (
+                  <Check size={16} strokeWidth={2} className="text-[#008A05]" aria-hidden="true" />
+                ) : (
+                  <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
+                )}
+                <span>{copiedField === item.key ? 'Đã sao chép' : 'Sao chép'}</span>
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       <div className="space-y-1.5">
         <label
@@ -127,7 +158,7 @@ export function MfaEnrollForm({
       <InteractiveHoverButton
         type="submit"
         isLoading={isVerifying}
-        disabled={isVerifying}
+        disabled={isVerifying || verificationCode.trim().length !== 6}
         text="Kích hoạt MFA & nhận mã khôi phục"
         className="w-full py-2.5 text-xs font-semibold"
       />

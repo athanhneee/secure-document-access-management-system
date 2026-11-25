@@ -28,7 +28,7 @@ export function LoginDemoPanel({ onSelectAccount }: LoginDemoPanelProps) {
               <span className="sm:hidden">Tài khoản Demo</span>
               <span className="hidden sm:inline">Tài khoản kiểm thử nhanh (Demo)</span>
             </span>
-            <span className="text-[13px] text-[#717171] font-bold">Nhấp để điền tài khoản</span>
+            <span className="text-xs text-[#717171] font-bold">Nhấp để điền tài khoản</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {DEMO_ACCOUNTS.map((item) => (
@@ -45,7 +45,7 @@ export function LoginDemoPanel({ onSelectAccount }: LoginDemoPanelProps) {
                   />
                   <span>{item.label}</span>
                 </span>
-                <span className="text-[13px] text-[#717171] font-bold transition-colors group-hover:text-[#E31C5F]">
+                <span className="text-xs text-[#717171] font-bold transition-colors group-hover:text-[#E31C5F]">
                   {item.user}
                 </span>
               </button>

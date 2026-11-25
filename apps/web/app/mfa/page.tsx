@@ -1,32 +1,42 @@
 'use client';
 
 /**
- * Thuật toán: Máy Trạng Thái Xác Thực Đa Yếu Tố & Chống Chuyển Hướng Chéo Vai Trò (`MfaPage`, `MfaContent`)
- * Mục đích: Điều phối xác thực yếu tố thứ hai qua FIDO2 WebAuthn, TOTP 6 chữ số hoặc mã khôi phục dùng một lần, sau đó kiểm chứng quyền truy cập đường dẫn `?redirect=` khớp với vai trò thực tế của tài khoản.
+ * Thuật toán: Máy Trạng Thái Xác Thực Đa Yếu Tố, Kiểm Tra Ngữ Cảnh Phiên & Chống Chuyển Hướng Chéo Vai Trò (`MfaPage`, `MfaContent`)
+ * Mục đích:
+ *   - Điều phối xác thực yếu tố thứ hai qua FIDO2 WebAuthn, TOTP 6 chữ số hoặc mã khôi phục dùng một lần, hỗ trợ `?method=totp` khi điều hướng từ `/reader` hoặc `/sessions` (`V-09`).
+ *   - Loại bỏ nền trang trí `blur-3xl` lệch hệ thống thiết kế (`V-66`), ngăn gọi mù `/auth/mfa/enroll` khi chưa đăng nhập (`V-21`) và điều chỉnh liên kết quay lại theo ngữ cảnh phiên (`V-49`).
  */
 import { useState, Suspense, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ShieldAlert } from 'lucide-react';
-import { apiClient, ApiError, sanitizeRedirectPath } from '@/lib/api-client';
-import { resolveAuthorizedRedirectPath, useAuth, type AuthUser } from '@/lib/auth-context';
+import { ShieldAlert, AlertCircle } from 'lucide-react';
+import { apiClient, ApiError, getCsrfToken, sanitizeRedirectPath } from '@/lib/api-client';
+import {
+  resolveAuthorizedRedirectPath,
+  resolveDefaultPortalForRoles,
+  useAuth,
+  type AuthUser,
+} from '@/lib/auth-context';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { executeWebAuthnAssertion, formatWebAuthnError } from './webauthn-binary';
 import { MfaEnrollmentCard } from './mfa-enrollment-card';
 import { MfaMethodCards } from './mfa-method-cards';
 
 /**
  * Algorithm / Thuật toán: Máy Trạng Thái Xác Thực Đa Yếu Tố (Multi-Factor Authentication State Machine — FIDO2 WebAuthn & RFC 6238 TOTP)
- * Mục đích: Xác minh yếu tố bảo mật thứ hai sau bước đăng nhập mật khẩu thông qua khóa phần cứng FIDO2/Passkey, mã TOTP 6 chữ số hoặc mã khôi phục dùng một lần.
- * Cơ chế hoạt động:
- *   - Phối hợp 3 phương thức xác thực độc lập, quản lý khóa trạng thái bất đồng bộ chống gửi trùng yêu cầu, và điều hướng an toàn theo phân cấp vai trò RBAC sau khi phiên được nâng cấp cờ `mfa`.
  */
 function MfaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTarget = sanitizeRedirectPath(searchParams.get('redirect'));
-  const enrollParam = searchParams.get('enroll') === '1';
-  const { hydrateUser, refreshUser } = useAuth();
+  const rawEnrollParam = searchParams.get('enroll');
+  const enrollParam = rawEnrollParam === '1';
+  const mfaEnrollBlocked = rawEnrollParam === '0';
+  const defaultEnrollMethod = searchParams.get('method') === 'totp' ? 'totp' : 'webauthn';
+  const { user, isAuthenticated, isLoading: isAuthLoading, hydrateUser, refreshUser } = useAuth();
+  const canShowFirstTimeEnroll = !mfaEnrollBlocked && !user?.mfaEnabled;
 
-  const [isEnrollMode, setIsEnrollMode] = useState(enrollParam);
+  const [isEnrollMode, setIsEnrollMode] = useState(enrollParam && !mfaEnrollBlocked);
   const [isRecoveryMode, setIsRecoveryMode] = useState(false);
   const [totpCode, setTotpCode] = useState('');
   const [recoveryCode, setRecoveryCode] = useState('');
@@ -34,12 +44,14 @@ function MfaContent() {
   const [isWebAuthnLoading, setIsWebAuthnLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  /**
-   * Algorithm / Thuật toán: Định Tuyến Ưu Tiên Theo Phân Cấp Vai Trò RBAC (Priority-Ordered RBAC Post-Auth Routing)
-   * Mục đích: Đưa người dùng đến đúng phân hệ nghiệp vụ sau khi hoàn tất xác thực MFA mà vẫn ngăn chặn Open Redirect và bẫy `403` chéo vai trò.
-   */
-  function handlePostAuthRedirect(user: AuthUser | null) {
-    router.push(resolveAuthorizedRedirectPath(redirectTarget, user));
+  const hasSessionCookie = typeof document !== 'undefined' ? Boolean(getCsrfToken()) : true;
+  const isUnauthenticatedVisitor = !isAuthLoading && !isAuthenticated && !hasSessionCookie;
+  const backHref = isAuthenticated && user ? resolveDefaultPortalForRoles(user) : '/login';
+  const backLabel =
+    isAuthenticated && user ? 'Quay về phân hệ làm việc' : 'Quay về trang đăng nhập';
+
+  function handlePostAuthRedirect(resolvedUser: AuthUser | null) {
+    router.push(resolveAuthorizedRedirectPath(redirectTarget, resolvedUser));
   }
 
   async function completeAuthWithProfile(inlineUser?: AuthUser | null) {
@@ -65,10 +77,6 @@ function MfaContent() {
     }
   }
 
-  /**
-   * Algorithm / Thuật toán: Kiểm Tra Định Dạng & Xác Minh Mã TOTP (RFC 6238) / Mã Khôi Phục Dùng Một Lần
-   * Cơ chế: Chế độ thường yêu cầu đúng 6 chữ số TOTP; chế độ khẩn cấp yêu cầu chuỗi mã khôi phục tối thiểu 16 ký tự chỉ tiêu thụ một lần.
-   */
   async function handleVerify(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setErrorMessage(null);
@@ -112,13 +120,8 @@ function MfaContent() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#E31C5F] overflow-hidden">
-      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
-        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full bg-[#E07912]/5 blur-3xl animate-float" />
-        <div className="absolute -bottom-32 left-1/3 w-[500px] h-[400px] rounded-full bg-[#FF385C]/5 blur-3xl animate-float delay-200" />
-      </div>
-
-      <div className="relative z-10 w-full max-w-md space-y-6">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#E31C5F]">
+      <div className="w-full max-w-md space-y-6">
         <div className="flex flex-col items-center text-center space-y-2 animate-fade-in-down">
           <ShieldAlert size={24} strokeWidth={1.75} className="text-[#E07912]" aria-hidden="true" />
           <h1 className="text-2xl font-bold tracking-tight text-[#222222]">
@@ -129,8 +132,26 @@ function MfaContent() {
           </p>
         </div>
 
-        {isEnrollMode ? (
+        {isEnrollMode && isUnauthenticatedVisitor ? (
+          <div className="rounded-[28px] border border-[#ebebeb] bg-[#ffffff] p-6 shadow-[0_12px_40px_rgba(0,0,0,0.06)] space-y-4">
+            <Alert variant="destructive" className="text-xs">
+              <AlertCircle size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+              <AlertDescription className="ml-2 leading-relaxed">
+                Bạn cần đăng nhập bằng tài khoản trước khi thiết lập xác thực đa yếu tố (MFA).
+              </AlertDescription>
+            </Alert>
+            <InteractiveHoverButton
+              href="/login"
+              variant="primary"
+              text="Đi tới trang đăng nhập"
+              className="w-full text-xs"
+            />
+          </div>
+        ) : isEnrollMode ? (
           <MfaEnrollmentCard
+            defaultMethod={defaultEnrollMethod}
+            backHref={backHref}
+            backLabel={backLabel}
             onComplete={async (enrolledUser) => {
               await completeAuthWithProfile(enrolledUser);
             }}
@@ -147,6 +168,10 @@ function MfaContent() {
             isLoading={isLoading}
             isWebAuthnLoading={isWebAuthnLoading}
             errorMessage={errorMessage}
+            unauthenticatedNotice={isUnauthenticatedVisitor}
+            showFirstTimeEnroll={canShowFirstTimeEnroll}
+            backHref={backHref}
+            backLabel={backLabel}
             onChangeTotpCode={setTotpCode}
             onChangeRecoveryCode={setRecoveryCode}
             onToggleRecoveryMode={() => {

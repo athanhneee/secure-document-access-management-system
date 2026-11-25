@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * Thuật toán: Giao Diện Đa Phương Thức Thử Thách MFA (`MfaMethodCards`)
- * Mục đích: Chuyển đổi liền mạch giữa xác thực phần cứng FIDO2/Passkey, mã ứng dụng TOTP 6 chữ số lọc số tức thời và mã khôi phục khẩn cấp dùng một lần.
+ * Thuật toán: Giao Diện Đa Phương Thức Thử Thách MFA Chuẩn Hệ Thống Thiết Kế (`MfaMethodCards`, V-21, V-49, V-62)
+ * Mục đích: Chuyển đổi liền mạch giữa xác thực phần cứng FIDO2/Passkey, mã ứng dụng TOTP 6 chữ số lọc số tức thời và mã khôi phục khẩn cấp dùng một lần, dùng `InteractiveHoverButton` đồng bộ thay nút đen đặc và con quay tự chế.
  */
 import type { FormEvent } from 'react';
 import Link from 'next/link';
@@ -26,6 +26,10 @@ interface MfaMethodCardsProps {
   isLoading: boolean;
   isWebAuthnLoading: boolean;
   errorMessage: string | null;
+  unauthenticatedNotice?: boolean;
+  showFirstTimeEnroll?: boolean;
+  backHref?: string;
+  backLabel?: string;
   onChangeTotpCode: (code: string) => void;
   onChangeRecoveryCode: (code: string) => void;
   onToggleRecoveryMode: () => void;
@@ -41,6 +45,10 @@ export function MfaMethodCards({
   isLoading,
   isWebAuthnLoading,
   errorMessage,
+  unauthenticatedNotice = false,
+  showFirstTimeEnroll = true,
+  backHref = '/login',
+  backLabel = 'Quay về trang đăng nhập',
   onChangeTotpCode,
   onChangeRecoveryCode,
   onToggleRecoveryMode,
@@ -62,6 +70,16 @@ export function MfaMethodCards({
       </CardHeader>
 
       <CardContent className="space-y-5">
+        {unauthenticatedNotice && !errorMessage && (
+          <output className="block rounded-[16px] border border-[#E07912]/35 bg-[#E07912]/10 p-3 text-xs text-[#222222] leading-relaxed">
+            Chưa phát hiện phiên chờ xác thực bước 2. Nếu bạn chưa đăng nhập mật khẩu, hãy{' '}
+            <Link href="/login" className="font-semibold text-[#E31C5F] underline">
+              đăng nhập tại đây
+            </Link>{' '}
+            trước khi nhập mã MFA.
+          </output>
+        )}
+
         {errorMessage && (
           <Alert
             variant="destructive"
@@ -79,29 +97,16 @@ export function MfaMethodCards({
 
         {!isRecoveryMode && (
           <div className="space-y-3">
-            <button
+            <InteractiveHoverButton
               type="button"
+              variant="secondary"
               onClick={onWebAuthnVerify}
+              isLoading={isWebAuthnLoading}
               disabled={isLoading || isWebAuthnLoading}
-              className="w-full min-h-11 py-3 px-4 rounded-full border border-[#222222] bg-[#222222] text-[#ffffff] hover:opacity-90 transition-all flex items-center justify-center gap-2.5 text-xs font-semibold shadow-xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            >
-              {isWebAuthnLoading ? (
-                <>
-                  <div className="h-4 w-4 rounded-full border-2 border-[#ffffff]/30 border-t-[#ffffff] animate-spin" />
-                  <span>Đang chờ xác nhận từ thiết bị…</span>
-                </>
-              ) : (
-                <>
-                  <Fingerprint
-                    size={16}
-                    strokeWidth={2}
-                    className="text-[#ffffff]"
-                    aria-hidden="true"
-                  />
-                  <span>Xác thực bằng khóa bảo mật / Passkey</span>
-                </>
-              )}
-            </button>
+              icon={<Fingerprint size={16} strokeWidth={1.75} aria-hidden="true" />}
+              text="Xác thực bằng khóa bảo mật / Passkey"
+              className="w-full py-2.5 text-xs font-semibold"
+            />
 
             <div className="relative flex py-1 items-center">
               <div className="grow border-t border-[#ebebeb]"></div>
@@ -131,7 +136,7 @@ export function MfaMethodCards({
                 value={totpCode}
                 onChange={(e) => onChangeTotpCode(e.target.value.replace(/\D/g, ''))}
                 placeholder="123456"
-                className="text-center font-bold text-xl tracking-[0.4em] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+                className="text-center font-bold text-xl tracking-[0.4em] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
                 aria-label="Mã xác thực 6 chữ số"
               />
               <p className="text-xs text-[#717171] text-center">
@@ -152,7 +157,7 @@ export function MfaMethodCards({
                 value={recoveryCode}
                 onChange={(e) => onChangeRecoveryCode(e.target.value.toUpperCase())}
                 placeholder="ABCD-EFGH-IJKL-MNOP"
-                className="text-center font-bold text-sm tracking-wider bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+                className="text-center font-bold text-sm tracking-wider bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
                 aria-label="Mã khôi phục khẩn cấp"
               />
               <p className="text-xs text-[#C13515] font-medium text-center">
@@ -186,22 +191,29 @@ export function MfaMethodCards({
           </span>
         </button>
 
-        <button
-          type="button"
-          disabled={isLoading || isWebAuthnLoading}
-          onClick={onStartEnrollment}
-          className="min-h-11 sm:min-h-9 rounded-full px-3 py-1.5 text-xs text-[#222222] hover:bg-[#f7f7f7] hover:underline transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-        >
-          <ShieldPlus size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
-          <span>Thiết lập MFA lần đầu</span>
-        </button>
+        {showFirstTimeEnroll && (
+          <button
+            type="button"
+            disabled={isLoading || isWebAuthnLoading}
+            onClick={onStartEnrollment}
+            className="min-h-11 sm:min-h-9 rounded-full px-3 py-1.5 text-xs text-[#222222] hover:bg-[#f7f7f7] hover:underline transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <ShieldPlus
+              size={16}
+              strokeWidth={1.75}
+              className="text-[#E31C5F]"
+              aria-hidden="true"
+            />
+            <span>Thiết lập MFA lần đầu</span>
+          </button>
+        )}
 
         <Link
-          href="/login"
+          href={backHref}
           className="min-h-11 sm:min-h-9 rounded-full px-3 py-1.5 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors flex items-center justify-center gap-1.5"
         >
           <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
-          <span>Quay về trang đăng nhập</span>
+          <span>{backLabel}</span>
         </Link>
       </CardFooter>
     </Card>

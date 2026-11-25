@@ -1,10 +1,12 @@
 'use client';
 
 /**
- * Thuật toán: Quy Trình Khôi Phục Mật Khẩu Hai Pha & Khử Độc Token Trên URL (`ResetPasswordPage`, `ResetPasswordContent`)
- * Mục đích: Xử lý an toàn luồng yêu cầu khôi phục chống dò quét định danh (Anti-Enumeration) và luồng đặt lại mật khẩu mới sau khi xóa sạch tham số `?token=` khỏi thanh địa chỉ bằng `history.replaceState`.
+ * Thuật toán: Quy Trình Khôi Phục Mật Khẩu Hai Pha, Đồng Bộ Luật Mật Khẩu NIST & Khử Độc Token Trên URL (`ResetPasswordPage`, `ResetPasswordContent`)
+ * Mục đích:
+ *   - Chụp giữ mã khôi phục dùng một lần vào bộ nhớ trạng thái React rồi xóa sạch `?token=` trên thanh địa chỉ.
+ *   - Đồng bộ mô tả chính sách mật khẩu khớp 1-1 với máy chủ (15–128 ký tự, `V-29`), không khóa vĩnh viễn biểu mẫu quên mật khẩu sau 1 lần gửi, dọn timer chuyển hướng khi unmount (`V-49`), chuẩn hóa chiều cao liên kết `44px` (`V-61`) và bỏ nền trang trí `blur-3xl` (`V-66`).
  */
-import { useState, useEffect, Suspense, type FormEvent } from 'react';
+import { useState, useEffect, useRef, Suspense, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { KeyRound, ArrowLeft, CheckCircle2, AlertCircle } from 'lucide-react';
@@ -20,24 +22,27 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ForgotPasswordStepForm, ConfirmResetStepForm } from './reset-steps';
 
-/**
- * Algorithm / Thuật toán: Quy Trình Khôi Phục Mật Khẩu Hai Pha & Khử Độc Token Trên URL (Two-Phase Password Recovery & URL Token Scrubbing)
- * Mục đích: Xử lý an toàn luồng yêu cầu khôi phục mật khẩu chống dò quét định danh (Anti-Enumeration) và luồng đặt mật khẩu mới kèm đánh giá độ mạnh thời gian thực.
- * Cơ chế hoạt động:
- *   - Chụp giữ mã khôi phục dùng một lần vào bộ nhớ trạng thái React ngay lần dựng đầu tiên rồi xóa sạch chuỗi truy vấn trên thanh địa chỉ bằng `window.history.replaceState` nhằm ngăn lộ token qua HTTP `Referer` header hoặc lịch sử duyệt web.
- */
 function ResetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryToken = searchParams.get('token');
   const [initialToken] = useState<string | null>(() => queryToken);
   const token = queryToken ?? initialToken;
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (queryToken && typeof window !== 'undefined' && window.location.search.includes('token=')) {
       window.history.replaceState(null, '', window.location.pathname);
     }
   }, [queryToken]);
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current) {
+        clearTimeout(redirectTimerRef.current);
+      }
+    };
+  }, []);
 
   const [identifier, setIdentifier] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -46,9 +51,6 @@ function ResetPasswordContent() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  /**
-   * Algorithm / Thuật toán: Yêu Cầu Liên Kết Khôi Phục Không Lộ Sự Tồn Tại Tài Khoản (Uniform-Response Recovery Request)
-   */
   async function handleForgot(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setErrorMessage(null);
@@ -78,16 +80,13 @@ function ResetPasswordContent() {
     }
   }
 
-  /**
-   * Algorithm / Thuật toán: Xác Thực Ràng Buộc Chính Sách Mật Khẩu NIST SP 800-63B & Cập Nhật Khóa Bí Mật
-   */
   async function handleReset(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
-    if (!newPassword || newPassword.length < 15) {
+    if (!newPassword || newPassword.length < 15 || newPassword.length > 128) {
       setErrorMessage(
-        'Mật khẩu mới bắt buộc phải có độ dài từ 15 ký tự trở lên theo tiêu chuẩn bảo mật.',
+        'Mật khẩu mới bắt buộc phải có độ dài từ 15 đến 128 ký tự theo tiêu chuẩn bảo mật.',
       );
       return;
     }
@@ -105,7 +104,7 @@ function ResetPasswordContent() {
       setSuccessMessage(
         'Mật khẩu đã được cập nhật thành công! Đang chuyển hướng về trang đăng nhập…',
       );
-      setTimeout(() => router.push('/login'), 2500);
+      redirectTimerRef.current = setTimeout(() => router.replace('/login'), 2500);
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
@@ -117,16 +116,11 @@ function ResetPasswordContent() {
     }
   }
 
-  const formDisabled = isLoading || Boolean(successMessage);
+  const resetFormDisabled = isLoading || Boolean(token && successMessage);
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#E31C5F] overflow-hidden">
-      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
-        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full bg-[#FF385C]/5 blur-3xl animate-float" />
-        <div className="absolute -bottom-32 left-1/3 w-[500px] h-[400px] rounded-full bg-[#008489]/5 blur-3xl animate-float delay-200" />
-      </div>
-
-      <div className="relative z-10 w-full max-w-md space-y-6">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-[#f7f7f7] px-4 py-12 antialiased selection:bg-[#FF385C]/15 selection:text-[#E31C5F]">
+      <div className="w-full max-w-md space-y-6">
         <div className="flex flex-col items-center text-center space-y-2 animate-fade-in-down">
           <KeyRound size={24} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
           <h1 className="text-2xl font-bold tracking-tight text-[#222222]">
@@ -146,7 +140,7 @@ function ResetPasswordContent() {
             </CardTitle>
             <CardDescription className="text-xs text-[#717171]">
               {token
-                ? 'Mật khẩu phải dài tối thiểu 15 ký tự, gồm chữ hoa, chữ thường, chữ số và ký tự đặc biệt.'
+                ? 'Bắt buộc dài từ 15 đến 128 ký tự và không chứa tên đăng nhập hoặc email (khuyến nghị kết hợp chữ hoa, chữ thường, chữ số và ký tự đặc biệt).'
                 : 'Nhập tên đăng nhập hoặc email để nhận liên kết khôi phục.'}
             </CardDescription>
           </CardHeader>
@@ -185,7 +179,7 @@ function ResetPasswordContent() {
               <ForgotPasswordStepForm
                 identifier={identifier}
                 isLoading={isLoading}
-                disabled={formDisabled}
+                disabled={isLoading}
                 onChangeIdentifier={setIdentifier}
                 onSubmit={handleForgot}
               />
@@ -194,7 +188,7 @@ function ResetPasswordContent() {
                 newPassword={newPassword}
                 confirmPassword={confirmPassword}
                 isLoading={isLoading}
-                disabled={formDisabled}
+                disabled={resetFormDisabled}
                 onChangeNewPassword={setNewPassword}
                 onChangeConfirmPassword={setConfirmPassword}
                 onSubmit={handleReset}
@@ -205,7 +199,7 @@ function ResetPasswordContent() {
           <CardFooter className="pt-2 border-t border-[#ebebeb] flex justify-center">
             <Link
               href="/login"
-              className="rounded-full px-3 py-1 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors flex items-center justify-center gap-1.5"
+              className="min-h-11 sm:min-h-9 rounded-full px-3 py-1.5 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors flex items-center justify-center gap-1.5"
             >
               <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
               <span>Quay về trang đăng nhập</span>

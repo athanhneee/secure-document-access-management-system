@@ -82,9 +82,15 @@ export function ConfirmResetStepForm({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const strength = evaluatePasswordStrength(newPassword);
   const requirements = [
-    { label: 'Từ 15 ký tự trở lên', met: strength.hasMinLength },
-    { label: 'Chữ in hoa & chữ thường', met: strength.hasUpper && strength.hasLower },
-    { label: 'Chữ số & ký tự đặc biệt', met: strength.hasNumber && strength.hasSpecial },
+    {
+      label: 'Bắt buộc: Từ 15 đến 128 ký tự',
+      met: strength.hasMinLength && newPassword.length <= 128,
+    },
+    { label: 'Khuyến nghị: Chữ in hoa & chữ thường', met: strength.hasUpper && strength.hasLower },
+    {
+      label: 'Khuyến nghị: Chữ số & ký tự đặc biệt',
+      met: strength.hasNumber && strength.hasSpecial,
+    },
   ];
 
   return (
@@ -128,12 +134,12 @@ export function ConfirmResetStepForm({
             <div className="flex h-1.5 w-full gap-1 overflow-hidden rounded-full bg-[#ebebeb]">
               <div className={`h-full transition-all ${strength.barClassName}`} />
             </div>
-            <p className="text-[13px] text-[#717171]">Độ mạnh: {strength.strengthLabel}</p>
+            <p className="text-xs text-[#717171]">Độ mạnh: {strength.strengthLabel}</p>
             <div className="grid grid-cols-1 gap-1 pt-0.5">
               {requirements.map((req) => (
                 <div
                   key={req.label}
-                  className={`flex items-center gap-1.5 text-[13px] ${
+                  className={`flex items-center gap-1.5 text-xs ${
                     req.met ? 'text-[#008A05] font-medium' : 'text-[#717171]'
                   }`}
                 >

@@ -45,23 +45,43 @@ export class AuditRedactionService {
    */
   private readonly sensitiveKeyPatterns = new Set([
     'password',
+    'passwordhash',
     'passphrase',
+    'passcode',
     'secret',
     'rawtoken',
     'token',
     'accesstoken',
     'refreshtoken',
     'authtoken',
+    'csrftoken',
+    'resettoken',
+    'sessiontoken',
+    'bearertoken',
+    'vaulttoken',
+    'watermarktoken',
     'downloadticket',
     'ticket',
     'cookie',
     'cookies',
     'setcookie',
+    'cookieheader',
+    'authorization',
+    'jwt',
+    'apikey',
+    'accesskey',
+    'secretkey',
+    'secretaccesskey',
+    'clientsecret',
+    'signingsecret',
+    'sharedsecret',
+    'webhooksecret',
+    'hmackey',
     'dek',
     'kek',
     'masterkey',
     'encryptionkey',
-    'encryption_key_ref',
+    'encryptionkeyref',
     'key',
     'plaintext',
     'content',
@@ -71,7 +91,12 @@ export class AuditRedactionService {
     'buffer',
     'totpsecret',
     'totp',
+    'otp',
+    'hsmpin',
+    'pin',
     'recoverycode',
+    'recoverycodes',
+    'backupcode',
     'mfasecret',
     'creditcard',
     'cvv',
@@ -82,12 +107,30 @@ export class AuditRedactionService {
   ]);
 
   /**
+   * Non-secret audit metadata keys explicitly exempt from suffix-based redaction.
+   */
+  private readonly safeMetadataKeys = new Set([
+    'hmackeyversion',
+    'keyversion',
+    'signerkeyid',
+    'tokenversion',
+    'tokencount',
+    'maxtokens',
+    'passwordchangedat',
+    'passwordresetrequired',
+    'keyid',
+    'keycount',
+    'publickeyid',
+  ]);
+
+  /**
    * Patterns to detect secrets embedded within string fields.
    */
   private readonly jwtRegex = /ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+/g;
   private readonly bearerRegex = /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi;
+  private readonly cookieSecretRegex = /(sda_(?:access|refresh|csrf))=([^;\s]+)/gi;
   private readonly downloadTicketRegex = /DT-[0-9a-f]{64}/gi;
-  private readonly watermarkTokenRegex = /WM-[0-9a-f]{16,64}/gi;
+  private readonly watermarkTokenRegex = /WM-[0-9a-f]{12,64}/gi;
 
   /**
    * Normalizes and sanitizes user agent strings.
@@ -119,6 +162,7 @@ export class AuditRedactionService {
     let sanitized = reason
       .replace(this.jwtRegex, '[REDACTED_JWT]')
       .replace(this.bearerRegex, 'Bearer [REDACTED]')
+      .replace(this.cookieSecretRegex, '$1=[REDACTED_COOKIE]')
       .replace(this.downloadTicketRegex, '[REDACTED_TICKET]')
       .replace(this.watermarkTokenRegex, '[REDACTED_WM_TOKEN]');
 
@@ -141,9 +185,32 @@ export class AuditRedactionService {
     return this.scrubValue(details, 0) as Record<string, unknown>;
   }
 
+  /**
+   * Thuật toán: Nhận diện tên khóa nhạy cảm chuẩn hóa O(1) kết hợp hậu tố phòng thủ (`*password*`, `*secret`, `*token`, `*key`, `*cookie`, `*credential`).
+   */
   private isSensitiveKey(key: string): boolean {
     const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return this.sensitiveKeyPatterns.has(normalized);
+    if (this.safeMetadataKeys.has(normalized)) {
+      return false;
+    }
+    if (this.sensitiveKeyPatterns.has(normalized)) {
+      return true;
+    }
+    return (
+      normalized.includes('password') ||
+      normalized.includes('passphrase') ||
+      normalized.endsWith('secret') ||
+      normalized.endsWith('token') ||
+      normalized.endsWith('cookie') ||
+      normalized.endsWith('cookies') ||
+      normalized.endsWith('privatekey') ||
+      normalized.endsWith('apikey') ||
+      normalized.endsWith('hmackey') ||
+      normalized.endsWith('encryptionkey') ||
+      normalized.endsWith('encryptionkeyref') ||
+      normalized.endsWith('credential') ||
+      normalized.endsWith('credentials')
+    );
   }
 
   /**
@@ -206,6 +273,7 @@ export class AuditRedactionService {
     text = text
       .replace(this.jwtRegex, '[REDACTED_JWT]')
       .replace(this.bearerRegex, 'Bearer [REDACTED]')
+      .replace(this.cookieSecretRegex, '$1=[REDACTED_COOKIE]')
       .replace(this.downloadTicketRegex, '[REDACTED_TICKET]')
       .replace(this.watermarkTokenRegex, '[REDACTED_WM_TOKEN]');
 

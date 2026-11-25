@@ -52,7 +52,7 @@ export function UploadStepPolicyReview({
             rows={3}
             value={docDescription}
             onChange={(e) => setDocDescription(e.target.value)}
-            placeholder="Nội dung chính và phạm vi sử dụng của tài liệu..."
+            placeholder="Nội dung chính và phạm vi sử dụng của tài liệu…"
             className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
           />
         </div>
@@ -66,7 +66,7 @@ export function UploadStepPolicyReview({
               aria-hidden="true"
             />
             <span className="text-xs font-semibold text-[#222222]">
-              Chính sách tải xuống theo mức mật {currentSelectedLevel?.name}
+              Chính sách tải về theo mức độ mật {currentSelectedLevel?.name}
             </span>
           </div>
           <div className="text-xs text-[#717171] leading-relaxed">
@@ -74,8 +74,8 @@ export function UploadStepPolicyReview({
               <div className="text-[#008A05] flex items-center gap-1.5 font-medium">
                 <Download size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
                 <span>
-                  Mức mật này <strong>cho phép tải về</strong> dưới dạng PDF có gắn Watermark động
-                  chứa danh tính người tải và mã truy vết QR.
+                  Mức độ mật này <strong>cho phép tải về</strong> dưới dạng PDF có gắn watermark bảo
+                  mật định danh người tải.
                 </span>
               </div>
             ) : (
@@ -87,8 +87,8 @@ export function UploadStepPolicyReview({
                   aria-hidden="true"
                 />
                 <span>
-                  Mức mật này <strong>cấm tải về ngoại tuyến</strong> theo quy chế an toàn dữ liệu.
-                  Người dùng chỉ được xem trực tuyến qua Secure Sandbox.
+                  Mức độ mật này <strong>chỉ cho phép xem trực tuyến</strong> theo quy định bảo mật,
+                  không hỗ trợ tải tệp ngoại tuyến.
                 </span>
               </div>
             )}
@@ -97,7 +97,7 @@ export function UploadStepPolicyReview({
 
         <div className="space-y-1">
           <label htmlFor="doc-retention" className="text-xs font-medium text-[#222222]">
-            Thời hạn lưu trữ bảo mật (Retention Date)
+            Thời hạn lưu trữ bảo mật
           </label>
           <Input
             id="doc-retention"
@@ -156,22 +156,21 @@ export function UploadStepPolicyReview({
           <span className="text-[#717171]">Chính sách tải:</span>
           <span className="font-semibold">
             {currentSelectedLevel?.allowDownload
-              ? 'Cho phép tải có watermark'
+              ? 'Cho phép tải có watermark bảo mật'
               : 'Chỉ xem trực tuyến'}
           </span>
           <span className="text-[#717171]">Thời hạn lưu trữ:</span>
           <span className="font-semibold text-[#222222]">
             {docRetentionDate ? formatIsoDateDisplay(docRetentionDate) : 'Không giới hạn'}
           </span>
-          <span className="text-[#717171]">Mã hóa xác thực:</span>
-          <span className="font-bold text-[#008A05]">AES-256-GCM / DEK</span>
+          <span className="text-[#717171]">Bảo vệ lưu trữ:</span>
+          <span className="font-bold text-[#008A05]">Mã hóa tệp độc lập</span>
         </div>
       </div>
 
       <p className="text-xs text-[#717171] leading-relaxed">
-        Tài liệu sẽ được quét mã độc, trích xuất magic bytes, phân trang an toàn và lưu vào bộ lưu
-        trữ mã hóa độc lập. Dấu bản quyền (Watermark) sẽ được nhúng động mỗi khi có yêu cầu truy
-        cập.
+        Tài liệu sẽ được kiểm tra an toàn mã độc và lưu trữ mã hóa độc lập. Watermark bảo mật sẽ tự
+        động được gắn mỗi khi có yêu cầu xem hoặc tải về.
       </p>
     </div>
   );

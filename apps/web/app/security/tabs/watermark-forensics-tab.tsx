@@ -54,7 +54,7 @@ export function WatermarkForensicsTab({
       if (provenance.verified) {
         onMessage('Đã hoàn tất đối soát chứng cứ dấu bản quyền.');
       } else {
-        onError('Phản hồi đối soát không có cờ xác thực hợp lệ (Fail-Closed).');
+        onError('Phản hồi đối soát thiếu xác nhận hợp lệ từ hệ thống kiểm chứng.');
       }
     } catch (err) {
       if (err instanceof ApiError) {
@@ -186,7 +186,7 @@ export function WatermarkForensicsTab({
                   <span>Chưa xác thực · Không đủ căn cứ pháp chứng</span>
                 </div>
                 <p className="text-[#717171] text-xs">
-                  Phản hồi không chứa xác nhận mật mã hợp lệ từ sổ cái đối soát (Fail-Closed).
+                  Phản hồi không chứa xác nhận mật mã hợp lệ từ sổ cái đối soát.
                 </p>
               </div>
             )

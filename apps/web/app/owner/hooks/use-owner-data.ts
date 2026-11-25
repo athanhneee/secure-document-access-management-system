@@ -96,8 +96,8 @@ export function useOwnerData() {
       usersResult,
       rolesResult,
     ] = await Promise.allSettled([
-      apiClient<{ data: DocumentApiDto[] }>('/documents?pageSize=50'),
-      apiClient<{ data: AccessGrantApiDto[] }>('/access-grants?pageSize=50'),
+      apiClient<{ data: DocumentApiDto[] }>('/documents?scope=owned&pageSize=50'),
+      apiClient<{ data: AccessGrantApiDto[] }>('/access-grants?scope=owned&pageSize=50'),
       apiClient<{ data: AccessRequestItem[] }>('/access-requests?scope=incoming&status=PENDING'),
       apiClient<{ data: DepartmentLookupItem[] }>('/departments/lookup'),
       apiClient<{ data: BusinessCategoryLookupItem[] }>('/classifications/categories'),
@@ -170,7 +170,7 @@ export function useOwnerData() {
       }
       setDocuments(mappedDocs);
     } else {
-      setErrorMessage('Không thể tải danh sách tài liệu từ máy chủ.');
+      setErrorMessage('Không thể tải danh sách tài liệu. Vui lòng thử lại.');
     }
 
     const loadedUsers = usersResult.status === 'fulfilled' ? usersResult.value.data || [] : [];

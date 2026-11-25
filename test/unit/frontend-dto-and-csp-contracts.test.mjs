@@ -287,6 +287,49 @@ describe('/owner DTO Mappers, Permission Inclusion, Pagination & Wizard Defaults
     assert.match(stepMetadataTsx, /isClassificationAllowedForClearance/);
     assert.match(stepMetadataTsx, /disabled=\{isAboveClearance\}/);
   });
+
+  it('scopes /owner queries strictly to owned resources and uses production-ready preview copy without Sandbox, sess-active, Gotenberg, or Fail-Closed UI text', () => {
+    const ownerDataTs = fs.readFileSync(
+      path.join(webRoot, 'app/owner/hooks/use-owner-data.ts'),
+      'utf8',
+    );
+    assert.match(ownerDataTs, /\/documents\?scope=owned&pageSize=50/);
+    assert.match(ownerDataTs, /\/access-grants\?scope=owned&pageSize=50/);
+
+    const uiFilesToAudit = [
+      'components/documents/shared-pdf-preview-modal.tsx',
+      'app/owner/modals/forensic-preview-modal.tsx',
+      'app/owner/modals/upload-step-policy-review.tsx',
+      'app/owner/hooks/use-owner-delivery.ts',
+      'app/reader/modals/document-viewer-modal.tsx',
+      'app/reader/hooks/use-reader-viewer.ts',
+      'app/security/tabs/watermark-forensics-tab.tsx',
+    ];
+    for (const relPath of uiFilesToAudit) {
+      const content = fs.readFileSync(path.join(webRoot, relPath), 'utf8');
+      assert.doesNotMatch(content, /sess-active/, `${relPath} must not fabricate sess-active`);
+      assert.doesNotMatch(content, /Gotenberg/, `${relPath} must not leak Gotenberg in UI`);
+      assert.doesNotMatch(
+        content,
+        /Sandbox Xem Trước|Đóng Sandbox|Secure Sandbox/,
+        `${relPath} must not display Sandbox labels to end users`,
+      );
+      assert.doesNotMatch(
+        content,
+        /\([^)]*Fail-Closed[^)]*\)/,
+        `${relPath} must not display Fail-Closed jargon in user-facing messages`,
+      );
+    }
+
+    const previewModal = fs.readFileSync(
+      path.join(webRoot, 'components/documents/shared-pdf-preview-modal.tsx'),
+      'utf8',
+    );
+    assert.match(previewModal, /Xem tài liệu bảo mật:/);
+    assert.match(previewModal, /Đang khởi tạo phiên truy cập/);
+    assert.match(previewModal, /Chế độ xem bảo mật · Có gắn (?:dấu Watermark|watermark bảo mật)/);
+    assert.match(previewModal, /text="Đóng"/);
+  });
 });
 
 describe('Dialog Sizing, Tabs ARIA Linkage, DLP Regex Escaping & CSP Proxy Invariants', () => {

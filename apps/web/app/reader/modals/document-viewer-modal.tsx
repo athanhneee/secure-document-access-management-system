@@ -33,8 +33,8 @@ export function DocumentViewerModal({ viewer }: DocumentViewerModalProps) {
       page={previewPage}
       totalPages={previewTotalPages}
       isLoading={isLoadingPreview}
-      pipelineLabel="Pipeline Gotenberg: Office (.docx/.xlsx/.pptx) -> Watermarked PDF"
-      loadingLabel="Đang chuyển đổi tệp Office sang PDF và đóng dấu Watermark…"
+      pipelineLabel="Chế độ xem bảo mật · Có gắn watermark bảo mật"
+      loadingLabel="Đang chuẩn bị bản xem trước tài liệu và gắn watermark bảo mật…"
       onPageChange={(newPage) => void handlePageChange(newPage)}
     />
   );

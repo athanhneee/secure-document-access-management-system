@@ -34,8 +34,8 @@ export interface SharedPdfPreviewModalProps {
 }
 
 /**
- * Thuật toán: Khung Xem Trước PDF Watermark Thích Ứng Di Động `375x667` (`SharedPdfPreviewModal`)
- * Mục đích: Hợp nhất giao diện Sandbox xem trước cho Chủ sở hữu và Người đọc, giới hạn chiều cao khung nhúng theo `dvh` (`h-[48dvh] sm:h-[60dvh]`) để thanh chuyển trang luôn hiển thị đầy đủ trên màn hình nhỏ và bảo vệ Fail-Closed khi thiếu luồng PDF hợp lệ.
+ * Thuật toán: Khung Xem Tài Liệu Bảo Mật Gắn Watermark Thích Ứng Di Động `375x667` (`SharedPdfPreviewModal`)
+ * Mục đích: Hợp nhất trình xem trực tuyến bảo mật cho Chủ sở hữu và Người đọc, giới hạn chiều cao khung nhúng theo `dvh` (`h-[48dvh] sm:h-[60dvh]`) để thanh chuyển trang luôn hiển thị đầy đủ trên màn hình nhỏ và chỉ hiển thị mã phiên thực sau khi máy chủ cấp phát.
  */
 export function SharedPdfPreviewModal({
   open,
@@ -47,8 +47,8 @@ export function SharedPdfPreviewModal({
   page,
   totalPages,
   isLoading,
-  pipelineLabel = 'Pipeline Gotenberg: Office -> Watermarked PDF',
-  loadingLabel = 'Đang xử lý trang tài liệu và nhúng dấu Watermark động…',
+  pipelineLabel = 'Chế độ xem bảo mật · Có gắn watermark bảo mật',
+  loadingLabel = 'Đang chuẩn bị trang tài liệu và gắn watermark bảo mật…',
   onPageChange,
 }: SharedPdfPreviewModalProps) {
   return (
@@ -64,11 +64,11 @@ export function SharedPdfPreviewModal({
                 aria-hidden="true"
               />
               <DialogTitle className="text-sm font-semibold text-[#222222] truncate">
-                Sandbox Xem Trước An Toàn: {title}
+                {title ? `Xem tài liệu bảo mật: ${title}` : 'Xem tài liệu bảo mật'}
               </DialogTitle>
             </div>
             <DialogDescription className="text-xs text-[#717171] mt-0.5 flex flex-wrap items-center gap-2">
-              <span>Phiên: {sessionId || 'sess-active'}</span>
+              <span>{sessionId ? `Phiên: ${sessionId}` : 'Đang khởi tạo phiên truy cập…'}</span>
               <span className="text-[#ebebeb]" aria-hidden="true">
                 |
               </span>
@@ -102,7 +102,7 @@ export function SharedPdfPreviewModal({
               <iframe
                 src={`${pdfUrl}#toolbar=0&navpanes=0`}
                 className="h-[48dvh] sm:h-[60dvh] max-h-[540px] min-h-[240px] w-full rounded border border-[#dddddd] bg-white shadow-sm"
-                title={title || 'Preview tài liệu'}
+                title={title || 'Xem trước tài liệu'}
               />
             </div>
           ) : (
@@ -117,11 +117,11 @@ export function SharedPdfPreviewModal({
                 aria-hidden="true"
               />
               <p className="text-sm font-semibold text-[#222222]">
-                Không thể hiển thị bản xem trước PDF đã xác thực
+                Không thể hiển thị bản xem trước tài liệu
               </p>
               <p className="text-xs leading-relaxed text-[#717171]">
-                Luồng dữ liệu PDF gắn dấu Watermark chưa sẵn sàng hoặc không vượt qua bước kiểm định
-                chữ ký tệp (chế độ bảo vệ Fail-Closed).
+                Bản xem trước có gắn watermark bảo mật hiện chưa sẵn sàng hoặc không hợp lệ. Vui
+                lòng thử lại hoặc kiểm tra quyền truy cập của bạn.
               </p>
             </div>
           )}
@@ -153,7 +153,7 @@ export function SharedPdfPreviewModal({
           <InteractiveHoverButton
             size="sm"
             variant="secondary"
-            text="Đóng Sandbox"
+            text="Đóng"
             onClick={() => onOpenChange(false)}
           />
         </div>

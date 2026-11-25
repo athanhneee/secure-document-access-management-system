@@ -39,8 +39,8 @@ export function ForensicPreviewModal({
       page={page}
       totalPages={totalPages}
       isLoading={isLoading}
-      pipelineLabel="Pipeline Gotenberg: Office -> Watermarked PDF"
-      loadingLabel="Đang xử lý trang tài liệu và nhúng dấu Watermark động…"
+      pipelineLabel="Chế độ xem bảo mật · Có gắn watermark bảo mật"
+      loadingLabel="Đang chuẩn bị bản xem trước tài liệu và gắn watermark bảo mật…"
       onPageChange={onPageChange}
     />
   );

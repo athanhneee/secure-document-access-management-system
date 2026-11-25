@@ -110,11 +110,11 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
       setPreviewOpen(false);
       setPreviewSessionId(null);
       if (err instanceof ApiError) {
-        setErrorMessage(err.message || 'Không thể tải luồng xem trước tài liệu an toàn.');
+        setErrorMessage(err.message || 'Không thể tải bản xem trước tài liệu. Vui lòng thử lại.');
       } else if (err instanceof Error && err.message === 'INVALID_PDF_MAGIC_BYTES') {
-        setErrorMessage('Luồng dữ liệu xem trước không phải tệp PDF hợp lệ (đã chặn Fail-Closed).');
+        setErrorMessage('Dữ liệu bản xem trước không hợp lệ nên hệ thống không thể hiển thị.');
       } else {
-        setErrorMessage('Không thể tải luồng xem trước tài liệu an toàn.');
+        setErrorMessage('Không thể tải bản xem trước tài liệu. Vui lòng thử lại.');
       }
     } finally {
       if (previewReqIdRef.current === reqId) {
@@ -139,9 +139,11 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
     } catch (err) {
       handleClosePreview(false);
       if (err instanceof ApiError) {
-        setErrorMessage(err.message || 'Không thể tải trang xem trước PDF.');
+        setErrorMessage(err.message || 'Không thể tải trang tài liệu. Vui lòng thử lại.');
+      } else if (err instanceof Error && err.message === 'INVALID_PDF_MAGIC_BYTES') {
+        setErrorMessage('Dữ liệu trang tài liệu không hợp lệ nên phiên xem đã được đóng.');
       } else {
-        setErrorMessage('Luồng trang PDF không hợp lệ (đã đóng chế độ xem Fail-Closed).');
+        setErrorMessage('Không thể tải trang tài liệu. Vui lòng thử lại.');
       }
     } finally {
       setIsLoadingPreview(false);
@@ -150,7 +152,7 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
 
   async function handleDownloadWithTicket(doc: MyGrantedDoc) {
     if (!doc.allowDownload) {
-      setErrorMessage('Tài liệu này thuộc diện cấm tải theo chính sách phân loại mật.');
+      setErrorMessage('Tài liệu này chỉ được phép xem trực tuyến theo mức độ mật hiện hành.');
       return;
     }
 
@@ -177,7 +179,7 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
       const blob = await apiDownload(`/documents/download-with-ticket/${ticketResult.ticket}`);
       triggerWatermarkedDownload(blob, doc.documentCode);
 
-      setMessage('Đã tạo và tải bản sao tài liệu có dấu bản quyền thành công.');
+      setMessage('Đã tải bản sao tài liệu có gắn watermark bảo mật thành công.');
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(err.message || 'Không thể tải tài liệu.');

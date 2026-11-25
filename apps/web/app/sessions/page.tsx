@@ -20,9 +20,20 @@ import {
   SessionSecurityOverview,
   type ActiveAuthSessionItem,
 } from './active-sessions-list';
+import { PasskeyEnrollmentCard } from './passkey-enrollment-card';
 
 export default function SessionsPage() {
-  const { user, logout } = useAuth();
+  return (
+    <AuthGuard>
+      <AppLayout>
+        <SessionsPageContent />
+      </AppLayout>
+    </AuthGuard>
+  );
+}
+
+function SessionsPageContent() {
+  const { user, logout, refreshUser } = useAuth();
   const [sessions, setSessions] = useState<ActiveAuthSessionItem[]>([]);
   const [isFetching, setIsFetching] = useState(true);
   const [isRevokingOthers, setIsRevokingOthers] = useState(false);
@@ -140,88 +151,98 @@ export default function SessionsPage() {
   const currentSession = sessions.find((s) => s.isCurrent);
 
   return (
-    <AuthGuard>
-      <AppLayout>
-        <DialogErrorProvider errorMessage={errorMessage} onDismiss={() => setErrorMessage(null)}>
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="min-w-0">
-                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222]">
-                  Quản lý phiên làm việc &amp; thiết bị
-                </h1>
-              </div>
-
-              <InteractiveHoverButton
-                variant="destructive"
-                size="sm"
-                onClick={() => setConfirmLogoutOthersOpen(true)}
-                disabled={isRevokingOthers}
-                isLoading={isRevokingOthers}
-                text={
-                  otherSessionsCount > 0
-                    ? `Đăng xuất tất cả thiết bị khác (${otherSessionsCount})`
-                    : 'Đăng xuất tất cả thiết bị khác'
-                }
-                className="w-full sm:w-auto shrink-0"
-              />
-            </div>
-
-            {successMessage && (
-              <Alert variant="success" className="rounded-[20px] text-xs">
-                <CheckCircle2
-                  size={16}
-                  strokeWidth={1.75}
-                  className="shrink-0 text-[#008A05]"
-                  aria-hidden="true"
-                />
-                <AlertDescription className="ml-2">{successMessage}</AlertDescription>
-              </Alert>
-            )}
-
-            {errorMessage && (
-              <Alert
-                variant="destructive"
-                className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
-              >
-                <AlertTriangle
-                  size={16}
-                  strokeWidth={1.75}
-                  className="shrink-0 text-[#C13515]"
-                  aria-hidden="true"
-                />
-                <AlertDescription className="ml-2">{errorMessage}</AlertDescription>
-              </Alert>
-            )}
-
-            <ActiveSessionsList
-              sessions={sessions}
-              isFetching={isFetching}
-              revokingId={revokingSessionId}
-              onRefresh={() => void loadActiveSessions()}
-              onRevokeSession={(session) => void handleRevokeSingleSession(session)}
-            />
-
-            <SessionSecurityOverview
-              fullName={user?.fullName}
-              username={user?.username}
-              mfaVerified={currentSession?.mfaVerified}
-              onLogoutCurrent={() => void logout()}
-            />
-
-            <ConfirmDialog
-              open={confirmLogoutOthersOpen}
-              onOpenChange={setConfirmLogoutOthersOpen}
-              title="Đăng xuất khỏi tất cả thiết bị khác"
-              description="Bạn có chắc chắn muốn thu hồi ngay lập tức toàn bộ các phiên đăng nhập đang mở trên những thiết bị khác không? Thiết bị hiện tại và cookie phiên này vẫn được giữ nguyên."
-              confirmText="Đăng xuất thiết bị khác"
-              cancelText="Giữ nguyên"
-              variant="danger"
-              isLoading={isRevokingOthers}
-              onConfirm={handleLogoutOthers}
-            />
+    <DialogErrorProvider errorMessage={errorMessage} onDismiss={() => setErrorMessage(null)}>
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222]">
+              Quản lý phiên làm việc &amp; thiết bị
+            </h1>
           </div>
-        </DialogErrorProvider>
-      </AppLayout>
-    </AuthGuard>
+
+          <InteractiveHoverButton
+            variant="destructive"
+            size="sm"
+            onClick={() => setConfirmLogoutOthersOpen(true)}
+            disabled={isRevokingOthers}
+            isLoading={isRevokingOthers}
+            text={
+              otherSessionsCount > 0
+                ? `Đăng xuất tất cả thiết bị khác (${otherSessionsCount})`
+                : 'Đăng xuất tất cả thiết bị khác'
+            }
+            className="w-full sm:w-auto shrink-0"
+          />
+        </div>
+
+        {successMessage && (
+          <Alert variant="success" className="rounded-[20px] text-xs">
+            <CheckCircle2
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#008A05]"
+              aria-hidden="true"
+            />
+            <AlertDescription className="ml-2">{successMessage}</AlertDescription>
+          </Alert>
+        )}
+
+        {errorMessage && (
+          <Alert
+            variant="destructive"
+            className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
+          >
+            <AlertTriangle
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#C13515]"
+              aria-hidden="true"
+            />
+            <AlertDescription className="ml-2">{errorMessage}</AlertDescription>
+          </Alert>
+        )}
+
+        <ActiveSessionsList
+          sessions={sessions}
+          isFetching={isFetching}
+          revokingId={revokingSessionId}
+          onRefresh={() => void loadActiveSessions()}
+          onRevokeSession={(session) => void handleRevokeSingleSession(session)}
+        />
+
+        <SessionSecurityOverview
+          fullName={user?.fullName}
+          username={user?.username}
+          mfaVerified={currentSession?.mfaVerified}
+          onLogoutCurrent={() => void logout()}
+        />
+
+        <PasskeyEnrollmentCard
+          mfaVerified={currentSession?.mfaVerified}
+          onRegistered={async (msg) => {
+            setErrorMessage(null);
+            setSuccessMessage(msg);
+            await refreshUser();
+            await loadActiveSessions({ silent: true });
+          }}
+          onError={(msg) => {
+            setSuccessMessage(null);
+            setErrorMessage(msg);
+          }}
+        />
+
+        <ConfirmDialog
+          open={confirmLogoutOthersOpen}
+          onOpenChange={setConfirmLogoutOthersOpen}
+          title="Đăng xuất khỏi tất cả thiết bị khác"
+          description="Bạn có chắc chắn muốn thu hồi ngay lập tức toàn bộ các phiên đăng nhập đang mở trên những thiết bị khác không? Thiết bị hiện tại và cookie phiên này vẫn được giữ nguyên."
+          confirmText="Đăng xuất thiết bị khác"
+          cancelText="Giữ nguyên"
+          variant="danger"
+          isLoading={isRevokingOthers}
+          onConfirm={handleLogoutOthers}
+        />
+      </div>
+    </DialogErrorProvider>
   );
 }

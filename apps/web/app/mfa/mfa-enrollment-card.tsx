@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
-import { AlertCircle, ArrowLeft, KeyRound, RefreshCw } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Fingerprint, KeyRound, RefreshCw, Smartphone } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
@@ -16,27 +16,36 @@ import {
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { MfaEnrollForm, type MfaEnrollResponse } from './mfa-enroll-form';
 import { MfaRecoveryCodesCard } from './mfa-recovery-codes-card';
+import { MfaWebAuthnEnrollPanel } from './mfa-webauthn-enroll-panel';
+import { executeWebAuthnRegistration, formatWebAuthnError } from './webauthn-binary';
 
 interface MfaEnrollmentCardProps {
   onComplete: () => Promise<void>;
   onSwitchToVerify: () => void;
 }
 
+type EnrollMethod = 'webauthn' | 'totp';
+
 /**
- * Thuật toán: Máy Trạng Thái Đăng Ký Nhân Tố Xác Thực TOTP Lần Đầu & Phát Hành Mã Khôi Phục (`MfaEnrollmentCard`)
- * Mục đích: Khởi tạo bí mật RFC 6238 qua `/auth/mfa/enroll`, xác nhận đồng bộ đồng hồ 6 chữ số tại `/auth/mfa/enroll/verify` và buộc người dùng lưu 10 mã khôi phục dùng một lần trước khi nâng cấp phiên.
+ * Thuật toán: Máy Trạng Thái Đăng Ký Nhân Tố MFA Song Chế Độ (FIDO2/Passkey & TOTP RFC 6238) (`MfaEnrollmentCard`)
+ * Mục đích:
+ *   - Cho phép người dùng lựa chọn linh hoạt đăng ký khóa phần cứng FIDO2/Passkey (`startRegistration`) hoặc quét mã QR TOTP 6 chữ số.
+ *   - Khởi tạo lười bí mật TOTP đúng lúc chuyển sang chế độ TOTP tránh gọi thừa API, đồng thời bắt buộc lưu 10 mã khôi phục dùng một lần sau khi kích hoạt thành công.
  */
 export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmentCardProps) {
+  const [enrollMethod, setEnrollMethod] = useState<EnrollMethod>('webauthn');
   const [enrollData, setEnrollData] = useState<MfaEnrollResponse | null>(null);
-  const [isInitializing, setIsInitializing] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
+  const [deviceLabel, setDeviceLabel] = useState('');
+  const [isRegisteringWebAuthn, setIsRegisteringWebAuthn] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [copiedField, setCopiedField] = useState<'secret' | 'uri' | 'recovery' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const startEnrollment = useCallback(async () => {
+  const startTotpEnrollment = useCallback(async () => {
     setIsInitializing(true);
     setErrorMessage(null);
     try {
@@ -57,14 +66,15 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
   }, []);
 
   useEffect(() => {
+    if (enrollMethod !== 'totp' || enrollData) return;
     let ignore = false;
     void Promise.resolve().then(() => {
-      if (!ignore) void startEnrollment();
+      if (!ignore) void startTotpEnrollment();
     });
     return () => {
       ignore = true;
     };
-  }, [startEnrollment]);
+  }, [enrollMethod, enrollData, startTotpEnrollment]);
 
   async function handleCopyText(value: string, field: 'secret' | 'uri' | 'recovery') {
     try {
@@ -76,7 +86,7 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
     }
   }
 
-  async function handleVerifyEnrollment(e: FormEvent<HTMLFormElement>) {
+  async function handleVerifyTotpEnrollment(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setErrorMessage(null);
     if (verificationCode.trim().length !== 6) {
@@ -98,6 +108,20 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
       );
     } finally {
       setIsVerifying(false);
+    }
+  }
+
+  async function handleRegisterWebAuthn(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setErrorMessage(null);
+    setIsRegisteringWebAuthn(true);
+    try {
+      const res = await executeWebAuthnRegistration(deviceLabel);
+      setRecoveryCodes(res.recoveryCodes);
+    } catch (err: unknown) {
+      setErrorMessage(formatWebAuthnError(err));
+    } finally {
+      setIsRegisteringWebAuthn(false);
     }
   }
 
@@ -126,13 +150,54 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
     <Card className="rounded-[28px] border border-[#ebebeb] bg-[#ffffff] shadow-[0_12px_40px_rgba(0,0,0,0.06)]">
       <CardHeader className="space-y-1 pb-3">
         <CardTitle className="text-base font-bold text-[#222222]">
-          Thiết lập xác thực đa yếu tố lần đầu (TOTP)
+          Thiết lập xác thực đa yếu tố (MFA)
         </CardTitle>
         <CardDescription className="text-xs text-[#717171]">
-          Quét mã QR hoặc nhập khóa Base32 vào Google / Microsoft Authenticator để kích hoạt bảo vệ
+          Chọn đăng ký khóa bảo mật FIDO2 / Passkey hoặc quét mã QR với ứng dụng Authenticator
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div
+          role="tablist"
+          aria-label="Phương thức thiết lập MFA"
+          className="grid grid-cols-2 gap-1 rounded-full border border-[#ebebeb] bg-[#f7f7f7] p-1"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={enrollMethod === 'webauthn'}
+            onClick={() => {
+              setEnrollMethod('webauthn');
+              setErrorMessage(null);
+            }}
+            className={`min-h-10 rounded-full px-3 py-1.5 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              enrollMethod === 'webauthn'
+                ? 'bg-[#ffffff] text-[#222222] shadow-xs border border-[#ebebeb]'
+                : 'text-[#717171] hover:text-[#222222]'
+            }`}
+          >
+            <Fingerprint size={16} strokeWidth={1.75} aria-hidden="true" />
+            <span className="truncate">FIDO2 / Passkey</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={enrollMethod === 'totp'}
+            onClick={() => {
+              setEnrollMethod('totp');
+              setErrorMessage(null);
+            }}
+            className={`min-h-10 rounded-full px-3 py-1.5 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              enrollMethod === 'totp'
+                ? 'bg-[#ffffff] text-[#222222] shadow-xs border border-[#ebebeb]'
+                : 'text-[#717171] hover:text-[#222222]'
+            }`}
+          >
+            <Smartphone size={16} strokeWidth={1.75} aria-hidden="true" />
+            <span className="truncate">Mã TOTP (6 số)</span>
+          </button>
+        </div>
+
         {errorMessage && (
           <Alert
             variant="destructive"
@@ -148,7 +213,14 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
           </Alert>
         )}
 
-        {isInitializing ? (
+        {enrollMethod === 'webauthn' ? (
+          <MfaWebAuthnEnrollPanel
+            deviceLabel={deviceLabel}
+            isRegistering={isRegisteringWebAuthn}
+            onChangeLabel={setDeviceLabel}
+            onSubmit={handleRegisterWebAuthn}
+          />
+        ) : isInitializing ? (
           <div className="py-8 text-center text-xs text-[#717171]">
             Đang khởi tạo khóa bí mật TOTP…
           </div>
@@ -160,15 +232,15 @@ export function MfaEnrollmentCard({ onComplete, onSwitchToVerify }: MfaEnrollmen
             isVerifying={isVerifying}
             onCopyText={(val, field) => void handleCopyText(val, field)}
             onChangeCode={setVerificationCode}
-            onSubmit={handleVerifyEnrollment}
+            onSubmit={handleVerifyTotpEnrollment}
           />
         ) : (
           <InteractiveHoverButton
             type="button"
             variant="secondary"
             icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
-            text="Thử khởi tạo lại khóa MFA"
-            onClick={() => void startEnrollment()}
+            text="Thử khởi tạo lại khóa TOTP"
+            onClick={() => void startTotpEnrollment()}
             className="w-full text-xs"
           />
         )}

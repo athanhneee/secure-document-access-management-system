@@ -6,7 +6,7 @@
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { DownloadTicketParamSchema, UuidParamSchema } from '@sda/contracts';
+import { AppErrorCode, DownloadTicketParamSchema, UuidParamSchema } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { DeliveryFileResult } from './document-delivery.service.js';
 
@@ -54,7 +54,30 @@ export function parseDownloadTicketParam(params: unknown): string {
  */
 export function parseBodyOrQuery<T>(schema: SafeParseSchema<T>, payload: unknown): T {
   const parsed = schema.safeParse(payload);
-  if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+  if (!parsed.success) {
+    const flattened = parsed.error.flatten() as {
+      formErrors?: string[];
+      fieldErrors?: Record<string, string[] | undefined>;
+    };
+    const fieldErrors = flattened.fieldErrors ?? {};
+    const nonEmptyFields = Object.keys(fieldErrors).filter(
+      (key) => (fieldErrors[key]?.length ?? 0) > 0,
+    );
+    const retentionErrors = fieldErrors['retentionUntil'];
+    if (
+      Array.isArray(retentionErrors) &&
+      retentionErrors.length > 0 &&
+      nonEmptyFields.length === 1 &&
+      (flattened.formErrors?.length ?? 0) === 0
+    ) {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.RETENTION_DATE_INVALID,
+        message: retentionErrors[0] ?? 'Invalid retention date.',
+        details: flattened,
+      });
+    }
+    throw new BadRequestException(flattened);
+  }
   return parsed.data;
 }
 

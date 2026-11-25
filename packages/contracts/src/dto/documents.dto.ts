@@ -1,10 +1,15 @@
 import { z } from 'zod';
-import { isValidIsoCalendarDate, PositiveBigIntSchema } from './validation-primitives.js';
+import {
+  isNotPastIsoCalendarDate,
+  isValidIsoCalendarDate,
+  PositiveBigIntSchema,
+} from './validation-primitives.js';
 
 const RetentionCalendarDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/u, 'Retention date must be in YYYY-MM-DD format')
-  .refine(isValidIsoCalendarDate, 'Invalid calendar retention date');
+  .refine(isValidIsoCalendarDate, 'Invalid calendar retention date')
+  .refine((value) => isNotPastIsoCalendarDate(value), 'Retention date cannot be in the past');
 
 export const IdParamSchema = z
   .object({

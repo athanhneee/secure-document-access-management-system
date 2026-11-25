@@ -22,6 +22,7 @@ import {
   DocumentIngestionService,
   type IngestDocumentOutput,
 } from './document-ingestion.service.js';
+import { parseIsoRetentionDate } from './document-draft-validation.helper.js';
 
 interface MultipartValueField {
   value?: unknown;
@@ -100,9 +101,15 @@ export class DocumentIngestionController {
       abortPartAndThrow('Invalid businessCategoryId format.');
     }
     const businessCategoryId = rawBusinessCategoryId ? BigInt(rawBusinessCategoryId) : undefined;
-    const retentionUntil = getFieldValue('retentionUntil');
-    if (retentionUntil && !/^\d{4}-\d{2}-\d{2}$/u.test(retentionUntil)) {
-      abortPartAndThrow('Invalid retentionUntil date format (expected YYYY-MM-DD).');
+    const rawRetentionUntil = getFieldValue('retentionUntil');
+    const retentionUntil = rawRetentionUntil ? rawRetentionUntil : undefined;
+    if (retentionUntil) {
+      try {
+        parseIsoRetentionDate(retentionUntil);
+      } catch (err) {
+        part.file.destroy();
+        throw err;
+      }
     }
 
     return this.ingestion.ingestDocument({

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
+import { AppErrorCode } from '@sda/contracts';
+import { DocumentIngestionController } from '../dist/modules/documents/document-ingestion.controller.js';
 import { createSamplePdfBuffer } from './helpers/zip-builder.mjs';
 import { createIngestionHarness } from './helpers/document-ingestion-mocks.mjs';
 
@@ -209,4 +211,71 @@ test('DocumentIngestionService: saves description, retention date, classificatio
   assert.equal(createdClassification.classification_level_id, 3n);
   assert.equal(createdClassification.business_category_id, 1n);
   assert.equal(createdClassification.classified_by, 201n);
+});
+
+test('DocumentIngestionService & Controller: reject past or impossible retentionUntil before spooling with RETENTION_DATE_INVALID', async () => {
+  const { ingestion } = createIngestionHarness();
+  const principal = {
+    userId: 202n,
+    sessionId: 'session-retention-guard',
+    username: 'uploader_user',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  };
+  const context = { ip: '127.0.0.1', correlationId: crypto.randomUUID() };
+  const yesterdayIso = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+
+  for (const invalidDate of [yesterdayIso, '2026-02-31']) {
+    const stream = Readable.from([createSamplePdfBuffer('Retention validation test')]);
+    await assert.rejects(
+      ingestion.ingestDocument({
+        fileStream: stream,
+        rawFilename: 'past_retention.pdf',
+        declaredMime: 'application/pdf',
+        retentionUntil: invalidDate,
+        principal,
+        context,
+      }),
+      (err) => err.response?.errorCode === AppErrorCode.RETENTION_DATE_INVALID,
+    );
+    assert.equal(stream.destroyed, true);
+  }
+
+  let ingestionCalled = false;
+  const controller = new DocumentIngestionController(
+    {
+      ingestDocument: async () => {
+        ingestionCalled = true;
+        throw new Error('should not be reached');
+      },
+    },
+    { assertRequest: () => {} },
+  );
+
+  for (const invalidDate of [yesterdayIso, '2026-02-31']) {
+    let streamDestroyed = false;
+    await assert.rejects(
+      controller.uploadDocument({
+        isMultipart: () => true,
+        file: async () => ({
+          filename: 'bad.pdf',
+          mimetype: 'application/pdf',
+          file: {
+            destroy: () => {
+              streamDestroyed = true;
+            },
+          },
+          fields: {
+            retentionUntil: { value: invalidDate },
+          },
+        }),
+        auth: principal,
+        ip: '127.0.0.1',
+        headers: {},
+      }),
+      (err) => err.response?.errorCode === AppErrorCode.RETENTION_DATE_INVALID,
+    );
+    assert.equal(streamDestroyed, true);
+  }
+  assert.equal(ingestionCalled, false);
 });

@@ -7,7 +7,7 @@
  */
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
-import { AppErrorCode, isValidIsoCalendarDate } from '@sda/contracts';
+import { AppErrorCode, isNotPastIsoCalendarDate, isValidIsoCalendarDate } from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 
@@ -56,13 +56,20 @@ export async function assertDepartmentWriteScope(
 }
 
 /**
- * Thuật toán: Phân tích ngày hạn lưu trữ ISO `YYYY-MM-DD` có kiểm định ngày lịch Gregorian thực.
+ * Thuật toán: Phân tích ngày hạn lưu trữ ISO `YYYY-MM-DD` có kiểm định ngày lịch Gregorian thực
+ * và từ chối ngày trong quá khứ (`< ngày hiện tại UTC`).
  */
-export function parseIsoRetentionDate(isoDate: string): Date {
+export function parseIsoRetentionDate(isoDate: string, referenceDate: Date = new Date()): Date {
   if (!isValidIsoCalendarDate(isoDate)) {
     throw new BadRequestException({
       errorCode: AppErrorCode.RETENTION_DATE_INVALID,
       message: 'Invalid retention date format or impossible calendar date.',
+    });
+  }
+  if (!isNotPastIsoCalendarDate(isoDate, referenceDate)) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.RETENTION_DATE_INVALID,
+      message: 'Retention date cannot be in the past.',
     });
   }
   const retDate = new Date(`${isoDate}T00:00:00.000Z`);

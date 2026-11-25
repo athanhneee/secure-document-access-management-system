@@ -34,11 +34,11 @@ const SPECIFIC_ERROR_CODE_MAP: Readonly<Record<string, string>> = {
     'Vi phạm nguyên tắc Bell-LaPadula: cấp thẩm quyền không đủ cho mức phân loại mật của tài liệu.',
   GRANT_CLEARANCE_INSUFFICIENT:
     'Người nhận chưa đủ cấp thẩm quyền bảo mật đối với mức độ mật của tài liệu.',
-  WATERMARK_TOKEN_NOT_FOUND: 'Không tìm thấy mã thủy vân này trong sổ cái đối soát pháp chứng.',
+  WATERMARK_TOKEN_NOT_FOUND: 'Không tìm thấy mã watermark này trong sổ cái đối soát pháp chứng.',
   AMBIGUOUS_WATERMARK_TOKEN:
-    'Tiền tố mã thủy vân khớp nhiều bản ghi, vui lòng nhập đầy đủ chuỗi mã.',
-  WATERMARK_CONFIG_NOT_FOUND: 'Không tìm thấy cấu hình mẫu thủy vân phù hợp.',
-  WATERMARK_GENERATION_FAILED: 'Không thể nhúng dấu thủy vân bảo mật vào tài liệu.',
+    'Tiền tố mã watermark khớp nhiều bản ghi, vui lòng nhập đầy đủ chuỗi mã.',
+  WATERMARK_CONFIG_NOT_FOUND: 'Không tìm thấy cấu hình mẫu watermark phù hợp.',
+  WATERMARK_GENERATION_FAILED: 'Không thể nhúng dấu watermark bảo mật vào tài liệu.',
   DOWNLOAD_TICKET_INVALID: 'Vé tải xuống không hợp lệ hoặc đã được sử dụng.',
   DOWNLOAD_TICKET_EXPIRED: 'Vé tải xuống dùng một lần đã hết hạn hiệu lực.',
   GRANT_EXPIRED: 'Giấy phép truy cập tài liệu đã hết thời hạn hiệu lực.',
@@ -60,7 +60,8 @@ const SPECIFIC_ERROR_CODE_MAP: Readonly<Record<string, string>> = {
   VERSION_NOT_CLEAN: 'Phiên bản tệp chưa hoàn tất kiểm định an toàn mã độc.',
   VERSION_NOT_FOUND: 'Không tìm thấy phiên bản tài liệu được chỉ định.',
   INVALID_VERSION_TARGET: 'Phiên bản tài liệu đích không hợp lệ.',
-  RETENTION_DATE_INVALID: 'Ngày hết hạn lưu trữ tài liệu không hợp lệ.',
+  RETENTION_DATE_INVALID:
+    'Thời hạn lưu trữ bảo mật không hợp lệ hoặc nằm trong quá khứ (phải từ ngày hôm nay trở đi).',
   TECHNICAL_ADMIN_CANNOT_OWN:
     'Quản trị viên hệ thống không được sở hữu tài liệu nghiệp vụ theo nguyên tắc Phân tách nhiệm vụ.',
   MALWARE_DETECTED: 'Phát hiện mã độc trong tệp tải lên — yêu cầu đã bị chặn an toàn.',
@@ -134,6 +135,8 @@ const EXACT_MESSAGE_MAP: Readonly<Record<string, string>> = {
   'validation failed for one or more fields.':
     'Thông tin biểu mẫu chưa hợp lệ. Vui lòng kiểm tra lại các trường dữ liệu.',
   'request validation failed.': 'Dữ liệu yêu cầu gửi lên không đúng định dạng quy định.',
+  'retention date cannot be in the past.':
+    'Thời hạn lưu trữ bảo mật không được nằm trong quá khứ (phải từ ngày hôm nay trở đi).',
   'active session was not found.': 'Không tìm thấy phiên đăng nhập thiết bị đang hoạt động.',
   'no webauthn security keys found for this account.':
     'Tài khoản này chưa đăng ký khóa bảo mật vật lý FIDO2 / Passkey.',

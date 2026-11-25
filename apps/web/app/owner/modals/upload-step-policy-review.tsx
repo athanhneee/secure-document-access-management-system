@@ -4,6 +4,7 @@ import { ShieldCheck, Download, Eye } from 'lucide-react';
 import { ClassificationBadge } from '@/components/classification-badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { formatIsoDateDisplay } from '../helpers';
 import type { useUploadWizard } from '../hooks/use-upload-wizard';
 import type {
   BusinessCategoryLookupItem,
@@ -35,6 +36,8 @@ export function UploadStepPolicyReview({
     docCategoryId,
     docRetentionDate,
     setDocRetentionDate,
+    minRetentionDate,
+    retentionDateError,
   } = wizard;
 
   if (step === 2) {
@@ -99,10 +102,27 @@ export function UploadStepPolicyReview({
           <Input
             id="doc-retention"
             type="date"
+            min={minRetentionDate}
             value={docRetentionDate}
             onChange={(e) => setDocRetentionDate(e.target.value)}
-            className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+            aria-invalid={Boolean(retentionDateError)}
+            aria-describedby={retentionDateError ? 'doc-retention-error' : 'doc-retention-hint'}
+            className={`min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] text-[#222222] placeholder:text-[#b0b0b0] ${
+              retentionDateError
+                ? 'border-[#C13515] focus-visible:border-[#C13515]'
+                : 'border-[#dddddd] focus-visible:border-[#FF385C]'
+            }`}
           />
+          {retentionDateError ? (
+            <p id="doc-retention-error" role="alert" className="text-xs text-[#C13515]">
+              {retentionDateError}
+            </p>
+          ) : (
+            <p id="doc-retention-hint" className="text-xs text-[#717171]">
+              Tùy chọn. Nếu thiết lập, chỉ được chọn từ ngày{' '}
+              {formatIsoDateDisplay(minRetentionDate)} trở đi.
+            </p>
+          )}
         </div>
       </div>
     );
@@ -138,6 +158,10 @@ export function UploadStepPolicyReview({
             {currentSelectedLevel?.allowDownload
               ? 'Cho phép tải có watermark'
               : 'Chỉ xem trực tuyến'}
+          </span>
+          <span className="text-[#717171]">Thời hạn lưu trữ:</span>
+          <span className="font-semibold text-[#222222]">
+            {docRetentionDate ? formatIsoDateDisplay(docRetentionDate) : 'Không giới hạn'}
           </span>
           <span className="text-[#717171]">Mã hóa xác thực:</span>
           <span className="font-bold text-[#008A05]">AES-256-GCM / DEK</span>

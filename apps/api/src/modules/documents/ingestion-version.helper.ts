@@ -11,6 +11,7 @@ import { AppErrorCode } from '@sda/contracts';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import type { RedlockService } from '../concurrency/redlock.service.js';
 import { getUserClearanceRank } from './document-access-guard.helper.js';
+import { parseIsoRetentionDate } from './document-draft-validation.helper.js';
 import type { ValidatedFileInfo } from './file-validation.service.js';
 import type { IngestDocumentInput } from './ingestion-validation.helper.js';
 
@@ -61,13 +62,10 @@ export async function persistCleanIngestedVersion(params: {
   const title = input.title ?? validatedInfo.sanitizedFilename;
   const docCode = input.documentCode ?? `DOC-${randomUUID().substring(0, 8).toUpperCase()}`;
 
-  let retentionDate: Date | null = null;
-  if (input.retentionUntil) {
-    retentionDate = new Date(`${input.retentionUntil}T00:00:00.000Z`);
-    if (Number.isNaN(retentionDate.getTime())) {
-      retentionDate = null;
-    }
-  }
+  const retentionDate: Date | null =
+    input.retentionUntil && input.retentionUntil !== ''
+      ? parseIsoRetentionDate(input.retentionUntil)
+      : null;
 
   let finalVersionNo = 1;
 

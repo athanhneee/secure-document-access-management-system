@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
+import { AppErrorCode, CreateDocumentDraftSchema } from '@sda/contracts';
+import { parseBodyOrQuery } from '../dist/modules/documents/documents-controller.helpers.js';
 import { createDocumentsTestService } from './helpers/document-lifecycle-mocks.mjs';
 
 test('Document Lifecycle: creates draft with required fields, initial classification and audit', async () => {
@@ -202,4 +204,59 @@ test('Document Lifecycle: activateDocument auto-provisions active access grant f
   assert.equal(grants.length, 1);
   assert.equal(grants[0].source, 'DIRECT');
   assert.equal(grants[0].granted_by, 10n);
+});
+
+test('Document Lifecycle: rejects past retentionUntil on draft creation, metadata update, and DTO controller parsing with RETENTION_DATE_INVALID', async () => {
+  const { service } = createDocumentsTestService();
+  const principal = { userId: 1n, username: 'owner_user', roles: ['DOCUMENT_OWNER'], mfa: true };
+  const context = { ip: '127.0.0.1', correlationId: randomUUID() };
+  const yesterdayIso = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  await assert.rejects(
+    service.createDocumentDraft(
+      {
+        title: 'Past retention draft',
+        departmentId: 100n,
+        retentionUntil: yesterdayIso,
+      },
+      principal,
+      context,
+    ),
+    (err) => err.response?.errorCode === AppErrorCode.RETENTION_DATE_INVALID,
+  );
+
+  const created = await service.createDocumentDraft(
+    {
+      title: 'Today retention draft',
+      departmentId: 100n,
+      retentionUntil: todayIso,
+    },
+    principal,
+    context,
+  );
+  assert.equal(created.retentionUntil, todayIso);
+
+  await assert.rejects(
+    service.updateMetadata(created.id, { retentionUntil: yesterdayIso }, principal, context),
+    (err) => err.response?.errorCode === AppErrorCode.RETENTION_DATE_INVALID,
+  );
+
+  const cleared = await service.updateMetadata(
+    created.id,
+    { retentionUntil: null },
+    principal,
+    context,
+  );
+  assert.equal(cleared.retentionUntil, null);
+
+  assert.throws(
+    () =>
+      parseBodyOrQuery(CreateDocumentDraftSchema, {
+        title: 'Controller DTO past retention',
+        departmentId: '100',
+        retentionUntil: yesterdayIso,
+      }),
+    (err) => err.response?.errorCode === AppErrorCode.RETENTION_DATE_INVALID,
+  );
 });

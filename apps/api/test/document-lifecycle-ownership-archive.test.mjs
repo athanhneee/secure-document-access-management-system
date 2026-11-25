@@ -136,6 +136,38 @@ test('Document Lifecycle: Retention check emits notifications and alerts but NEV
   assert.equal(documents.get(expiringDocId).status, 'ACTIVE');
 });
 
+test('Document Lifecycle: Retention check warns for today expiration without triggering premature RETENTION_OVERDUE security alert', async () => {
+  const todayDocId = randomUUID();
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayRetentionDate = new Date(`${todayIso}T00:00:00.000Z`);
+
+  const { notifications, securityAlerts, service } = createDocumentsTestService({
+    documents: [
+      [
+        todayDocId,
+        {
+          id: todayDocId,
+          document_code: 'DOC-TODAY',
+          title: 'Expiring today document',
+          owner_id: 1n,
+          department_id: 100n,
+          status: 'ACTIVE',
+          retention_until: todayRetentionDate,
+        },
+      ],
+    ],
+  });
+
+  const result = await service.checkRetentionWarnings(30, undefined, undefined, {
+    systemScan: true,
+  });
+
+  assert.equal(result.warningCount, 1);
+  assert.equal(result.warnings[0].daysRemaining, 0);
+  assert.equal(notifications.size, 1);
+  assert.equal(securityAlerts.size, 0);
+});
+
 test('Document Lifecycle: transfer document owner updates owner and records audit', async () => {
   const docId = randomUUID();
   const { documents, mockAudit, service } = createDocumentsTestService({

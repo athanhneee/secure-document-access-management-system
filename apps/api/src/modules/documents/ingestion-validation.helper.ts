@@ -12,6 +12,7 @@ import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
 import { getUserClearanceRank } from './document-access-guard.helper.js';
+import { parseIsoRetentionDate } from './document-draft-validation.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -83,6 +84,15 @@ export async function validateIngestionPreconditions(
       errorCode: AppErrorCode.VALIDATION_FAILED,
       message: 'Invalid documentCode format.',
     });
+  }
+
+  if (input.retentionUntil !== undefined && input.retentionUntil !== '') {
+    try {
+      parseIsoRetentionDate(input.retentionUntil);
+    } catch (err) {
+      input.fileStream.destroy();
+      throw err;
+    }
   }
 
   if (input.documentId && typeof database?.document?.findUnique === 'function') {

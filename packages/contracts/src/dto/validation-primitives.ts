@@ -39,6 +39,20 @@ export function isValidIsoCalendarDate(value: string): boolean {
 }
 
 /**
+ * Thuật toán: Lấy chuỗi ngày hiện tại theo chuẩn lịch ISO-8601 `YYYY-MM-DD` (múi giờ UTC).
+ */
+export function getCurrentUtcIsoDate(referenceDate: Date = new Date()): string {
+  return referenceDate.toISOString().slice(0, 10);
+}
+
+/**
+ * Thuật toán: Kiểm định ngày lịch Gregorian `YYYY-MM-DD` hợp lệ và không nằm trong quá khứ (`>= ngày hiện tại UTC`).
+ */
+export function isNotPastIsoCalendarDate(value: string, referenceDate: Date = new Date()): boolean {
+  return isValidIsoCalendarDate(value) && value >= getCurrentUtcIsoDate(referenceDate);
+}
+
+/**
  * Thuật toán: Chuẩn hóa và kiểm định khóa định danh nguyên dương 64-bit (`1 <= x <= 9223372036854775807`).
  * Chặn tràn số `BIGINT` PostgreSQL (HTTP 500 `22003 numeric field overflow`) ngay tại biên xác thực DTO.
  */

@@ -37,7 +37,8 @@ export async function executeCheckRetentionWarnings(params: {
     });
   }
   const now = new Date();
-  const thresholdDate = new Date(now.getTime() + daysThreshold * 86400 * 1000);
+  const todayUtcStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const thresholdDate = new Date(todayUtcStartMs + daysThreshold * 86_400_000);
 
   const allExpiringDocuments = await database.document.findMany({
     where: {
@@ -104,21 +105,32 @@ export async function executeCheckRetentionWarnings(params: {
 
   for (const doc of expiringDocuments) {
     if (!doc.retention_until) continue;
-    const daysRemaining = Math.ceil((doc.retention_until.getTime() - now.getTime()) / 86_400_000);
+    const retentionUtcStartMs = Date.UTC(
+      doc.retention_until.getUTCFullYear(),
+      doc.retention_until.getUTCMonth(),
+      doc.retention_until.getUTCDate(),
+    );
+    const daysRemaining = Math.round((retentionUtcStartMs - todayUtcStartMs) / 86_400_000);
     const dateStr = doc.retention_until.toISOString().substring(0, 10);
+    const remainingText =
+      daysRemaining < 0
+        ? 'đã hết hạn'
+        : daysRemaining === 0
+          ? 'hết hạn trong hôm nay'
+          : `còn ${daysRemaining} ngày`;
 
     notificationBatch.push({
       id: randomUUID(),
       recipient_id: doc.owner_id,
       notification_type: 'RETENTION_EXPIRATION_WARNING',
       title: 'Cảnh báo hạn lưu trữ tài liệu',
-      body: `Tài liệu "${doc.title}" (${doc.document_code}) sẽ hết hạn lưu trữ vào ngày ${dateStr} (${daysRemaining <= 0 ? 'đã hết hạn' : `còn ${daysRemaining} ngày`}). Cần xem xét chính sách phê duyệt lưu trữ hoặc tiêu hủy.`,
+      body: `Tài liệu "${doc.title}" (${doc.document_code}) sẽ hết hạn lưu trữ vào ngày ${dateStr} (${remainingText}). Cần xem xét chính sách phê duyệt lưu trữ hoặc tiêu hủy.`,
       related_object_type: 'DOCUMENT',
       related_object_id: doc.id,
       status: 'UNREAD',
     });
 
-    if (daysRemaining <= 0) {
+    if (daysRemaining < 0) {
       securityAlertBatch.push({
         id: randomUUID(),
         alert_type: 'RETENTION_OVERDUE',

@@ -1,6 +1,6 @@
 /**
  * @module WatermarksService
- * Thuật toán: Quản lý cấu hình thủy vân pháp y có ràng buộc độ mờ `[10%, 90%]`, tương phản màu tối thiểu,
+ * Thuật toán: Quản lý cấu hình watermark pháp y có ràng buộc độ mờ `[10%, 90%]`, tương phản màu tối thiểu,
  * cưỡng chế mã QR hoặc `{watermarkToken}` đầy đủ đối với cấp độ mật `SECRET` / `TOP_SECRET`, và truy vết nguồn rò rỉ (UC28).
  */
 import {
@@ -65,7 +65,7 @@ export class WatermarksService {
   }
 
   /**
-   * Thuật toán: Chiếu danh mục cấu hình thủy vân đang kích hoạt kèm cấp độ mật (`Active Watermark Catalog Projection`).
+   * Thuật toán: Chiếu danh mục cấu hình watermark đang kích hoạt kèm cấp độ mật (`Active Watermark Catalog Projection`).
    */
   async listConfigs(): Promise<{ data: unknown[] }> {
     const configs = await this.database.watermarkConfig.findMany({
@@ -106,7 +106,7 @@ export class WatermarksService {
   }
 
   /**
-   * Thuật toán: Cập nhật cấu hình thủy vân có chốt chặn hiển thị, biên độ mờ đục, tương phản màu và bảo toàn QR cho `SECRET`/`TOP_SECRET`.
+   * Thuật toán: Cập nhật cấu hình watermark có chốt chặn hiển thị, biên độ mờ đục, tương phản màu và bảo toàn QR cho `SECRET`/`TOP_SECRET`.
    */
   async updateConfig(
     id: bigint,
@@ -233,7 +233,7 @@ export class WatermarksService {
   }
 
   /**
-   * Thuật toán: Truy vết định danh pháp y từ mã thủy vân tài liệu rò rỉ (`Forensic Watermark Token Attribution - UC28`).
+   * Thuật toán: Truy vết định danh pháp y từ mã watermark tài liệu rò rỉ (`Forensic Watermark Token Attribution - UC28`).
    */
   async verifyWatermarkToken(
     token: string,

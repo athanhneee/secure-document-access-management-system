@@ -7,7 +7,7 @@ import { isMaxOutputExceededError, MAX_DLP_DECOMPRESSED_BYTES } from './icap-con
  * Bộ bóc tách không phụ thuộc ngoài cho kho lưu trữ ZIP / OOXML (`.docx`, `.xlsx`, `.pptx`) phục vụ DLP biên mạng:
  * - Ưu tiên đọc Central Directory (`0x06054b50` -> `0x02014b50`) và quay lui về Local File Header (`0x04034b50`) khi luồng bị cắt Preview.
  * - Giải nén bất đồng bộ `inflateRaw` có ngân sách tổng byte nghiêm ngặt chống Zip Bomb, đồng thời nối liền các thẻ chạy văn bản `<w:t>` / `<t>`
- *   trong `word/document.xml` và `xl/sharedStrings.xml` để bắt trọn mã thủy vân `WM-...` bị tách thẻ XML.
+ *   trong `word/document.xml` và `xl/sharedStrings.xml` để bắt trọn mã watermark `WM-...` bị tách thẻ XML.
  */
 
 const inflateRawAsync = promisify(inflateRaw);

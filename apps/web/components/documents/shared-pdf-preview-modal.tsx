@@ -34,7 +34,7 @@ export interface SharedPdfPreviewModalProps {
 }
 
 /**
- * Thuật toán: Khung Xem Trước PDF Thủy Vân Thích Ứng Di Động `375x667` (`SharedPdfPreviewModal`)
+ * Thuật toán: Khung Xem Trước PDF Watermark Thích Ứng Di Động `375x667` (`SharedPdfPreviewModal`)
  * Mục đích: Hợp nhất giao diện Sandbox xem trước cho Chủ sở hữu và Người đọc, giới hạn chiều cao khung nhúng theo `dvh` (`h-[48dvh] sm:h-[60dvh]`) để thanh chuyển trang luôn hiển thị đầy đủ trên màn hình nhỏ và bảo vệ Fail-Closed khi thiếu luồng PDF hợp lệ.
  */
 export function SharedPdfPreviewModal({

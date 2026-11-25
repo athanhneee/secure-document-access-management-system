@@ -5,7 +5,7 @@
  */
 
 /**
- * Thuật toán: Khởi tạo dữ liệu hạt giống SQL (dàn độ mật, ABAC `CLEARANCE_LEVEL`, cấu hình thủy vân) và các dịch vụ tài liệu/thủy vân cho kiểm thử tích hợp.
+ * Thuật toán: Khởi tạo dữ liệu hạt giống SQL (dàn độ mật, ABAC `CLEARANCE_LEVEL`, cấu hình watermark) và các dịch vụ tài liệu/watermark cho kiểm thử tích hợp.
  */
 export async function setupDocumentsWatermarksIntegrationFixture(dbHarness) {
   const { sql, insertOne, prisma } = dbHarness;

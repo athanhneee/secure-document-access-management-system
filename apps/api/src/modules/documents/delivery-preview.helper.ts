@@ -1,10 +1,10 @@
 /**
  * Module: Watermarked PDF Preview Pipeline Helper
- * Thuật toán: Đường Ống Xem Trước PDF Thủy Vân Theo Phiên Có Bộ Đệm Dẫn Xuất Mã Hóa (`executeWatermarkedPreview`).
+ * Thuật toán: Đường Ống Xem Trước PDF Watermark Theo Phiên Có Bộ Đệm Dẫn Xuất Mã Hóa (`executeWatermarkedPreview`).
  *   1. Xác thực phiên hoạt động (`VIEW`), quyền cấp phát còn hạn và cập nhật `last_activity_at`.
  *   2. Kiểm tra bộ đệm dẫn xuất mã hóa trên `STORAGE_BUCKET_DERIVATIVES`:
- *      - Khi trúng cache (trang 2, 3, 4...): giải mã trực tiếp bản PDF đã thủy vân của phiên (0 lệnh KMS nguồn, 0 chuyển đổi Gotenberg, 0 đóng lại thủy vân/QR, chỉ 1 lần `PDFDocument.load` trích trang).
- *      - Khi trượt cache (trang 1 hoặc lần đầu): giải mã nguồn 1 lần (dọn tệp tạm trong `finally`), chuyển đổi Office qua Gotenberg 1 lần, đóng thủy vân 1 lần (lấy trực tiếp `wmResult.pageCount` không nạp lại PDF lần 2), lưu bản mã hóa vào `STORAGE_BUCKET_DERIVATIVES` và trích trang yêu cầu.
+ *      - Khi trúng cache (trang 2, 3, 4...): giải mã trực tiếp bản PDF đã watermark của phiên (0 lệnh KMS nguồn, 0 chuyển đổi Gotenberg, 0 đóng lại watermark/QR, chỉ 1 lần `PDFDocument.load` trích trang).
+ *      - Khi trượt cache (trang 1 hoặc lần đầu): giải mã nguồn 1 lần (dọn tệp tạm trong `finally`), chuyển đổi Office qua Gotenberg 1 lần, đóng watermark 1 lần (lấy trực tiếp `wmResult.pageCount` không nạp lại PDF lần 2), lưu bản mã hóa vào `STORAGE_BUCKET_DERIVATIVES` và trích trang yêu cầu.
  */
 import { BadRequestException } from '@nestjs/common';
 import crypto from 'node:crypto';
@@ -32,7 +32,7 @@ import { storeCachedSessionPdf, tryLoadCachedSessionPdf } from './derivative-pdf
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Thuật toán: Xử Lý Kết Xuất Xem Trước Tài Liệu & Trích Xuất Trang Thủy Vân Tối Ưu Qua Bộ Đệm Phiên (`executeWatermarkedPreview`)
+ * Thuật toán: Xử Lý Kết Xuất Xem Trước Tài Liệu & Trích Xuất Trang Watermark Tối Ưu Qua Bộ Đệm Phiên (`executeWatermarkedPreview`)
  */
 export async function executeWatermarkedPreview(params: {
   database: PrismaClient;

@@ -31,7 +31,7 @@ const SENSITIVE_QUERY_KEYS = new Set([
 
 /**
  * Thuật toán: Phân tách và Làm sạch URL Nhật ký (URL Token & Query Parameter Sanitization)
- * Mục đích: Loại bỏ mã vé truyền tải tài liệu, mã thủy vân trên đường dẫn và các tham số truy vấn
+ * Mục đích: Loại bỏ mã vé truyền tải tài liệu, mã watermark trên đường dẫn và các tham số truy vấn
  *   nhạy cảm trước khi ghi vào nhật ký HTTP nhằm ngăn rò rỉ thông tin xác thực qua log.
  * Cơ chế hoạt động:
  *   - Tách chuỗi URL thô tại dấu `?` đầu tiên thành hai phần độc lập: `rawPath` và `rawQuery`.

@@ -14,8 +14,8 @@ interface UseOwnerDeliveryParams {
  * Thuật toán: Mở Hộp Thoại Xem Trước Tức Thì Dưới 16ms & Tải Xuống Qua Vé Dùng Một Lần (`useOwnerDelivery`)
  * Mục đích: Mở khung xem trước Sandbox ngay lập tức (`< 0,1s`) trước khi khởi tạo phiên `VIEW`, xác thực chữ ký đầu `%PDF-` và chống tranh chấp phản hồi mạng qua `previewReqIdRef`.
  * Cơ chế hoạt động:
- *   - `handleOpenPreview`: Hiển thị hộp thoại phương thức ngay trong khung hình đầu tiên, tải phiên và luồng PDF gắn thủy vân ở nền; tự động đóng hộp thoại nếu máy chủ từ chối phiên.
- *   - `handleDownloadWithTicket`: Thực thi giao thức 3 bước (mở phiên `DOWNLOAD` -> xin vé ngắn hạn dùng một lần `download-ticket` -> tải bản sao PDF gắn thủy vân).
+ *   - `handleOpenPreview`: Hiển thị hộp thoại phương thức ngay trong khung hình đầu tiên, tải phiên và luồng PDF gắn watermark ở nền; tự động đóng hộp thoại nếu máy chủ từ chối phiên.
+ *   - `handleDownloadWithTicket`: Thực thi giao thức 3 bước (mở phiên `DOWNLOAD` -> xin vé ngắn hạn dùng một lần `download-ticket` -> tải bản sao PDF gắn watermark).
  */
 export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDeliveryParams) {
   const [previewOpen, setPreviewOpen] = useState(false);

@@ -1,6 +1,6 @@
 /**
  * @module WatermarkEngineService
- * Thuật toán: Động cơ đóng dấu thủy vân pháp chứng đa lớp trên tài liệu PDF (`pdf-lib`) — làm phẳng trường biểu mẫu tương tác,
+ * Thuật toán: Động cơ đóng dấu watermark pháp chứng đa lớp trên tài liệu PDF (`pdf-lib`) — làm phẳng trường biểu mẫu tương tác,
  * phủ lưới văn bản định danh nghiêng lặp lại, dải cảnh báo đầu/cuối trang, mã QR góc phải dưới và nhúng `watermarkToken`
  * (`WM-<48hex>`) vào metadata/catalog PDF không nén để cổng ICAP DLP phát hiện rò rỉ mạng 100%, kèm chốt chặn fail-closed.
  */
@@ -46,7 +46,7 @@ export class WatermarkEngineService {
   }
 
   /**
-   * Thuật toán: Sinh mã định danh thủy vân ngẫu nhiên mật mã 192-bit (`WM-<48-hex>`).
+   * Thuật toán: Sinh mã định danh watermark ngẫu nhiên mật mã 192-bit (`WM-<48-hex>`).
    */
   generateWatermarkToken(): string {
     return generateCryptographicWatermarkToken();
@@ -73,7 +73,7 @@ export class WatermarkEngineService {
   }
 
   /**
-   * Thuật toán: Phủ thủy vân pháp chứng đa lớp lên toàn bộ trang PDF kết hợp nhúng siêu dữ liệu ASCII không nén cho ICAP DLP.
+   * Thuật toán: Phủ watermark pháp chứng đa lớp lên toàn bộ trang PDF kết hợp nhúng siêu dữ liệu ASCII không nén cho ICAP DLP.
    * Thực hiện làm phẳng trường biểu mẫu AcroForm, vẽ lưới chữ chéo, dải cảnh báo đầu/cuối trang, mã QR góc phải dưới,
    * gắn `watermarkToken` vào `Keywords`/`Subject`/`Catalog` và xuất với `useObjectStreams: false`; từ chối fail-closed nếu lỗi.
    */
@@ -247,14 +247,14 @@ export class WatermarkEngineService {
   }
 
   /**
-   * Thuật toán: Phân giải cấu hình thủy vân hiệu lực theo thứ bậc độ mật hoặc cấu hình mặc định hệ thống.
+   * Thuật toán: Phân giải cấu hình watermark hiệu lực theo thứ bậc độ mật hoặc cấu hình mặc định hệ thống.
    */
   async getWatermarkConfig(classificationLevelId?: bigint | null): Promise<WatermarkConfigData> {
     return resolveWatermarkConfig(this.database, classificationLevelId);
   }
 
   /**
-   * Thuật toán: Ghi nhận số liệu độ trễ và tỷ lệ thành công kết xuất thủy vân sang Prometheus `MetricsService`.
+   * Thuật toán: Ghi nhận số liệu độ trễ và tỷ lệ thành công kết xuất watermark sang Prometheus `MetricsService`.
    */
   private async recordMetric(
     durationSeconds: number,

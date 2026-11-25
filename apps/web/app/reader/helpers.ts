@@ -203,8 +203,8 @@ export function buildRequestWindowIso(
 }
 
 /**
- * Thuật toán: Kích hoạt Tải Tệp PDF Gắn Thủy vân & Thu hồi Tức thời Object URL (`triggerWatermarkedDownload`)
- * Tạo thẻ neo tạm thời để lưu luồng Blob đã đóng dấu thủy vân và thu hồi URL bộ nhớ ngay sau thao tác nhấp.
+ * Thuật toán: Kích hoạt Tải Tệp PDF Gắn Watermark & Thu hồi Tức thời Object URL (`triggerWatermarkedDownload`)
+ * Tạo thẻ neo tạm thời để lưu luồng Blob đã đóng dấu watermark và thu hồi URL bộ nhớ ngay sau thao tác nhấp.
  */
 export function triggerWatermarkedDownload(blob: Blob, documentCode?: string): void {
   const downloadUrl = window.URL.createObjectURL(blob);

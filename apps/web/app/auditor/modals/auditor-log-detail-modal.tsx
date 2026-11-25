@@ -136,7 +136,7 @@ export function AuditorLogDetailModal({
 
             <div className="space-y-1">
               <div className="font-medium text-[#222222]">Chi tiết sự kiện</div>
-              <pre className="rounded-[12px] border border-[#ebebeb] bg-[#f7f7f7] p-2.5 font-mono text-xs text-[#222222] overflow-x-auto max-h-40">
+              <pre className="sda-table-scroll rounded-[12px] border border-[#ebebeb] bg-[#f7f7f7] p-2.5 font-mono text-xs text-[#222222] overflow-x-auto overflow-y-auto max-h-44">
                 {JSON.stringify(auditLog.details ?? {}, null, 2)}
               </pre>
             </div>

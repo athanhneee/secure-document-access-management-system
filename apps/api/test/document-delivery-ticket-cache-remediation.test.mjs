@@ -3,7 +3,7 @@
  * Thuật toán: Kiểm thử hồi quy 4 cơ chế bảo mật & hiệu năng:
  *   1. Chủ sở hữu tài liệu bị hạ cấp độ mật (`CLEARANCE_LEVEL` < `documentRank`) bị chặn đọc, sửa và mở phiên PEP.
  *   2. Vé tải dùng một lần phân tán (`DistributedStateService.consumeOnce`) tái xác minh `AccessSession`, `AccessGrant`, `User` và IP tại thời điểm đổi vé.
- *   3. Chính sách phiên PEP có TTL hữu hạn bắt buộc (30–60 phút) và bộ đệm dẫn xuất mã hóa `STORAGE_BUCKET_DERIVATIVES` giúp xem trang 2 không gọi lại KMS/thủy vân.
+ *   3. Chính sách phiên PEP có TTL hữu hạn bắt buộc (30–60 phút) và bộ đệm dẫn xuất mã hóa `STORAGE_BUCKET_DERIVATIVES` giúp xem trang 2 không gọi lại KMS/watermark.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';

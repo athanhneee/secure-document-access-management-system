@@ -1,10 +1,10 @@
 /**
  * Module: Session-Bound Encrypted Derivative PDF Cache Helper (`STORAGE_BUCKET_DERIVATIVES`)
- * Thuật toán: Bộ Đệm PDF Đã Đóng Thủy Vân Mã Hóa Theo Phiên (`AES-256-GCM` + `HKDF-SHA256`) Trên Kho `STORAGE_BUCKET_DERIVATIVES`.
+ * Thuật toán: Bộ Đệm PDF Đã Đóng Watermark Mã Hóa Theo Phiên (`AES-256-GCM` + `HKDF-SHA256`) Trên Kho `STORAGE_BUCKET_DERIVATIVES`.
  *   1. Dẫn xuất khóa phiên 256-bit bằng `hkdfSync('sha256', masterOrFallbackSecret, accessSessionId, 'sda-derivative-pdf-v1', 32)` và xóa sạch khóa (`fill(0)`) trong khối `finally`.
- *   2. Mã hóa/giải mã bản PDF đã nhúng thủy vân bằng `AES-256-GCM` với dữ liệu xác thực bổ sung AAD `${accessSessionId}:${documentVersionId}`.
+ *   2. Mã hóa/giải mã bản PDF đã nhúng watermark bằng `AES-256-GCM` với dữ liệu xác thực bổ sung AAD `${accessSessionId}:${documentVersionId}`.
  *   3. Lưu đối tượng mã hóa tại `sessions/${accessSessionId}/v${documentVersionId}.pdf.enc` trong `STORAGE_BUCKET_DERIVATIVES` và lưu siêu dữ liệu `{ pageCount, watermarkToken }` trên `DistributedStateService` với TTL 30 phút.
- *   4. Giúp các yêu cầu xem trang 2, 3, 4... giải mã trực tiếp bản PDF phiên mà không cần gọi lại KMS nguồn, không chuyển đổi lại Gotenberg, không đóng lại thủy vân/QR toàn tài liệu.
+ *   4. Giúp các yêu cầu xem trang 2, 3, 4... giải mã trực tiếp bản PDF phiên mà không cần gọi lại KMS nguồn, không chuyển đổi lại Gotenberg, không đóng lại watermark/QR toàn tài liệu.
  */
 import crypto from 'node:crypto';
 import type { AppConfigService } from '../../config/config.service.js';
@@ -62,7 +62,7 @@ function buildDerivativeMetaId(
 }
 
 /**
- * Thuật toán: Dẫn xuất khóa phiên bằng HKDF-SHA256 và mã hóa tài liệu PDF thủy vân bằng AES-256-GCM kèm AAD `${accessSessionId}:${documentVersionId}`.
+ * Thuật toán: Dẫn xuất khóa phiên bằng HKDF-SHA256 và mã hóa tài liệu PDF watermark bằng AES-256-GCM kèm AAD `${accessSessionId}:${documentVersionId}`.
  */
 export function encryptDerivativeSessionPdf(
   pdfBuffer: Buffer,
@@ -96,7 +96,7 @@ export function encryptDerivativeSessionPdf(
 }
 
 /**
- * Thuật toán: Giải mã và xác thực thẻ toàn vẹn AES-256-GCM cho PDF thủy vân theo phiên với AAD `${accessSessionId}:${documentVersionId}`.
+ * Thuật toán: Giải mã và xác thực thẻ toàn vẹn AES-256-GCM cho PDF watermark theo phiên với AAD `${accessSessionId}:${documentVersionId}`.
  */
 export function decryptDerivativeSessionPdf(
   envelope: Buffer,
@@ -183,7 +183,7 @@ export async function tryLoadCachedSessionPdf(params: {
 }
 
 /**
- * Thuật toán: Mã Hóa & Lưu Bản Đệm PDF Đã Thủy Vân Lên `STORAGE_BUCKET_DERIVATIVES` Kèm Siêu Dữ Liệu TTL 30 Phút (`storeCachedSessionPdf`)
+ * Thuật toán: Mã Hóa & Lưu Bản Đệm PDF Đã Watermark Lên `STORAGE_BUCKET_DERIVATIVES` Kèm Siêu Dữ Liệu TTL 30 Phút (`storeCachedSessionPdf`)
  */
 export async function storeCachedSessionPdf(params: {
   storage: ObjectStorageService;

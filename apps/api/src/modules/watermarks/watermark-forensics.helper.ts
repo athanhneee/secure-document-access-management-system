@@ -87,7 +87,7 @@ const FORENSIC_INSTANCE_INCLUDE = {
 } as const;
 
 /**
- * Thuật toán: Đối soát sổ cái thủy vân hỗ trợ tiền tố `WM-<12..47-hex>` (15..50 ký tự), khớp chính xác `WM-<48-hex>` (51 ký tự),
+ * Thuật toán: Đối soát sổ cái watermark hỗ trợ tiền tố `WM-<12..47-hex>` (15..50 ký tự), khớp chính xác `WM-<48-hex>` (51 ký tự),
  * và ghi nhật ký `WATERMARK_TRACE_PERFORMED` với `outcome: 'DENIED'` + `reasonCode: 'WATERMARK_TOKEN_NOT_FOUND'` khi trả `404`.
  */
 export async function traceWatermarkToken(
@@ -210,7 +210,7 @@ export async function traceWatermarkToken(
   const docWithClass = typedInstance.document_versions.document;
   const activeLevel = docWithClass.classification_history?.[0]?.classification_levels;
 
-  // CONFLICT-RESOLVED: Giới hạn phạm vi phòng ban và chặn cán bộ cấp phòng ban truy vết thủy vân liên phòng ban hoặc tài liệu `TOP_SECRET` (HIGH-06).
+  // CONFLICT-RESOLVED: Giới hạn phạm vi phòng ban và chặn cán bộ cấp phòng ban truy vết watermark liên phòng ban hoặc tài liệu `TOP_SECRET` (HIGH-06).
   if (authorization && actor && typeof authorization.visibleDepartmentIds === 'function') {
     const visibleDepts = await authorization.visibleDepartmentIds(
       actor,

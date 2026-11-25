@@ -2,7 +2,7 @@
 
 /**
  * Thuật toán: Chân Trang Trạng Thái Bảo Mật Không Gian Làm Việc (`AppFooter`)
- * Mục đích: Hiển thị tóm tắt chính sách quyền tối thiểu, kiểm toán chuỗi băm HMAC-SHA256 và thủy vân định danh phiên theo bố cục linh hoạt trên màn hình `375px`.
+ * Mục đích: Hiển thị tóm tắt chính sách quyền tối thiểu, kiểm toán chuỗi băm HMAC-SHA256 và watermark định danh phiên theo bố cục linh hoạt trên màn hình `375px`.
  */
 import { ShieldCheck, Lock, EyeOff, Hash } from 'lucide-react';
 

@@ -96,7 +96,7 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
             {auditLog.details && Object.keys(auditLog.details).length > 0 && (
               <div className="space-y-1">
                 <span className="font-medium text-[#222222]">Chi tiết sự kiện</span>
-                <pre className="p-2.5 rounded-[12px] bg-[#f7f7f7] border border-[#ebebeb] font-mono text-xs text-[#222222] overflow-x-auto max-h-36">
+                <pre className="sda-table-scroll p-2.5 rounded-[12px] bg-[#f7f7f7] border border-[#ebebeb] font-mono text-xs text-[#222222] overflow-x-auto overflow-y-auto max-h-44">
                   {JSON.stringify(auditLog.details, null, 2)}
                 </pre>
               </div>

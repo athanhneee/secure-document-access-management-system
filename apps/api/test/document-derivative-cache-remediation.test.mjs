@@ -1,7 +1,7 @@
 /**
  * Module: Unit Tests for Bounded PEP Session Policies & Encrypted Derivative Session PDF Cache
  * Thuật toán: Kiểm chứng TTL hữu hạn bắt buộc của chính sách phiên PEP (30–60 phút) và bộ đệm dẫn xuất mã hóa
- *   `STORAGE_BUCKET_DERIVATIVES` giúp xem trang 2 không tải lại bản gốc S3 hay chạy lại KMS/thủy vân.
+ *   `STORAGE_BUCKET_DERIVATIVES` giúp xem trang 2 không tải lại bản gốc S3 hay chạy lại KMS/watermark.
  */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';

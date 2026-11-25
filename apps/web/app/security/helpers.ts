@@ -80,7 +80,7 @@ export function filterSecurityAlerts(
 }
 
 /**
- * Thuật toán: Chuẩn Hóa & Kiểm Định Định Dạng Token Thủy Vân Phía Máy Khách (`normalizeWatermarkTokenInput`)
+ * Thuật toán: Chuẩn Hóa & Kiểm Định Định Dạng Token Watermark Phía Máy Khách (`normalizeWatermarkTokenInput`)
  * Mục đích: Tự động ghép tiền tố `WM-` nếu chuyên viên SOC dán chuỗi hex 12–48 ký tự từ PDF thiếu `WM-`; từ chối sớm bằng thông báo tiếng Việt nếu sai định dạng để tránh lỗi `400`.
  */
 export function normalizeWatermarkTokenInput(
@@ -118,7 +118,7 @@ export function filterNetworkDlpAlerts(alerts: SecurityAlertItem[]): SecurityAle
 }
 
 /**
- * Thuật toán: Chuẩn hóa Bằng chứng Thủy vân Pháp chứng Chế độ Fail-Closed (`mapWatermarkVerifyDto`)
+ * Thuật toán: Chuẩn hóa Bằng chứng Watermark Pháp chứng Chế độ Fail-Closed (`mapWatermarkVerifyDto`)
  * Mục đích: Bắt buộc `res.verified === true` tường minh từ máy chủ; mọi phản hồi thiếu cờ xác thực đều bị đánh dấu `verified: false`.
  */
 export function mapWatermarkVerifyDto(res: WatermarkVerifyDto): WatermarkProvenance {

@@ -1,6 +1,6 @@
 /**
  * @module SecurityWatermarkOutboxRemediationTests
- * Thuật toán: Kiểm chứng truy vết thủy vân 15 ký tự `WM-<12-hex>` (1 khớp thành công, 2 khớp báo `AMBIGUOUS_WATERMARK_TOKEN`),
+ * Thuật toán: Kiểm chứng truy vết watermark 15 ký tự `WM-<12-hex>` (1 khớp thành công, 2 khớp báo `AMBIGUOUS_WATERMARK_TOKEN`),
  * khóa tắt QR cho `SECRET`/`TOP_SECRET`, làm phẳng biểu mẫu PDF, khử trùng lặp 5 phút và bộ đệm Epoch ABAC.
  */
 import 'reflect-metadata';

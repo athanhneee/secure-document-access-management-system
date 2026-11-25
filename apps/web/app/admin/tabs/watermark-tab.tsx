@@ -86,7 +86,7 @@ export function WatermarkTab({
 
           <div className="space-y-1">
             <label htmlFor="wm-template-text" className="font-medium text-[#222222]">
-              Mẫu văn bản thủy vân
+              Mẫu văn bản Watermark
             </label>
             <Input
               id="wm-template-text"

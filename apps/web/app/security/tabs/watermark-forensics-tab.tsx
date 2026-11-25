@@ -26,7 +26,7 @@ export function WatermarkForensicsTab({
   const [isTracingWm, setIsTracingWm] = useState(false);
 
   /**
-   * Thuật toán: Chuẩn Hóa Token Thủy Vân Phía Client & Đối Soát Chứng Cứ Fail-Closed (`handleTraceWatermark`)
+   * Thuật toán: Chuẩn Hóa Token Watermark Phía Client & Đối Soát Chứng Cứ Fail-Closed (`handleTraceWatermark`)
    * Mục đích: Tự động ghép tiền tố `WM-` khi chuyên viên SOC dán chuỗi hex `12..48` ký tự từ PDF thiếu `WM-`; từ chối sớm trên form nếu sai định dạng, sau đó truy vấn `/watermarks/verify/:token` và bắt buộc `provenance.verified === true`.
    */
   async function handleTraceWatermark(e: FormEvent) {
@@ -113,7 +113,7 @@ export function WatermarkForensicsTab({
 
           <p className="rounded-[14px] border border-[#ebebeb] bg-[#f7f7f7] px-3 py-2 text-[#717171] text-xs leading-relaxed">
             Hỗ trợ dán mã <code>WM-...</code> hoặc chuỗi hex 12–48 ký tự trích xuất trực tiếp từ lớp
-            thủy vân PDF để truy nguyên phiên đọc/tải.
+            watermark PDF để truy nguyên phiên đọc/tải.
           </p>
         </CardContent>
       </Card>

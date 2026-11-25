@@ -1,6 +1,6 @@
 /**
  * Module: Controlled Derivative Document Download Pipeline Helper
- * Thuật toán: Đường Ống Tải Xuống Bản Phái Sinh Có Thủy Vân Bắt Buộc & Dọn Dẹp Tệp Tạm Trong `finally`.
+ * Thuật toán: Đường Ống Tải Xuống Bản Phái Sinh Có Watermark Bắt Buộc & Dọn Dẹp Tệp Tạm Trong `finally`.
  */
 import { ForbiddenException } from '@nestjs/common';
 import crypto from 'node:crypto';

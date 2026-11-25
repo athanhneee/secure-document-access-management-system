@@ -119,7 +119,7 @@ export function evaluateDlpTextSurfaces(
       });
     }
 
-    // CONFLICT-RESOLVED: Bắt chính xác cả token thủy vân đầy đủ WM-<48hex> nhúng trong luồng byte PDF không nén lẫn tiền tố WM-<12..64hex>.
+    // CONFLICT-RESOLVED: Bắt chính xác cả token watermark đầy đủ WM-<48hex> nhúng trong luồng byte PDF không nén lẫn tiền tố WM-<12..64hex>.
     const watermarkTokenRegex =
       /WM-[0-9a-f]{48}(?![0-9a-f])|(?<![\p{L}\p{N}_])WM-[0-9a-f]{12,64}(?![\p{L}\p{N}_])/giu;
     if ((match = watermarkTokenRegex.exec(text)) !== null) {

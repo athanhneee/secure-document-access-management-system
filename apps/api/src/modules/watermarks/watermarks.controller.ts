@@ -1,6 +1,6 @@
 /**
  * @module WatermarksController
- * Thuật toán: Điều phối API quản trị cấu hình thủy vân pháp y và truy vết nguồn rò rỉ tài liệu (UC28)
+ * Thuật toán: Điều phối API quản trị cấu hình watermark pháp y và truy vết nguồn rò rỉ tài liệu (UC28)
  * hỗ trợ cả mã đầy đủ 48-hex lẫn tiền tố hiển thị 12-hex với bảo vệ CSRF và kiểm tra quyền nguyên tử.
  */
 import {
@@ -84,7 +84,7 @@ export class WatermarksController {
   }
 
   /**
-   * Thuật toán: Chuẩn hóa tham số mã thủy vân (tự động bù tiền tố `WM-` nếu truyền chuỗi hex thuần 12..48 ký tự)
+   * Thuật toán: Chuẩn hóa tham số mã watermark (tự động bù tiền tố `WM-` nếu truyền chuỗi hex thuần 12..48 ký tự)
    * trước khi kiểm định lược đồ `WatermarkTokenParamSchema` và chuyển tiếp ngữ cảnh truy vết pháp chứng UC28.
    */
   @Get('verify/:token')

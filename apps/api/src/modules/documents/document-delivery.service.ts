@@ -2,7 +2,7 @@
  * Module: Controlled Document Delivery, Watermarked Preview & Distributed Single-Use Ticket Service
  * Thuật toán: Điều Phối Phân Phối Tài Liệu Có Kiểm Soát (`DocumentDeliveryService`).
  *   1. Mở phiên truy cập qua cổng PEP Zero-Trust (`createSession`).
- *   2. Phục vụ xem trước PDF nhúng thủy vân có bộ đệm phiên mã hóa trên `STORAGE_BUCKET_DERIVATIVES` (`getPreviewPdf`).
+ *   2. Phục vụ xem trước PDF nhúng watermark có bộ đệm phiên mã hóa trên `STORAGE_BUCKET_DERIVATIVES` (`getPreviewPdf`).
  *   3. Phát hành và đổi vé tải dùng một lần nguyên tử qua `DistributedStateService` kèm tái xác minh CSDL thời gian thực (`createDownloadTicket` / `redeemDownloadTicket`).
  */
 import { Injectable, Optional } from '@nestjs/common';
@@ -79,7 +79,7 @@ export class DocumentDeliveryService {
   }
 
   /**
-   * Thuật toán: Phục vụ xem trước PDF gắn thủy vân truy vết và tối ưu chuyển trang qua bộ đệm dẫn xuất mã hóa.
+   * Thuật toán: Phục vụ xem trước PDF gắn watermark truy vết và tối ưu chuyển trang qua bộ đệm dẫn xuất mã hóa.
    */
   async getPreviewPdf(
     documentId: string,
@@ -108,7 +108,7 @@ export class DocumentDeliveryService {
   }
 
   /**
-   * Thuật toán: Thực thi tải xuống bản dẫn xuất tài liệu đã kiểm định quyền `DOWNLOAD` và đóng thủy vân bắt buộc.
+   * Thuật toán: Thực thi tải xuống bản dẫn xuất tài liệu đã kiểm định quyền `DOWNLOAD` và đóng watermark bắt buộc.
    */
   async downloadDocument(
     documentId: string,

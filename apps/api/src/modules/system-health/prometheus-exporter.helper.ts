@@ -34,9 +34,9 @@ const DISALLOWED_LABEL_KEYS = new Set([
 
 /**
  * Thuật toán: Chuẩn hóa đường dẫn HTTP chống bùng nổ nhãn (High-Cardinality Route Path Sanitization)
- * Mục đích: Gom các URL chứa tham số động (UUID, mã thủy vân `WM-...`, vé tải `DT-...`, số nguyên ID, chuỗi băm hex) về mẫu route cố định.
+ * Mục đích: Gom các URL chứa tham số động (UUID, mã watermark `WM-...`, vé tải `DT-...`, số nguyên ID, chuỗi băm hex) về mẫu route cố định.
  * Cơ chế hoạt động:
- *   - Cắt bỏ chuỗi truy vấn sau dấu `?` và áp dụng chuỗi biểu thức chính quy thay thế lần lượt UUID -> `:id`, token thủy vân -> `:token`, vé tải -> `:ticket`, phân đoạn số -> `/:id` và chuỗi hex >= 16 ký tự -> `/:hash`.
+ *   - Cắt bỏ chuỗi truy vấn sau dấu `?` và áp dụng chuỗi biểu thức chính quy thay thế lần lượt UUID -> `:id`, token watermark -> `:token`, vé tải -> `:ticket`, phân đoạn số -> `/:id` và chuỗi hex >= 16 ký tự -> `/:hash`.
  *
  * Algorithm: High-Cardinality Route Path Sanitization.
  * Strips query parameters and normalizes UUIDs, forensic watermark/download tokens,

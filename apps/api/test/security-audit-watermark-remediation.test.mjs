@@ -2,7 +2,7 @@
  * @module SecurityAuditWatermarkRemediationTests
  * Thuật toán: Bộ kiểm thử đơn vị toàn diện cho khắc phục lỗ hổng ngữ cảnh ABAC cấp quyền, truy vấn lô `O(1)` cho vai trò,
  * ẩn dấu vết `WATERMARK_TRACE_PERFORMED` khỏi `DOCUMENT_OWNER`, nối tiếp kiểm toán từ `AuditAnchor`,
- * truy vết thủy vân 15 ký tự + khóa QR `SECRET`/`TOP_SECRET` + làm phẳng biểu mẫu PDF, và phân mảnh khử trùng lặp 5 phút.
+ * truy vết watermark 15 ký tự + khóa QR `SECRET`/`TOP_SECRET` + làm phẳng biểu mẫu PDF, và phân mảnh khử trùng lặp 5 phút.
  */
 import 'reflect-metadata';
 import assert from 'node:assert/strict';

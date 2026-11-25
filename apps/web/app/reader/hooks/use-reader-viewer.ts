@@ -12,7 +12,7 @@ interface UseReaderViewerParams {
 
 /**
  * Thuật toán: Mở Hộp Thoại Xem Trước Tức Thì Dưới 16ms & Kiểm Định Chữ Ký `%PDF-` Chống Tranh Chấp (`useReaderViewer`)
- * Mục đích: Hiển thị khung Sandbox xem trước ngay tức khắc khi người đọc nhấp chuột (`< 0,1s`) trong lúc đàm phán phiên `VIEW` và tải luồng PDF gắn thủy vân ở nền, đồng thời chặn phản hồi trễ bằng khóa phiên tăng dần `previewReqIdRef`.
+ * Mục đích: Hiển thị khung Sandbox xem trước ngay tức khắc khi người đọc nhấp chuột (`< 0,1s`) trong lúc đàm phán phiên `VIEW` và tải luồng PDF gắn watermark ở nền, đồng thời chặn phản hồi trễ bằng khóa phiên tăng dần `previewReqIdRef`.
  * Cơ chế hoạt động:
  *   - `handleOpenPreview`: Mở ngay hộp thoại phương thức ở trạng thái đang tải trước khi `await` API; nếu tạo phiên thất bại thì tự động đóng hộp thoại và hiển thị thông báo lỗi.
  *   - `verifyPdfMagicBytes` & `URL.revokeObjectURL`: Xác thực 5 byte đầu `0x25 0x50 0x44 0x46 0x2D` và thu hồi ngay Object URL khi đóng hoặc chuyển trang chống rò rỉ bộ nhớ.

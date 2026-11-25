@@ -1,5 +1,5 @@
 /**
- * Module: WatermarkCryptoHelper — Sinh mã thủy vân ngẫu nhiên mật mã CSPRNG, chuẩn hóa văn bản WinAnsi, nội suy mẫu định danh và phân giải cấu hình thủy vân phân cấp.
+ * Module: WatermarkCryptoHelper — Sinh mã watermark ngẫu nhiên mật mã CSPRNG, chuẩn hóa văn bản WinAnsi, nội suy mẫu định danh và phân giải cấu hình watermark phân cấp.
  */
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
@@ -42,8 +42,8 @@ export interface WatermarkResult {
 }
 
 /**
- * Thuật toán: Sinh mã token thủy vân pháp y 192-bit bằng CSPRNG (`WM-<48-hex>`)
- * Mục đích: Đảm bảo xác suất trùng lặp hoặc đoán trước mã thủy vân là không khả thi về mặt tính toán ($2^{-192}$).
+ * Thuật toán: Sinh mã token watermark pháp y 192-bit bằng CSPRNG (`WM-<48-hex>`)
+ * Mục đích: Đảm bảo xác suất trùng lặp hoặc đoán trước mã watermark là không khả thi về mặt tính toán ($2^{-192}$).
  * Cơ chế hoạt động:
  *   - Đọc 24 byte từ nguồn entropy hệ điều hành `crypto.randomBytes(24)` và mã hóa thập lục phân gắn tiền tố `WM-`.
  *
@@ -141,8 +141,8 @@ export async function renderQrCodePngBuffer(payload: string): Promise<Buffer> {
 }
 
 /**
- * Thuật toán: Phân giải phân cấp cấu hình thủy vân có dự phòng an toàn (3-Tier Watermark Config Fallback Resolution)
- * Mục đích: Luôn tìm được cấu hình thủy vân hợp lệ cho mọi cấp độ mật của tài liệu ngay cả khi CSDL chưa cấu hình riêng.
+ * Thuật toán: Phân giải phân cấp cấu hình watermark có dự phòng an toàn (3-Tier Watermark Config Fallback Resolution)
+ * Mục đích: Luôn tìm được cấu hình watermark hợp lệ cho mọi cấp độ mật của tài liệu ngay cả khi CSDL chưa cấu hình riêng.
  * Cơ chế hoạt động:
  *   - Tầng 1: Tìm cấu hình đang bật gắn riêng với `classificationLevelId`.
  *   - Tầng 2: Rơi về cấu hình mặc định của hệ thống (`is_default: true, is_active: true`).

@@ -64,7 +64,7 @@ export class DocumentDeliveryController {
   }
 
   /**
-   * Thuật toán: Trả bản xem trước PDF đầy đủ gắn thủy vân theo phiên hoạt động.
+   * Thuật toán: Trả bản xem trước PDF đầy đủ gắn watermark theo phiên hoạt động.
    */
   @Get(':id/preview')
   @RequirePermission('DOCUMENT', 'VIEW')

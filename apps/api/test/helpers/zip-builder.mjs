@@ -132,7 +132,7 @@ export function createSampleXlsxBuffer() {
 
 /**
  * Thuật toán: Dựng Cây Đối tượng Tài liệu PDF Đa trang Chuẩn A4 (`createSamplePdf`)
- * Mục đích: Sinh tệp PDF nhị phân nhiều trang hoàn chỉnh bảng tham chiếu chéo (`xref`) phục vụ kiểm thử đóng dấu thủy vân từng trang.
+ * Mục đích: Sinh tệp PDF nhị phân nhiều trang hoàn chỉnh bảng tham chiếu chéo (`xref`) phục vụ kiểm thử đóng dấu watermark từng trang.
  * Cơ chế hoạt động:
  *   - Dùng `pdf-lib` khởi tạo `PDFDocument`, lặp thêm `pageCount` trang khổ chuẩn A4 (`595.28 x 841.89 pt`), vẽ dòng chữ định danh trang và tuần tự hóa ra `Buffer`.
  */

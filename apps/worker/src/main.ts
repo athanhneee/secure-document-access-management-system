@@ -86,8 +86,8 @@ const configuredAuditHmacKey =
   process.env['DOCUMENT_AUDIT_HMAC_KEY'] ??
   process.env['AUDIT_HMAC_KEY'];
 
-// Thuật toán: Kiểm tra điều kiện tiên quyết mật mã Fail-Fast trên môi trường Production chống chạy với khóa yếu/mặc định
-if (process.env['NODE_ENV'] === 'production') {
+// Thuật toán: Kiểm tra điều kiện tiên quyết mật mã Fail-Fast trên môi trường Production/Staging chống chạy với khóa yếu/mặc định
+if (process.env['NODE_ENV'] === 'production' || process.env['NODE_ENV'] === 'staging') {
   if (
     !configuredAuditHmacKey ||
     configuredAuditHmacKey.length < 32 ||

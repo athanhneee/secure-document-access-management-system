@@ -270,7 +270,7 @@ test('UsersService & UsersController — department transfer expires old roles, 
   );
 
   const csrf = new CsrfService(new AppConfigService({ CORS_ORIGIN: 'http://localhost:3000' }));
-  const token = 'csrf-token-0123456789abcdef0123456789abcdef';
+  const token = 'test-placeholder-csrf-token-000000000000';
   const controller = new UsersController(service, csrf);
 
   await assert.rejects(
@@ -523,7 +523,7 @@ test('UsersService & UsersController — clearance options, create/update/PUT cl
     db,
   );
   const csrf = new CsrfService(new AppConfigService({ CORS_ORIGIN: 'http://localhost:3000' }));
-  const token = 'csrf-clearance-0123456789abcdef0123456789';
+  const token = 'test-placeholder-csrf-clearance-000000000000';
   const controller = new UsersController(service, csrf);
   const authedReq = {
     auth: managerPrincipal,

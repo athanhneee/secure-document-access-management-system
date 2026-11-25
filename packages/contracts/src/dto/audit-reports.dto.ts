@@ -11,10 +11,12 @@ const AuditOutcomeSchema = z.enum(['SUCCESS', 'DENIED', 'FAILED']);
 export const QueryAuditLogsSchema = z
   .object({
     actorUserId: PositiveBigIntSchema.optional(),
+    actorUsername: z.string().max(80).optional(),
     documentId: z.string().uuid().optional(),
     action: z.string().max(100).optional(),
     outcome: AuditOutcomeSchema.optional(),
     chainPartition: z.string().max(80).optional(),
+    correlationId: z.string().max(64).optional(),
     from: IsoDateOrDateTimeSchema.optional(),
     to: IsoDateOrDateTimeSchema.optional(),
     page: z.coerce.number().int().min(1).default(1),
@@ -30,10 +32,12 @@ export const ExportAuditLogsSchema = z
   .object({
     format: z.enum(['CSV', 'JSON']).default('JSON'),
     actorUserId: PositiveBigIntSchema.optional(),
+    actorUsername: z.string().max(80).optional(),
     documentId: z.string().uuid().optional(),
     action: z.string().max(100).optional(),
     outcome: AuditOutcomeSchema.optional(),
     chainPartition: z.string().max(80).optional(),
+    correlationId: z.string().max(64).optional(),
     from: IsoDateOrDateTimeSchema.optional(),
     to: IsoDateOrDateTimeSchema.optional(),
     limit: z.coerce.number().int().min(1).max(10000).default(1000),

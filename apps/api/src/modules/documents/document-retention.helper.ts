@@ -159,21 +159,61 @@ export async function executeCheckRetentionWarnings(params: {
     });
   }
 
-  if (notificationBatch.length > 0) {
+  // CONFLICT-RESOLVED: Khử trùng lặp cảnh báo RETENTION_OVERDUE đang OPEN/INVESTIGATING và thông báo chưa đọc cùng ngày (N11).
+  let existingOverdueDocIds = new Set<string>();
+  if (securityAlertBatch.length > 0 && typeof database.securityAlert?.findMany === 'function') {
+    const overdueDocIds = securityAlertBatch.map((a) => a.document_id);
+    const existingAlerts = await database.securityAlert.findMany({
+      where: {
+        alert_type: 'RETENTION_OVERDUE',
+        status: { in: ['OPEN', 'INVESTIGATING'] },
+        document_id: { in: overdueDocIds },
+      },
+      select: { document_id: true },
+    });
+    existingOverdueDocIds = new Set(
+      existingAlerts.map((a) => a.document_id).filter((id): id is string => Boolean(id)),
+    );
+  }
+  const deduplicatedAlertBatch = securityAlertBatch.filter(
+    (a) => !existingOverdueDocIds.has(a.document_id),
+  );
+
+  let existingUnreadDocIds = new Set<string>();
+  if (notificationBatch.length > 0 && typeof database.notification?.findMany === 'function') {
+    const existingNotifications = await database.notification.findMany({
+      where: {
+        notification_type: 'RETENTION_EXPIRATION_WARNING',
+        status: 'UNREAD',
+        related_object_id: { in: notificationBatch.map((n) => n.related_object_id) },
+      },
+      select: { related_object_id: true },
+    });
+    existingUnreadDocIds = new Set(
+      existingNotifications
+        .map((n) => n.related_object_id)
+        .filter((id): id is string => Boolean(id)),
+    );
+  }
+  const deduplicatedNotificationBatch = notificationBatch.filter(
+    (n) => !existingUnreadDocIds.has(n.related_object_id),
+  );
+
+  if (deduplicatedNotificationBatch.length > 0) {
     if (typeof database.notification?.createMany === 'function') {
-      await database.notification.createMany({ data: notificationBatch });
+      await database.notification.createMany({ data: deduplicatedNotificationBatch });
     } else {
-      for (const data of notificationBatch) {
+      for (const data of deduplicatedNotificationBatch) {
         await database.notification.create({ data });
       }
     }
   }
 
-  if (securityAlertBatch.length > 0) {
+  if (deduplicatedAlertBatch.length > 0) {
     if (typeof database.securityAlert?.createMany === 'function') {
-      await database.securityAlert.createMany({ data: securityAlertBatch });
+      await database.securityAlert.createMany({ data: deduplicatedAlertBatch });
     } else {
-      for (const data of securityAlertBatch) {
+      for (const data of deduplicatedAlertBatch) {
         await database.securityAlert.create({ data });
       }
     }

@@ -54,12 +54,24 @@ export async function raiseAuditIntegrityAlert(
 
   let resolvedAlertId: string = alertId;
   await database.$transaction(async (tx) => {
+    // CONFLICT-RESOLVED: Đọc cấu hình severity & cooldown_minutes từ detection_rule_configs cho Quy tắc #6 AUDIT_INTEGRITY_COMPROMISED (N04).
+    const ruleCfg =
+      typeof tx.detectionRuleConfig?.findUnique === 'function'
+        ? await tx.detectionRuleConfig
+            .findUnique({ where: { rule_code: 'AUDIT_INTEGRITY_COMPROMISED' } })
+            .catch(() => null)
+        : null;
+    const effectiveSeverity = ruleCfg?.severity ?? 'CRITICAL';
+    const cooldownMinutes = ruleCfg?.cooldown_minutes ?? 15;
+    const cooldownStart = new Date(Date.now() - cooldownMinutes * 60_000);
+
     if (typeof tx.securityAlert?.findFirst === 'function') {
       const existingOpen = await tx.securityAlert.findFirst({
         where: {
           alert_type: 'AUDIT_INTEGRITY_COMPROMISED',
-          status: 'OPEN',
+          status: { in: ['OPEN', 'INVESTIGATING'] },
           title: { contains: `partition ${partition} ` },
+          detected_at: { gte: cooldownStart },
         },
         select: { id: true },
       });
@@ -73,7 +85,7 @@ export async function raiseAuditIntegrityAlert(
       data: {
         id: alertId,
         alert_type: 'AUDIT_INTEGRITY_COMPROMISED',
-        severity: 'CRITICAL',
+        severity: effectiveSeverity,
         status: 'OPEN',
         title: `CRITICAL: Audit integrity compromised in partition ${partition} (${primaryViolation.code})`,
         description: JSON.stringify({

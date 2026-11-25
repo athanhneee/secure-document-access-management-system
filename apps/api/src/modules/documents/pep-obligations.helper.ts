@@ -35,6 +35,7 @@ export interface PepPolicyObligationOutcome {
   obligationTypes: string[];
   riskScore: number;
   riskFactors: string[];
+  trustedNetwork: boolean;
 }
 
 /**
@@ -198,6 +199,7 @@ export async function evaluatePepPolicyAndObligations(params: {
     obligationTypes: obligations.map((o) => o.type),
     riskScore: riskAssessment.riskScore,
     riskFactors: riskAssessment.factors,
+    trustedNetwork,
   };
 }
 
@@ -265,6 +267,10 @@ export async function finalizePermittedAccessSession(params: {
   const ttlMs = computeBoundedSessionPolicyTtlMs(policyOutcome.maxSessionMinutes);
   await stateStore.putEphemeral(SESSION_POLICY_NAMESPACE, sessionId, policyRecord, ttlMs);
 
+  const untrustedIp = policyOutcome.trustedNetwork === false;
+  const untrustedDevice = policyOutcome.riskFactors.includes('UNTRUSTED_DEVICE');
+  const untrustedContext = untrustedIp || untrustedDevice;
+
   await audit.record(
     {
       action: 'ACCESS_PERMITTED',
@@ -285,6 +291,10 @@ export async function finalizePermittedAccessSession(params: {
         ...(policyOutcome.riskFactors.length > 0
           ? { riskFactors: policyOutcome.riskFactors.join(',') }
           : {}),
+        // CONFLICT-RESOLVED: Phát tín hiệu telemetry ngữ cảnh chưa tin cậy để Quy tắc #4 UNTRUSTED_CONTEXT hoạt động thực tế ở runtime (N03).
+        ...(untrustedIp ? { untrustedIp: true } : {}),
+        ...(untrustedDevice ? { untrustedDevice: true } : {}),
+        ...(untrustedContext ? { untrustedContext: true } : {}),
       },
     },
     principal,

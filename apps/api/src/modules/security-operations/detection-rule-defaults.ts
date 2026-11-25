@@ -1,6 +1,7 @@
 /**
  * Module: DetectionRuleDefaults — Phân giải cấu hình quy tắc SOC từ CSDL kèm dự phòng mặc định chuẩn hóa và cập nhật lũy đẳng `upsert`.
  */
+import { BadRequestException } from '@nestjs/common';
 import { cloneDefaultSecurityDetectionRules } from '@sda/contracts';
 import type { getDatabaseClient, severity_level } from '@sda/database';
 import type { AuditWriterService } from '../audit/audit-writer.service.js';
@@ -98,6 +99,12 @@ export async function upsertDetectionRuleConfig(
   updatedByUserId?: bigint,
 ): Promise<DetectionRule> {
   const ruleCode = existing.ruleCode;
+  // CONFLICT-RESOLVED: Cấm tắt quy tắc kiểm soát toàn vẹn chuỗi băm kiểm toán bắt buộc của hệ thống (N04).
+  if (ruleCode === 'AUDIT_INTEGRITY_COMPROMISED' && updates.isEnabled === false) {
+    throw new BadRequestException(
+      'Cannot disable mandatory AUDIT_INTEGRITY_COMPROMISED detection rule.',
+    );
+  }
   // CONFLICT-RESOLVED: Không nuốt lỗi CSDL hoặc kiểm toán bằng try/catch rỗng khi cập nhật quy tắc SOC (MED-03)
   const updated = await database.detectionRuleConfig.upsert({
     where: { rule_code: ruleCode },

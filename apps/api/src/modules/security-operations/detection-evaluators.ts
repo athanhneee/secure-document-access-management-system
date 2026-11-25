@@ -6,6 +6,7 @@ import {
   groupAuditLogsByActor,
   isOffHoursTimestampUtc,
   isUntrustedAuditEvent,
+  resolveMinClassificationRank,
 } from '@sda/contracts';
 import type { getDatabaseClient } from '@sda/database';
 import type { DetectionResult, DetectionRule } from './detection-rule-defaults.js';
@@ -104,20 +105,46 @@ export async function evaluateSlidingWindowRule(
     }
 
     case 'OFF_HOURS_ACCESS': {
-      // Thuật toán 3/6 (Off-Hours Temporal Anomaly Detection): Lọc các lượt truy cập tài liệu rơi ngoài khung giờ làm việc chuẩn (`isOffHoursTimestampUtc`) và gom cụm theo người dùng.
+      // Thuật toán 3/6 (Off-Hours Temporal & Sensitivity Anomaly Detection): Lọc lượt truy cập tài liệu nhạy cảm (rank >= minClassificationRank) rơi ngoài khung giờ làm việc chuẩn theo múi giờ Việt Nam (`isOffHoursTimestampUtc`) (N10).
+      const minRank = resolveMinClassificationRank(rule.parameters);
       const logs = await database.auditLog.findMany({
         where: {
           action: { in: [...SECURITY_DETECTION_ACTIONS.OFF_HOURS_ACCESS] },
           occurred_at: { gte: windowStart },
           actor_user_id: { not: null },
         },
-        select: { id: true, actor_user_id: true, document_id: true, occurred_at: true },
+        select: {
+          id: true,
+          actor_user_id: true,
+          document_id: true,
+          occurred_at: true,
+          documents: {
+            select: {
+              classification_history: {
+                where: { effective_to: null },
+                take: 1,
+                select: { classification_levels: { select: { rank: true } } },
+              },
+            },
+          },
+        },
         orderBy: { occurred_at: 'desc' },
         take: 1000,
       });
-      const offHoursLogs = logs.filter((log) =>
-        isOffHoursTimestampUtc(log.occurred_at, rule.parameters),
-      );
+      const offHoursLogs = logs.filter((log) => {
+        if (!isOffHoursTimestampUtc(log.occurred_at, rule.parameters)) return false;
+        const docRank = (
+          log as {
+            documents?: {
+              classification_history?: Array<{
+                classification_levels?: { rank?: number } | null;
+              }>;
+            } | null;
+          }
+        ).documents?.classification_history?.[0]?.classification_levels?.rank;
+        if (typeof docRank === 'number' && docRank < minRank) return false;
+        return true;
+      });
       for (const [uid, userLogs] of groupAuditLogsByActor(offHoursLogs).entries()) {
         if (userLogs.length >= rule.threshold) {
           results.push(
@@ -127,7 +154,7 @@ export async function evaluateSlidingWindowRule(
               documentId: userLogs[0]?.document_id ?? undefined,
               matchingLogIds: userLogs.map((l) => l.id),
               title: `Truy cập ngoài giờ: Người dùng #${uid} truy cập tài liệu mật ngoài khung giờ làm việc`,
-              description: `Phát hiện ${userLogs.length} lượt truy cập tài liệu ngoài giờ làm việc bởi người dùng #${uid}.`,
+              description: `Phát hiện ${userLogs.length} lượt truy cập tài liệu mật ngoài giờ làm việc bởi người dùng #${uid}.`,
             }),
           );
         }
@@ -136,9 +163,17 @@ export async function evaluateSlidingWindowRule(
     }
 
     case 'UNTRUSTED_CONTEXT': {
-      // Thuật toán 4/6 (Untrusted Network/Device Context & Anonymous Probing): Đánh giá vị từ `isUntrustedAuditEvent` trên cả hai nhánh tác nhân định danh và luồng ẩn danh (`actor_user_id == null`).
+      // Thuật toán 4/6 (Untrusted Network/Device Context & Anonymous Probing): Đẩy vị từ lọc xuống SQL JSONB (`OR`) đồng bộ với Worker để không bị cắt ngưỡng 1000 dòng khi lưu lượng lớn (N03, N09).
       const logs = await database.auditLog.findMany({
-        where: { occurred_at: { gte: windowStart } },
+        where: {
+          occurred_at: { gte: windowStart },
+          OR: [
+            { action: { in: [...SECURITY_DETECTION_ACTIONS.UNTRUSTED_CONTEXT] } },
+            { details: { path: ['untrustedContext'], equals: true } },
+            { details: { path: ['untrustedIp'], equals: true } },
+            { details: { path: ['untrustedDevice'], equals: true } },
+          ],
+        },
         select: { id: true, actor_user_id: true, action: true, details: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
         take: 1000,

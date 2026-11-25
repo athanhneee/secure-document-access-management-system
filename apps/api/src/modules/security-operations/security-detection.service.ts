@@ -50,25 +50,39 @@ export class SecurityDetectionService {
         message: `Rule ${ruleCode} not found.`,
       });
     }
-    return upsertDetectionRuleConfig(
+    const saved = await upsertDetectionRuleConfig(
       this.database,
       this.auditWriter,
       existing,
       updates,
       updatedByUserId,
     );
+    this.realtime?.publish({
+      type: 'DETECTION_RULE_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: { ruleCode: saved.ruleCode, isEnabled: saved.isEnabled, severity: saved.severity },
+    });
+    return saved;
   }
 
   /**
-   * Algorithm: Sequential Enabled-Rule Sweep.
-   * Iterates over all enabled SOC rules and aggregates per-rule sliding-window match outcomes.
+   * Algorithm: Sequential Enabled-Rule Sweep with Optional Targeted `ruleCodes` Filtering (`runAllDetections`).
+   * Iterates over all enabled SOC rules (or the requested `ruleCodes` subset) and aggregates per-rule sliding-window match outcomes (N08).
    */
-  async runAllDetections(customWindowMinutes?: number): Promise<DetectionResult[]> {
+  async runAllDetections(
+    customWindowMinutes?: number,
+    ruleCodes?: readonly string[],
+  ): Promise<DetectionResult[]> {
     const rules = await this.getRules();
+    const filterSet =
+      Array.isArray(ruleCodes) && ruleCodes.length > 0
+        ? new Set(ruleCodes.map((c) => c.trim().toUpperCase()).filter(Boolean))
+        : null;
     const results: DetectionResult[] = [];
 
     for (const rule of rules) {
       if (!rule.isEnabled) continue;
+      if (filterSet && !filterSet.has(rule.ruleCode.toUpperCase())) continue;
       const window = customWindowMinutes ?? rule.windowMinutes;
       const ruleResults = await this.evaluateRule(rule, window);
       results.push(...ruleResults);
@@ -95,7 +109,8 @@ export class SecurityDetectionService {
     const existingAlert = await this.database.securityAlert.findFirst({
       where: {
         alert_type: rule.ruleCode,
-        ...(userId ? { detected_user_id: userId } : {}),
+        // CONFLICT-RESOLVED: Luôn khóa rõ detected_user_id (kể cả null cho sự kiện ẩn danh) tránh cảnh báo theo user đè mất cảnh báo ẩn danh (N09).
+        detected_user_id: userId ?? null,
         status: { in: ['OPEN', 'INVESTIGATING'] },
         detected_at: { gte: cooldownBoundary },
       },

@@ -12,6 +12,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { formatLocalDateTimeMin, validateCustomRequestWindow } from '../helpers';
 import type { useReaderCatalog } from '../hooks/use-reader-catalog';
 
 const DURATION_OPTIONS = [
@@ -26,6 +27,12 @@ interface RequestAccessModalProps {
   canDownloadDocument?: boolean;
 }
 
+/**
+ * Thuật toán: Biểu Mẫu Đề Xuất Quyền Truy Cập Có Tiền Kiểm Ngày Tùy Chọn & Giới Hạn 1000 Ký Tự (`RequestAccessModal`)
+ * Mục đích:
+ *   - Chặn chọn ngày quá khứ (`min`), chặn `Đến <= Từ` hoặc thiếu 1 trong 2 mốc ngay trên trình duyệt (`V-39`), áp `maxLength={1000}` đồng bộ với Zod Backend (`V-40`).
+ *   - Chuẩn hóa nút chọn thời hạn sang màu Primary `#FF385C` không nền pastel (`V-66`) và cỡ chữ chuẩn `text-xs` (`V-61`).
+ */
 export function RequestAccessModal({
   catalog,
   canDownloadDocument = true,
@@ -49,6 +56,14 @@ export function RequestAccessModal({
     isSubmittingRequest,
     handleSubmitRequest,
   } = catalog;
+
+  const minDateTimeLocal = formatLocalDateTimeMin();
+  const customWindowError = isCustomDuration
+    ? validateCustomRequestWindow(true, customRequestedFrom, customRequestedUntil)
+    : null;
+  const trimmedLength = justification.trim().length;
+  const isSubmitDisabled =
+    isSubmittingRequest || trimmedLength < 10 || trimmedLength > 1000 || Boolean(customWindowError);
 
   return (
     <Dialog open={requestModalOpen} onOpenChange={setRequestModalOpen}>
@@ -84,7 +99,7 @@ export function RequestAccessModal({
                 onClick={() => setRequestedAction('VIEW')}
                 className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                   requestedAction === 'VIEW'
-                    ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
+                    ? 'border-[#FF385C] bg-[#FF385C] text-[#ffffff] shadow-xs'
                     : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd] hover:bg-[#f7f7f7]'
                 }`}
               >
@@ -98,7 +113,7 @@ export function RequestAccessModal({
                   onClick={() => setRequestedAction('DOWNLOAD')}
                   className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
                     requestedAction === 'DOWNLOAD'
-                      ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
+                      ? 'border-[#FF385C] bg-[#FF385C] text-[#ffffff] shadow-xs'
                       : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd] hover:bg-[#f7f7f7]'
                   }`}
                 >
@@ -125,8 +140,8 @@ export function RequestAccessModal({
                   }}
                   className={`min-h-11 sm:min-h-9 px-2.5 py-1.5 rounded-full border text-xs font-semibold transition-all cursor-pointer ${
                     !isCustomDuration && requestDurationDays === opt.days
-                      ? 'border-[#FF385C] bg-[#FF385C]/15 text-[#E31C5F]'
-                      : 'border-[#ebebeb] bg-[#f7f7f7] text-[#717171] hover:border-[#dddddd]'
+                      ? 'border-[#FF385C] bg-[#FF385C] text-[#ffffff] shadow-xs'
+                      : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd] hover:bg-[#f7f7f7]'
                   }`}
                 >
                   {opt.label}
@@ -145,37 +160,46 @@ export function RequestAccessModal({
             </div>
 
             {isCustomDuration && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                <div>
-                  <label
-                    htmlFor="custom-requested-from"
-                    className="text-[13px] text-[#717171] block mb-0.5"
-                  >
-                    Từ thời điểm
-                  </label>
-                  <input
-                    id="custom-requested-from"
-                    type="datetime-local"
-                    value={customRequestedFrom}
-                    onChange={(e) => setCustomRequestedFrom(e.target.value)}
-                    className="w-full min-h-11 sm:h-9 text-xs px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
-                  />
+              <div className="space-y-2 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label
+                      htmlFor="custom-requested-from"
+                      className="text-xs text-[#717171] block mb-0.5"
+                    >
+                      Từ thời điểm
+                    </label>
+                    <input
+                      id="custom-requested-from"
+                      type="datetime-local"
+                      required
+                      min={minDateTimeLocal}
+                      value={customRequestedFrom}
+                      onChange={(e) => setCustomRequestedFrom(e.target.value)}
+                      className="w-full min-h-11 sm:h-9 text-xs px-3 py-1.5 rounded-full border border-[#dddddd] bg-[#ffffff] text-[#222222]"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="custom-requested-until"
+                      className="text-xs text-[#717171] block mb-0.5"
+                    >
+                      Đến thời điểm
+                    </label>
+                    <input
+                      id="custom-requested-until"
+                      type="datetime-local"
+                      required
+                      min={customRequestedFrom || minDateTimeLocal}
+                      value={customRequestedUntil}
+                      onChange={(e) => setCustomRequestedUntil(e.target.value)}
+                      className="w-full min-h-11 sm:h-9 text-xs px-3 py-1.5 rounded-full border border-[#dddddd] bg-[#ffffff] text-[#222222]"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label
-                    htmlFor="custom-requested-until"
-                    className="text-[13px] text-[#717171] block mb-0.5"
-                  >
-                    Đến thời điểm
-                  </label>
-                  <input
-                    id="custom-requested-until"
-                    type="datetime-local"
-                    value={customRequestedUntil}
-                    onChange={(e) => setCustomRequestedUntil(e.target.value)}
-                    className="w-full min-h-11 sm:h-9 text-xs px-3 py-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222]"
-                  />
-                </div>
+                {customWindowError && (
+                  <p className="text-xs text-[#C13515] font-medium">{customWindowError}</p>
+                )}
               </div>
             )}
           </fieldset>
@@ -188,15 +212,16 @@ export function RequestAccessModal({
               id="req-justification"
               required
               rows={3}
+              maxLength={1000}
               value={justification}
               onChange={(e) => setJustification(e.target.value)}
               placeholder="Mô tả nhiệm vụ hoặc dự án cụ thể cần sử dụng tài liệu này…"
               className="text-xs bg-[#f7f7f7] border-[#ebebeb] text-[#222222]"
             />
-            <p className="text-[13px] text-[#717171]">
-              {justification.trim().length < 10
-                ? `Cần thêm ${10 - justification.trim().length} ký tự (tối thiểu 10 ký tự).`
-                : `Đã đạt yêu cầu (${justification.trim().length} ký tự).`}
+            <p className="text-xs text-[#717171]">
+              {trimmedLength < 10
+                ? `Cần thêm ${10 - trimmedLength} ký tự (tối thiểu 10, tối đa 1000 ký tự).`
+                : `Đã đạt yêu cầu (${trimmedLength} / 1000 ký tự).`}
             </p>
           </div>
 
@@ -213,7 +238,7 @@ export function RequestAccessModal({
               variant="primary"
               size="sm"
               text="Gửi yêu cầu"
-              disabled={isSubmittingRequest || justification.trim().length < 10}
+              disabled={isSubmitDisabled}
               isLoading={isSubmittingRequest}
             />
           </DialogFooter>

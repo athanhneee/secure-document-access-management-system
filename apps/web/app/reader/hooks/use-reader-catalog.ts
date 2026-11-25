@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, type FormEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth-context';
 import { applyOptimisticStatusById } from '@/lib/optimistic-state';
 import { subscribeRealtimeEvent } from '@/lib/realtime-events';
 import { formatPermissionActionLabel } from '@/lib/ui-labels';
@@ -10,6 +11,7 @@ import {
   isActiveReaderGrant,
   mapReaderDocumentDto,
   mapReaderGrantDto,
+  validateCustomRequestWindow,
 } from '../helpers';
 import type {
   DiscoverableDoc,
@@ -19,20 +21,60 @@ import type {
   ReaderGrantApiDto,
 } from '../types';
 
+const READER_PAGE_SIZE = 20;
+
+interface PagedDocsResponse {
+  data: ReaderDocumentApiDto[];
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+}
+
+interface PagedGrantsResponse {
+  data: ReaderGrantApiDto[];
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+}
+
+interface PagedRequestsResponse {
+  data: MyRequestItem[];
+  total?: number;
+}
+
 /**
- * Thuật toán: Tải Đồng thời Danh mục Người đọc & Quản lý Vòng đời Yêu cầu Xin Quyền (`useReaderCatalog`)
- * Mục đích: Đồng bộ song song danh mục khám phá, danh sách quyền hiệu lực và lịch sử yêu cầu cá nhân mà không chặn lẫn nhau.
- * Cơ chế hoạt động:
- *   - Dùng `Promise.allSettled` tải 3 nguồn dữ liệu độc lập (`O(N)`), kết hợp cờ hủy `ignore` chống ghi đè phản hồi trễ và hỗ trợ gửi/hủy yêu cầu ở trạng thái `PENDING`.
+ * Thuật toán: Tải Danh Mục Người Đọc Phân Trang Theo Quyền Hạt Mịn, Tìm Kiếm Server-Side & Hủy Lạc Quan Có Hoàn Tác (`useReaderCatalog`)
+ * Mục đích:
+ *   - Chỉ gọi các điểm cuối nằm trong tập quyền thực tế (`DOCUMENT:DISCOVER`, `DOCUMENT:VIEW`, `ACCESS_REQUEST:VIEW_OWN`) tránh lỗi `403` giả (`V-18`).
+ *   - Hỗ trợ phân trang đầy đủ (`page`, `hasMore`, `total`), tìm kiếm lai FTS/Trigram phía máy chủ kèm debounce 250ms (`V-37`, `V-38`), lọc tự động grant hết hạn theo chu kỳ 60s (`V-43`), và thông báo rõ lỗi khi bất kỳ nguồn nào thất bại (`V-41`).
+ *   - Đảm bảo banner thành công/lỗi không xếp chồng (`V-44`), reset biểu mẫu mỗi lần mở modal (`V-40`) và hủy yêu cầu lạc quan thực sự kèm hoàn tác ảnh chụp (`V-55`).
  */
 export function useReaderCatalog() {
+  const { hasPermission } = useAuth();
+  const canDiscover = hasPermission('DOCUMENT:DISCOVER');
+  const canViewDocument = hasPermission('DOCUMENT:VIEW');
+  const canViewOwnRequests = hasPermission('ACCESS_REQUEST:VIEW_OWN');
+
   const [discoverDocs, setDiscoverDocs] = useState<DiscoverableDoc[]>([]);
+  const [discoverPage, setDiscoverPage] = useState(1);
+  const [discoverHasMore, setDiscoverHasMore] = useState(false);
+
   const [myDocs, setMyDocs] = useState<MyGrantedDoc[]>([]);
+  const [grantsPage, setGrantsPage] = useState(1);
+  const [grantsHasMore, setGrantsHasMore] = useState(false);
+
   const [myRequests, setMyRequests] = useState<MyRequestItem[]>([]);
+  const [requestsPage, setRequestsPage] = useState(1);
+  const [requestsTotal, setRequestsTotal] = useState(0);
+  const [requestStatusFilter, setRequestStatusFilter] = useState<string>('ALL');
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [selectedClassification, setSelectedClassification] = useState<string>('ALL');
 
   const [isLoading, setIsLoading] = useState(true);
-  const [message, setMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [message, setMessageState] = useState<string | null>(null);
+  const [errorMessage, setErrorMessageState] = useState<string | null>(null);
 
   const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [targetDoc, setTargetDoc] = useState<DiscoverableDoc | null>(null);
@@ -46,64 +88,211 @@ export function useReaderCatalog() {
 
   const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null);
   const [pendingCancelRequestId, setPendingCancelRequestId] = useState<string | null>(null);
+  const rawGrantsRef = useRef<ReaderGrantApiDto[]>([]);
+  const loadSeqRef = useRef(0);
+
+  const setMessage = useCallback((next: string | null) => {
+    setMessageState(next);
+    if (next) setErrorMessageState(null);
+  }, []);
+
+  const setErrorMessage = useCallback((next: string | null) => {
+    setErrorMessageState(next);
+    if (next) setMessageState(null);
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    setDiscoverPage(1);
+  }, []);
+
+  const handleClassificationChange = useCallback((value: string) => {
+    setSelectedClassification(value);
+    setDiscoverPage(1);
+  }, []);
+
+  const handleRequestStatusFilterChange = useCallback((value: string) => {
+    setRequestStatusFilter(value);
+    setRequestsPage(1);
+  }, []);
+
+  const buildDiscoverEndpoint = useCallback((page: number, q: string, cls: string) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(READER_PAGE_SIZE),
+    });
+    if (q) params.set('q', q);
+    if (cls && cls !== 'ALL') params.set('classificationCode', cls);
+    return `/documents?${params.toString()}`;
+  }, []);
+
+  const buildRequestsEndpoint = useCallback((page: number, statusFilter: string) => {
+    const params = new URLSearchParams({
+      scope: 'my',
+      page: String(page),
+      pageSize: String(READER_PAGE_SIZE),
+    });
+    if (statusFilter && statusFilter !== 'ALL') {
+      params.set('status', statusFilter);
+    }
+    return `/access-requests?${params.toString()}`;
+  }, []);
 
   const refreshData = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setIsLoading(true);
-    setErrorMessage(null);
+    setErrorMessageState(null);
+    setMessageState(null);
+
     try {
       const [docsResult, myGrantsResult, requestsResult] = await Promise.allSettled([
-        apiClient<{ data: ReaderDocumentApiDto[] }>('/documents?pageSize=50'),
-        apiClient<{ data: ReaderGrantApiDto[] }>('/documents/my-grants?pageSize=50'),
-        apiClient<{ data: MyRequestItem[] }>('/access-requests?scope=my'),
+        canDiscover
+          ? apiClient<PagedDocsResponse>(
+              buildDiscoverEndpoint(discoverPage, debouncedSearch, selectedClassification),
+            )
+          : Promise.resolve(null),
+        canViewDocument
+          ? apiClient<PagedGrantsResponse>(
+              `/documents/my-grants?page=${grantsPage}&pageSize=${READER_PAGE_SIZE}`,
+            )
+          : Promise.resolve(null),
+        canViewOwnRequests
+          ? apiClient<PagedRequestsResponse>(
+              buildRequestsEndpoint(requestsPage, requestStatusFilter),
+            )
+          : Promise.resolve(null),
       ]);
 
+      if (loadSeqRef.current !== seq) return;
+
+      const failedSections: string[] = [];
+
       if (docsResult.status === 'fulfilled') {
-        setDiscoverDocs((docsResult.value.data || []).map(mapReaderDocumentDto));
+        if (docsResult.value) {
+          setDiscoverDocs((docsResult.value.data || []).map(mapReaderDocumentDto));
+          setDiscoverHasMore(Boolean(docsResult.value.hasMore));
+        } else {
+          setDiscoverDocs([]);
+          setDiscoverHasMore(false);
+        }
       } else {
-        setErrorMessage('Không thể tải danh sách tài liệu. Vui lòng thử lại.');
+        failedSections.push('danh mục tài liệu');
       }
 
       if (myGrantsResult.status === 'fulfilled') {
-        // CONFLICT-RESOLVED: Lọc bỏ các giấy phép đã thu hồi, hết hạn hoặc tài liệu không còn ACTIVE trước khi hiển thị cho người đọc.
-        const nowMs = Date.now();
-        setMyDocs(
-          (myGrantsResult.value.data || [])
-            .filter((g) => isActiveReaderGrant(g, nowMs))
-            .map((g, idx) => mapReaderGrantDto(g, idx))
-            .filter((g) => Boolean(g.documentId)),
-        );
+        if (myGrantsResult.value) {
+          const raw = myGrantsResult.value.data || [];
+          rawGrantsRef.current = raw;
+          const nowMs = Date.now();
+          setMyDocs(
+            raw
+              .filter((g) => isActiveReaderGrant(g, nowMs))
+              .map((g, idx) => mapReaderGrantDto(g, idx))
+              .filter((g) => Boolean(g.documentId)),
+          );
+          setGrantsHasMore(Boolean(myGrantsResult.value.hasMore));
+        } else {
+          rawGrantsRef.current = [];
+          setMyDocs([]);
+          setGrantsHasMore(false);
+        }
+      } else {
+        failedSections.push('tài liệu được cấp quyền');
       }
 
       if (requestsResult.status === 'fulfilled') {
-        setMyRequests(requestsResult.value.data || []);
+        if (requestsResult.value) {
+          const rows = requestsResult.value.data || [];
+          setMyRequests(rows);
+          setRequestsTotal(
+            typeof requestsResult.value.total === 'number'
+              ? requestsResult.value.total
+              : rows.length,
+          );
+        } else {
+          setMyRequests([]);
+          setRequestsTotal(0);
+        }
+      } else {
+        failedSections.push('yêu cầu truy cập');
+      }
+
+      if (failedSections.length > 0) {
+        setErrorMessageState(
+          `Không thể tải ${failedSections.join(', ')}. Vui lòng nhấn Làm mới để thử lại.`,
+        );
       }
     } catch (err) {
-      setErrorMessage(err instanceof ApiError ? err.message : 'Không thể tải dữ liệu danh mục.');
+      if (loadSeqRef.current !== seq) return;
+      setErrorMessageState(
+        err instanceof ApiError ? err.message : 'Không thể tải dữ liệu danh mục.',
+      );
     } finally {
-      setIsLoading(false);
+      if (loadSeqRef.current === seq) {
+        setIsLoading(false);
+      }
     }
-  }, []);
+  }, [
+    canDiscover,
+    canViewDocument,
+    canViewOwnRequests,
+    discoverPage,
+    debouncedSearch,
+    selectedClassification,
+    grantsPage,
+    requestsPage,
+    requestStatusFilter,
+    buildDiscoverEndpoint,
+    buildRequestsEndpoint,
+  ]);
 
   const refreshGrantsAndRequestsSilently = useCallback(async () => {
     const [myGrantsResult, requestsResult] = await Promise.allSettled([
-      apiClient<{ data: ReaderGrantApiDto[] }>('/documents/my-grants?pageSize=50'),
-      apiClient<{ data: MyRequestItem[] }>('/access-requests?scope=my'),
+      canViewDocument
+        ? apiClient<PagedGrantsResponse>(
+            `/documents/my-grants?page=${grantsPage}&pageSize=${READER_PAGE_SIZE}`,
+          )
+        : Promise.resolve(null),
+      canViewOwnRequests
+        ? apiClient<PagedRequestsResponse>(buildRequestsEndpoint(requestsPage, requestStatusFilter))
+        : Promise.resolve(null),
     ]);
 
-    if (myGrantsResult.status === 'fulfilled') {
+    if (myGrantsResult.status === 'fulfilled' && myGrantsResult.value) {
+      const raw = myGrantsResult.value.data || [];
+      rawGrantsRef.current = raw;
       const nowMs = Date.now();
       setMyDocs(
-        (myGrantsResult.value.data || [])
+        raw
           .filter((g) => isActiveReaderGrant(g, nowMs))
           .map((g, idx) => mapReaderGrantDto(g, idx))
           .filter((g) => Boolean(g.documentId)),
       );
+      setGrantsHasMore(Boolean(myGrantsResult.value.hasMore));
     }
 
-    if (requestsResult.status === 'fulfilled') {
-      setMyRequests(requestsResult.value.data || []);
+    if (requestsResult.status === 'fulfilled' && requestsResult.value) {
+      const rows = requestsResult.value.data || [];
+      setMyRequests(rows);
+      setRequestsTotal(
+        typeof requestsResult.value.total === 'number' ? requestsResult.value.total : rows.length,
+      );
     }
-  }, []);
+  }, [
+    canViewDocument,
+    canViewOwnRequests,
+    grantsPage,
+    requestsPage,
+    requestStatusFilter,
+    buildRequestsEndpoint,
+  ]);
 
   useEffect(() => {
     let ignore = false;
@@ -119,6 +308,20 @@ export function useReaderCatalog() {
     };
   }, [refreshData]);
 
+  // Thuật toán: Tự động loại bỏ grant vừa hết hạn theo đồng hồ trình duyệt mỗi 60 giây (V-43).
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (rawGrantsRef.current.length === 0) return;
+      const nowMs = Date.now();
+      const filtered = rawGrantsRef.current
+        .filter((g) => isActiveReaderGrant(g, nowMs))
+        .map((g, idx) => mapReaderGrantDto(g, idx))
+        .filter((g) => Boolean(g.documentId));
+      setMyDocs((prev) => (prev.length === filtered.length ? prev : filtered));
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     let syncTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleSync = () => {
@@ -126,7 +329,7 @@ export function useReaderCatalog() {
       syncTimer = setTimeout(() => {
         syncTimer = null;
         void refreshGrantsAndRequestsSilently();
-      }, 120);
+      }, 150);
     };
 
     const unsubRequests = subscribeRealtimeEvent('ACCESS_REQUEST_UPDATED', scheduleSync);
@@ -139,11 +342,16 @@ export function useReaderCatalog() {
     };
   }, [refreshGrantsAndRequestsSilently]);
 
-  function openRequestModal(doc: DiscoverableDoc) {
-    setErrorMessage(null);
+  function openRequestModal(doc: DiscoverableDoc, initialAction: 'VIEW' | 'DOWNLOAD' = 'VIEW') {
+    setErrorMessageState(null);
     setTargetDoc(doc);
-    setRequestedAction('VIEW');
+    setRequestedAction(initialAction === 'DOWNLOAD' && doc.allowDownload ? 'DOWNLOAD' : 'VIEW');
     setJustification('');
+    // Reset hoàn toàn cấu hình thời hạn của lần mở trước (V-40)
+    setRequestDurationDays(7);
+    setIsCustomDuration(false);
+    setCustomRequestedFrom('');
+    setCustomRequestedUntil('');
     setRequestModalOpen(true);
   }
 
@@ -151,13 +359,28 @@ export function useReaderCatalog() {
     e.preventDefault();
     if (!targetDoc) return;
 
-    if (justification.trim().length < 10) {
+    const trimmedReason = justification.trim();
+    if (trimmedReason.length < 10) {
       setErrorMessage('Lý do đề xuất truy cập phải có tối thiểu 10 ký tự.');
+      return;
+    }
+    if (trimmedReason.length > 1000) {
+      setErrorMessage('Lý do đề xuất truy cập không được vượt quá 1000 ký tự.');
+      return;
+    }
+
+    const customWindowError = validateCustomRequestWindow(
+      isCustomDuration,
+      customRequestedFrom,
+      customRequestedUntil,
+    );
+    if (customWindowError) {
+      setErrorMessage(customWindowError);
       return;
     }
 
     setIsSubmittingRequest(true);
-    setErrorMessage(null);
+    setErrorMessageState(null);
 
     try {
       const { fromIso, untilIso } = buildRequestWindowIso(
@@ -172,7 +395,7 @@ export function useReaderCatalog() {
         body: JSON.stringify({
           documentId: targetDoc.id,
           requestedAction,
-          reason: justification.trim(),
+          reason: trimmedReason,
           requestedFrom: fromIso,
           requestedUntil: untilIso,
         }),
@@ -184,34 +407,44 @@ export function useReaderCatalog() {
       setRequestModalOpen(false);
       setTargetDoc(null);
       setJustification('');
+      setRequestDurationDays(7);
       setIsCustomDuration(false);
       setCustomRequestedFrom('');
       setCustomRequestedUntil('');
-      setMyRequests((prev) => [created, ...prev]);
+      setMyRequests((prev) => [created, ...prev].slice(0, READER_PAGE_SIZE));
+      setRequestsTotal((prev) => prev + 1);
     } catch (err) {
-      setErrorMessage(err instanceof ApiError ? err.message : 'Không thể gửi yêu cầu cấp quyền.');
+      setErrorMessage(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error && err.message
+            ? err.message
+            : 'Không thể gửi yêu cầu cấp quyền.',
+      );
     } finally {
       setIsSubmittingRequest(false);
     }
   }
 
-  // CONFLICT-RESOLVED: Loại bỏ hộp thoại xác nhận thô của trình duyệt, chuyển sang ConfirmDialog chuẩn WCAG 2.1 AA (rules/ui-design-system.md §6.3) kèm cập nhật lạc quan dưới 16ms
+  // CONFLICT-RESOLVED: Cập nhật lạc quan thực sự dưới 16ms kèm hoàn tác ảnh chụp khi lỗi và luôn đóng hộp thoại xác nhận (V-46, V-55).
   async function handleCancelRequest(explicitId?: string) {
     const requestId = explicitId ?? pendingCancelRequestId;
     if (!requestId) {
       return;
     }
+    const previousRequests = myRequests;
+    setPendingCancelRequestId(null);
     setCancellingRequestId(requestId);
-    setErrorMessage(null);
+    setErrorMessageState(null);
+    setMyRequests((prev) => applyOptimisticStatusById(prev, requestId, 'CANCELLED'));
 
     try {
       await apiClient(`/access-requests/${requestId}/cancel`, {
         method: 'POST',
       });
-      setPendingCancelRequestId(null);
-      setMyRequests((prev) => applyOptimisticStatusById(prev, requestId, 'CANCELLED'));
       setMessage('Đã hủy yêu cầu truy cập thành công.');
     } catch (err) {
+      setMyRequests(previousRequests);
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể hủy yêu cầu truy cập.'
@@ -222,10 +455,28 @@ export function useReaderCatalog() {
     }
   }
 
+  const pendingCancelRequest = myRequests.find((r) => r.id === pendingCancelRequestId) ?? null;
+
   return {
     discoverDocs,
+    discoverPage,
+    setDiscoverPage,
+    discoverHasMore,
     myDocs,
+    grantsPage,
+    setGrantsPage,
+    grantsHasMore,
     myRequests,
+    requestsPage,
+    setRequestsPage,
+    requestsTotal,
+    requestsHasMore: requestsPage * READER_PAGE_SIZE < requestsTotal,
+    requestStatusFilter,
+    setRequestStatusFilter: handleRequestStatusFilterChange,
+    searchQuery,
+    setSearchQuery: handleSearchChange,
+    selectedClassification,
+    setSelectedClassification: handleClassificationChange,
     isLoading,
     message,
     setMessage,
@@ -252,6 +503,7 @@ export function useReaderCatalog() {
     handleSubmitRequest,
     cancellingRequestId,
     pendingCancelRequestId,
+    pendingCancelRequest,
     setPendingCancelRequestId,
     handleCancelRequest,
   };

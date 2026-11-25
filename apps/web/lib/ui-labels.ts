@@ -103,6 +103,8 @@ const AUDIT_OUTCOME_LABELS: Readonly<Record<string, string>> = {
 const EXPORT_TYPE_LABELS: Readonly<Record<string, string>> = {
   AUDIT_LOGS: 'Nhật ký kiểm toán',
   SYSTEM_REPORT: 'Báo cáo hệ thống',
+  SECURITY_ALERTS: 'Cảnh báo an ninh',
+  INCIDENT_REPORTS: 'Báo cáo sự cố',
   INCIDENT_REPORT: 'Báo cáo sự cố',
 };
 
@@ -150,6 +152,29 @@ const ABAC_REASON_LABELS: Readonly<Record<string, string>> = {
 };
 
 const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
+  LOGIN: 'Đăng nhập hệ thống',
+  LOGOUT: 'Đăng xuất hệ thống',
+  LOGOUT_ALL: 'Đăng xuất toàn bộ thiết bị',
+  LOGOUT_OTHERS: 'Đăng xuất các thiết bị khác',
+  TOKEN_REFRESH: 'Làm mới phiên xác thực',
+  REFRESH_REUSE: 'Tái sử dụng Refresh Token đã thu hồi',
+  SESSION_REVOKED: 'Thu hồi phiên đăng nhập',
+  MFA_VERIFY: 'Xác thực đa yếu tố (MFA)',
+  MFA_ENABLED: 'Kích hoạt xác thực đa yếu tố',
+  MFA_DISABLED: 'Hủy xác thực đa yếu tố',
+  MFA_DISABLE_BLOCKED: 'Chặn hủy MFA do chính sách bảo mật',
+  MFA_DISABLE_DENIED: 'Từ chối hủy MFA',
+  MFA_ENROLLMENT_STARTED: 'Bắt đầu thiết lập MFA',
+  MFA_ENROLLMENT_BLOCKED: 'Chặn thiết lập MFA trùng lặp',
+  MFA_FACTOR_REMOVED: 'Gỡ bỏ phương thức xác thực MFA',
+  MFA_WEBAUTHN_ENROLL_START: 'Bắt đầu đăng ký Passkey / khóa bảo mật',
+  MFA_WEBAUTHN_ENROLLED: 'Đăng ký khóa bảo mật / Passkey',
+  MFA_WEBAUTHN_AUTH_OPTIONS: 'Tạo thử thách xác thực Passkey',
+  MFA_WEBAUTHN_VERIFY: 'Xác thực bằng khóa bảo mật / Passkey',
+  PASSWORD_RESET_REQUEST: 'Yêu cầu đặt lại mật khẩu',
+  PASSWORD_RESET: 'Đặt lại mật khẩu thành công',
+  PASSWORD_CHANGE: 'Đổi mật khẩu tài khoản',
+  PASSWORD_CHANGED: 'Đổi mật khẩu tài khoản',
   AUTH_LOGIN: 'Đăng nhập hệ thống',
   AUTH_LOGIN_SUCCESS: 'Đăng nhập thành công',
   AUTH_LOGIN_FAILED: 'Đăng nhập thất bại',
@@ -158,38 +183,110 @@ const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   AUTH_MFA_ENROLL: 'Thiết lập xác thực đa yếu tố',
   AUTH_PASSWORD_RESET: 'Đặt lại mật khẩu',
   AUTH_SESSION_REVOKE: 'Thu hồi phiên đăng nhập',
+  ACCESS_PERMITTED: 'Cho phép truy cập tài liệu',
+  ACCESS_DENIED: 'Từ chối truy cập tài liệu',
+  DOCUMENT_CREATED: 'Khởi tạo hồ sơ tài liệu mới',
   DOCUMENT_UPLOAD: 'Tải lên tài liệu',
+  DOCUMENT_UPLOAD_STARTED: 'Bắt đầu tải lên tài liệu',
+  DOCUMENT_UPLOAD_COMPLETED: 'Hoàn tất tải lên tài liệu',
+  DOCUMENT_UPLOAD_FAILED: 'Tải lên tài liệu thất bại',
+  DOCUMENT_SCAN_RESULT: 'Kết quả quét mã độc tài liệu',
   DOCUMENT_ACTIVATE: 'Kích hoạt tài liệu',
+  DOCUMENT_ACTIVATED: 'Kích hoạt tài liệu',
+  DOCUMENT_METADATA_UPDATED: 'Cập nhật thông tin tài liệu',
+  DOCUMENT_CURRENT_VERSION_SET: 'Đặt phiên bản tài liệu hiện hành',
   DOCUMENT_VERSION_UPLOAD: 'Tải lên phiên bản mới',
+  DOCUMENT_OWNER_TRANSFERRED: 'Chuyển giao quyền sở hữu tài liệu',
   DOCUMENT_RECLASSIFY: 'Điều chỉnh mức độ mật',
+  DOCUMENT_RECLASSIFIED: 'Điều chỉnh mức độ mật',
   DOCUMENT_ARCHIVE: 'Lưu trữ tài liệu',
+  DOCUMENT_ARCHIVED: 'Lưu trữ tài liệu',
   DOCUMENT_VIEW: 'Xem tài liệu',
+  DOCUMENT_VIEWED: 'Xem tài liệu',
   DOCUMENT_PREVIEW: 'Xem trước tài liệu',
+  DOCUMENT_PREVIEWED: 'Xem trước tài liệu',
   DOCUMENT_DOWNLOAD: 'Tải về tài liệu',
+  DOCUMENT_DOWNLOADED: 'Tải về tài liệu',
   DOCUMENT_DISCOVER: 'Tra cứu danh mục tài liệu',
+  DOCUMENT_SEARCHED: 'Tìm kiếm tài liệu',
+  DOCUMENT_RETENTION_WARNING: 'Cảnh báo hạn lưu trữ tài liệu',
   ACCESS_REQUEST_CREATE: 'Gửi yêu cầu quyền truy cập',
+  ACCESS_REQUEST_CREATED: 'Gửi yêu cầu quyền truy cập',
   ACCESS_REQUEST_APPROVE: 'Phê duyệt yêu cầu truy cập',
+  ACCESS_REQUEST_APPROVED: 'Phê duyệt yêu cầu truy cập',
   ACCESS_REQUEST_REJECT: 'Từ chối yêu cầu truy cập',
+  ACCESS_REQUEST_REJECTED: 'Từ chối yêu cầu truy cập',
   ACCESS_REQUEST_CANCEL: 'Hủy yêu cầu truy cập',
+  ACCESS_REQUEST_CANCELLED: 'Hủy yêu cầu truy cập',
   ACCESS_GRANT_CREATE: 'Cấp quyền truy cập',
+  GRANT_CREATED: 'Cấp quyền truy cập',
+  GRANT_EXTENDED: 'Gia hạn quyền truy cập',
+  GRANT_EXPIRED: 'Hết hạn quyền truy cập',
+  GRANT_REVOKED: 'Thu hồi quyền truy cập',
   ACCESS_GRANT_REVOKE: 'Thu hồi quyền truy cập',
   ACCESS_SESSION_CREATE: 'Mở phiên đọc tài liệu',
   ACCESS_SESSION_TERMINATE: 'Ngắt phiên đọc tài liệu',
+  ACCESS_SESSION_TERMINATED: 'Ngắt phiên đọc tài liệu',
+  ACCESS_SESSION_ENDED: 'Kết thúc phiên đọc tài liệu',
   POLICY_CREATE: 'Tạo chính sách truy cập',
   POLICY_UPDATE: 'Cập nhật chính sách truy cập',
   POLICY_ACTIVATE: 'Kích hoạt chính sách truy cập',
+  POLICY_ACTIVATED: 'Kích hoạt chính sách truy cập',
+  POLICY_DEACTIVATED: 'Vô hiệu hóa chính sách truy cập',
+  POLICY_DELETED: 'Xóa chính sách truy cập',
   POLICY_SIMULATED: 'Mô phỏng đánh giá chính sách',
+  WATERMARK_GENERATED: 'Đóng dấu watermark pháp chứng',
   WATERMARK_TRACE: 'Truy vết watermark bảo mật',
+  WATERMARK_TRACE_PERFORMED: 'Truy vết nguồn gốc watermark',
+  WATERMARK_VERIFIED: 'Đối soát truy vết watermark',
   WATERMARK_CONFIG_UPDATE: 'Cập nhật cấu hình watermark',
+  WATERMARK_CONFIG_UPDATED: 'Cập nhật cấu hình watermark',
   ALERT_UPDATE: 'Cập nhật cảnh báo an ninh',
+  SECURITY_ALERT_STATUS_UPDATED: 'Cập nhật trạng thái cảnh báo',
+  SECURITY_ALERT_ASSIGNED: 'Phân công xử lý cảnh báo',
+  SECURITY_ALERT_NOTE_ADDED: 'Thêm ghi chú điều tra cảnh báo',
+  DETECTION_RULE_CONFIGURED: 'Cập nhật quy tắc phát hiện bất thường',
   INCIDENT_CREATE: 'Tạo hồ sơ sự cố',
+  INCIDENT_REPORT_CREATED: 'Tạo hồ sơ sự cố an ninh',
   INCIDENT_UPDATE: 'Cập nhật hồ sơ sự cố',
+  INCIDENT_REPORT_UPDATED: 'Cập nhật hồ sơ sự cố an ninh',
+  INCIDENT_REPORT_SUBMITTED: 'Trình duyệt hồ sơ sự cố',
+  INCIDENT_REPORT_IN_REVIEW: 'Chuyển thẩm định hồ sơ sự cố',
+  INCIDENT_REPORT_CLOSED: 'Đóng hồ sơ sự cố an ninh',
+  INCIDENT_ACTION_CREATED: 'Thêm hành động khắc phục sự cố',
+  INCIDENT_ACTION_COMPLETED: 'Hoàn thành hành động khắc phục',
+  NETWORK_DLP_BLOCKED: 'Chặn rò rỉ dữ liệu mạng (DLP)',
+  NETWORK_DLP_DETECTED: 'Phát hiện vi phạm dữ liệu mạng (DLP)',
   AUDIT_EXPORT: 'Xuất báo cáo kiểm toán',
+  AUDIT_LOG_EXPORTED: 'Xuất trực tiếp nhật ký kiểm toán',
   AUDIT_VERIFY: 'Kiểm tra toàn vẹn nhật ký',
+  AUDIT_CHAIN_VERIFIED: 'Kiểm chứng toàn vẹn chuỗi băm',
+  AUDIT_ANCHOR_CREATED: 'Khởi tạo điểm neo chữ ký HMAC',
+  REPORT_EXPORT_REQUESTED: 'Yêu cầu xuất báo cáo',
+  REPORT_EXPORT_DOWNLOADED: 'Tải về báo cáo đã xuất',
   USER_CREATE: 'Tạo tài khoản người dùng',
+  USER_CREATED: 'Tạo tài khoản người dùng',
   USER_UPDATE: 'Cập nhật tài khoản người dùng',
+  USER_UPDATED: 'Cập nhật tài khoản người dùng',
+  USER_LOCKED: 'Tạm khóa tài khoản người dùng',
+  USER_UNLOCKED: 'Mở khóa tài khoản người dùng',
+  USER_DISABLED: 'Vô hiệu hóa tài khoản người dùng',
+  USER_REACTIVATED: 'Kích hoạt lại tài khoản người dùng',
   USER_CLEARANCE_UPDATE: 'Cập nhật cấp thẩm quyền bảo mật',
+  USER_CLEARANCE_UPDATED: 'Cập nhật cấp thẩm quyền bảo mật',
+  DEPARTMENT_CREATED: 'Tạo phòng ban mới',
+  DEPARTMENT_UPDATED: 'Cập nhật thông tin phòng ban',
+  DEPARTMENT_ACTIVATED: 'Kích hoạt phòng ban',
+  DEPARTMENT_DEACTIVATED: 'Ngừng hoạt động phòng ban',
+  ROLE_CREATED: 'Tạo vai trò mới',
+  ROLE_UPDATED: 'Cập nhật thông tin vai trò',
+  ROLE_ENABLED: 'Kích hoạt vai trò',
+  ROLE_DISABLED: 'Vô hiệu hóa vai trò',
+  ROLE_DELETED: 'Xóa vai trò tùy chỉnh',
+  ROLE_PERMISSIONS_REPLACED: 'Cập nhật danh sách quyền của vai trò',
   ROLE_ASSIGN: 'Gán vai trò người dùng',
+  USER_ROLE_ASSIGNED: 'Gán vai trò người dùng',
+  USER_ROLE_REVOKED: 'Thu hồi vai trò người dùng',
 };
 
 const AUDIT_OBJECT_TYPE_LABELS: Readonly<Record<string, string>> = {
@@ -199,16 +296,35 @@ const AUDIT_OBJECT_TYPE_LABELS: Readonly<Record<string, string>> = {
   ACCESS_REQUEST: 'Yêu cầu truy cập',
   ACCESS_SESSION: 'Phiên đọc tài liệu',
   AUTH_SESSION: 'Phiên đăng nhập',
+  AUTHENTICATION: 'Xác thực người dùng',
   USER: 'Tài khoản người dùng',
+  USER_ROLE: 'Gán vai trò người dùng',
   ROLE: 'Vai trò',
+  ROLE_PERMISSION: 'Quyền hạn vai trò',
   DEPARTMENT: 'Phòng ban',
   POLICY: 'Chính sách bảo mật',
+  POLICY_SIMULATION: 'Mô phỏng chính sách truy cập',
   SECURITY_ALERT: 'Cảnh báo an ninh',
+  DETECTION_RULE_CONFIG: 'Quy tắc phát hiện bất thường',
   INCIDENT_REPORT: 'Hồ sơ sự cố',
+  INCIDENT_ACTION: 'Hành động khắc phục sự cố',
   WATERMARK_INSTANCE: 'Watermark bảo mật',
   WATERMARK_CONFIG: 'Cấu hình watermark',
   EXPORT_JOB: 'Báo cáo xuất tệp',
+  ASYNC_EXPORT_JOB: 'Tác vụ xuất báo cáo',
   AUDIT_LOG: 'Nhật ký kiểm toán',
+  AUDIT_ANCHOR: 'Điểm neo chữ ký kiểm toán',
+};
+
+const AUDIT_PARTITION_LABELS: Readonly<Record<string, string>> = {
+  GLOBAL: 'Toàn hệ thống',
+  AUTH: 'Xác thực & phiên đăng nhập',
+  DOCUMENT: 'Tài liệu & phiên bản',
+  ACCESS_SESSION: 'Phiên đọc tài liệu',
+  RBAC: 'Phân quyền & tổ chức',
+  AUDIT: 'Kiểm toán & xuất báo cáo',
+  SECURITY: 'An ninh & watermark',
+  SECURITY_OPERATIONS: 'Vận hành an ninh (SOC)',
 };
 
 const AUDIT_VIOLATION_CODE_LABELS: Readonly<Record<string, string>> = {
@@ -222,15 +338,28 @@ const AUDIT_VIOLATION_CODE_LABELS: Readonly<Record<string, string>> = {
   HASH_MISMATCH: 'Phát hiện sai lệch mã kiểm tra toàn vẹn bản ghi',
 };
 
+// CONFLICT-RESOLVED: Thay thế 7 mã rác không tồn tại bằng đầy đủ 9 loại cảnh báo thực tế của API/Worker (#11).
 const DETECTION_RULE_LABELS: Readonly<Record<string, string>> = {
+  MASS_DOWNLOAD: 'Tải về hàng loạt bất thường',
+  REPEATED_DENIED: 'Bị từ chối truy cập liên tiếp',
+  OFF_HOURS_ACCESS: 'Truy cập tài liệu mật ngoài giờ',
+  UNTRUSTED_CONTEXT: 'Truy cập từ IP / thiết bị chưa tin cậy',
+  REFRESH_TOKEN_REUSE: 'Tái sử dụng Refresh Token (nghi vấn chiếm đoạt phiên)',
+  AUDIT_INTEGRITY_COMPROMISED: 'Vi phạm tính toàn vẹn chuỗi nhật ký kiểm toán',
+  NETWORK_DLP_VIOLATION: 'Vi phạm chống thất thoát dữ liệu mạng (DLP)',
+  WEBAUTHN_CLONE_DETECTED: 'Phát hiện dấu hiệu nhân bản khóa FIDO2 / Passkey',
+  RETENTION_OVERDUE: 'Tài liệu quá hạn lưu trữ bảo mật',
   ANOMALY_DETECTION: 'Phát hiện hành vi bất thường',
-  RAPID_DOWNLOAD_BURST: 'Tải về hàng loạt bất thường',
-  OFF_HOURS_SECRET_ACCESS: 'Truy cập tài liệu mật ngoài giờ làm việc',
-  REPEATED_ACCESS_DENIED: 'Truy cập bị từ chối liên tiếp nhiều lần',
-  SUSPICIOUS_IP_SHIFT: 'Thay đổi địa chỉ IP truy cập bất thường',
-  REFRESH_TOKEN_REUSE: 'Nghi vấn chiếm đoạt phiên đăng nhập',
-  WATERMARK_EGRESS_BLOCK: 'Phát hiện rò rỉ tài liệu có watermark bảo mật',
-  SENSITIVE_DATA_EXFILTRATION: 'Phát hiện dữ liệu nhạy cảm truyền ra ngoài',
+};
+
+const CLASSIFICATION_LEVEL_LABELS: Readonly<Record<string, string>> = {
+  PUBLIC: 'Công khai',
+  UNCLASSIFIED: 'Không mật',
+  INTERNAL: 'Nội bộ',
+  RESTRICTED: 'Hạn chế nội bộ',
+  CONFIDENTIAL: 'Mật',
+  SECRET: 'Tối mật',
+  TOP_SECRET: 'Tuyệt mật',
 };
 
 function normalizeKey(raw: string | null | undefined): string {
@@ -368,10 +497,16 @@ export function formatDetectionRuleLabel(ruleCode: string | null | undefined): s
   return DETECTION_RULE_LABELS[key] ?? ruleCode!.trim();
 }
 
+export function formatClassificationLabel(level: string | null | undefined): string {
+  const key = normalizeKey(level);
+  if (!key) return 'Chưa phân loại';
+  return CLASSIFICATION_LEVEL_LABELS[key] ?? level!.trim();
+}
+
 export function formatAuditPartitionLabel(partition: string | null | undefined): string {
   const key = normalizeKey(partition);
-  if (!key || key === 'GLOBAL') return 'Toàn hệ thống';
-  return partition!.trim();
+  if (!key) return 'Toàn hệ thống';
+  return AUDIT_PARTITION_LABELS[key] ?? partition!.trim();
 }
 
 export function formatAuditViolationMessage(

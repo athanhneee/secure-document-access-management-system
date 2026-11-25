@@ -77,6 +77,38 @@ export function isAnchorCryptographicallyAuthentic(
 }
 
 /**
+ * Thuật toán: Tái tính mã băm chuẩn tắc RFC 8785 HMAC-SHA256 cho một dòng nhật ký kiểm toán đơn lẻ.
+ */
+export function computeAuditEntryHash(
+  log: VerifiableAuditLogRow,
+  keySource: string | AuditKeyRing,
+): string {
+  const canonicalString = canonicalizeJson({
+    action: log.action,
+    actorUserId: log.actor_user_id ? log.actor_user_id.toString() : null,
+    actorUsername: log.actor_username,
+    chainAlgorithm: log.chain_algorithm,
+    chainPartition: log.chain_partition,
+    chainSequence: log.chain_sequence.toString(),
+    correlationId: log.correlation_id,
+    details: log.details as Record<string, unknown>,
+    documentId: log.document_id,
+    accessSessionId: log.access_session_id,
+    ipAddress: log.ip_address,
+    objectType: log.object_type,
+    objectId: log.object_id,
+    occurredAt: log.occurred_at.toISOString(),
+    outcome: log.outcome,
+    previousHash: log.previous_hash,
+    reasonCode: log.reason_code,
+    userAgent: log.user_agent,
+  });
+
+  const hmacKey = resolveKeyFromSource(keySource, log.hmac_key_version);
+  return createHmac('sha256', hmacKey).update(canonicalString, 'utf8').digest('hex');
+}
+
+/**
  * Thuật toán: Xác Thực Mắt Xích Chuỗi Băm Kiểm Toán Đơn Lẻ Hỗ Trợ Vòng Khóa Xoay Vòng (Single-Entry Hash Chain & Versioned HMAC-SHA256 Verifier).
  */
 export function verifyAuditChainEntry(
@@ -114,29 +146,7 @@ export function verifyAuditChainEntry(
     });
   }
 
-  const canonicalString = canonicalizeJson({
-    action: log.action,
-    actorUserId: log.actor_user_id ? log.actor_user_id.toString() : null,
-    actorUsername: log.actor_username,
-    chainAlgorithm: log.chain_algorithm,
-    chainPartition: log.chain_partition,
-    chainSequence: log.chain_sequence.toString(),
-    correlationId: log.correlation_id,
-    details: log.details as Record<string, unknown>,
-    documentId: log.document_id,
-    accessSessionId: log.access_session_id,
-    ipAddress: log.ip_address,
-    objectType: log.object_type,
-    objectId: log.object_id,
-    occurredAt: log.occurred_at.toISOString(),
-    outcome: log.outcome,
-    previousHash: log.previous_hash,
-    reasonCode: log.reason_code,
-    userAgent: log.user_agent,
-  });
-
-  const hmacKey = resolveKeyFromSource(keySource, log.hmac_key_version);
-  const computedHash = createHmac('sha256', hmacKey).update(canonicalString, 'utf8').digest('hex');
+  const computedHash = computeAuditEntryHash(log, keySource);
 
   if (!safeTimingEqual(computedHash, log.entry_hash)) {
     violations.push({

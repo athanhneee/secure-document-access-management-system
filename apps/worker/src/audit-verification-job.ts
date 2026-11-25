@@ -2,12 +2,14 @@ import { getDatabaseClient } from '@sda/database';
 import { buildAuditKeyRing } from '@sda/contracts';
 import { randomUUID } from 'node:crypto';
 import {
+  computeAuditEntryHash,
   isAnchorCryptographicallyAuthentic,
   safeTimingEqual,
   verifyAuditChainEntry,
   verifyPartitionAnchors,
   type AuditChainViolation,
   type VerifiableAuditAnchorRow,
+  type VerifiableAuditLogRow,
 } from './audit-chain-verifier.js';
 import { incrementAuditIntegrityCompromised, recordWorkerJobRun } from './worker-metrics.js';
 
@@ -38,11 +40,23 @@ async function persistPartitionIntegrityAlert(
   let createdNewAlert = false;
 
   await database.$transaction(async (tx) => {
+    // CONFLICT-RESOLVED: Đọc severity và cooldown_minutes của Quy tắc #6 AUDIT_INTEGRITY_COMPROMISED từ detection_rule_configs (N04).
+    const ruleCfg =
+      typeof tx.detectionRuleConfig?.findUnique === 'function'
+        ? await tx.detectionRuleConfig
+            .findUnique({ where: { rule_code: 'AUDIT_INTEGRITY_COMPROMISED' } })
+            .catch(() => null)
+        : null;
+    const effectiveSeverity = ruleCfg?.severity ?? 'CRITICAL';
+    const cooldownMinutes = ruleCfg?.cooldown_minutes ?? 15;
+    const cooldownStart = new Date(Date.now() - cooldownMinutes * 60_000);
+
     const existingOpen = await tx.securityAlert.findFirst({
       where: {
         alert_type: 'AUDIT_INTEGRITY_COMPROMISED',
-        status: 'OPEN',
+        status: { in: ['OPEN', 'INVESTIGATING'] },
         title: { contains: `partition ${partition} ` },
+        detected_at: { gte: cooldownStart },
       },
       select: { id: true },
     });
@@ -52,7 +66,7 @@ async function persistPartitionIntegrityAlert(
       data: {
         id: alertId,
         alert_type: 'AUDIT_INTEGRITY_COMPROMISED',
-        severity: 'CRITICAL',
+        severity: effectiveSeverity,
         status: 'OPEN',
         title: `CRITICAL: Audit integrity compromised in partition ${partition} (${primary.code})`,
         description: JSON.stringify({
@@ -139,16 +153,58 @@ export async function runAuditVerificationSweep(
     }
 
     if (resumeAnchor && typeof database.auditLog.findFirst === 'function') {
-      const anchoredRow = await database.auditLog.findFirst({
-        where: { chain_partition: partition, chain_sequence: resumeAnchor.anchor_sequence },
-        select: { id: true, entry_hash: true },
+      // Thuật toán: Trước khi nối tiếp từ điểm neo K, xác minh toàn bộ điểm neo trước K, đếm số bản ghi [1..K]
+      // và tái tính HMAC của chính bản ghi được neo để chống giả mạo hoặc xóa bản ghi trước điểm neo.
+      const hasTamperedPriorAnchor = anchors.some(
+        (a) =>
+          a.anchor_sequence < resumeAnchor!.anchor_sequence &&
+          (a.status === 'INVALID' || !isAnchorCryptographicallyAuthentic(a, keyRing)),
+      );
+      if (hasTamperedPriorAnchor) {
+        resumeAnchor = undefined;
+      }
+    }
+
+    if (resumeAnchor && typeof database.auditLog?.count === 'function') {
+      const priorLogCount = await database.auditLog.count({
+        where: {
+          chain_partition: partition,
+          chain_sequence: { lte: resumeAnchor.anchor_sequence },
+        },
       });
-      if (!anchoredRow || !safeTimingEqual(anchoredRow.entry_hash, resumeAnchor.entry_hash)) {
+      if (BigInt(priorLogCount) !== resumeAnchor.anchor_sequence) {
+        resumeAnchor = undefined;
+      }
+    }
+
+    if (resumeAnchor && typeof database.auditLog.findFirst === 'function') {
+      const anchoredRow = (await database.auditLog.findFirst({
+        where: { chain_partition: partition, chain_sequence: resumeAnchor.anchor_sequence },
+      })) as Partial<VerifiableAuditLogRow> | null;
+      const hashMatches =
+        Boolean(anchoredRow?.entry_hash) &&
+        safeTimingEqual(anchoredRow?.entry_hash, resumeAnchor.entry_hash);
+      const hasFullRowFields = Boolean(
+        anchoredRow &&
+        typeof anchoredRow.action === 'string' &&
+        anchoredRow.occurred_at instanceof Date &&
+        typeof anchoredRow.chain_algorithm === 'string',
+      );
+      const hmacAuthentic =
+        hashMatches &&
+        (!hasFullRowFields ||
+          safeTimingEqual(
+            computeAuditEntryHash(anchoredRow as VerifiableAuditLogRow, keyRing),
+            anchoredRow!.entry_hash,
+          ));
+      if (!anchoredRow || !hmacAuthentic) {
         violations.push({
-          code: 'AUDIT_ANCHOR_MISMATCH',
+          code: !hashMatches ? 'AUDIT_ANCHOR_MISMATCH' : 'AUDIT_LOG_TAMPERED',
           sequence: resumeAnchor.anchor_sequence,
           ...(anchoredRow?.id !== undefined ? { logId: anchoredRow.id } : {}),
-          message: `Anchored log missing or modified at sequence ${resumeAnchor.anchor_sequence} in partition ${partition}`,
+          message: !hashMatches
+            ? `Anchored log missing or modified at sequence ${resumeAnchor.anchor_sequence} in partition ${partition}`
+            : `Anchored log HMAC verification failed at sequence ${resumeAnchor.anchor_sequence} in partition ${partition}`,
         });
         resumeAnchor = undefined;
       }

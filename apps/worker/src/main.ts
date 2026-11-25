@@ -95,7 +95,7 @@ if (process.env['NODE_ENV'] === 'production') {
     configuredAuditHmacKey.toLowerCase().includes('change-me')
   ) {
     throw new Error(
-      'AUDIT_INTEGRITY_KEY (>= 32 random chars, non-placeholder) is mandatory when running worker in production.',
+      'AUDIT_INTEGRITY_KEY (>= 32 random chars, non-placeholder) is mandatory when running worker in production or staging.',
     );
   }
 }

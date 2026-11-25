@@ -41,7 +41,7 @@ const CreateSchema = z
     email: z.string().email().max(255),
     fullName: z.string().trim().min(1).max(150),
     employeeCode: z.string().trim().min(1).max(50).nullable().optional(),
-    departmentId: PositiveBigIntSchema.nullable().optional(),
+    departmentId: PositiveBigIntSchema,
     clearanceOptionId: PositiveBigIntSchema.nullable().optional(),
     password: z.string().min(15).max(128),
   })
@@ -52,7 +52,7 @@ const UpdateSchema = z
     email: z.string().email().max(255).optional(),
     fullName: z.string().trim().min(1).max(150).optional(),
     employeeCode: z.string().trim().min(1).max(50).nullable().optional(),
-    departmentId: PositiveBigIntSchema.nullable().optional(),
+    departmentId: PositiveBigIntSchema.optional(),
     clearanceOptionId: PositiveBigIntSchema.nullable().optional(),
   })
   .strict();

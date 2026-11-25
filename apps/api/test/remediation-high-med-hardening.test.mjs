@@ -143,6 +143,96 @@ test('[HIGH-13, HIGH-14] Department-scoped clearance lookup & cross-user export 
   assert.equal(scopedLookup.data[0].clearanceCode, 'SECRET');
   assert.equal(scopedLookup.data[1].clearanceCode, 'REDACTED');
 
+  // DOCUMENT_OWNER lookup excludes self and privileged SoD accounts (SYSTEM_ADMIN / AUDITOR / privileged custom role)
+  const ownerLookupDb = {
+    user: {
+      findMany: async () => [
+        {
+          id: 5n,
+          username: 'owner.self',
+          full_name: 'Owner Self',
+          department_id: 1n,
+          departments: { id: 1n, name: 'Dept 1' },
+          user_roles_user_roles_user_idTousers: [
+            { roles: { code: 'DOCUMENT_OWNER', role_permissions: [] } },
+          ],
+          user_attribute_assignments_user_attribute_assignments_user_idTousers: [],
+        },
+        {
+          id: 6n,
+          username: 'sys.admin',
+          full_name: 'System Admin',
+          department_id: 1n,
+          departments: { id: 1n, name: 'Dept 1' },
+          user_roles_user_roles_user_idTousers: [
+            { roles: { code: 'SYSTEM_ADMIN', role_permissions: [] } },
+          ],
+          user_attribute_assignments_user_attribute_assignments_user_idTousers: [],
+        },
+        {
+          id: 7n,
+          username: 'custom.soc',
+          full_name: 'Custom SOC',
+          department_id: 1n,
+          departments: { id: 1n, name: 'Dept 1' },
+          user_roles_user_roles_user_idTousers: [
+            {
+              roles: {
+                code: 'CUSTOM_SOC_HELPER',
+                role_permissions: [
+                  {
+                    permissions: {
+                      code: 'ALERT_MANAGE',
+                      resource_type: 'SECURITY_ALERT',
+                      action: 'MANAGE',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          user_attribute_assignments_user_attribute_assignments_user_idTousers: [],
+        },
+        {
+          id: 8n,
+          username: 'reader.eligible',
+          full_name: 'Eligible Reader',
+          department_id: 1n,
+          departments: { id: 1n, name: 'Dept 1' },
+          user_roles_user_roles_user_idTousers: [
+            { roles: { code: 'DOCUMENT_READER', role_permissions: [] } },
+          ],
+          user_attribute_assignments_user_attribute_assignments_user_idTousers: [
+            {
+              attribute_options: {
+                numeric_rank: 3,
+                value_code: 'SECRET',
+                display_name: 'Tối mật',
+                is_active: true,
+              },
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const ownerAuthz = {
+    visibleDepartmentIds: async (_p, resource) => (resource === 'ACCESS_GRANT' ? [1n] : []),
+    hasPermission: async (_p, resource, action) =>
+      resource === 'ACCESS_GRANT' && action === 'CREATE',
+  };
+  const ownerLookup = await lookupUsersWithClearance(ownerLookupDb, ownerAuthz, {
+    userId: 5n,
+    sessionId: 's-owner',
+    username: 'owner.self',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  });
+  assert.deepEqual(
+    ownerLookup.data.map((u) => u.username),
+    ['reader.eligible'],
+  );
+
   await assert.rejects(
     () =>
       assertCrossUserExportScope(

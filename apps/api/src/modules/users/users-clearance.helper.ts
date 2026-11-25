@@ -4,6 +4,7 @@
 import type { getDatabaseClient, withSerializableTransaction } from '@sda/database';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
+import { isPrivilegedSeparationRoleOrCapability } from '../rbac/permission-matrix.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 type SerializableTransaction = Parameters<Parameters<typeof withSerializableTransaction>[0]>[0];
@@ -88,10 +89,12 @@ async function resolveClearanceVisibilityScope(
 }
 
 /**
- * Thuật toán: Tra cứu danh bạ người dùng hoạt động kèm che dấu độ mật theo phạm vi phòng ban (Department-Scoped Clearance-Redacted Lookup)
- * Mục đích: Cho phép tìm kiếm người dùng để cấp quyền, nhưng chỉ hiển thị `CLEARANCE_LEVEL` cho các nhân sự thuộc phòng ban mà người gọi nắm quyền `ACCESS_GRANT:CREATE` hoặc `USER:MANAGE`.
- *
- * Algorithm: Department-Scoped Clearance-Redacted Active User Directory Lookup.
+ * Thuật toán: Tra cứu danh bạ người dùng hoạt động có lọc Phân tách Nhiệm vụ (SoD), loại trừ tự cấp quyền
+ * và che dấu độ mật theo phạm vi phòng ban (Department-Scoped SoD-Filtered Clearance-Redacted Lookup).
+ * Mục đích:
+ *   - Cho phép chủ sở hữu tìm người nhận quyền hợp lệ (`ACCESS_GRANT:CREATE`) mà không hiển thị chính bản thân mình
+ *     hay các tài khoản đặc quyền (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`, Custom Role đặc quyền).
+ *   - Chỉ hiển thị `CLEARANCE_LEVEL` cho nhân sự thuộc phòng ban mà người gọi nắm quyền `ACCESS_GRANT:CREATE` hoặc `USER:MANAGE`.
  */
 export async function lookupUsersWithClearance(
   database: PrismaClient,
@@ -100,6 +103,9 @@ export async function lookupUsersWithClearance(
 ) {
   const now = new Date();
   const visibility = await resolveClearanceVisibilityScope(authorization, principal);
+  const canManageUsers = principal
+    ? await authorization.hasPermission(principal, 'USER', 'MANAGE', { anyScope: true })
+    : false;
 
   const users = await database.user.findMany({
     where: { status: 'ACTIVE' },
@@ -111,6 +117,24 @@ export async function lookupUsersWithClearance(
       full_name: true,
       department_id: true,
       departments: { select: { id: true, name: true } },
+      user_roles_user_roles_user_idTousers: {
+        where: {
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          roles: { is_active: true },
+        },
+        select: {
+          roles: {
+            select: {
+              code: true,
+              role_permissions: {
+                select: {
+                  permissions: { select: { code: true, resource_type: true, action: true } },
+                },
+              },
+            },
+          },
+        },
+      },
       user_attribute_assignments_user_attribute_assignments_user_idTousers: {
         where: {
           attribute_definitions: { code: 'CLEARANCE_LEVEL', is_active: true },
@@ -125,8 +149,37 @@ export async function lookupUsersWithClearance(
     },
   });
 
+  const eligibleUsers =
+    !canManageUsers && principal
+      ? users.filter((u) => {
+          if (u.id === principal.userId) return false;
+          const activeRoleLinks =
+            (
+              u as {
+                user_roles_user_roles_user_idTousers?: Array<{
+                  roles?: {
+                    code?: string;
+                    role_permissions?: Array<{
+                      permissions?: { code: string; resource_type?: string; action?: string };
+                    }>;
+                  };
+                }>;
+              }
+            ).user_roles_user_roles_user_idTousers ?? [];
+          const holdsPrivilegedCapability = activeRoleLinks.some((link) => {
+            const roleObj = link.roles;
+            if (!roleObj) return false;
+            const perms = (roleObj.role_permissions ?? [])
+              .map((rp) => rp.permissions)
+              .filter((p): p is NonNullable<typeof p> => Boolean(p));
+            return isPrivilegedSeparationRoleOrCapability(roleObj.code, perms);
+          });
+          return !holdsPrivilegedCapability;
+        })
+      : users;
+
   return {
-    data: users.map((u) => {
+    data: eligibleUsers.map((u) => {
       const canViewClearance =
         visibility.global ||
         (u.department_id !== null && visibility.departmentIds.has(u.department_id.toString()));

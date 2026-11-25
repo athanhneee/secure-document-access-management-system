@@ -57,8 +57,13 @@ export async function executeCreateUser(params: {
   context: RequestContext;
 }): Promise<{ id: string }> {
   const { database, authorization, passwords, audit, principal, input, context } = params;
+  if (input.departmentId === null || input.departmentId === undefined) {
+    throw new BadRequestException(
+      'Active departmentId is required because SUBJECT_DEPARTMENT is mandatory under ABAC policy.',
+    );
+  }
   await authorization.assertPermission(principal, 'USER', 'MANAGE', {
-    targetDepartmentId: input.departmentId ?? null,
+    targetDepartmentId: input.departmentId,
   });
   passwords.validate(input.password, [input.username, input.email]);
   const passwordHash = await passwords.hash(input.password);
@@ -138,6 +143,11 @@ export async function executeUpdateUser(params: {
       const before = await transaction.user.findUnique({ where: { id } });
       if (!before) throw new NotFoundException('User not found.');
       await assertUserDepartmentVisible(authorization, principal, before.department_id);
+      if (input.departmentId === null) {
+        throw new BadRequestException(
+          'Department cannot be cleared because SUBJECT_DEPARTMENT is mandatory under ABAC policy.',
+        );
+      }
       const targetDepartment =
         input.departmentId === undefined ? before.department_id : input.departmentId;
       await authorization.assertPermission(principal, 'USER', 'MANAGE', {

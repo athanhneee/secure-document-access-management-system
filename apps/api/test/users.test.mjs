@@ -634,4 +634,25 @@ test('UsersService & UsersController — clearance options, create/update/PUT cl
       controller.updateClearance('2', { expectedVersion: 1, clearanceOptionId: '2' }, authedReq),
     ConflictException,
   );
+
+  // 8. Required SUBJECT_DEPARTMENT alignment: reject null/missing department on create & clearing department on update
+  await assert.rejects(
+    () =>
+      service.create(
+        managerPrincipal,
+        {
+          username: 'no.dept.user',
+          email: 'no.dept.user@sda.local',
+          fullName: 'Thiếu Phòng Ban',
+          departmentId: null,
+          password: 'fixture-Str0ng#Passphrase!2026$XyZ',
+        },
+        ctx,
+      ),
+    BadRequestException,
+  );
+  await assert.rejects(
+    () => service.update(managerPrincipal, 2n, { expectedVersion: 3, departmentId: null }, ctx),
+    BadRequestException,
+  );
 });

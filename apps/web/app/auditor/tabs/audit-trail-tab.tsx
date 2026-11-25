@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { formatAuditActionLabel, formatAuditOutcomeLabel, formatSafeDateVi } from '@/lib/ui-labels';
 import type { AuditLogItem } from '../types';
 
 interface AuditTrailTabProps {
@@ -87,16 +88,16 @@ export function AuditTrailTab({
                 onChange={(e) => onOutcomeFilterChange(e.target.value)}
                 className="min-h-11 sm:h-9 w-full sm:w-auto rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
               >
-                <option value="ALL">Mọi kết quả</option>
-                <option value="SUCCESS">SUCCESS (Thành công)</option>
-                <option value="DENIED">DENIED (Từ chối)</option>
-                <option value="FAILED">FAILED (Thất bại)</option>
+                <option value="ALL">Tất cả kết quả</option>
+                <option value="SUCCESS">Thành công</option>
+                <option value="DENIED">Bị từ chối</option>
+                <option value="FAILED">Thất bại</option>
               </select>
             </div>
 
             <div className="relative w-full sm:w-44 min-w-0">
               <label htmlFor="auditor-action-filter" className="sr-only">
-                Lọc theo mã hành động
+                Lọc theo hành động
               </label>
               <Search
                 size={16}
@@ -107,7 +108,7 @@ export function AuditTrailTab({
               <Input
                 id="auditor-action-filter"
                 type="text"
-                placeholder="Lọc hành động..."
+                placeholder="Lọc theo hành động…"
                 value={actionFilter}
                 onChange={(e) => onActionFilterChange(e.target.value)}
                 className="pl-9 min-h-11 sm:h-9 w-full text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
@@ -158,12 +159,12 @@ export function AuditTrailTab({
         <Table containerRef={tableScrollRef} className="min-w-[880px] table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[172px] text-xs text-[#717171]">Thời gian (UTC)</TableHead>
+              <TableHead className="w-[172px] text-xs text-[#717171]">Thời gian</TableHead>
               <TableHead className="w-[138px] text-xs text-[#717171]">Người thực hiện</TableHead>
               <TableHead className="w-[195px] text-xs text-[#717171]">Hành động</TableHead>
               <TableHead className="w-[105px] text-xs text-[#717171]">Kết quả</TableHead>
               <TableHead className="w-[115px] text-xs text-[#717171]">Địa chỉ IP</TableHead>
-              <TableHead className="text-xs text-[#717171]">Correlation ID / Hash</TableHead>
+              <TableHead className="text-xs text-[#717171]">Mã truy vết</TableHead>
               <TableHead className="w-[96px] text-xs text-[#717171] text-right">Thao tác</TableHead>
             </TableRow>
           </TableHeader>
@@ -171,36 +172,36 @@ export function AuditTrailTab({
             {logs.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="py-8 text-center text-xs text-[#717171]">
-                  Không có bản ghi nhật ký kiểm toán phù hợp bộ lọc hiện tại
+                  Không có bản ghi nhật ký kiểm toán nào phù hợp với bộ lọc hiện tại.
                 </TableCell>
               </TableRow>
             ) : (
               logs.map((log) => {
-                const formattedUtc = log.occurredAt
-                  ? new Date(log.occurredAt).toISOString().replace('T', ' ').slice(0, 19)
-                  : '—';
+                const formattedTime = formatSafeDateVi(log.occurredAt, { includeTime: true });
+                const actionLabel = formatAuditActionLabel(log.action);
+                const actorLabel = log.actorUsername === 'SYSTEM' ? 'Hệ thống' : log.actorUsername;
                 return (
                   <TableRow
                     key={log.id}
                     className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
                   >
                     <TableCell
-                      title={formattedUtc}
+                      title={formattedTime}
                       className="font-bold text-xs text-[#717171] whitespace-nowrap tabular-nums truncate"
                     >
-                      {formattedUtc}
+                      {formattedTime}
                     </TableCell>
                     <TableCell
-                      title={log.actorUsername}
+                      title={actorLabel}
                       className="font-semibold text-xs text-[#222222] truncate"
                     >
-                      {log.actorUsername}
+                      {actorLabel}
                     </TableCell>
                     <TableCell
-                      title={log.action}
-                      className="font-bold text-xs text-[#008489] truncate"
+                      title={actionLabel}
+                      className="font-semibold text-xs text-[#008489] truncate"
                     >
-                      {log.action}
+                      {actionLabel}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       <Badge
@@ -212,7 +213,7 @@ export function AuditTrailTab({
                               : 'destructive'
                         }
                       >
-                        {log.outcome}
+                        {formatAuditOutcomeLabel(log.outcome)}
                       </Badge>
                     </TableCell>
                     <TableCell
@@ -246,12 +247,12 @@ export function AuditTrailTab({
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-t border-[#ebebeb] bg-[#f7f7f7]/60 px-4 py-2.5 text-xs text-[#717171]">
           <div className="flex flex-wrap items-center gap-2.5">
             <span>
-              Tổng cộng <strong className="text-[#222222]">{totalLogs}</strong> bản ghi · Hiển thị{' '}
-              <strong className="text-[#222222]">{logs.length}</strong> dòng
+              Tổng cộng <strong className="text-[#222222]">{totalLogs}</strong> bản ghi · Đang hiển
+              thị <strong className="text-[#222222]">{logs.length}</strong> bản ghi
             </span>
             <div className="inline-flex items-center gap-1.5">
               <label htmlFor="auditor-page-size" className="sr-only">
-                Số dòng mỗi trang nhật ký
+                Số bản ghi mỗi trang nhật ký
               </label>
               <select
                 id="auditor-page-size"
@@ -259,9 +260,9 @@ export function AuditTrailTab({
                 onChange={(e) => onPageSizeChange(Number(e.target.value))}
                 className="min-h-9 sm:h-8 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs font-medium text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
               >
-                <option value={10}>10 dòng / trang</option>
-                <option value={20}>20 dòng / trang</option>
-                <option value={50}>50 dòng / trang</option>
+                <option value={10}>10 bản ghi / trang</option>
+                <option value={20}>20 bản ghi / trang</option>
+                <option value={50}>50 bản ghi / trang</option>
               </select>
             </div>
           </div>

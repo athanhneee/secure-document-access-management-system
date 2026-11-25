@@ -1,6 +1,7 @@
 'use client';
 
 import { FileText, MessageSquare } from 'lucide-react';
+import { formatDetectionRuleLabel, formatSafeDateVi } from '@/lib/ui-labels';
 import type { AlertNoteItem } from '../types';
 
 interface AlertNotesHistoryProps {
@@ -30,7 +31,9 @@ export function AlertNotesHistory({
       <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5">
         <div className="flex justify-between gap-2">
           <span className="text-[#717171]">Quy tắc:</span>
-          <span className="font-bold text-[#222222] text-right">{ruleCode}</span>
+          <span className="font-bold text-[#222222] text-right">
+            {formatDetectionRuleLabel(ruleCode)}
+          </span>
         </div>
         <div className="flex justify-between gap-2">
           <span className="text-[#717171]">Đối tượng:</span>
@@ -75,7 +78,7 @@ export function AlertNotesHistory({
                   <span className="font-semibold text-[#222222]">{entry.authorName}</span>
                   <span>
                     {entry.createdAt
-                      ? new Date(entry.createdAt).toLocaleString('vi-VN')
+                      ? formatSafeDateVi(entry.createdAt, { includeTime: true })
                       : 'Vừa xong'}
                   </span>
                 </div>

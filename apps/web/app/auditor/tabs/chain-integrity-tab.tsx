@@ -3,6 +3,7 @@
 import { AlertTriangle, CheckCircle2, Hash, Shield } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { formatAuditPartitionLabel, formatSafeDateVi } from '@/lib/ui-labels';
 import type { ChainVerificationReport } from '../types';
 
 interface ChainIntegrityTabProps {
@@ -16,30 +17,32 @@ export function ChainIntegrityTab({
   isVerifyingChain,
   onVerifyHashChain,
 }: ChainIntegrityTabProps) {
-  const partitionName = verificationReport?.chainPartition || 'GLOBAL';
+  const partitionName = formatAuditPartitionLabel(verificationReport?.chainPartition);
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm sm:text-base text-[#222222]">
-            Xác minh chuỗi băm HMAC-SHA256
+            Kiểm tra tính toàn vẹn nhật ký
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3.5 text-xs">
           <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-2 text-[#222222]">
             <div className="flex justify-between gap-2">
-              <span className="text-[#717171]">Phân vùng chuỗi</span>
-              <span className="font-mono text-[#008489] text-right">{partitionName}</span>
+              <span className="text-[#717171]">Phân vùng dữ liệu</span>
+              <span className="font-semibold text-[#008489] text-right">{partitionName}</span>
             </div>
             <div className="flex justify-between gap-2">
-              <span className="text-[#717171]">Thuật toán băm</span>
-              <span className="font-mono text-[#222222] text-right">HMAC-SHA-256</span>
+              <span className="text-[#717171]">Cơ chế kiểm chứng</span>
+              <span className="font-medium text-[#222222] text-right">
+                Chuỗi băm toàn vẹn (HMAC-SHA256)
+              </span>
             </div>
             <div className="flex justify-between gap-2">
-              <span className="text-[#717171]">Khóa toàn vẹn</span>
+              <span className="text-[#717171]">Phạm vi đối soát</span>
               <span className="font-semibold text-[#008A05] text-right">
-                Lưu trữ độc lập CSDL (KMS/Vault)
+                Toàn bộ bản ghi theo thứ tự chuỗi
               </span>
             </div>
           </div>
@@ -47,7 +50,7 @@ export function ChainIntegrityTab({
           <InteractiveHoverButton
             variant="primary"
             size="md"
-            text="Xác minh toàn bộ chuỗi"
+            text="Kiểm tra tính toàn vẹn"
             icon={<Hash size={16} strokeWidth={1.75} aria-hidden="true" />}
             isLoading={isVerifyingChain}
             disabled={isVerifyingChain}
@@ -60,7 +63,7 @@ export function ChainIntegrityTab({
       <Card className="flex flex-col justify-between">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm sm:text-base text-[#222222]">
-            Kết quả đối soát mật mã
+            Kết quả kiểm tra toàn vẹn
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 flex flex-col justify-center text-xs">
@@ -71,8 +74,8 @@ export function ChainIntegrityTab({
                   <CheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>
                     {verificationReport.totalEntriesChecked === 0
-                      ? 'CHƯA CÓ BẢN GHI / HỢP LỆ'
-                      : 'Chuỗi băm toàn vẹn · Không phát hiện giả mạo'}
+                      ? 'Chưa có bản ghi kiểm toán nào'
+                      : 'Chuỗi nhật ký toàn vẹn · Không phát hiện sai lệch'}
                   </span>
                 </div>
                 <div className="space-y-1.5 text-[#222222]">
@@ -81,19 +84,19 @@ export function ChainIntegrityTab({
                     <span className="font-bold text-[#008489] text-right">{partitionName}</span>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <span className="text-[#717171]">Số bản ghi đã duyệt:</span>
+                    <span className="text-[#717171]">Số bản ghi đã kiểm tra:</span>
                     <span className="font-bold text-[#222222]">
-                      {verificationReport.totalEntriesChecked} entries
+                      {verificationReport.totalEntriesChecked} bản ghi
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <span className="text-[#717171]">Hành vi chỉnh sửa/xóa:</span>
-                    <span className="text-[#008A05] font-semibold">0 (Không có)</span>
+                    <span className="text-[#717171]">Dấu hiệu chỉnh sửa / xóa:</span>
+                    <span className="text-[#008A05] font-semibold">0 (Không phát hiện)</span>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <span className="text-[#717171]">Thời điểm xác minh:</span>
+                    <span className="text-[#717171]">Thời điểm kiểm tra:</span>
                     <span className="font-bold text-[#222222]">
-                      {new Date(verificationReport.verifiedAt).toLocaleTimeString('vi-VN')}
+                      {formatSafeDateVi(verificationReport.verifiedAt, { includeTime: true })}
                     </span>
                   </div>
                 </div>
@@ -107,7 +110,7 @@ export function ChainIntegrityTab({
                     className="shrink-0"
                     aria-hidden="true"
                   />
-                  <span>Cảnh báo: Phát hiện sai lệch / giả mạo chuỗi băm!</span>
+                  <span>Cảnh báo: Phát hiện sai lệch tính toàn vẹn nhật ký</span>
                 </div>
                 <div className="space-y-1.5 text-[#222222]">
                   <div className="flex justify-between gap-2">
@@ -115,21 +118,21 @@ export function ChainIntegrityTab({
                     <span className="font-bold text-[#008489] text-right">{partitionName}</span>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <span className="text-[#717171]">Số bản ghi đã duyệt:</span>
+                    <span className="text-[#717171]">Số bản ghi đã kiểm tra:</span>
                     <span className="font-bold text-[#222222]">
-                      {verificationReport.totalEntriesChecked} entries
+                      {verificationReport.totalEntriesChecked} bản ghi
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-[#717171]">Số điểm đứt gãy / sai lệch:</span>
                     <span className="text-[#C13515] font-bold">
-                      {verificationReport.brokenSequences.length} vi phạm
+                      {verificationReport.brokenSequences.length} vị trí
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <span className="text-[#717171]">Thời điểm xác minh:</span>
+                    <span className="text-[#717171]">Thời điểm kiểm tra:</span>
                     <span className="font-bold text-[#222222]">
-                      {new Date(verificationReport.verifiedAt).toLocaleTimeString('vi-VN')}
+                      {formatSafeDateVi(verificationReport.verifiedAt, { includeTime: true })}
                     </span>
                   </div>
                   {verificationReport.brokenSequences.length > 0 && (
@@ -145,7 +148,7 @@ export function ChainIntegrityTab({
           ) : (
             <div className="flex flex-col items-center justify-center text-center py-6 px-4 text-[#717171] space-y-2">
               <Shield size={24} strokeWidth={1.75} className="text-[#717171]" aria-hidden="true" />
-              <p>Bấm nút xác minh bên trái để rà soát liên kết chuỗi băm</p>
+              <p>Bấm nút kiểm tra để rà soát tính toàn vẹn của chuỗi nhật ký kiểm toán.</p>
             </div>
           )}
         </CardContent>

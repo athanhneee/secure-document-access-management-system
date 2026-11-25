@@ -21,7 +21,7 @@ export function mapAlertDto(a: AlertApiDto): SecurityAlertItem {
           id: n.id,
           note: (n.note || n.content || '').trim(),
           authorName:
-            n.authorName || n.author?.fullName || n.author?.username || 'Cán bộ An ninh (SOC)',
+            n.authorName || n.author?.fullName || n.author?.username || 'Cán bộ an ninh thông tin',
           createdAt: n.createdAt || a.detectedAt || '',
         }))
         .filter((item) => item.note.length > 0)
@@ -51,7 +51,7 @@ export function mapIncidentDto(inc: IncidentApiDto): IncidentItem {
     id: inc.id || '—',
     incidentCode: inc.incidentCode,
     alertId: inc.alertId ?? null,
-    title: inc.title || 'Báo cáo sự cố bảo mật',
+    title: inc.title || 'Hồ sơ sự cố an ninh',
     summary: inc.summary || '',
     findings: inc.findings ?? '',
     impactAssessment: inc.impactAssessment ?? '',
@@ -88,7 +88,7 @@ export function normalizeWatermarkTokenInput(
 ): { valid: true; token: string } | { valid: false; error: string } {
   const trimmed = raw.trim();
   if (!trimmed) {
-    return { valid: false, error: 'Vui lòng nhập mã token watermark cần đối soát.' };
+    return { valid: false, error: 'Vui lòng nhập mã watermark cần đối soát.' };
   }
   if (/^[0-9a-fA-F]{12,48}$/u.test(trimmed)) {
     return { valid: true, token: `WM-${trimmed.toLowerCase()}` };
@@ -100,7 +100,7 @@ export function normalizeWatermarkTokenInput(
   return {
     valid: false,
     error:
-      'Mã watermark không đúng định dạng. Vui lòng nhập mã dạng WM-<12..48 ký tự hex> (ví dụ: WM-2e59958fa6c7) hoặc dán chuỗi hex 12–48 ký tự từ tài liệu PDF.',
+      'Mã watermark không đúng định dạng. Vui lòng nhập mã bắt đầu bằng WM- (ví dụ: WM-2e59958fa6c7) hoặc dán chuỗi mã trích xuất từ tài liệu PDF.',
   };
 }
 

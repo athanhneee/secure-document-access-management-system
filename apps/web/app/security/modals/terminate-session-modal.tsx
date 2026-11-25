@@ -23,12 +23,9 @@ interface TerminateSessionModalProps {
   onError: (msg: string) => void;
 }
 
-const DEFAULT_TERMINATE_REASON =
-  'Phát hiện dấu hiệu truy cập bất thường qua giám sát SOC, cưỡng bức thu hồi phiên đọc.';
-
 /**
- * Thuật toán: Cưỡng Bức Ngắt Phiên Truy Cập Có Ghi Lý Do Kiểm Toán (`TerminateSessionModal`)
- * Mục đích: Thu thập lý do cưỡng bức ngắt phiên (`5..500` ký tự) truyền trong body `POST /access-sessions/:id/terminate` và chỉ đóng `<dialog>` sau khi máy chủ xác nhận thành công.
+ * Thuật toán: Ngắt Phiên Truy Cập Khẩn Cấp Có Ghi Lý Do Kiểm Toán (`TerminateSessionModal`)
+ * Mục đích: Thu thập lý do ngắt phiên (`5..500` ký tự) truyền trong body `POST /access-sessions/:id/terminate` và chỉ đóng `<dialog>` sau khi máy chủ xác nhận thành công.
  */
 export function TerminateSessionModal({
   open,
@@ -54,10 +51,11 @@ export function TerminateSessionModal({
               className="text-[#C13515] shrink-0"
               aria-hidden="true"
             />
-            <span>Cưỡng bức ngắt phiên truy cập tài liệu</span>
+            <span>Ngắt phiên đọc tài liệu khẩn cấp</span>
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Phiên đọc trực tuyến sẽ bị hủy tức thời và ghi nhận lý do vào sổ cái kiểm toán bất biến.
+            Phiên đọc trực tuyến sẽ bị chấm dứt ngay lập tức và lý do sẽ được ghi vào nhật ký kiểm
+            toán.
           </DialogDescription>
         </DialogHeader>
 
@@ -89,13 +87,13 @@ function TerminateSessionForm({
   onConfirm: (reason: string) => Promise<boolean>;
   onError: (msg: string) => void;
 }) {
-  const [reason, setReason] = useState(DEFAULT_TERMINATE_REASON);
+  const [reason, setReason] = useState('');
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = reason.trim();
     if (trimmed.length < 5 || trimmed.length > 500) {
-      onError('Lý do cưỡng bức ngắt phiên phải có độ dài từ 5 đến 500 ký tự.');
+      onError('Lý do ngắt phiên phải có độ dài từ 5 đến 500 ký tự.');
       return;
     }
     const ok = await onConfirm(trimmed);
@@ -114,7 +112,7 @@ function TerminateSessionForm({
 
       <div className="space-y-1">
         <label htmlFor="terminate-session-reason" className="font-medium text-[#222222]">
-          Lý do cưỡng bức ngắt phiên ( tối thiểu 5 ký tự ) <span className="text-[#C13515]">*</span>
+          Lý do ngắt phiên (tối thiểu 5 ký tự) <span className="text-[#C13515]">*</span>
         </label>
         <Textarea
           id="terminate-session-reason"
@@ -124,7 +122,7 @@ function TerminateSessionForm({
           rows={3}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          placeholder="Nhập lý do an ninh để cưỡng bức thu hồi phiên đọc..."
+          placeholder="Ví dụ: Phát hiện truy cập bất thường ngoài giờ làm việc, cần ngắt phiên ngay…"
           className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] focus-visible:border-[#FF385C]"
         />
       </div>
@@ -134,7 +132,7 @@ function TerminateSessionForm({
           type="button"
           variant="ghost"
           size="sm"
-          text="Hủy bỏ"
+          text="Hủy"
           disabled={isSubmitting}
           onClick={onClose}
         />

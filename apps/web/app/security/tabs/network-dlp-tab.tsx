@@ -12,6 +12,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  formatAlertSeverityLabel,
+  formatDetectionRuleLabel,
+  formatSafeDateVi,
+  formatServiceHealthLabel,
+} from '@/lib/ui-labels';
 import type { GatewayHealthStatus, SecurityAlertItem } from '../types';
 import { NetworkDlpBlueprint, NetworkDlpOverview } from './network-dlp-overview';
 
@@ -32,12 +38,7 @@ export function NetworkDlpTab({
       : gatewayHealth === 'DEGRADED'
         ? 'warning'
         : 'destructive';
-  const healthLabel =
-    gatewayHealth === 'ONLINE'
-      ? 'ONLINE · TCP 1344'
-      : gatewayHealth === 'DEGRADED'
-        ? 'DEGRADED · TCP 1344'
-        : 'OFFLINE · TCP 1344';
+  const healthLabel = formatServiceHealthLabel(gatewayHealth);
 
   return (
     <Card>
@@ -45,11 +46,13 @@ export function NetworkDlpTab({
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <CardTitle className="text-sm sm:text-base text-[#222222] flex items-center gap-2">
             <Network size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
-            <span>Network DLP Gateway (ICAP · TCP 1344)</span>
+            <span>Giám sát chống thất thoát dữ liệu mạng (DLP)</span>
           </CardTitle>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <Badge variant={healthBadgeVariant}>{healthLabel}</Badge>
-            <Badge variant="danger">BLOCK VIOLATIONS</Badge>
+            <Badge variant={gatewayHealth === 'ONLINE' ? 'danger' : 'warning'}>
+              {gatewayHealth === 'ONLINE' ? 'Chính sách chặn vi phạm' : 'Cần kiểm tra kết nối'}
+            </Badge>
           </div>
         </div>
       </CardHeader>
@@ -59,9 +62,11 @@ export function NetworkDlpTab({
         <div className="space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-bold text-[#222222] uppercase tracking-wider">
-              Cảnh báo rò rỉ dữ liệu tầng mạng ({dlpAlerts.length})
+              Cảnh báo chống thất thoát dữ liệu ({dlpAlerts.length})
             </h3>
-            <span className="text-xs text-[#717171]">Đồng bộ từ ICAP Gateway</span>
+            <span className="text-xs text-[#717171]">
+              Ghi nhận từ hệ thống giám sát luồng dữ liệu
+            </span>
           </div>
 
           <div className="rounded-[16px] border border-[#ebebeb] overflow-hidden">
@@ -89,7 +94,8 @@ export function NetworkDlpTab({
                             aria-hidden="true"
                           />
                           <span className="font-medium text-[#222222]">
-                            ICAP Gateway đang hoạt động · Chưa ghi nhận vi phạm Egress
+                            Hệ thống giám sát đang hoạt động bình thường · Chưa ghi nhận vi phạm rò
+                            rỉ dữ liệu.
                           </span>
                         </div>
                       ) : (
@@ -101,7 +107,7 @@ export function NetworkDlpTab({
                             aria-hidden="true"
                           />
                           <span className="font-medium text-[#222222]">
-                            Kết nối dịch vụ DLP đang suy giảm ({gatewayHealth})
+                            Kết nối dịch vụ giám sát đang gián đoạn ({healthLabel}).
                           </span>
                         </div>
                       )}
@@ -123,12 +129,14 @@ export function NetworkDlpTab({
                                 : 'info'
                           }
                         >
-                          {alert.severity}
+                          {formatAlertSeverityLabel(alert.severity)}
                         </Badge>
                       </TableCell>
                       <TableCell>
                         <div className="font-semibold text-xs text-[#222222]">{alert.title}</div>
-                        <div className="text-xs font-mono text-[#717171]">{alert.ruleCode}</div>
+                        <div className="text-xs text-[#717171]">
+                          {formatDetectionRuleLabel(alert.ruleCode)}
+                        </div>
                       </TableCell>
                       <TableCell className="text-xs text-[#222222]">
                         {alert.detectedUserName || 'Chưa định danh'}
@@ -137,7 +145,7 @@ export function NetworkDlpTab({
                         {alert.ipAddress}
                       </TableCell>
                       <TableCell className="text-xs text-[#717171]">
-                        {new Date(alert.detectedAt).toLocaleString('vi-VN')}
+                        {formatSafeDateVi(alert.detectedAt, { includeTime: true })}
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
                         <InteractiveHoverButton

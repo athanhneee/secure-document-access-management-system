@@ -146,7 +146,7 @@ export function useAuditorData() {
       } catch (err) {
         if (ignore || isAbortError(err, controller.signal)) return;
         setErrorMessage(
-          err instanceof ApiError ? err.message : 'Không thể tải hàng đợi xuất báo cáo.',
+          err instanceof ApiError ? err.message : 'Không thể tải lịch sử xuất báo cáo.',
         );
       }
     })();
@@ -204,17 +204,17 @@ export function useAuditorData() {
       if (report.isChainValid) {
         setMessage(
           report.totalEntriesChecked === 0
-            ? 'CHƯA CÓ BẢN GHI / HỢP LỆ: Sổ cái kiểm toán chưa phát sinh bản ghi và không có sai lệch.'
-            : `Đã hoàn thành kiểm tra tính toàn vẹn chuỗi băm HMAC-SHA256 trên ${partitionCount} phân vùng (${report.chainPartition}): Hợp lệ 100% (${report.totalEntriesChecked} bản ghi).`,
+            ? 'Chưa có bản ghi nhật ký kiểm toán nào để kiểm tra.'
+            : `Đã hoàn tất kiểm tra tính toàn vẹn trên ${partitionCount} phân vùng (${report.chainPartition}): Toàn vẹn, không phát hiện sai lệch (${report.totalEntriesChecked} bản ghi).`,
         );
       } else {
-        setErrorMessage(`Phát hiện sai lệch chuỗi băm trong ${violationCount} vị trí!`);
+        setErrorMessage(`Phát hiện sai lệch tính toàn vẹn tại ${violationCount} vị trí.`);
       }
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
-          ? err.message || 'Xác minh chuỗi băm thất bại.'
-          : 'Đã xảy ra lỗi khi kiểm tra tính toàn vẹn chuỗi băm.',
+          ? err.message || 'Kiểm tra tính toàn vẹn nhật ký thất bại.'
+          : 'Đã xảy ra lỗi khi kiểm tra tính toàn vẹn nhật ký.',
       );
     } finally {
       setIsVerifyingChain(false);

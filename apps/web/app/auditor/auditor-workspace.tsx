@@ -108,9 +108,9 @@ function AuditorWorkspaceContent() {
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="min-w-0">
-            <Badge variant="info">Auditor (Read-Only)</Badge>
+            <Badge variant="info">Kiểm toán viên độc lập</Badge>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-1">
-              Kiểm toán Toàn vẹn &amp; Báo cáo Tuân thủ
+              Kiểm toán toàn vẹn và báo cáo tuân thủ
             </h1>
           </div>
 
@@ -150,8 +150,9 @@ function AuditorWorkspaceContent() {
             aria-hidden="true"
           />
           <span className="text-[#222222]">
-            <strong className="text-[#008489]">Nguyên tắc Phân tách Trách nhiệm (SoD):</strong> Chế
-            độ chỉ đọc — tra cứu nhật ký và xuất báo cáo, không can thiệp dữ liệu nghiệp vụ.
+            <strong className="text-[#008489]">Chế độ chỉ đọc:</strong> Bạn có thể tra cứu nhật ký
+            kiểm toán, kiểm tra tính toàn vẹn và xuất báo cáo tuân thủ, không thể chỉnh sửa dữ liệu
+            nghiệp vụ.
           </span>
         </div>
 
@@ -202,13 +203,13 @@ function AuditorWorkspaceContent() {
               {canViewAuditLogs && (
                 <TabsTrigger value="chain-verify" className="flex items-center gap-1.5 text-xs">
                   <Hash size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Xác minh chuỗi băm HMAC</span>
+                  <span>Kiểm tra toàn vẹn</span>
                 </TabsTrigger>
               )}
               {canExportReports && (
                 <TabsTrigger value="export-queue" className="flex items-center gap-1.5 text-xs">
                   <Download size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Hàng đợi báo cáo ({exportJobs.length})</span>
+                  <span>Lịch sử xuất báo cáo ({exportJobs.length})</span>
                 </TabsTrigger>
               )}
             </TabsList>

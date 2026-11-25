@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { Check } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth-context';
+import { formatAlertStatusLabel } from '@/lib/ui-labels';
 import {
   Dialog,
   DialogContent,
@@ -42,10 +44,10 @@ export function AlertDetailModal({
       <DialogContent className="max-w-lg border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Chi tiết cảnh báo an ninh #{alert?.id}
+            Chi tiết cảnh báo an ninh
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Cập nhật trạng thái điều tra theo máy trạng thái nghiêm ngặt và lưu vết ghi chú nội bộ
+            Cập nhật trạng thái điều tra và ghi nhận kết quả rà soát nội bộ.
           </DialogDescription>
         </DialogHeader>
 
@@ -86,6 +88,7 @@ function AlertDetailForm({
   onSuccess,
   onError,
 }: AlertDetailFormProps) {
+  const { user: currentUser } = useAuth();
   const allowedStatuses = Array.from(
     new Set<SecurityAlertItem['status']>([
       alert.status,
@@ -108,12 +111,12 @@ function AlertDetailForm({
     const trimmedInvNote = investigationNote.trim();
 
     if (!statusChanged && !trimmedInvNote) {
-      onError('Vui lòng chọn trạng thái chuyển tiếp mới hoặc nhập ghi chú điều tra nội bộ.');
+      onError('Vui lòng chọn trạng thái xử lý mới hoặc nhập ghi chú điều tra nội bộ.');
       return;
     }
     if (requiresResolutionNote && trimmedResNote.length < 5) {
       onError(
-        'Cần ghi rõ ghi chú kết luận xử lý (ít nhất 5 ký tự) khi đóng hoặc đánh dấu false-positive.',
+        'Cần nhập ghi chú kết luận xử lý (tối thiểu 5 ký tự) khi hoàn tất hoặc đánh dấu báo động giả.',
       );
       return;
     }
@@ -142,7 +145,8 @@ function AlertDetailForm({
         ? {
             id: `note-${Date.now()}`,
             note: trimmedInvNote,
-            authorName: 'Cán bộ An ninh (SOC)',
+            authorName:
+              currentUser?.fullName || currentUser?.username || 'Cán bộ an ninh thông tin',
             createdAt: new Date().toISOString(),
           }
         : undefined;
@@ -155,7 +159,7 @@ function AlertDetailForm({
       if (trimmedResNote) setResolutionNote('');
       await onSuccess(
         statusChanged
-          ? `Đã cập nhật trạng thái cảnh báo thành ${newStatus}.`
+          ? `Đã cập nhật trạng thái cảnh báo thành "${formatAlertStatusLabel(newStatus)}".`
           : 'Đã lưu ghi chú điều tra nội bộ cho cảnh báo.',
       );
       if (statusChanged) onClose();
@@ -179,7 +183,7 @@ function AlertDetailForm({
 
         <div className="space-y-1">
           <label htmlFor="alert-status-select" className="font-medium text-[#222222]">
-            Chuyển đổi trạng thái:
+            Trạng thái xử lý
           </label>
           <select
             id="alert-status-select"
@@ -196,7 +200,7 @@ function AlertDetailForm({
           </select>
           {isTerminalStatus && (
             <p className="text-xs text-[#717171]">
-              Cảnh báo đã ở trạng thái kết thúc; bạn vẫn có thể lưu thêm ghi chú điều tra bên dưới.
+              Cảnh báo này đã hoàn tất xử lý; bạn vẫn có thể bổ sung ghi chú điều tra bên dưới.
             </p>
           )}
         </div>
@@ -204,15 +208,14 @@ function AlertDetailForm({
         {requiresResolutionNote && (
           <div className="space-y-1">
             <label htmlFor="res-note" className="font-medium text-[#222222]">
-              Ghi chú kết luận (Bắt buộc tối thiểu 5 ký tự){' '}
-              <span className="text-[#C13515]">*</span>
+              Ghi chú kết luận (tối thiểu 5 ký tự) <span className="text-[#C13515]">*</span>
             </label>
             <Textarea
               id="res-note"
               rows={2}
               value={resolutionNote}
               onChange={(e) => setResolutionNote(e.target.value)}
-              placeholder="Nêu rõ kết quả xác minh hoặc nguyên nhân báo động giả..."
+              placeholder="Nêu rõ kết quả xác minh hoặc nguyên nhân báo động giả…"
               className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
             />
           </div>
@@ -220,14 +223,14 @@ function AlertDetailForm({
 
         <div className="space-y-1">
           <label htmlFor="inv-note" className="font-medium text-[#222222]">
-            Thêm ghi chú điều tra nội bộ:
+            Thêm ghi chú điều tra nội bộ
           </label>
           <Textarea
             id="inv-note"
             rows={2}
             value={investigationNote}
             onChange={(e) => setInvestigationNote(e.target.value)}
-            placeholder="Ghi nhận các bước rà soát log, trao đổi với người dùng..."
+            placeholder="Ghi nhận các bước rà soát nhật ký, trao đổi với người dùng…"
             className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
           />
         </div>

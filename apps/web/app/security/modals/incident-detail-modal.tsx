@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { FileText } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { formatIncidentStatusLabel } from '@/lib/ui-labels';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
@@ -88,7 +89,7 @@ function IncidentDetailBody({
         setFindings(mapped.findings || '');
         setImpactAssessment(mapped.impactAssessment || '');
       } catch (err) {
-        onError(err instanceof ApiError ? err.message : 'Không thể tải chi tiết báo cáo sự cố.');
+        onError(err instanceof ApiError ? err.message : 'Không thể tải chi tiết hồ sơ sự cố.');
       } finally {
         setIsLoadingDetail(false);
       }
@@ -110,7 +111,7 @@ function IncidentDetailBody({
       })
       .catch((err) => {
         if (!cancelled) {
-          onError(err instanceof ApiError ? err.message : 'Không thể tải chi tiết báo cáo sự cố.');
+          onError(err instanceof ApiError ? err.message : 'Không thể tải chi tiết hồ sơ sự cố.');
         }
       })
       .finally(() => {
@@ -147,7 +148,7 @@ function IncidentDetailBody({
       await loadDetail(detail.id);
       await onSuccess('Đã lưu cập nhật phân tích nguyên nhân gốc & đánh giá tác động.');
     } catch (err) {
-      onError(err instanceof ApiError ? err.message : 'Không thể cập nhật báo cáo sự cố.');
+      onError(err instanceof ApiError ? err.message : 'Không thể cập nhật hồ sơ sự cố.');
     } finally {
       setBusyOp(null);
     }
@@ -191,7 +192,7 @@ function IncidentDetailBody({
     if (!detail) return;
     const trimmedClose = closingNote.trim();
     if (mode === 'close' && trimmedClose.length > 0 && trimmedClose.length < 5) {
-      onError('Ghi chú đóng sự cố (nếu nhập) phải có ít nhất 5 ký tự.');
+      onError('Ghi chú đóng hồ sơ (nếu nhập) cần tối thiểu 5 ký tự.');
       return;
     }
     setBusyOp(mode);
@@ -200,7 +201,7 @@ function IncidentDetailBody({
       if (mode === 'submit') {
         await apiClient(`/incidents/${detail.id}/submit`, { method: 'POST', body: '{}' });
         await loadDetail(detail.id);
-        await onSuccess('Đã gửi trình duyệt báo cáo sự cố thành công.');
+        await onSuccess('Đã gửi phê duyệt hồ sơ sự cố thành công.');
       } else {
         await apiClient(`/incidents/${detail.id}/close`, {
           method: 'POST',
@@ -226,17 +227,17 @@ function IncidentDetailBody({
           </DialogTitle>
           {detail && (
             <Badge variant={isClosed ? 'success' : canSubmit ? 'warning' : 'info'}>
-              {detail.status}
+              {formatIncidentStatusLabel(detail.status)}
             </Badge>
           )}
         </div>
         <DialogDescription className="text-xs text-[#717171]">
-          Phân tích nguyên nhân gốc, theo dõi hành động khắc phục và phê duyệt vòng đời sự cố
+          Phân tích nguyên nhân gốc, theo dõi hành động khắc phục và cập nhật tiến độ xử lý sự cố.
         </DialogDescription>
       </DialogHeader>
 
       {isLoadingDetail && !detail ? (
-        <div className="py-8 text-center text-xs text-[#717171]">Đang tải hồ sơ sự cố...</div>
+        <div className="py-8 text-center text-xs text-[#717171]">Đang tải hồ sơ sự cố…</div>
       ) : (
         detail && (
           <div className="space-y-4 py-2 text-xs">

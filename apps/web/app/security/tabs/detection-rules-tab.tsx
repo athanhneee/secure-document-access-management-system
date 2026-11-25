@@ -12,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { formatAlertSeverityLabel } from '@/lib/ui-labels';
 import type { DetectionRuleItem } from '../types';
 
 interface DetectionRulesTabProps {
@@ -41,7 +42,7 @@ export function DetectionRulesTab({
           <InteractiveHoverButton
             size="sm"
             variant="danger"
-            text="Quét toàn bộ ngay"
+            text="Quét bất thường (60 phút qua)"
             icon={<Play size={16} strokeWidth={1.75} aria-hidden="true" />}
             onClick={onRunDetection}
             className="shrink-0"
@@ -56,8 +57,8 @@ export function DetectionRulesTab({
               <TableHead className="text-xs text-[#717171]">Tên quy tắc</TableHead>
               <TableHead className="text-xs text-[#717171]">Mức nghiêm trọng</TableHead>
               <TableHead className="text-xs text-[#717171]">Ngưỡng</TableHead>
-              <TableHead className="text-xs text-[#717171]">Cửa sổ</TableHead>
-              <TableHead className="text-xs text-[#717171]">Hạ nhiệt</TableHead>
+              <TableHead className="text-xs text-[#717171]">Khung theo dõi</TableHead>
+              <TableHead className="text-xs text-[#717171]">Giãn cách cảnh báo</TableHead>
               <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
               <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
             </TableRow>
@@ -83,21 +84,21 @@ export function DetectionRulesTab({
                             : 'info'
                       }
                     >
-                      {r.severity}
+                      {formatAlertSeverityLabel(r.severity)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs font-bold text-[#222222]">
                     {r.threshold ?? r.thresholdCount ?? 5} lần
                   </TableCell>
                   <TableCell className="text-xs font-bold text-[#222222]">
-                    {r.windowMinutes}m
+                    {r.windowMinutes} phút
                   </TableCell>
                   <TableCell className="text-xs font-bold text-[#717171]">
-                    {r.cooldownMinutes ?? 30}m
+                    {r.cooldownMinutes ?? 30} phút
                   </TableCell>
                   <TableCell>
                     <Badge variant={enabled ? 'success' : 'neutral'}>
-                      {enabled ? 'Kích hoạt' : 'Đã tắt'}
+                      {enabled ? 'Đang bật' : 'Đã tắt'}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">

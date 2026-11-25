@@ -5,6 +5,7 @@ import { Check, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { formatIncidentActionTypeLabel } from '@/lib/ui-labels';
 import type { IncidentActionItem } from '../types';
 
 interface IncidentActionsPanelProps {
@@ -91,9 +92,11 @@ export function IncidentActionsPanel({
                 className="rounded-[16px] border border-[#ebebeb] bg-[#ffffff] p-3 space-y-2"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono font-bold text-[#222222]">{act.actionType}</span>
+                  <span className="font-semibold text-[#222222]">
+                    {formatIncidentActionTypeLabel(act.actionType)}
+                  </span>
                   <Badge variant={done ? 'success' : 'warning'}>
-                    {done ? 'ĐÃ HOÀN THÀNH' : 'ĐANG THỰC HIỆN'}
+                    {done ? 'Đã hoàn thành' : 'Đang thực hiện'}
                   </Badge>
                 </div>
                 <p className="text-[#222222]">{act.recommendation}</p>
@@ -106,7 +109,8 @@ export function IncidentActionsPanel({
                   : !isClosed && (
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
                         <label htmlFor={`complete-note-${act.id}`} className="sr-only">
-                          Ghi chú hoàn thành hành động {act.actionType}
+                          Ghi chú hoàn thành hành động{' '}
+                          {formatIncidentActionTypeLabel(act.actionType)}
                         </label>
                         <Input
                           id={`complete-note-${act.id}`}
@@ -114,7 +118,7 @@ export function IncidentActionsPanel({
                           onChange={(e) =>
                             setCompletionNotes((prev) => ({ ...prev, [act.id]: e.target.value }))
                           }
-                          placeholder="Ghi chú kết quả thực hiện (>= 5 ký tự)..."
+                          placeholder="Ghi chú kết quả thực hiện (tối thiểu 5 ký tự)…"
                           className="min-h-11 sm:h-9 flex-1 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
                         />
                         <InteractiveHoverButton
@@ -143,7 +147,7 @@ export function IncidentActionsPanel({
                 htmlFor="incident-action-type"
                 className="block font-medium text-[#222222] mb-1"
               >
-                Mã hành động
+                Loại hành động
               </label>
               <select
                 id="incident-action-type"
@@ -151,10 +155,10 @@ export function IncidentActionsPanel({
                 onChange={(e) => setActionType(e.target.value)}
                 className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] cursor-pointer"
               >
-                <option value="REVOKE_ACCESS">REVOKE_ACCESS</option>
-                <option value="LOCK_ACCOUNT">LOCK_ACCOUNT</option>
-                <option value="ROTATE_POLICY">ROTATE_POLICY</option>
-                <option value="FORENSIC_AUDIT">FORENSIC_AUDIT</option>
+                <option value="REVOKE_ACCESS">Thu hồi quyền truy cập</option>
+                <option value="LOCK_ACCOUNT">Tạm khóa tài khoản</option>
+                <option value="ROTATE_POLICY">Cập nhật chính sách bảo mật</option>
+                <option value="FORENSIC_AUDIT">Kiểm tra chuyên sâu</option>
               </select>
             </div>
             <div className="sm:col-span-2">
@@ -169,7 +173,7 @@ export function IncidentActionsPanel({
                   id="incident-action-rec"
                   value={recommendation}
                   onChange={(e) => setRecommendation(e.target.value)}
-                  placeholder="Mô tả biện pháp xử lý (>= 5 ký tự)..."
+                  placeholder="Mô tả biện pháp xử lý (tối thiểu 5 ký tự)…"
                   className="min-h-11 sm:h-9 flex-1 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
                 />
                 <InteractiveHoverButton

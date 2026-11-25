@@ -78,7 +78,7 @@ export function IncidentAnalysisForm({
             disabled={isClosed}
             value={findings}
             onChange={(e) => onFindingsChange(e.target.value)}
-            placeholder="Kết quả điều tra log, watermark, nguồn rò rỉ..."
+            placeholder="Kết quả điều tra nhật ký, watermark bảo mật, nguồn rò rỉ…"
             className="text-xs rounded-[16px] border-[#dddddd]"
           />
         </div>
@@ -92,7 +92,7 @@ export function IncidentAnalysisForm({
             disabled={isClosed}
             value={impactAssessment}
             onChange={(e) => onImpactChange(e.target.value)}
-            placeholder="Phạm vi tài liệu mật và đơn vị bị ảnh hưởng..."
+            placeholder="Phạm vi tài liệu mật và đơn vị bị ảnh hưởng…"
             className="text-xs rounded-[16px] border-[#dddddd]"
           />
         </div>
@@ -140,13 +140,13 @@ export function IncidentLifecycleFooter({
       {canClose && (
         <div className="space-y-1">
           <label htmlFor="inc-closing-note" className="font-medium text-[#222222]">
-            Ghi chú kết luận đóng hồ sơ sự cố
+            Ghi chú kết luận đóng hồ sơ (không bắt buộc)
           </label>
           <Input
             id="inc-closing-note"
             value={closingNote}
             onChange={(e) => onClosingNoteChange(e.target.value)}
-            placeholder="Nhập kết luận nghiệm thu trước khi đóng (>= 5 ký tự)..."
+            placeholder="Nhập kết luận nghiệm thu nếu cần (tối thiểu 5 ký tự khi nhập)…"
             className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd]"
           />
         </div>
@@ -157,7 +157,7 @@ export function IncidentLifecycleFooter({
           type="button"
           variant="ghost"
           size="sm"
-          text="Đóng cửa sổ"
+          text="Đóng"
           onClick={onCloseDialog}
         />
         {canSubmit && (
@@ -165,7 +165,7 @@ export function IncidentLifecycleFooter({
             type="button"
             variant="primary"
             size="sm"
-            text="Gửi trình duyệt"
+            text="Gửi phê duyệt"
             icon={<Send size={16} strokeWidth={1.75} aria-hidden="true" />}
             isLoading={busyOp === 'submit'}
             disabled={busyOp !== null}
@@ -177,7 +177,7 @@ export function IncidentLifecycleFooter({
             type="button"
             variant="primary"
             size="sm"
-            text="Đóng sự cố"
+            text="Đóng hồ sơ sự cố"
             icon={<Lock size={16} strokeWidth={1.75} aria-hidden="true" />}
             isLoading={busyOp === 'close'}
             disabled={busyOp !== null}

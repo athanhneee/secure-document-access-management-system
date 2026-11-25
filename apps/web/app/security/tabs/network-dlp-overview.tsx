@@ -9,23 +9,23 @@ export function NetworkDlpOverview() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-0.5">
           <div className="flex items-center justify-between text-xs text-[#717171]">
-            <span>Giao thức</span>
+            <span>Phạm vi giám sát</span>
             <Cpu size={16} strokeWidth={1.75} className="text-[#008489]" aria-hidden="true" />
           </div>
-          <div className="text-sm font-bold text-[#222222]">ICAP/1.0 · TCP 1344</div>
+          <div className="text-sm font-bold text-[#222222]">Luồng dữ liệu ra ngoài</div>
         </div>
 
         <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-0.5">
           <div className="flex items-center justify-between text-xs text-[#717171]">
-            <span>Chế độ quét</span>
+            <span>Chế độ kiểm tra</span>
             <Activity size={16} strokeWidth={1.75} className="text-[#008A05]" aria-hidden="true" />
           </div>
-          <div className="text-sm font-bold text-[#222222]">RESPMOD &amp; REQMOD</div>
+          <div className="text-sm font-bold text-[#222222]">Phân tích thời gian thực</div>
         </div>
 
         <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-0.5">
           <div className="flex items-center justify-between text-xs text-[#717171]">
-            <span>Vi phạm</span>
+            <span>Khi phát hiện vi phạm</span>
             <ShieldAlert
               size={16}
               strokeWidth={1.75}
@@ -33,12 +33,12 @@ export function NetworkDlpOverview() {
               aria-hidden="true"
             />
           </div>
-          <div className="text-sm font-bold text-[#C13515]">HTTP 403 Forbidden</div>
+          <div className="text-sm font-bold text-[#C13515]">Tự động chặn &amp; cảnh báo</div>
         </div>
 
         <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-0.5">
           <div className="flex items-center justify-between text-xs text-[#717171]">
-            <span>Luồng sạch</span>
+            <span>Khi dữ liệu hợp lệ</span>
             <ShieldCheck
               size={16}
               strokeWidth={1.75}
@@ -46,58 +46,55 @@ export function NetworkDlpOverview() {
               aria-hidden="true"
             />
           </div>
-          <div className="text-sm font-bold text-[#008A05]">204 No modifications</div>
+          <div className="text-sm font-bold text-[#008A05]">Cho phép lưu thông</div>
         </div>
       </div>
 
       <div className="space-y-2.5">
         <h3 className="text-xs font-bold text-[#222222] uppercase tracking-wider">
-          Chính sách kiểm duyệt nội dung (Inspection Policies)
+          Chính sách kiểm tra nội dung
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
           <div className="rounded-[16px] border border-[#ebebeb] p-3 space-y-1 bg-[#ffffff]">
             <div className="flex items-center justify-between gap-2">
               <span className="font-semibold text-[#222222]">Nhãn phân loại mật</span>
-              <Badge variant="danger">BẮT BUỘC</Badge>
+              <Badge variant="danger">Bắt buộc</Badge>
             </div>
             <p className="text-xs text-[#717171]">
-              Chặn nhãn <span className="font-mono">TUYỆT MẬT</span>,{' '}
-              <span className="font-mono">TỐI MẬT</span>,{' '}
-              <span className="font-mono">TOP SECRET</span>,{' '}
-              <span className="font-mono">STRICTLY CONFIDENTIAL</span>.
+              Chặn truyền tải tài liệu mang dấu hiệu phân loại Mật, Tối mật hoặc Tuyệt mật ra ngoài
+              phạm vi cho phép.
             </p>
           </div>
 
           <div className="rounded-[16px] border border-[#ebebeb] p-3 space-y-1 bg-[#ffffff]">
             <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-[#222222]">Thủy ấn số pháp chứng</span>
-              <Badge variant="primary">PHÁP CHỨNG</Badge>
+              <span className="font-semibold text-[#222222]">Watermark bảo mật</span>
+              <Badge variant="primary">Truy vết</Badge>
             </div>
             <p className="text-xs text-[#717171]">
-              Phát hiện token định dạng <span className="font-mono">{'WM-[a-f0-9]{48}'}</span> gửi
-              qua cổng biên mạng.
+              Phát hiện và chặn tệp tài liệu chứa mã watermark bảo mật đi qua cổng kiểm soát mạng.
             </p>
           </div>
 
           <div className="rounded-[16px] border border-[#ebebeb] p-3 space-y-1 bg-[#ffffff]">
             <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-[#222222]">Khóa bí mật &amp; Token</span>
-              <Badge variant="warning">BẢO VỆ KHÓA</Badge>
+              <span className="font-semibold text-[#222222]">Khóa bí mật và mã xác thực</span>
+              <Badge variant="warning">Bảo vệ khóa</Badge>
             </div>
             <p className="text-xs text-[#717171]">
-              Chặn <span className="font-mono">PEM Private Keys</span>,{' '}
-              <span className="font-mono">AKIA...</span>, <span className="font-mono">ghp_...</span>
-              .
+              Ngăn chặn rò rỉ khóa bảo mật riêng tư, khóa truy cập dịch vụ đám mây và mã xác thực hệ
+              thống.
             </p>
           </div>
 
           <div className="rounded-[16px] border border-[#ebebeb] p-3 space-y-1 bg-[#ffffff]">
             <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-[#222222]">Thẻ thanh toán &amp; CCCD</span>
-              <Badge variant="info">PII</Badge>
+              <span className="font-semibold text-[#222222]">Thông tin định danh cá nhân</span>
+              <Badge variant="info">Dữ liệu cá nhân</Badge>
             </div>
             <p className="text-xs text-[#717171]">
-              Kiểm tra số thẻ quốc tế (Luhn Checksum) và CCCD 12 chữ số.
+              Kiểm tra và cảnh báo số thẻ thanh toán cùng số căn cước công dân trong luồng dữ liệu
+              truyền ra ngoài.
             </p>
           </div>
         </div>
@@ -108,17 +105,16 @@ export function NetworkDlpOverview() {
 
 export function NetworkDlpBlueprint() {
   return (
-    <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-2 text-xs">
+    <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-1.5 text-xs">
       <div className="font-bold text-[#222222] flex items-center gap-1.5">
         <Cpu size={16} strokeWidth={1.75} className="text-[#008489]" aria-hidden="true" />
-        <span>Cấu hình định tuyến Proxy / Edge Gateway (ICAP)</span>
+        <span>Tích hợp cổng kiểm soát biên mạng</span>
       </div>
-      <div className="p-3 bg-[#222222] text-[#f7f7f7] rounded-[12px] font-mono text-xs overflow-x-auto space-y-1">
-        <div># squid.conf</div>
-        <div className="text-[#ffffff]">icap_enable on</div>
-        <div>icap_service sda_dlp respmod_precache icap://127.0.0.1:1344/dlp-respmod bypass=0</div>
-        <div>adaptation_access sda_dlp allow all</div>
-      </div>
+      <p className="text-xs text-[#717171] leading-relaxed">
+        Chính sách chống thất thoát dữ liệu (DLP) được quản trị viên hạ tầng cấu hình đồng bộ tại
+        cổng kiểm soát mạng của tổ chức. Mọi sự kiện chặn vi phạm sẽ tự động đồng bộ về bảng cảnh
+        báo ở trên để đội ngũ an ninh thông tin xử lý.
+      </p>
     </div>
   );
 }

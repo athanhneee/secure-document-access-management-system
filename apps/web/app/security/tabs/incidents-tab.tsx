@@ -12,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { formatIncidentStatusLabel } from '@/lib/ui-labels';
 import type { IncidentItem } from '../types';
 
 interface IncidentsTabProps {
@@ -41,7 +42,7 @@ export function IncidentsTab({
           <InteractiveHoverButton
             size="sm"
             variant="primary"
-            text="Tạo báo cáo mới"
+            text="Tạo hồ sơ mới"
             icon={<FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
             onClick={onOpenCreateIncident}
             className="shrink-0"
@@ -53,7 +54,7 @@ export function IncidentsTab({
           <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
             <TableRow>
               <TableHead className="text-xs text-[#717171]">Tiêu đề sự cố</TableHead>
-              <TableHead className="text-xs text-[#717171]">Tóm tắt tác động</TableHead>
+              <TableHead className="text-xs text-[#717171]">Tóm tắt diễn biến</TableHead>
               <TableHead className="text-xs text-[#717171]">Hành động khắc phục</TableHead>
               <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
               <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
@@ -63,7 +64,7 @@ export function IncidentsTab({
             {incidents.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-center py-8 text-[#717171] text-xs">
-                  Chưa có hồ sơ sự cố an ninh nào được tạo
+                  Chưa có hồ sơ sự cố an ninh nào được tạo.
                 </TableCell>
               </TableRow>
             ) : (
@@ -102,7 +103,7 @@ export function IncidentsTab({
                             : 'info'
                       }
                     >
-                      {inc.status}
+                      {formatIncidentStatusLabel(inc.status)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">

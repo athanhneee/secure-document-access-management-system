@@ -71,6 +71,31 @@ export function extractAuditorPagination(
   return { page, pageSize, total, totalPages };
 }
 
+const VIOLATION_CODE_LABELS: Readonly<Record<string, string>> = {
+  AUDIT_CHAIN_BROKEN: 'Phát hiện đứt gãy liên kết giữa các bản ghi nhật ký',
+  AUDIT_SEQUENCE_GAP: 'Phát hiện thiếu hụt số thứ tự trong chuỗi nhật ký',
+  AUDIT_LOG_TAMPERED: 'Phát hiện dấu hiệu chỉnh sửa nội dung bản ghi nhật ký',
+  AUDIT_ANCHOR_MISMATCH: 'Mã đối soát chữ ký nhật ký không khớp với giá trị lưu trữ',
+  CHAIN_BROKEN: 'Phát hiện đứt gãy liên kết giữa các bản ghi nhật ký',
+  SEQUENCE_GAP: 'Phát hiện thiếu hụt số thứ tự trong chuỗi nhật ký',
+  HMAC_MISMATCH: 'Phát hiện dấu hiệu chỉnh sửa nội dung bản ghi nhật ký',
+  HASH_MISMATCH: 'Phát hiện sai lệch mã kiểm tra toàn vẹn bản ghi',
+};
+
+function formatPartitionName(partition: string | null | undefined): string {
+  const trimmed = (partition ?? '').trim();
+  if (!trimmed || trimmed.toUpperCase() === 'GLOBAL') return 'Toàn hệ thống';
+  return trimmed;
+}
+
+function formatViolationLabel(partition: string | null | undefined, code?: string | null): string {
+  const partLabel = formatPartitionName(partition);
+  const key = (code ?? '').trim().toUpperCase();
+  const detail =
+    VIOLATION_CODE_LABELS[key] ?? 'Phát hiện sai lệch tính toàn vẹn trong chuỗi nhật ký';
+  return `${partLabel}: ${detail}.`;
+}
+
 /**
  * Thuật toán: Tổng hợp Xác minh Toàn vẹn Chuỗi Băm Đa phân vùng (`aggregatePartitionVerifications`)
  * Mục đích: Kiểm chứng không có bất kỳ bản ghi nhật ký nào bị sửa đổi, xóa bỏ hoặc chèn trái phép trên các phân vùng chuỗi kiểm toán thực tế.
@@ -99,7 +124,7 @@ export function aggregatePartitionVerifications(res: VerifyHashChainResponse): {
 
   const totalChecked = partitions.reduce((acc, p) => acc + (p.totalChecked || 0), 0);
   const allViolations = partitions.flatMap((p) =>
-    (p.violations || []).map((v) => `${p.partition || 'GLOBAL'}: ${v.message || v.code}`),
+    (p.violations || []).map((v) => formatViolationLabel(p.partition, v.code)),
   );
   const tamperedCount =
     typeof structured?.tamperedCount === 'number' ? structured.tamperedCount : allViolations.length;
@@ -107,9 +132,9 @@ export function aggregatePartitionVerifications(res: VerifyHashChainResponse): {
     tamperedCount === 0 && (partitions.length === 0 || partitions.every((p) => p.valid !== false));
   const partitionLabel =
     partitions
-      .map((p) => p.partition)
+      .map((p) => formatPartitionName(p.partition))
       .filter(Boolean)
-      .join(', ') || 'GLOBAL';
+      .join(', ') || 'Toàn hệ thống';
 
   return {
     report: {

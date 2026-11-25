@@ -59,12 +59,12 @@ export function CreateIncidentModal({
       onOpenChange(false);
       setIncTitle('');
       setIncSummary('');
-      await onSuccess('Đã khởi tạo hồ sơ báo cáo sự cố an ninh (trạng thái DRAFT).');
+      await onSuccess('Đã tạo hồ sơ sự cố an ninh (trạng thái Bản nháp).');
     } catch (err) {
       if (err instanceof ApiError) {
-        onError(err.message || 'Không thể tạo báo cáo sự cố.');
+        onError(err.message || 'Không thể tạo hồ sơ sự cố.');
       } else {
-        onError('Đã xảy ra lỗi khi tạo sự cố.');
+        onError('Đã xảy ra lỗi khi tạo hồ sơ sự cố.');
       }
     } finally {
       setIsCreatingInc(false);
@@ -76,10 +76,10 @@ export function CreateIncidentModal({
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Lập hồ sơ sự cố an ninh thông tin mới
+            Tạo hồ sơ sự cố an ninh mới
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Ghi nhận sự cố để phục vụ quy trình điều tra, khắc phục và báo cáo lãnh đạo
+            Ghi nhận sự cố để phục vụ quy trình điều tra, khắc phục và báo cáo.
           </DialogDescription>
         </DialogHeader>
 
@@ -108,7 +108,7 @@ export function CreateIncidentModal({
               rows={4}
               value={incSummary}
               onChange={(e) => setIncSummary(e.target.value)}
-              placeholder="Mô tả sự việc, các bằng chứng sơ bộ và mức độ rủi ro đối với tổ chức..."
+              placeholder="Mô tả sự việc, các bằng chứng sơ bộ và mức độ rủi ro đối với tổ chức…"
               className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
             />
             <p className="text-[13px] text-[#717171]">
@@ -128,7 +128,7 @@ export function CreateIncidentModal({
               type="submit"
               variant="primary"
               size="sm"
-              text="Tạo hồ sơ DRAFT"
+              text="Tạo hồ sơ sự cố"
               icon={<FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
               isLoading={isCreatingInc}
               disabled={isCreatingInc || incSummary.trim().length < 10}

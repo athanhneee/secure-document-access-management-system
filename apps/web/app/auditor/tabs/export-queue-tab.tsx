@@ -12,6 +12,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  formatExportFormatLabel,
+  formatExportStatusLabel,
+  formatExportTypeLabel,
+  formatSafeDateVi,
+} from '@/lib/ui-labels';
 import type { ExportJobItem } from '../types';
 
 interface ExportQueueTabProps {
@@ -31,7 +37,7 @@ export function ExportQueueTab({
     <Card>
       <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3">
         <CardTitle className="text-sm sm:text-base text-[#222222]">
-          Hàng đợi xuất báo cáo ({exportJobs.length})
+          Lịch sử xuất báo cáo ({exportJobs.length})
         </CardTitle>
         {canExport && (
           <InteractiveHoverButton
@@ -48,19 +54,19 @@ export function ExportQueueTab({
         <Table>
           <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
             <TableRow>
-              <TableHead className="text-xs text-[#717171]">Mã tác vụ</TableHead>
+              <TableHead className="text-xs text-[#717171]">Mã yêu cầu</TableHead>
               <TableHead className="text-xs text-[#717171]">Loại báo cáo</TableHead>
               <TableHead className="text-xs text-[#717171]">Định dạng</TableHead>
               <TableHead className="text-xs text-[#717171]">Thời gian tạo</TableHead>
               <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
-              <TableHead className="text-xs text-[#717171] text-right">Tải về</TableHead>
+              <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {exportJobs.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-center py-8 text-xs text-[#717171]">
-                  Chưa có tác vụ xuất báo cáo kiểm toán nào trong hàng đợi
+                  Chưa có yêu cầu xuất báo cáo kiểm toán nào.
                 </TableCell>
               </TableRow>
             ) : (
@@ -72,13 +78,15 @@ export function ExportQueueTab({
                     key={job.id}
                     className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
                   >
-                    <TableCell className="font-bold text-xs text-[#222222]">{job.id}</TableCell>
-                    <TableCell className="text-xs text-[#222222]">{job.exportType}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{job.format}</Badge>
+                    <TableCell className="font-mono text-xs text-[#222222]">{job.id}</TableCell>
+                    <TableCell className="text-xs text-[#222222]">
+                      {formatExportTypeLabel(job.exportType)}
                     </TableCell>
-                    <TableCell className="text-xs font-bold text-[#717171]">
-                      {new Date(job.createdAt).toLocaleDateString('vi-VN')}
+                    <TableCell>
+                      <Badge variant="secondary">{formatExportFormatLabel(job.format)}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-[#717171] whitespace-nowrap">
+                      {formatSafeDateVi(job.createdAt, { includeTime: true })}
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -92,7 +100,7 @@ export function ExportQueueTab({
                                 : 'warning'
                         }
                       >
-                        {displayStatus}
+                        {formatExportStatusLabel(displayStatus)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">

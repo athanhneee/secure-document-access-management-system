@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { applyOptimisticStatusById } from '@/lib/optimistic-state';
+import { subscribeRealtimeEvent } from '@/lib/realtime-events';
 import { mapAlertDto, mapIncidentDto } from '../helpers';
 import type {
   AlertApiDto,
@@ -96,7 +97,7 @@ export function useSecurityData() {
         setGatewayHealth('DEGRADED');
         setErrorMessage(
           err instanceof ApiError
-            ? err.message || 'Không thể tải dữ liệu giám sát an ninh SOC.'
+            ? err.message || 'Không thể tải dữ liệu giám sát an ninh thông tin.'
             : 'Không thể kết nối máy chủ giám sát an ninh thông tin.',
         );
       } finally {
@@ -132,7 +133,7 @@ export function useSecurityData() {
         setGatewayHealth('DEGRADED');
         setErrorMessage(
           err instanceof ApiError
-            ? err.message || 'Không thể tải dữ liệu giám sát an ninh SOC.'
+            ? err.message || 'Không thể tải dữ liệu giám sát an ninh thông tin.'
             : 'Không thể kết nối máy chủ giám sát an ninh thông tin.',
         );
       } finally {
@@ -147,6 +148,42 @@ export function useSecurityData() {
     };
   }, [loadSnapshot]);
 
+  useEffect(() => {
+    let alertsTimer: ReturnType<typeof setTimeout> | null = null;
+    let sessionsTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const unsubAlerts = subscribeRealtimeEvent('SECURITY_ALERT_UPDATED', () => {
+      if (alertsTimer) clearTimeout(alertsTimer);
+      alertsTimer = setTimeout(() => {
+        alertsTimer = null;
+        void apiClient<SecurityPaginatedResponse<AlertApiDto>>('/security-alerts?pageSize=50')
+          .then((res) => setAlerts((res.data || []).map(mapAlertDto)))
+          .catch(() => {
+            /* Bỏ qua lỗi mạng thoáng qua khi đồng bộ ngầm cảnh báo SOC */
+          });
+      }, 150);
+    });
+
+    const unsubSessions = subscribeRealtimeEvent('ACCESS_SESSION_UPDATED', () => {
+      if (sessionsTimer) clearTimeout(sessionsTimer);
+      sessionsTimer = setTimeout(() => {
+        sessionsTimer = null;
+        void apiClient<SecurityPaginatedResponse<DocumentSessionItem>>('/access-sessions')
+          .then((res) => setDocumentSessions(res.data || []))
+          .catch(() => {
+            /* Bỏ qua lỗi mạng thoáng qua khi đồng bộ ngầm phiên đọc */
+          });
+      }, 150);
+    });
+
+    return () => {
+      unsubAlerts();
+      unsubSessions();
+      if (alertsTimer) clearTimeout(alertsTimer);
+      if (sessionsTimer) clearTimeout(sessionsTimer);
+    };
+  }, []);
+
   async function runDetection() {
     setErrorMessage(null);
     try {
@@ -154,11 +191,11 @@ export function useSecurityData() {
         method: 'POST',
         body: JSON.stringify({ windowMinutes: 60 }),
       });
-      setMessage('Đã kích hoạt quét phát hiện bất thường trên toàn bộ audit log 60 phút qua.');
+      setMessage('Đã hoàn tất quét phát hiện bất thường trên nhật ký 60 phút qua.');
       await refreshData({ silent: true });
     } catch (err) {
       setErrorMessage(
-        err instanceof ApiError ? err.message : 'Không thể chạy quét phát hiện bất thường.',
+        err instanceof ApiError ? err.message : 'Không thể thực hiện quét phát hiện bất thường.',
       );
     }
   }
@@ -196,8 +233,7 @@ export function useSecurityData() {
       });
       setDocumentSessions((prev) => applyOptimisticStatusById(prev, sessionId, 'TERMINATED'));
       setPendingTerminateSessionId(null);
-      setMessage('Đã cưỡng bức ngắt phiên truy cập tài liệu thành công.');
-      void refreshData({ silent: true });
+      setMessage('Đã ngắt phiên đọc tài liệu khẩn cấp thành công.');
       return true;
     } catch (err) {
       setErrorMessage(

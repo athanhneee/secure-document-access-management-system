@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { formatSafeDateVi, formatSessionStatusLabel } from '@/lib/ui-labels';
 import type { DocumentSessionItem } from '../types';
 
 interface ActiveSessionsTabProps {
@@ -30,11 +31,13 @@ export function ActiveSessionsTab({
   canTerminateSession = true,
   onTerminateSession,
 }: ActiveSessionsTabProps) {
+  const activeCount = documentSessions.filter((s) => s.status === 'ACTIVE').length;
+
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm sm:text-base text-[#222222]">
-          Phiên đọc đang hoạt động ({documentSessions.length})
+          Danh sách phiên đọc ({activeCount} đang hoạt động / {documentSessions.length} tổng)
         </CardTitle>
       </CardHeader>
       <CardContent className="p-0">
@@ -53,7 +56,7 @@ export function ActiveSessionsTab({
             {documentSessions.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-center py-8 text-[#717171] text-xs">
-                  Không có phiên truy cập tài liệu nào đang hoạt động
+                  Hiện không có phiên đọc tài liệu nào.
                 </TableCell>
               </TableRow>
             ) : (
@@ -73,11 +76,11 @@ export function ActiveSessionsTab({
                     {sess.ipAddress}
                   </TableCell>
                   <TableCell className="text-xs text-[#717171]">
-                    {new Date(sess.startedAt).toLocaleString('vi-VN')}
+                    {formatSafeDateVi(sess.startedAt, { includeTime: true })}
                   </TableCell>
                   <TableCell>
                     <Badge variant={sess.status === 'ACTIVE' ? 'success' : 'neutral'}>
-                      {sess.status}
+                      {formatSessionStatusLabel(sess.status)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">

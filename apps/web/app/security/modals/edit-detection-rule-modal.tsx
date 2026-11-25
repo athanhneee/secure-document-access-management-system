@@ -44,10 +44,11 @@ export function EditDetectionRuleModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base font-semibold text-[#222222]">
             <Settings size={20} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
-            <span>Cấu hình luật phát hiện: {ruleCode}</span>
+            <span>Cấu hình quy tắc phát hiện: {ruleCode}</span>
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            {rule?.name || 'Điều chỉnh ngưỡng kích hoạt, cửa sổ quan sát và thời gian hạ nhiệt'}
+            {rule?.name ||
+              'Điều chỉnh ngưỡng kích hoạt, khung thời gian theo dõi và thời gian giãn cách cảnh báo.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -102,7 +103,7 @@ function EditDetectionRuleForm({
       cooldownMinutes <= 1440;
     if (!valid) {
       onError(
-        'Ngưỡng (1–1000) và cửa sổ / thời gian hạ nhiệt (1–1440 phút) phải là số nguyên hợp lệ.',
+        'Ngưỡng (1–1000) và khung theo dõi / giãn cách cảnh báo (1–1440 phút) phải là số nguyên hợp lệ.',
       );
       return;
     }
@@ -120,9 +121,9 @@ function EditDetectionRuleForm({
         }),
       });
       onClose();
-      await onSuccess(`Đã cập nhật cấu hình luật phát hiện [${ruleCode}] thành công.`);
+      await onSuccess(`Đã cập nhật cấu hình quy tắc phát hiện [${ruleCode}] thành công.`);
     } catch (err) {
-      onError(err instanceof ApiError ? err.message : 'Không thể lưu cấu hình luật phát hiện.');
+      onError(err instanceof ApiError ? err.message : 'Không thể lưu cấu hình quy tắc phát hiện.');
     } finally {
       setIsSaving(false);
     }
@@ -148,7 +149,7 @@ function EditDetectionRuleForm({
         </div>
         <div className="space-y-1">
           <label htmlFor="rule-window-minutes" className="font-medium text-[#222222]">
-            Cửa sổ (phút) <span className="text-[#C13515]">*</span>
+            Khung theo dõi (phút) <span className="text-[#C13515]">*</span>
           </label>
           <Input
             id="rule-window-minutes"
@@ -163,7 +164,7 @@ function EditDetectionRuleForm({
         </div>
         <div className="space-y-1">
           <label htmlFor="rule-cooldown-minutes" className="font-medium text-[#222222]">
-            Hạ nhiệt (phút) <span className="text-[#C13515]">*</span>
+            Giãn cách cảnh báo (phút) <span className="text-[#C13515]">*</span>
           </label>
           <Input
             id="rule-cooldown-minutes"
@@ -180,13 +181,13 @@ function EditDetectionRuleForm({
 
       <label
         htmlFor="rule-is-enabled"
-        aria-label="Kích hoạt thực thi tự động"
+        aria-label="Bật kiểm tra tự động"
         className="flex items-center justify-between gap-3 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 cursor-pointer"
       >
         <span className="block">
-          <span className="block font-semibold text-[#222222]">Kích hoạt thực thi tự động</span>
+          <span className="block font-semibold text-[#222222]">Bật kiểm tra tự động</span>
           <span className="block text-[#717171]">
-            Bật hoặc tạm ngưng luật này khi chạy chu kỳ quét SOC
+            Bật hoặc tạm dừng quy tắc này trong chu kỳ quét an ninh.
           </span>
         </span>
         <input

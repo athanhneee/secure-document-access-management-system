@@ -137,13 +137,13 @@ function SecurityWorkspaceContent() {
               {canTraceWatermark && (
                 <TabsTrigger value="watermark-trace" className="flex items-center gap-1.5 text-xs">
                   <QrCode size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Truy vết Watermark</span>
+                  <span>Truy vết watermark</span>
                 </TabsTrigger>
               )}
               {canManageIncidents && (
                 <TabsTrigger value="incidents" className="flex items-center gap-1.5 text-xs">
                   <FileText size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Báo cáo sự cố ({data.incidents.length})</span>
+                  <span>Hồ sơ sự cố ({data.incidents.length})</span>
                 </TabsTrigger>
               )}
               {canTerminateSession && (
@@ -155,13 +155,13 @@ function SecurityWorkspaceContent() {
               {(canViewAlerts || canManageAlerts) && (
                 <TabsTrigger value="detection" className="flex items-center gap-1.5 text-xs">
                   <Settings size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Luật phát hiện ({data.detectionRules.length})</span>
+                  <span>Quy tắc phát hiện ({data.detectionRules.length})</span>
                 </TabsTrigger>
               )}
               {canViewAlerts && (
                 <TabsTrigger value="network-dlp" className="flex items-center gap-1.5 text-xs">
                   <Network size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Network DLP ({dlpAlerts.length})</span>
+                  <span>Giám sát DLP mạng ({dlpAlerts.length})</span>
                 </TabsTrigger>
               )}
             </TabsList>

@@ -13,6 +13,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  formatAlertSeverityLabel,
+  formatAlertStatusLabel,
+  formatDetectionRuleLabel,
+} from '@/lib/ui-labels';
 import { filterSecurityAlerts } from '../helpers';
 import type { SecurityAlertItem } from '../types';
 
@@ -51,10 +56,10 @@ export function AlertsTab({ alerts, onSelectAlert }: AlertsTabProps) {
                 className="min-h-11 sm:h-9 w-full rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
               >
                 <option value="ALL">Mọi mức độ nghiêm trọng</option>
-                <option value="CRITICAL">CRITICAL (Nghiêm trọng)</option>
-                <option value="HIGH">HIGH (Cao)</option>
-                <option value="MEDIUM">MEDIUM (Trung bình)</option>
-                <option value="LOW">LOW (Thấp)</option>
+                <option value="CRITICAL">Nghiêm trọng</option>
+                <option value="HIGH">Cao</option>
+                <option value="MEDIUM">Trung bình</option>
+                <option value="LOW">Thấp</option>
               </select>
             </div>
 
@@ -69,10 +74,11 @@ export function AlertsTab({ alerts, onSelectAlert }: AlertsTabProps) {
                 className="min-h-11 sm:h-9 w-full rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
               >
                 <option value="ALL">Mọi trạng thái xử lý</option>
-                <option value="OPEN">OPEN (Chờ xử lý)</option>
-                <option value="INVESTIGATING">INVESTIGATING (Đang điều tra)</option>
-                <option value="RESOLVED">RESOLVED (Đã xử lý)</option>
-                <option value="FALSE_POSITIVE">FALSE_POSITIVE (Báo động giả)</option>
+                <option value="OPEN">Chờ xử lý</option>
+                <option value="INVESTIGATING">Đang điều tra</option>
+                <option value="ESCALATED">Đã chuyển cấp xử lý</option>
+                <option value="RESOLVED">Đã xử lý</option>
+                <option value="FALSE_POSITIVE">Báo động giả</option>
               </select>
             </div>
           </div>
@@ -87,14 +93,14 @@ export function AlertsTab({ alerts, onSelectAlert }: AlertsTabProps) {
               <TableHead className="text-xs text-[#717171]">Đối tượng phát hiện</TableHead>
               <TableHead className="text-xs text-[#717171]">Địa chỉ IP</TableHead>
               <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
-              <TableHead className="text-xs text-[#717171] text-right">Xử lý</TableHead>
+              <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredAlerts.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="py-8 text-center text-xs text-[#717171]">
-                  Không có cảnh báo bảo mật nào khớp với bộ lọc hiện tại
+                  Không có cảnh báo bảo mật nào khớp với bộ lọc hiện tại.
                 </TableCell>
               </TableRow>
             ) : (
@@ -113,12 +119,14 @@ export function AlertsTab({ alerts, onSelectAlert }: AlertsTabProps) {
                             : 'info'
                       }
                     >
-                      {alert.severity}
+                      {formatAlertSeverityLabel(alert.severity)}
                     </Badge>
                   </TableCell>
                   <TableCell>
                     <div className="font-semibold text-xs text-[#222222]">{alert.title}</div>
-                    <div className="text-xs font-bold text-[#717171]">{alert.ruleCode}</div>
+                    <div className="text-xs text-[#717171]">
+                      {formatDetectionRuleLabel(alert.ruleCode)}
+                    </div>
                   </TableCell>
                   <TableCell className="text-xs text-[#222222]">
                     {alert.detectedUserName || 'Chưa định danh'}
@@ -131,12 +139,12 @@ export function AlertsTab({ alerts, onSelectAlert }: AlertsTabProps) {
                       variant={
                         alert.status === 'OPEN'
                           ? 'destructive'
-                          : alert.status === 'INVESTIGATING'
+                          : alert.status === 'INVESTIGATING' || alert.status === 'ESCALATED'
                             ? 'warning'
                             : 'success'
                       }
                     >
-                      {alert.status}
+                      {formatAlertStatusLabel(alert.status)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">

@@ -30,9 +30,9 @@ export function SecurityWorkspaceHeader({
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="min-w-0">
-          <Badge variant="destructive">Security Officer</Badge>
+          <Badge variant="destructive">Cán bộ an ninh thông tin</Badge>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-1">
-            Giám sát An ninh &amp; Điều tra Sự cố
+            Giám sát an ninh và điều tra sự cố
           </h1>
         </div>
 
@@ -56,7 +56,7 @@ export function SecurityWorkspaceHeader({
             <InteractiveHoverButton
               variant="primary"
               size="sm"
-              text="Lập báo cáo sự cố"
+              text="Tạo hồ sơ sự cố"
               icon={<FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
               onClick={onOpenCreateIncident}
             />

@@ -6,6 +6,7 @@ import { apiClient, ApiError } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { formatSafeDateVi } from '@/lib/ui-labels';
 import { mapWatermarkVerifyDto, normalizeWatermarkTokenInput } from '../helpers';
 import type { WatermarkProvenance, WatermarkVerifyDto } from '../types';
 
@@ -52,9 +53,9 @@ export function WatermarkForensicsTab({
       const provenance = mapWatermarkVerifyDto(res);
       setWmTraceResult(provenance);
       if (provenance.verified) {
-        onMessage('Đã hoàn tất đối soát chứng cứ dấu bản quyền.');
+        onMessage('Đã hoàn tất đối soát thông tin watermark bảo mật.');
       } else {
-        onError('Phản hồi đối soát thiếu xác nhận hợp lệ từ hệ thống kiểm chứng.');
+        onError('Không thể xác nhận tính hợp lệ của mã watermark này.');
       }
     } catch (err) {
       if (err instanceof ApiError) {
@@ -72,14 +73,14 @@ export function WatermarkForensicsTab({
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm sm:text-base text-[#222222]">
-            Tra cứu dấu bản quyền (Watermark Forensic)
+            Truy vết watermark bảo mật
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3.5 text-xs">
           <form onSubmit={handleTraceWatermark} className="space-y-3" noValidate>
             <div className="space-y-1.5">
               <label htmlFor="wm-token-input" className="font-medium text-[#222222]">
-                Mã Token Watermark (12–48 ký tự hex)
+                Mã truy vết watermark
               </label>
               <Input
                 id="wm-token-input"
@@ -88,7 +89,7 @@ export function WatermarkForensicsTab({
                   setWmInputToken(e.target.value);
                   if (validationError) setValidationError(null);
                 }}
-                placeholder="Ví dụ: WM-2e59958fa6c7 hoặc WM-<48-hex>"
+                placeholder="Ví dụ: WM-2e59958fa6c7"
                 aria-invalid={Boolean(validationError)}
                 className="min-h-11 sm:h-9 font-mono text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
               />
@@ -103,7 +104,7 @@ export function WatermarkForensicsTab({
               type="submit"
               variant="primary"
               size="md"
-              text="Đối soát xuất xứ tài liệu"
+              text="Đối soát nguồn gốc tài liệu"
               icon={<Search size={16} strokeWidth={1.75} aria-hidden="true" />}
               isLoading={isTracingWm}
               disabled={isTracingWm || !wmInputToken.trim()}
@@ -112,8 +113,8 @@ export function WatermarkForensicsTab({
           </form>
 
           <p className="rounded-[14px] border border-[#ebebeb] bg-[#f7f7f7] px-3 py-2 text-[#717171] text-xs leading-relaxed">
-            Hỗ trợ dán mã <code>WM-...</code> hoặc chuỗi hex 12–48 ký tự trích xuất trực tiếp từ lớp
-            watermark PDF để truy nguyên phiên đọc/tải.
+            Hỗ trợ nhập mã bắt đầu bằng <code>WM-</code> hoặc dán chuỗi mã trích xuất trực tiếp từ
+            lớp watermark trên tài liệu PDF để tra cứu nguồn gốc phiên đọc.
           </p>
         </CardContent>
       </Card>
@@ -121,7 +122,7 @@ export function WatermarkForensicsTab({
       <Card className="flex flex-col justify-between">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm sm:text-base text-[#222222]">
-            Kết quả đối soát bằng chứng
+            Kết quả truy vết nguồn gốc
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 flex flex-col justify-center text-xs">
@@ -130,7 +131,7 @@ export function WatermarkForensicsTab({
               <div className="space-y-3 rounded-[18px] border border-[#008A05]/20 bg-[#008A05]/5 p-4">
                 <div className="flex items-center gap-2 text-[#008A05] font-semibold border-b border-[#008A05]/15 pb-2">
                   <CheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Đối soát thành công · Bằng chứng hợp lệ</span>
+                  <span>Đối soát thành công · Mã watermark hợp lệ</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2.5 text-[#222222]">
                   <div className="min-w-0">
@@ -168,11 +169,11 @@ export function WatermarkForensicsTab({
                   <div className="min-w-0">
                     <div className="text-[#717171]">Thời điểm tạo</div>
                     <div className="font-semibold text-[#222222]">
-                      {wmTraceResult.generatedAtUtc}
+                      {formatSafeDateVi(wmTraceResult.generatedAtUtc, { includeTime: true })}
                     </div>
                   </div>
                   <div className="min-w-0">
-                    <div className="text-[#717171]">Session ID</div>
+                    <div className="text-[#717171]">Mã phiên đọc</div>
                     <div className="font-mono text-[#717171] break-all">
                       {wmTraceResult.sessionId}
                     </div>
@@ -183,17 +184,17 @@ export function WatermarkForensicsTab({
               <div className="space-y-2 rounded-[18px] border border-[#C13515]/20 bg-[#C13515]/5 p-4 text-[#C13515]">
                 <div className="flex items-center gap-2 font-semibold">
                   <AlertTriangle size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Chưa xác thực · Không đủ căn cứ pháp chứng</span>
+                  <span>Không xác thực được mã watermark</span>
                 </div>
                 <p className="text-[#717171] text-xs">
-                  Phản hồi không chứa xác nhận mật mã hợp lệ từ sổ cái đối soát.
+                  Hệ thống không tìm thấy bản ghi khớp với mã watermark đã cung cấp.
                 </p>
               </div>
             )
           ) : (
             <div className="flex flex-col items-center justify-center text-center py-6 px-4 text-[#717171] space-y-2">
               <QrCode size={24} strokeWidth={1.75} className="text-[#717171]" aria-hidden="true" />
-              <p>Nhập mã token bên trái và bấm đối soát để xem kết quả</p>
+              <p>Nhập mã watermark và bấm đối soát để xem kết quả truy vết.</p>
             </div>
           )}
         </CardContent>

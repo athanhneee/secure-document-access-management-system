@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { formatExportFormatLabel } from '@/lib/ui-labels';
 import { normalizeExportJob } from '../helpers';
 import type { ExportFormat, ExportJobItem } from '../types';
 
@@ -66,11 +67,11 @@ export function ExportReportModal({
       onOpenChange(false);
       onJobCreated(
         normalized,
-        `Đã tạo tác vụ xuất báo cáo định dạng ${exportFormat}. Báo cáo được tạo bất đồng bộ với TTL 24h và bảo vệ chống CSV Formula Injection.`,
+        `Đã tạo yêu cầu xuất báo cáo định dạng ${formatExportFormatLabel(exportFormat)}. Tệp báo cáo đang được xử lý và có hiệu lực tải về trong 24 giờ.`,
       );
     } catch (err) {
       if (err instanceof ApiError) {
-        onError(err.message || 'Không thể tạo tác vụ xuất báo cáo.');
+        onError(err.message || 'Không thể tạo yêu cầu xuất báo cáo.');
       } else {
         onError('Đã xảy ra lỗi khi xuất báo cáo.');
       }
@@ -79,22 +80,23 @@ export function ExportReportModal({
     }
   }
 
+  const isSpreadsheetFormat = exportFormat === 'CSV' || exportFormat === 'EXCEL';
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Xuất báo cáo kiểm toán bảo mật
+            Xuất báo cáo kiểm toán
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Chọn định dạng xuất dữ liệu. Hệ thống tự động khử mã thực thi độc hại (CSV Formula
-            Injection)
+            Chọn định dạng tệp xuất dữ liệu nhật ký kiểm toán.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleTriggerExport} className="space-y-4 py-2 text-xs">
           <fieldset className="space-y-1.5 border-0 p-0 m-0 min-w-0">
-            <legend className="font-medium text-[#222222] block mb-1.5">Chọn định dạng tệp:</legend>
+            <legend className="font-medium text-[#222222] block mb-1.5">Chọn định dạng tệp</legend>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {FORMAT_OPTIONS.map(({ value, label, Icon }) => {
                 const selected = exportFormat === value;
@@ -118,17 +120,18 @@ export function ExportReportModal({
             </div>
           </fieldset>
 
-          <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 text-[#717171] text-xs leading-relaxed">
-            <div className="flex items-center gap-1.5 text-[#008489] font-semibold">
-              <Shield size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span>Chống CSV Formula Injection:</span>
+          {isSpreadsheetFormat && (
+            <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 text-[#717171] text-xs leading-relaxed">
+              <div className="flex items-center gap-1.5 text-[#008489] font-semibold">
+                <Shield size={16} strokeWidth={1.75} aria-hidden="true" />
+                <span>Bảo vệ an toàn bảng tính</span>
+              </div>
+              <p>
+                Nội dung văn bản trong tệp bảng tính được tự động chuẩn hóa để ngăn thực thi công
+                thức ngoài ý muốn khi mở trên Excel hoặc các phần mềm bảng tính khác.
+              </p>
             </div>
-            <p>
-              Mọi trường văn bản bắt đầu bằng các ký tự nguy hiểm (<code>=</code>, <code>+</code>,{' '}
-              <code>-</code>, <code>@</code>, tab, xuống dòng) đều được thêm dấu nháy đơn{' '}
-              <code>&apos;</code> phía trước để ngăn chặn thực thi mã macro khi mở trong Excel/Calc.
-            </p>
-          </div>
+          )}
 
           <DialogFooter className="pt-2">
             <InteractiveHoverButton

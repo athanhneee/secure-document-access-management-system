@@ -11,6 +11,11 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import {
+  formatPermissionActionLabel,
+  formatRequestStatusLabel,
+  formatSafeDateVi,
+} from '@/lib/ui-labels';
 import { computeRequestSpanDays } from '../helpers';
 import type { MyRequestItem } from '../types';
 
@@ -31,17 +36,17 @@ export function MyRequestsTab({
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm sm:text-base text-[#222222]">
-          Yêu cầu cấp quyền cá nhân ({myRequests.length})
+          Yêu cầu truy cập của tôi ({myRequests.length})
         </CardTitle>
       </CardHeader>
       <CardContent className="p-0">
         <Table>
           <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
             <TableRow>
-              <TableHead className="text-xs text-[#717171]">Tài liệu mục tiêu</TableHead>
+              <TableHead className="text-xs text-[#717171]">Tài liệu</TableHead>
               <TableHead className="text-xs text-[#717171]">Quyền yêu cầu</TableHead>
-              <TableHead className="text-xs text-[#717171]">Thời gian yêu cầu</TableHead>
-              <TableHead className="text-xs text-[#717171]">Thời gian gửi</TableHead>
+              <TableHead className="text-xs text-[#717171]">Thời hạn đề nghị</TableHead>
+              <TableHead className="text-xs text-[#717171]">Ngày gửi</TableHead>
               <TableHead className="text-xs text-[#717171]">Trạng thái xử lý</TableHead>
               <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
             </TableRow>
@@ -50,7 +55,7 @@ export function MyRequestsTab({
             {myRequests.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-center py-8 text-[#717171] text-xs">
-                  Bạn chưa gửi yêu cầu cấp quyền nào
+                  Bạn chưa gửi yêu cầu quyền truy cập nào.
                 </TableCell>
               </TableRow>
             ) : (
@@ -60,14 +65,16 @@ export function MyRequestsTab({
                     {req.documentTitle}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="secondary">{req.requestedAction}</Badge>
+                    <Badge variant="secondary">
+                      {formatPermissionActionLabel(req.requestedAction)}
+                    </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-[#222222]">
                     {req.requestedFrom && req.requestedUntil ? (
                       <div className="flex flex-col text-xs">
                         <span className="font-medium text-[#222222]">
-                          {new Date(req.requestedFrom).toLocaleDateString('vi-VN')} &rarr;{' '}
-                          {new Date(req.requestedUntil).toLocaleDateString('vi-VN')}
+                          {formatSafeDateVi(req.requestedFrom)} &rarr;{' '}
+                          {formatSafeDateVi(req.requestedUntil)}
                         </span>
                         <span className="text-[13px] text-[#717171]">
                           ({computeRequestSpanDays(req.requestedFrom, req.requestedUntil)} ngày)
@@ -78,7 +85,7 @@ export function MyRequestsTab({
                     )}
                   </TableCell>
                   <TableCell className="text-xs text-[#717171] font-bold">
-                    {new Date(req.createdAt).toLocaleDateString('vi-VN')}
+                    {formatSafeDateVi(req.createdAt)}
                   </TableCell>
                   <TableCell>
                     <Badge
@@ -92,7 +99,7 @@ export function MyRequestsTab({
                               : 'destructive'
                       }
                     >
-                      {req.status}
+                      {formatRequestStatusLabel(req.status)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">

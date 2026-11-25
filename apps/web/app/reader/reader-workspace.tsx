@@ -78,9 +78,9 @@ function ReaderWorkspaceContent() {
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="min-w-0">
-            <Badge variant="info">Document Reader</Badge>
+            <Badge variant="info">Người đọc tài liệu</Badge>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
-              Khám phá &amp; Đọc Tài liệu Mật
+              Tra cứu và đọc tài liệu mật
             </h1>
           </div>
 
@@ -140,8 +140,8 @@ function ReaderWorkspaceContent() {
                     className="shrink-0"
                     aria-hidden="true"
                   />
-                  <span className="hidden sm:inline">Khám phá danh mục</span>
-                  <span className="sm:hidden">Khám phá</span>
+                  <span className="hidden sm:inline">Tra cứu tài liệu</span>
+                  <span className="sm:hidden">Tra cứu</span>
                   <span className="text-xs opacity-80">({catalog.discoverDocs.length})</span>
                 </TabsTrigger>
               )}
@@ -151,8 +151,8 @@ function ReaderWorkspaceContent() {
                   className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-1.5 px-1 sm:px-2"
                 >
                   <BookOpen size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-                  <span className="hidden sm:inline">Tài liệu được xem</span>
-                  <span className="sm:hidden">Được xem</span>
+                  <span className="hidden sm:inline">Tài liệu được cấp quyền</span>
+                  <span className="sm:hidden">Được cấp</span>
                   <span className="text-xs opacity-80">({catalog.myDocs.length})</span>
                 </TabsTrigger>
               )}
@@ -162,7 +162,7 @@ function ReaderWorkspaceContent() {
                   className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-1.5 px-1 sm:px-2"
                 >
                   <Clock size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-                  <span className="hidden sm:inline">Theo dõi yêu cầu</span>
+                  <span className="hidden sm:inline">Yêu cầu của tôi</span>
                   <span className="sm:hidden">Yêu cầu</span>
                   <span className="text-xs opacity-80">({catalog.myRequests.length})</span>
                 </TabsTrigger>
@@ -226,9 +226,10 @@ function ReaderWorkspaceContent() {
           onOpenChange={(open) => {
             if (!open) catalog.setPendingCancelRequestId(null);
           }}
-          title="Xác nhận hủy yêu cầu cấp quyền"
-          description="Bạn có chắc chắn muốn hủy yêu cầu cấp quyền đang chờ phê duyệt này không?"
+          title="Xác nhận hủy yêu cầu truy cập"
+          description="Bạn có chắc chắn muốn hủy yêu cầu quyền truy cập đang chờ phê duyệt này không?"
           confirmText="Hủy yêu cầu"
+          cancelText="Giữ nguyên"
           variant="danger"
           isLoading={catalog.cancellingRequestId !== null}
           onConfirm={() => void catalog.handleCancelRequest()}

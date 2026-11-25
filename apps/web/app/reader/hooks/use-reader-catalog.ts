@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, type FormEvent } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { applyOptimisticStatusById } from '@/lib/optimistic-state';
+import { subscribeRealtimeEvent } from '@/lib/realtime-events';
+import { formatPermissionActionLabel } from '@/lib/ui-labels';
 import {
   buildRequestWindowIso,
   isActiveReaderGrant,
@@ -58,7 +60,7 @@ export function useReaderCatalog() {
       if (docsResult.status === 'fulfilled') {
         setDiscoverDocs((docsResult.value.data || []).map(mapReaderDocumentDto));
       } else {
-        setErrorMessage('Không thể tải danh sách tài liệu từ máy chủ.');
+        setErrorMessage('Không thể tải danh sách tài liệu. Vui lòng thử lại.');
       }
 
       if (myGrantsResult.status === 'fulfilled') {
@@ -82,6 +84,27 @@ export function useReaderCatalog() {
     }
   }, []);
 
+  const refreshGrantsAndRequestsSilently = useCallback(async () => {
+    const [myGrantsResult, requestsResult] = await Promise.allSettled([
+      apiClient<{ data: ReaderGrantApiDto[] }>('/documents/my-grants?pageSize=50'),
+      apiClient<{ data: MyRequestItem[] }>('/access-requests?scope=my'),
+    ]);
+
+    if (myGrantsResult.status === 'fulfilled') {
+      const nowMs = Date.now();
+      setMyDocs(
+        (myGrantsResult.value.data || [])
+          .filter((g) => isActiveReaderGrant(g, nowMs))
+          .map((g, idx) => mapReaderGrantDto(g, idx))
+          .filter((g) => Boolean(g.documentId)),
+      );
+    }
+
+    if (requestsResult.status === 'fulfilled') {
+      setMyRequests(requestsResult.value.data || []);
+    }
+  }, []);
+
   useEffect(() => {
     let ignore = false;
     const run = async () => {
@@ -96,6 +119,26 @@ export function useReaderCatalog() {
     };
   }, [refreshData]);
 
+  useEffect(() => {
+    let syncTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleSync = () => {
+      if (syncTimer) clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        syncTimer = null;
+        void refreshGrantsAndRequestsSilently();
+      }, 120);
+    };
+
+    const unsubRequests = subscribeRealtimeEvent('ACCESS_REQUEST_UPDATED', scheduleSync);
+    const unsubGrants = subscribeRealtimeEvent('ACCESS_GRANT_UPDATED', scheduleSync);
+
+    return () => {
+      unsubRequests();
+      unsubGrants();
+      if (syncTimer) clearTimeout(syncTimer);
+    };
+  }, [refreshGrantsAndRequestsSilently]);
+
   function openRequestModal(doc: DiscoverableDoc) {
     setErrorMessage(null);
     setTargetDoc(doc);
@@ -109,7 +152,7 @@ export function useReaderCatalog() {
     if (!targetDoc) return;
 
     if (justification.trim().length < 10) {
-      setErrorMessage('Lý do đề xuất truy cập phải có ít nhất 10 ký tự.');
+      setErrorMessage('Lý do đề xuất truy cập phải có tối thiểu 10 ký tự.');
       return;
     }
 
@@ -136,7 +179,7 @@ export function useReaderCatalog() {
       });
 
       setMessage(
-        `Yêu cầu quyền ${requestedAction} tài liệu "${targetDoc.title}" đã được gửi đến chủ sở hữu để xét duyệt.`,
+        `Đã gửi yêu cầu quyền "${formatPermissionActionLabel(requestedAction)}" cho tài liệu "${targetDoc.title}" đến chủ sở hữu để phê duyệt.`,
       );
       setRequestModalOpen(false);
       setTargetDoc(null);
@@ -167,7 +210,7 @@ export function useReaderCatalog() {
       });
       setPendingCancelRequestId(null);
       setMyRequests((prev) => applyOptimisticStatusById(prev, requestId, 'CANCELLED'));
-      setMessage('Đã hủy yêu cầu cấp quyền thành công.');
+      setMessage('Đã hủy yêu cầu truy cập thành công.');
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError

@@ -55,7 +55,7 @@ export function CatalogTab({
             onChange={(e) => onClassificationChange(e.target.value)}
             className="min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
           >
-            <option value="ALL">Tất cả mức mật</option>
+            <option value="ALL">Tất cả mức độ mật</option>
             <option value="UNCLASSIFIED">Không mật</option>
             {/* CONFLICT-RESOLVED: Đổi mã lọc mức Nội bộ từ RESTRICTED sang INTERNAL khớp chuẩn classificationLevelCode từ máy chủ */}
             <option value="INTERNAL">Nội bộ</option>
@@ -76,7 +76,7 @@ export function CatalogTab({
               name="reader-catalog-search"
               type="text"
               aria-label="Tìm kiếm danh mục tài liệu"
-              placeholder="Tìm kiếm tài liệu..."
+              placeholder="Tìm theo tên hoặc mã tài liệu…"
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               className="pl-10 min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
@@ -92,14 +92,16 @@ export function CatalogTab({
               <TableHead className="text-xs text-[#717171]">Mức độ mật</TableHead>
               <TableHead className="text-xs text-[#717171]">Đơn vị chủ quản</TableHead>
               <TableHead className="text-xs text-[#717171]">Chính sách tải</TableHead>
-              <TableHead className="text-xs text-[#717171] text-right">Hành động</TableHead>
+              <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {documents.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-center py-8 text-[#717171] text-xs">
-                  Không tìm thấy tài liệu phù hợp với điều kiện tìm kiếm
+                  {searchQuery.trim() || selectedClassification !== 'ALL'
+                    ? 'Không tìm thấy tài liệu phù hợp với điều kiện lọc.'
+                    : 'Hiện chưa có tài liệu nào trong danh mục.'}
                 </TableCell>
               </TableRow>
             ) : (
@@ -113,11 +115,11 @@ export function CatalogTab({
                     <TableCell>
                       <div className="font-semibold text-xs text-[#222222]">{doc.title}</div>
                       <div className="text-xs font-bold text-[#717171]">
-                        {doc.documentCode || 'DOC-' + doc.id.slice(0, 8)}
+                        {doc.documentCode || 'Chưa cấp mã'}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <ClassificationBadge level={doc.classificationCode} showRank />
+                      <ClassificationBadge level={doc.classificationCode} />
                     </TableCell>
                     <TableCell className="text-xs text-[#222222]">
                       {doc.departmentName || '—'}
@@ -147,7 +149,7 @@ export function CatalogTab({
                             <InteractiveHoverButton
                               size="sm"
                               variant="secondary"
-                              text="Yêu cầu quyền"
+                              text="Yêu cầu truy cập"
                               icon={<Send size={16} strokeWidth={1.75} aria-hidden="true" />}
                               onClick={() => onOpenRequestModal(doc)}
                             />

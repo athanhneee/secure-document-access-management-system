@@ -16,7 +16,7 @@ import type { useReaderCatalog } from '../hooks/use-reader-catalog';
 
 const DURATION_OPTIONS = [
   { days: 3, label: '3 ngày' },
-  { days: 7, label: '7 ngày (Chuẩn)' },
+  { days: 7, label: '7 ngày (mặc định)' },
   { days: 14, label: '14 ngày' },
   { days: 30, label: '30 ngày' },
 ] as const;
@@ -55,16 +55,16 @@ export function RequestAccessModal({
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Gửi yêu cầu cấp quyền truy cập tài liệu
+            Gửi yêu cầu quyền truy cập tài liệu
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Nêu rõ căn cứ nghiệp vụ để chủ sở hữu tài liệu và hệ thống PDP phê duyệt
+            Nêu rõ lý do công việc để chủ sở hữu tài liệu xem xét phê duyệt.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmitRequest} className="space-y-3.5 py-2 text-xs">
           <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5">
-            <div className="text-[#717171]">Tài liệu yêu cầu:</div>
+            <div className="text-[#717171]">Tài liệu yêu cầu</div>
             <div className="font-semibold text-[#222222]">{targetDoc?.title}</div>
             {targetDoc && (
               <div className="pt-1">
@@ -74,7 +74,7 @@ export function RequestAccessModal({
           </div>
 
           <fieldset className="space-y-1 border-0 p-0 m-0 min-w-0">
-            <legend className="font-medium text-[#222222] block mb-1">Mức quyền yêu cầu:</legend>
+            <legend className="font-medium text-[#222222] block mb-1">Mức quyền yêu cầu</legend>
             <div
               className={`grid grid-cols-1 gap-2 ${targetDoc?.allowDownload && canDownloadDocument ? 'sm:grid-cols-2' : ''}`}
             >
@@ -89,7 +89,7 @@ export function RequestAccessModal({
                 }`}
               >
                 <Eye size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>Xem trực tuyến (VIEW)</span>
+                <span>Chỉ xem trực tuyến</span>
               </button>
               {Boolean(targetDoc?.allowDownload) && canDownloadDocument && (
                 <button
@@ -103,7 +103,7 @@ export function RequestAccessModal({
                   }`}
                 >
                   <Download size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Xem &amp; Tải bản sao</span>
+                  <span>Xem &amp; Tải về</span>
                 </button>
               )}
             </div>
@@ -111,7 +111,7 @@ export function RequestAccessModal({
 
           <fieldset className="space-y-1.5 border-0 p-0 m-0 min-w-0">
             <legend className="font-medium text-[#222222] block mb-1.5">
-              Thời gian sử dụng mong muốn:
+              Thời hạn sử dụng mong muốn
             </legend>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {DURATION_OPTIONS.map((opt) => (
@@ -140,9 +140,7 @@ export function RequestAccessModal({
                 onClick={() => setIsCustomDuration(!isCustomDuration)}
                 className="min-h-11 sm:min-h-8 inline-flex items-center rounded-full px-2 py-1 text-xs text-[#008489] hover:underline font-medium cursor-pointer"
               >
-                {isCustomDuration
-                  ? '← Chọn thời hạn nhanh'
-                  : 'Tùy chọn khoảng thời gian cụ thể (Từ ngày - Đến ngày) →'}
+                {isCustomDuration ? 'Chọn thời hạn nhanh' : 'Tùy chọn khoảng thời gian cụ thể'}
               </button>
             </div>
 
@@ -153,7 +151,7 @@ export function RequestAccessModal({
                     htmlFor="custom-requested-from"
                     className="text-[13px] text-[#717171] block mb-0.5"
                   >
-                    Từ ngày:
+                    Từ thời điểm
                   </label>
                   <input
                     id="custom-requested-from"
@@ -168,7 +166,7 @@ export function RequestAccessModal({
                     htmlFor="custom-requested-until"
                     className="text-[13px] text-[#717171] block mb-0.5"
                   >
-                    Đến ngày:
+                    Đến thời điểm
                   </label>
                   <input
                     id="custom-requested-until"
@@ -184,7 +182,7 @@ export function RequestAccessModal({
 
           <div className="space-y-1">
             <label htmlFor="req-justification" className="font-medium text-[#222222]">
-              Căn cứ nghiệp vụ / Lý do đề xuất <span className="text-[#C13515]">*</span>
+              Lý do đề xuất truy cập <span className="text-[#C13515]">*</span>
             </label>
             <Textarea
               id="req-justification"
@@ -192,11 +190,13 @@ export function RequestAccessModal({
               rows={3}
               value={justification}
               onChange={(e) => setJustification(e.target.value)}
-              placeholder="Mô tả nhiệm vụ hoặc dự án cụ thể cần đối chiếu thông tin này..."
+              placeholder="Mô tả nhiệm vụ hoặc dự án cụ thể cần sử dụng tài liệu này…"
               className="text-xs bg-[#f7f7f7] border-[#ebebeb] text-[#222222]"
             />
             <p className="text-[13px] text-[#717171]">
-              Tối thiểu 10 ký tự ({justification.trim().length}/10)
+              {justification.trim().length < 10
+                ? `Cần thêm ${10 - justification.trim().length} ký tự (tối thiểu 10 ký tự).`
+                : `Đã đạt yêu cầu (${justification.trim().length} ký tự).`}
             </p>
           </div>
 

@@ -13,6 +13,7 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { formatPermissionActionLabel, formatSafeDateVi } from '@/lib/ui-labels';
 import type { MyGrantedDoc } from '../types';
 
 interface GrantedDocumentsTabProps {
@@ -47,14 +48,14 @@ export function GrantedDocumentsTab({
               <TableHead className="text-xs text-[#717171]">Mức độ mật</TableHead>
               <TableHead className="text-xs text-[#717171]">Quyền được cấp</TableHead>
               <TableHead className="text-xs text-[#717171]">Hiệu lực đến</TableHead>
-              <TableHead className="text-xs text-[#717171] text-right">Xem &amp; Tải</TableHead>
+              <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {myDocs.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-center py-8 text-[#717171] text-xs">
-                  Bạn chưa có giấy phép truy cập nào còn hiệu lực
+                  Bạn chưa có tài liệu nào được cấp quyền truy cập còn hiệu lực.
                 </TableCell>
               </TableRow>
             ) : (
@@ -71,17 +72,17 @@ export function GrantedDocumentsTab({
                     <TableCell>
                       <div className="font-semibold text-xs text-[#222222]">{doc.title}</div>
                       <div className="text-xs font-bold text-[#717171]">
-                        {doc.documentCode || 'DOC-' + doc.id.slice(0, 8)}
+                        {doc.documentCode || 'Chưa cấp mã'}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <ClassificationBadge level={doc.classificationCode} showRank />
+                      <ClassificationBadge level={doc.classificationCode} />
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-3">
                         {doc.permissions.map((p) => (
                           <Badge key={p} variant="secondary">
-                            {p}
+                            {formatPermissionActionLabel(p)}
                           </Badge>
                         ))}
                       </div>
@@ -89,7 +90,7 @@ export function GrantedDocumentsTab({
                     <TableCell className="text-xs font-bold text-[#222222]">
                       <span className="inline-flex items-center gap-1.5">
                         <span className="dot dot-warning" aria-hidden="true" />
-                        <span>{new Date(doc.validUntil).toLocaleDateString('vi-VN')}</span>
+                        <span>{formatSafeDateVi(doc.validUntil)}</span>
                       </span>
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
@@ -98,7 +99,7 @@ export function GrantedDocumentsTab({
                           <InteractiveHoverButton
                             size="sm"
                             variant="primary"
-                            text="Xem"
+                            text="Xem tài liệu"
                             icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
                             onClick={() => onOpenPreview(doc)}
                           />

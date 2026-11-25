@@ -71,7 +71,7 @@ export function mapReaderDocumentDto(d: ReaderDocumentApiDto): DiscoverableDoc {
 
   return {
     id: d.id,
-    title: d.title || 'Tài liệu không tên',
+    title: d.title || 'Tài liệu chưa có tiêu đề',
     documentCode: d.documentCode || d.document_code,
     classificationCode: clsCode,
     classificationRank: clsRank,
@@ -210,7 +210,7 @@ export function triggerWatermarkedDownload(blob: Blob, documentCode?: string): v
   const downloadUrl = window.URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = downloadUrl;
-  link.download = `${documentCode || 'DOCUMENT'}_watermarked.pdf`;
+  link.download = `${documentCode || 'TAI-LIEU'}_bao-mat.pdf`;
   document.body.appendChild(link);
   link.click();
   link.remove();

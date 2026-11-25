@@ -1,12 +1,13 @@
 'use client';
 
 /**
- * Thuật toán: Biểu Mẫu Đăng Ký Khóa Bảo Mật FIDO2 / Passkey Lần Đầu Kèm Cảnh Báo Loopback (`MfaWebAuthnEnrollPanel`)
- * Mục đích: Thu thập nhãn gợi nhớ thiết bị (tối đa 80 ký tự), phát hiện địa chỉ IP `127.0.0.1` để nhắc chuyển sang `localhost` và kích hoạt luồng tạo cặp khóa công khai WebAuthn (`startRegistration`).
+ * Thuật toán: Biểu Mẫu Đăng Ký Khóa Bảo Mật FIDO2 / Passkey Lần Đầu Chuẩn Hệ Thống Thiết Kế (`MfaWebAuthnEnrollPanel`, V-62, #59)
+ * Mục đích: Thu thập nhãn gợi nhớ thiết bị (tối đa 80 ký tự), phát hiện địa chỉ IP `127.0.0.1` để nhắc chuyển sang `localhost`, đảm bảo tương phản WCAG 2.1 AA (`#222222` / `#717171`) và sử dụng `InteractiveHoverButton` chuẩn hệ thống thay cho nút đen đặc tự chế.
  */
 import type { FormEvent } from 'react';
 import { AlertTriangle, Fingerprint, ShieldCheck } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { useLocalhostSwitchUrl } from './webauthn-binary';
 
 export interface MfaWebAuthnEnrollPanelProps {
@@ -82,23 +83,15 @@ export function MfaWebAuthnEnrollPanel({
         />
       </div>
 
-      <button
+      <InteractiveHoverButton
         type="submit"
+        variant="primary"
+        isLoading={isRegistering}
         disabled={isRegistering}
-        className="w-full min-h-11 py-3 px-4 rounded-full border border-[#222222] bg-[#222222] text-[#ffffff] hover:opacity-90 transition-all flex items-center justify-center gap-2 text-xs font-semibold shadow-xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-      >
-        {isRegistering ? (
-          <>
-            <div className="h-4 w-4 rounded-full border-2 border-[#ffffff]/30 border-t-[#ffffff] animate-spin" />
-            <span>Đang chờ xác nhận thiết bị…</span>
-          </>
-        ) : (
-          <>
-            <Fingerprint size={16} strokeWidth={2} className="text-[#ffffff]" aria-hidden="true" />
-            <span>Đăng ký khóa bảo mật / Passkey</span>
-          </>
-        )}
-      </button>
+        icon={<Fingerprint size={16} strokeWidth={2} aria-hidden="true" />}
+        text="Đăng ký khóa bảo mật / Passkey"
+        className="w-full py-2.5 text-xs font-semibold"
+      />
     </form>
   );
 }

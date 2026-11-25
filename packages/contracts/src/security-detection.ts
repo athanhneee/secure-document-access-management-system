@@ -158,17 +158,34 @@ export function resolveBusinessHoursUtc(parameters?: Record<string, unknown> | n
 }
 
 /**
- * Algorithm: Wrap-Around UTC Off-Hours & Weekend Temporal Classifier.
- * Evaluates whether `occurredAt` falls on a UTC weekend (`Saturday`/`Sunday`) or outside the
- * inclusive `[startHourUtc, endHourUtc]` business interval (handling midnight-crossing windows).
+ * Algorithm: Sensitivity Classification Rank Threshold Normalizer (`resolveMinClassificationRank`).
+ * Returns the minimum Bell-LaPadula classification rank (default `2` = `CONFIDENTIAL`) monitored by
+ * `OFF_HOURS_ACCESS` so non-sensitive `INTERNAL` documents do not trigger false off-hours alerts (N10).
+ */
+export function resolveMinClassificationRank(parameters?: Record<string, unknown> | null): number {
+  const rawRank = Number(parameters?.['minClassificationRank'] ?? 2);
+  if (!Number.isFinite(rawRank)) return 2;
+  return Math.min(Math.max(Math.trunc(rawRank), 1), 4);
+}
+
+/**
+ * Algorithm: Wrap-Around Business-Hour & Local-Timezone Weekend Temporal Classifier (`isOffHoursTimestampUtc`).
+ * Evaluates whether `occurredAt` falls on a local weekend (`Saturday`/`Sunday` in configured timezone offset,
+ * default UTC+7 = `+420` minutes for Vietnam ICT) or outside the inclusive `[startHourUtc, endHourUtc]`
+ * business interval (handling midnight-crossing windows) (N10).
  */
 export function isOffHoursTimestampUtc(
   occurredAt: Date | string,
   parameters?: Record<string, unknown> | null,
 ): boolean {
   const timestamp = occurredAt instanceof Date ? occurredAt : new Date(occurredAt);
-  const day = timestamp.getUTCDay();
-  if (day === 0 || day === 6) {
+  const rawOffset = Number(parameters?.['timezoneOffsetMinutes'] ?? 420);
+  const tzOffsetMinutes = Number.isFinite(rawOffset)
+    ? Math.min(Math.max(Math.trunc(rawOffset), -720), 840)
+    : 420;
+  const localShifted = new Date(timestamp.getTime() + tzOffsetMinutes * 60_000);
+  const localDay = localShifted.getUTCDay();
+  if (localDay === 0 || localDay === 6) {
     return true;
   }
   const hour = timestamp.getUTCHours();

@@ -17,6 +17,7 @@ export const QuerySecurityAlertsSchema = z
     status: AlertStatusSchema.optional(),
     severity: SeverityLevelSchema.optional(),
     alertType: z.string().max(80).optional(),
+    search: z.string().trim().max(120).optional(),
     detectedUserId: PositiveBigIntSchema.optional(),
     documentId: z.string().uuid().optional(),
     assignedTo: PositiveBigIntSchema.optional(),
@@ -33,12 +34,19 @@ export type QuerySecurityAlertsInput = z.infer<typeof QuerySecurityAlertsSchema>
 
 /**
  * Thuật toán: Kiểm định điều kiện ràng buộc phụ thuộc trạng thái (`superRefine`) cho cập nhật cảnh báo SOC:
- * Khi đóng cảnh báo (`RESOLVED` hoặc `FALSE_POSITIVE`), bắt buộc đính kèm `resolutionNote` tối thiểu 5 ký tự phục vụ hậu kiểm.
+ * Khi đóng cảnh báo (`RESOLVED` hoặc `FALSE_POSITIVE`), bắt buộc đính kèm `resolutionNote` tối thiểu 5 ký tự phục vụ hậu kiểm;
+ * hỗ trợ tùy chọn `investigationNote` nguyên tử cùng lệnh đổi trạng thái (#09).
  */
 export const UpdateAlertStatusSchema = z
   .object({
     status: AlertStatusSchema,
     resolutionNote: z.string().trim().max(1000).optional(),
+    investigationNote: z
+      .string()
+      .trim()
+      .min(5, 'Investigation note must be at least 5 characters.')
+      .max(2000)
+      .optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -106,6 +114,7 @@ export type SubmitIncidentReportInput = z.infer<typeof SubmitIncidentReportSchem
 export const CloseIncidentReportSchema = z
   .object({
     closingNote: z.string().trim().min(5).max(1000).optional(),
+    forceClose: z.boolean().optional(),
   })
   .strict();
 
@@ -137,6 +146,7 @@ export type CompleteIncidentActionInput = z.infer<typeof CompleteIncidentActionS
 export const QueryIncidentReportsSchema = z
   .object({
     status: IncidentStatusSchema.optional(),
+    search: z.string().trim().max(120).optional(),
     preparedBy: PositiveBigIntSchema.optional(),
     alertId: z.string().uuid().optional(),
     from: IsoDateOrDateTimeSchema.optional(),

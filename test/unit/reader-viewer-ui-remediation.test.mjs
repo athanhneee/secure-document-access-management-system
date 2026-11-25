@@ -181,6 +181,15 @@ describe('DOCUMENT_READER (qa.view) 66-Finding Remediation Regression Suite', ()
     assert.match(bell, /Đọc tất cả/);
     assert.match(bell, /Tải thêm thông báo/);
     assert.match(bell, /chưa đọc\)/);
+    assert.match(bell, /canAccessPortal\('DOCUMENT_OWNER'\)/);
+    assert.match(bell, /WORKSPACE_TAB_EVENT/);
+
+    const readerWorkspace = readWeb('app/reader/reader-workspace.tsx');
+    const ownerWorkspace = readWeb('app/owner/owner-workspace.tsx');
+    assert.match(readerWorkspace, /useSearchParams\(\)/);
+    assert.match(readerWorkspace, /WORKSPACE_TAB_EVENT/);
+    assert.match(ownerWorkspace, /useSearchParams\(\)/);
+    assert.match(ownerWorkspace, /WORKSPACE_TAB_EVENT/);
 
     assert.match(sidebar, /href="\/sessions"/);
     assert.doesNotMatch(sidebar, /Bảo mật &amp; MFA/);
@@ -206,8 +215,11 @@ describe('DOCUMENT_READER (qa.view) 66-Finding Remediation Regression Suite', ()
 
     assert.match(hero, /4 cấp độ mật/);
     assert.doesNotMatch(hero, /5 cấp độ mật/);
+    assert.match(hero, /resolvedPortal === '\/' \? '\/sessions'/);
     assert.match(ihb, /onClick: linkOnClick/);
+    assert.match(ihb, /href\.startsWith\('#'\)/);
     assert.match(homeDrawer, /skipRestoreFocusRef/);
+    assert.match(homeDrawer, /scrollIntoView/);
     assert.doesNotMatch(badge, /\bFlame\b/);
   });
 });

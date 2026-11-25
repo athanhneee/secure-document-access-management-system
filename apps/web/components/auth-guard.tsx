@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import {
   useAuth,
@@ -8,7 +8,6 @@ import {
   ROLE_LABELS,
   resolveDefaultPortalForRoles,
 } from '@/lib/auth-context';
-import { resolvePermissionLabel } from '@/lib/permission-labels';
 import { ArrowLeft, RefreshCw, Lock } from 'lucide-react';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -22,11 +21,11 @@ interface AuthGuardProps {
 }
 
 /**
- * Thuật toán: Cổng Kiểm Soát Truy Cập Tuyến Đường Theo Quyền Thực Tế Bảo Toàn Phiên (`AuthGuard`)
+ * Thuật toán: Cổng Kiểm Soát Truy Cập Tuyến Đường Theo Quyền Thực Tế Bảo Toàn Phiên & Không Lộ Vai Trò Đặc Quyền (`AuthGuard`)
  * Mục đích:
- *   - Chặn thực thi và dựng giao diện trái phép (bao gồm các hook gọi API con) khi tài khoản chưa xác thực hoặc thiếu quyền truy cập phân hệ (`requiredPortal`) / vai trò (`requiredRole`) / quyền nguyên tử (`requiredPermission`).
- *   - Cho phép tài khoản vai trò tùy chỉnh (Custom Role) vào đúng phân hệ tương ứng với tập quyền được cấp; đồng thời chặn ngay nếu vai trò bị gỡ sạch quyền (`permissions: []`).
- *   - Khi gặp `403`, giữ nguyên khung điều hướng `AppLayout` và phiên đăng nhập hiện tại.
+ *   - Chặn thực thi và dựng giao diện trái phép (bao gồm các hook gọi API con) khi tài khoản chưa xác thực hoặc thiếu quyền.
+ *   - Chuyển hướng chưa đăng nhập bằng `router.replace` tránh vòng lặp nút Quay lại (`V-47`).
+ *   - Trên màn hình 403 không làm lộ tên vai trò/quyền đặc quyền yêu cầu (`V-20`), đồng thời phản hồi rõ ràng khi bấm `Kiểm tra lại quyền` (`V-47`).
  */
 export function AuthGuard({
   children,
@@ -38,13 +37,32 @@ export function AuthGuard({
     useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const [isRechecking, setIsRechecking] = useState(false);
+  const [recheckFeedback, setRecheckFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       const redirectUrl = pathname ? `/login?redirect=${encodeURIComponent(pathname)}` : '/login';
-      router.push(redirectUrl);
+      router.replace(redirectUrl);
     }
   }, [isLoading, isAuthenticated, router, pathname]);
+
+  async function handleRecheckAccess() {
+    setIsRechecking(true);
+    setRecheckFeedback(null);
+    try {
+      const refreshed = await refreshUser();
+      if (!refreshed) {
+        setRecheckFeedback('Không thể cập nhật thông tin quyền lúc này. Vui lòng thử lại.');
+        return;
+      }
+      setRecheckFeedback(
+        'Đã kiểm tra lại: tài khoản hiện vẫn chưa được cấp thẩm quyền truy cập trang này.',
+      );
+    } finally {
+      setIsRechecking(false);
+    }
+  }
 
   if (isLoading) {
     // CONFLICT-RESOLVED: Loại bỏ hộp tròn nền/viền bao quanh icon RefreshCw theo quy tắc Icon System (rules/ui-design-system.md).
@@ -75,7 +93,6 @@ export function AuthGuard({
   if (!isPortalAllowed || !isRoleAllowed || !isPermissionAllowed) {
     const fallbackWorkspace = resolveDefaultPortalForRoles(user);
     const fallbackLabel = fallbackWorkspace === '/' ? 'Về trang chủ' : 'Về phân hệ làm việc';
-    const targetPortal = requiredPortal ?? requiredRole;
 
     return (
       <AppLayout>
@@ -89,7 +106,7 @@ export function AuthGuard({
                 Không có quyền truy cập
               </CardTitle>
               <CardDescription className="text-[#717171] text-xs mt-0.5">
-                Tài khoản hiện tại không có thẩm quyền truy cập phân hệ này. Phiên làm việc của bạn
+                Tài khoản hiện tại không có thẩm quyền truy cập khu vực này. Phiên làm việc của bạn
                 vẫn được giữ nguyên.
               </CardDescription>
             </CardHeader>
@@ -99,24 +116,6 @@ export function AuthGuard({
                   <span className="text-[#717171]">Tài khoản</span>
                   <span className="font-semibold text-[#222222]">{user.username}</span>
                 </div>
-                {targetPortal && (
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-[#717171]">
-                      {requiredPortal ? 'Phân hệ yêu cầu' : 'Vai trò yêu cầu'}
-                    </span>
-                    <span className="font-semibold text-[#C13515]">
-                      {ROLE_LABELS[targetPortal]}
-                    </span>
-                  </div>
-                )}
-                {requiredPermission && (
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-[#717171]">Quyền yêu cầu</span>
-                    <span className="font-semibold text-[#C13515]">
-                      {resolvePermissionLabel({ code: requiredPermission })}
-                    </span>
-                  </div>
-                )}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#ebebeb]">
                   <span className="text-[#717171]">Vai trò được cấp</span>
                   <span className="text-[#222222]">
@@ -135,6 +134,12 @@ export function AuthGuard({
                 </div>
               </div>
 
+              {recheckFeedback && (
+                <output className="block rounded-[16px] border border-[#E07912]/30 bg-[#E07912]/10 px-3 py-2 text-xs text-[#222222]">
+                  {recheckFeedback}
+                </output>
+              )}
+
               <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-1">
                 <InteractiveHoverButton
                   variant="primary"
@@ -148,8 +153,10 @@ export function AuthGuard({
                   variant="secondary"
                   size="sm"
                   text="Kiểm tra lại quyền"
+                  isLoading={isRechecking}
+                  disabled={isRechecking}
                   icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
-                  onClick={() => void refreshUser()}
+                  onClick={handleRecheckAccess}
                   className="w-full sm:w-auto"
                 />
               </div>

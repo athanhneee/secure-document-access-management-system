@@ -130,7 +130,7 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
             e.preventDefault();
             onClose?.();
           }}
-          className="fixed inset-0 z-50 m-0 flex h-full w-full max-h-none max-w-none items-stretch justify-start border-none bg-[#222222]/40 p-0 outline-none backdrop-blur-xs lg:hidden"
+          className="fixed inset-0 z-50 m-0 flex h-full w-full max-h-none max-w-none items-stretch justify-start border-none bg-transparent p-0 outline-none lg:hidden"
         >
           <aside
             data-drawer-panel="true"

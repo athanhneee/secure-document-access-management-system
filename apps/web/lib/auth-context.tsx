@@ -10,6 +10,7 @@ import {
   subscribeSessionExpired,
 } from './api-client';
 import { disconnectRealtimeStream, subscribeRealtimeEvent } from './realtime-events';
+import { clearNotificationMemoryCache } from '@/components/navigation/notification-bell-dialog';
 import {
   canAccessPortal as evaluatePortalAccess,
   checkEffectivePermission,
@@ -26,10 +27,12 @@ export interface AuthUser {
   fullName: string;
   email: string;
   departmentId: string | null;
+  departmentName?: string | null;
   clearanceOptionId?: string | null;
   clearanceCode?: string | null;
   clearanceName?: string | null;
   clearanceRank?: number;
+  mfaEnabled?: boolean;
   status: string;
   version: number;
   roles: string[];
@@ -59,7 +62,6 @@ export function resolveDefaultPortalForRoles(
 ): string {
   if (!userOrRoles) return '/';
   if (Array.isArray(userOrRoles)) {
-    // Tương thích ngược nếu caller cũ truyền mảng roles thô
     const fallbackOrder: readonly RoleType[] = [
       'SYSTEM_ADMIN',
       'DOCUMENT_OWNER',
@@ -125,10 +127,11 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 /**
- * Thuật toán: Máy Trạng Thái Phiên Xác Thực Không Chặn Điều Hướng & Bỏ Qua Thăm Dò Khi Chưa Có Cookie (`AuthProvider`)
+ * Thuật toán: Máy Trạng Thái Phiên Xác Thực Không Chặn Điều Hướng, Định Tuyến Đúng Pre-MFA & Đăng Xuất Đợi Xóa Cookie (`AuthProvider`)
  * Mục đích:
- *   - Duy trì trạng thái định danh người dùng trong bộ nhớ React mà không gọi lại `/users/me` mỗi khi chuyển tuyến đường Sidebar, giúp chuyển trang nội bộ phản hồi dưới `100ms`.
- *   - Khi khởi tạo trên trình duyệt chưa có cookie `sda_csrf` (khách vãng lai trên trang công khai `/`), bỏ qua lời gọi `/api/v1/users/me` để loại bỏ hoàn toàn lỗi `401` đỏ trên Console.
+ *   - Duy trì trạng thái định danh người dùng trong bộ nhớ React mà không gọi lại `/users/me` mỗi khi chuyển tuyến đường Sidebar.
+ *   - Phân biệt lỗi `401` tiền-MFA (`mfa_required` -> `/mfa`, `V-14`) với lỗi hết phiên thực sự (`/login?reason=session_revoked`).
+ *   - Khi đăng xuất (`logout`), đợi máy chủ xóa cookie HttpOnly (giới hạn 3 giây phòng rớt mạng) và xóa sạch cache thông báo trong RAM trước khi điều hướng (`V-11`).
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -154,7 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(data);
       return data;
     } catch (err) {
-      // Chỉ xóa phiên khi 401 (hết hạn / chưa xác thực); tuyệt đối không tự ý đăng xuất khi gặp 403 Forbidden hoặc lỗi mạng tạm thời
+      // Chỉ xóa phiên khi 401 (hết hạn / chưa xác thực); tuyệt đối không tự ý đăng xuất khi gặp lỗi phân quyền hoặc lỗi mạng tạm thời
       if (err instanceof ApiError && err.status === 401) {
         setUser(null);
         setRoleOverride(null);
@@ -166,10 +169,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const forceExpireSession = useCallback(
-    (reason: 'locked' | 'disabled' | 'session_revoked') => {
+    (reason: 'locked' | 'disabled' | 'session_revoked' | 'mfa_required') => {
       disconnectRealtimeStream();
+      clearNotificationMemoryCache();
       setUser(null);
       setRoleOverride(null);
+      if (reason === 'mfa_required') {
+        router.replace('/mfa');
+        return;
+      }
       router.replace(`/login?reason=${reason}`);
     },
     [router],
@@ -186,7 +194,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /**
    * Thuật toán: Cưỡng Chế Đăng Xuất Tức Thì Khi Tài Khoản Bị Khóa/Vô Hiệu Qua SSE `USER_SESSION_REVOKED` Hoặc Lỗi `401` Hết Phiên (`AuthProvider`)
-   * Mục đích: Khi quản trị viên khóa (`LOCKED`) hoặc vô hiệu hóa (`DISABLED`) tài khoản, lập tức ngắt luồng SSE, xóa trạng thái phiên cục bộ và chuyển hướng trình duyệt về `/login?reason=...` mà không cần tải lại trang; tuyệt đối không tự đăng xuất khi gặp `403 Forbidden`.
    */
   const authenticatedUserId = user?.id ?? null;
   useEffect(() => {
@@ -211,8 +218,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         forceExpireSession('session_revoked');
       }
     });
-    const unsubscribe401 = subscribeSessionExpired(() => {
-      forceExpireSession('session_revoked');
+    const unsubscribe401 = subscribeSessionExpired((reason) => {
+      forceExpireSession(reason === 'mfa_required' ? 'mfa_required' : 'session_revoked');
     });
     return () => {
       unsubscribeSse();
@@ -254,14 +261,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     disconnectRealtimeStream();
-    const logoutPromise = apiClient('/auth/logout', { method: 'POST' });
-    setUser(null);
-    setRoleOverride(null);
-    router.push('/login');
+    clearNotificationMemoryCache();
     try {
-      await logoutPromise;
+      await Promise.race([
+        apiClient('/auth/logout', { method: 'POST' }),
+        new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+      ]);
     } catch {
-      // Bỏ qua lỗi mạng khi đăng xuất vì trạng thái cục bộ đã được xóa sạch
+      // Đảm bảo vẫn dọn sạch trạng thái phiên phía client nếu mất mạng
+    } finally {
+      setUser(null);
+      setRoleOverride(null);
+      router.replace('/login');
     }
   }, [router]);
 

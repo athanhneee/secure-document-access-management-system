@@ -3,8 +3,9 @@
 /**
  * Thuật toán: Lọc Tối Thiểu Đặc Quyền Danh Mục Phân Hệ RBAC Dùng Chung Desktop & Mobile (`SidebarDirectory`)
  * Mục đích:
- *   - Chỉ dựng các liên kết phân hệ vai trò mà tài khoản hiện tại thực sự sở hữu trong `userRoles`, loại bỏ hoàn toàn các mục bị khóa gây hiểu nhầm và tránh điều hướng vào tuyến đường `403`.
- *   - Đánh dấu tuyến đường đang hoạt động (`aria-current="page"`) và giữ nguyên vùng chạm tối thiểu `44x44px` trên ngăn kéo di động `375px`.
+ *   - Chỉ dựng các liên kết phân hệ vai trò mà tài khoản hiện tại thực sự được cấp quyền qua `canAccessPortal`.
+ *   - Hiển thị thẻ tóm tắt tài khoản (họ tên, phòng ban, cấp thẩm quyền bảo mật, trạng thái MFA) để người dùng di động (`<1024px`) luôn tra cứu được danh tính và thẩm quyền của mình (`V-30`, `V-59`).
+ *   - Cung cấp lối vào trực tiếp `Bảo mật & MFA` (`/sessions#bao-mat-mfa`, `V-09`, `V-48`), gán `aria-current="page"` thống nhất (`V-65`) và thay icon `ExternalLink` sai ngữ nghĩa bằng `Home` (`V-63`).
  */
 import type React from 'react';
 import Link from 'next/link';
@@ -16,11 +17,14 @@ import {
   FileCheck,
   Laptop,
   Shield,
-  ExternalLink,
+  ShieldCheck,
+  Home,
+  User,
   X,
 } from 'lucide-react';
 import type { AuthUser, RoleType } from '@/lib/auth-context';
 import { canAccessPortal } from '@/lib/role-permissions';
+import { ClassificationBadge } from '@/components/classification-badge';
 
 interface NavItem {
   title: string;
@@ -88,13 +92,14 @@ export function SidebarDirectory({
   const authorizedItems = NAV_ITEMS.filter((item) =>
     user ? canAccessPortal(user, item.role) : Boolean(userRoles?.includes(item.role)),
   );
+  const isSessionsActive = pathname === '/sessions';
 
   return (
     <>
       <div className="mb-2 flex items-center justify-between gap-2 px-2.5">
         <div
           id={headingId}
-          className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#717171]"
+          className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-[#717171]"
         >
           <Shield size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
           <span>Phân hệ được cấp</span>
@@ -111,6 +116,38 @@ export function SidebarDirectory({
           </button>
         )}
       </div>
+
+      {user && (
+        <div className="mb-3 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <User
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#008489]"
+              aria-hidden="true"
+            />
+            <div className="min-w-0">
+              <div className="font-semibold text-[#222222] truncate">
+                {user.fullName || user.username}
+              </div>
+              {user.departmentName && (
+                <div className="text-xs text-[#717171] truncate">{user.departmentName}</div>
+              )}
+            </div>
+          </div>
+          {user.clearanceCode && (
+            <div className="pt-1 border-t border-[#ebebeb] flex items-center justify-between gap-2">
+              <span className="text-[#717171]">Thẩm quyền</span>
+              <ClassificationBadge
+                code={user.clearanceCode}
+                rank={user.clearanceRank}
+                subject="user"
+                size="sm"
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {authorizedItems.length > 0 && (
         <nav className="flex-1 space-y-1 overflow-y-auto" aria-label="Danh sách phân hệ">
@@ -152,10 +189,11 @@ export function SidebarDirectory({
         <Link
           href="/sessions"
           onClick={() => onNavigate?.()}
-          className={`flex min-h-11 sm:min-h-9 items-center gap-2.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-            pathname === '/sessions'
-              ? 'bg-[#f7f7f7] text-[#222222] font-semibold'
-              : 'text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222]'
+          aria-current={isSessionsActive ? 'page' : undefined}
+          className={`flex min-h-11 sm:min-h-9 items-center gap-2.5 rounded-full px-3 py-1.5 text-xs transition-colors ${
+            isSessionsActive
+              ? 'border border-[#E31C5F]/35 bg-[#FF385C]/10 font-semibold text-[#E31C5F]'
+              : 'border border-transparent font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222]'
           }`}
         >
           <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -163,11 +201,20 @@ export function SidebarDirectory({
         </Link>
 
         <Link
+          href="/sessions#bao-mat-mfa"
+          onClick={() => onNavigate?.()}
+          className="flex min-h-11 sm:min-h-9 items-center gap-2.5 rounded-full border border-transparent px-3 py-1.5 text-xs font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors"
+        >
+          <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
+          <span className="truncate">Bảo mật &amp; MFA</span>
+        </Link>
+
+        <Link
           href="/"
           onClick={() => onNavigate?.()}
-          className="flex min-h-11 sm:min-h-9 items-center gap-2.5 rounded-full px-3 py-1.5 text-xs font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors"
+          className="flex min-h-11 sm:min-h-9 items-center gap-2.5 rounded-full border border-transparent px-3 py-1.5 text-xs font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors"
         >
-          <ExternalLink size={16} strokeWidth={1.75} aria-hidden="true" />
+          <Home size={16} strokeWidth={1.75} aria-hidden="true" />
           <span className="truncate">Trang giới thiệu</span>
         </Link>
       </div>

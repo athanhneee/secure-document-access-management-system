@@ -1,11 +1,14 @@
 'use client';
 
 /**
- * Thuật toán: Hộp Thư Chuông Thông Báo Nội Bộ `<dialog>.showModal()` Kèm Đánh Dấu Đã Đọc Lạc Quan (`NotificationBellDialog`)
- * Mục đích: Hiển thị chuông `Bell` kèm chấm đỏ `#FF385C` khi `unreadCount > 0`, mở tức thì `<dialog>` `.showModal()` từ `GET /api/v1/notifications?page=1&pageSize=15` và cập nhật lạc quan `PATCH /api/v1/notifications/:id/read` có hoàn tác khi lỗi mạng.
+ * Thuật toán: Hộp Thư Chuông Thông Báo Nội Bộ `<dialog>.showModal()` Có Phân Trang, Đọc Tất Cả, Điều Hướng Ngữ Cảnh & Xóa Bộ Nhớ Đệm Khi Đăng Xuất (`NotificationBellDialog`)
+ * Mục đích:
+ *   - Hiển thị chuông `Bell` kèm `aria-label` nêu rõ số lượng chưa đọc thực từ CSDL (`unreadCount`, `V-37`, `V-65`).
+ *   - Hỗ trợ tải thêm trang (`hasMore`), đánh dấu đã đọc độc lập từng mục (`markingIds: Set<string>`), đánh dấu tất cả đã đọc (`PATCH /notifications/read-all`), điều hướng tới tài liệu/yêu cầu liên quan (`V-28`, `V-53`) và xóa bộ đệm RAM khi đăng xuất (`V-11`).
  */
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, Bell, Check, RefreshCw } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { AlertCircle, ArrowUpRight, Bell, Check, CheckCheck, RefreshCw } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { subscribeRealtimeEvent } from '@/lib/realtime-events';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -30,56 +33,127 @@ export interface InAppNotificationItem {
   readAt: string | null;
 }
 
-const notificationMemoryCache = new Map<string, InAppNotificationItem[]>();
+interface NotificationListResponse {
+  data?: InAppNotificationItem[];
+  unreadCount?: number;
+  hasMore?: boolean;
+  page?: number;
+}
+
+interface NotificationCacheEntry {
+  items: InAppNotificationItem[];
+  unreadCount: number;
+  page: number;
+  hasMore: boolean;
+}
+
+const PAGE_SIZE = 15;
+const notificationMemoryCache = new Map<string, NotificationCacheEntry>();
+
+/**
+ * Thuật toán: Xóa Toàn Bộ Bộ Nhớ Đệm Thông Báo Khi Đăng Xuất / Hết Phiên (`clearNotificationMemoryCache`, V-11).
+ * Mục đích: Đảm bảo phiên đăng nhập kế tiếp trên cùng trình duyệt không bao giờ đọc nhầm thông báo của tài khoản trước.
+ */
+export function clearNotificationMemoryCache(): void {
+  notificationMemoryCache.clear();
+}
 
 function formatNotificationTime(iso: string): string {
   const parsed = new Date(iso);
   return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString('vi-VN');
 }
 
-export function NotificationBellDialog({
-  userId,
-  canViewNotifications,
-}: {
-  userId: string;
-  canViewNotifications: boolean;
-}) {
-  return (
-    <NotificationBellDialogInner
-      key={userId}
-      userId={userId}
-      canViewNotifications={canViewNotifications}
-    />
-  );
+function resolveNotificationHref(item: InAppNotificationItem): string | null {
+  const objType = (item.relatedObjectType ?? '').toUpperCase();
+  if (objType === 'ACCESS_REQUEST') return '/reader?tab=my-requests';
+  if (objType === 'ACCESS_GRANT' || objType === 'DOCUMENT' || objType === 'ACCESS_SESSION') {
+    return '/reader?tab=my-docs';
+  }
+  return null;
 }
 
-function NotificationBellDialogInner({
+function parseNotificationResponse(res: NotificationListResponse | InAppNotificationItem[]): {
+  list: InAppNotificationItem[];
+  unreadCount: number;
+  hasMore: boolean;
+} {
+  const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
+  const fallbackUnread = list.reduce((acc, item) => acc + (item.status === 'UNREAD' ? 1 : 0), 0);
+  const unreadCount =
+    !Array.isArray(res) && typeof res?.unreadCount === 'number' ? res.unreadCount : fallbackUnread;
+  const hasMore =
+    !Array.isArray(res) && typeof res?.hasMore === 'boolean'
+      ? res.hasMore
+      : list.length >= PAGE_SIZE;
+  return { list, unreadCount, hasMore };
+}
+
+export function NotificationBellDialog({
   userId,
-  canViewNotifications,
+  canViewNotifications = true,
 }: {
   userId: string;
-  canViewNotifications: boolean;
+  canViewNotifications?: boolean;
 }) {
+  if (!canViewNotifications) return null;
+  return <NotificationBellDialogInner key={userId} userId={userId} />;
+}
+
+function NotificationBellDialogInner({ userId }: { userId: string }) {
+  const router = useRouter();
+  const cached = notificationMemoryCache.get(userId);
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<InAppNotificationItem[]>(
-    () => notificationMemoryCache.get(userId) ?? [],
-  );
+  const [items, setItems] = useState<InAppNotificationItem[]>(() => cached?.items ?? []);
+  const [unreadCount, setUnreadCount] = useState<number>(() => cached?.unreadCount ?? 0);
+  const [page, setPage] = useState<number>(() => cached?.page ?? 1);
+  const [hasMore, setHasMore] = useState<boolean>(() => cached?.hasMore ?? false);
   const [isLoading, setIsLoading] = useState(false);
-  const [markingId, setMarkingId] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isMarkingAll, setIsMarkingAll] = useState(false);
+  const [markingIds, setMarkingIds] = useState<Set<string>>(() => new Set());
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const persistCache = useCallback(
+    (entry: NotificationCacheEntry) => {
+      notificationMemoryCache.set(userId, entry);
+    },
+    [userId],
+  );
+
   const fetchNotifications = useCallback(
-    async (silent = false) => {
-      if (!canViewNotifications) return;
-      if (!silent) setIsLoading(true);
+    async (options?: { silent?: boolean; targetPage?: number; append?: boolean }) => {
+      const silent = options?.silent ?? false;
+      const targetPage = options?.targetPage ?? 1;
+      const append = options?.append ?? false;
+      if (append) {
+        setIsLoadingMore(true);
+      } else if (!silent) {
+        setIsLoading(true);
+      }
       setErrorMessage(null);
       try {
-        const res = await apiClient<{ data?: InAppNotificationItem[] } | InAppNotificationItem[]>(
-          '/notifications?page=1&pageSize=15',
+        const res = await apiClient<NotificationListResponse | InAppNotificationItem[]>(
+          `/notifications?page=${targetPage}&pageSize=${PAGE_SIZE}`,
         );
-        const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
-        notificationMemoryCache.set(userId, list);
-        setItems(list);
+        const parsed = parseNotificationResponse(res);
+        setUnreadCount(parsed.unreadCount);
+        setPage(targetPage);
+        setHasMore(parsed.hasMore);
+        setItems((prev) => {
+          const nextItems = append
+            ? [
+                ...prev,
+                ...parsed.list.filter((incoming) => !prev.some((p) => p.id === incoming.id)),
+              ]
+            : parsed.list;
+          persistCache({
+            items: nextItems,
+            unreadCount: parsed.unreadCount,
+            page: targetPage,
+            hasMore: parsed.hasMore,
+          });
+          return nextItems;
+        });
       } catch (err) {
         if (!silent) {
           setErrorMessage(
@@ -87,23 +161,35 @@ function NotificationBellDialogInner({
           );
         }
       } finally {
-        if (!silent) setIsLoading(false);
+        if (append) {
+          setIsLoadingMore(false);
+        } else if (!silent) {
+          setIsLoading(false);
+        }
       }
     },
-    [userId, canViewNotifications],
+    [persistCache],
   );
 
   useEffect(() => {
-    if (notificationMemoryCache.has(userId) || !canViewNotifications) return;
+    if (notificationMemoryCache.has(userId)) return;
     let cancelled = false;
-    apiClient<{ data?: InAppNotificationItem[] } | InAppNotificationItem[]>(
-      '/notifications?page=1&pageSize=15',
+    apiClient<NotificationListResponse | InAppNotificationItem[]>(
+      `/notifications?page=1&pageSize=${PAGE_SIZE}`,
     )
       .then((res) => {
         if (cancelled) return;
-        const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
-        notificationMemoryCache.set(userId, list);
-        setItems(list);
+        const parsed = parseNotificationResponse(res);
+        persistCache({
+          items: parsed.list,
+          unreadCount: parsed.unreadCount,
+          page: 1,
+          hasMore: parsed.hasMore,
+        });
+        setItems(parsed.list);
+        setUnreadCount(parsed.unreadCount);
+        setPage(1);
+        setHasMore(parsed.hasMore);
       })
       .catch(() => {
         /* Tải nền im lặng: không bật banner lỗi trên chuông header */
@@ -111,10 +197,9 @@ function NotificationBellDialogInner({
     return () => {
       cancelled = true;
     };
-  }, [userId, canViewNotifications]);
+  }, [userId, persistCache]);
 
   useEffect(() => {
-    if (!canViewNotifications) return;
     return subscribeRealtimeEvent<Partial<InAppNotificationItem> & { id?: string }>(
       'NOTIFICATION_CREATED',
       (event) => {
@@ -132,46 +217,94 @@ function NotificationBellDialogInner({
             readAt: p.readAt ?? null,
           };
           setItems((prev) => {
-            const next = [incoming, ...prev.filter((entry) => entry.id !== incoming.id)].slice(
-              0,
-              15,
-            );
-            notificationMemoryCache.set(userId, next);
+            const existed = prev.some((entry) => entry.id === incoming.id);
+            const next = [incoming, ...prev.filter((entry) => entry.id !== incoming.id)];
+            setUnreadCount((curr) => {
+              const nextUnread = !existed && incoming.status === 'UNREAD' ? curr + 1 : curr;
+              persistCache({ items: next, unreadCount: nextUnread, page, hasMore });
+              return nextUnread;
+            });
             return next;
           });
           return;
         }
-        void fetchNotifications(true);
+        void fetchNotifications({ silent: true, targetPage: 1, append: false });
       },
     );
-  }, [userId, canViewNotifications, fetchNotifications]);
+  }, [fetchNotifications, persistCache, page, hasMore]);
 
   async function handleMarkAsRead(target: InAppNotificationItem) {
-    if (target.status !== 'UNREAD' || markingId) return;
-    const snapshot = items;
-    const next = items.map((entry) =>
+    if (target.status !== 'UNREAD' || markingIds.has(target.id)) return;
+    const prevItems = items;
+    const prevUnread = unreadCount;
+    const nextItems = items.map((entry) =>
       entry.id === target.id
         ? { ...entry, status: 'READ', readAt: new Date().toISOString() }
         : entry,
     );
-    setMarkingId(target.id);
+    const nextUnread = Math.max(0, unreadCount - 1);
+
+    setMarkingIds((prev) => new Set(prev).add(target.id));
     setErrorMessage(null);
-    setItems(next);
-    notificationMemoryCache.set(userId, next);
+    setItems(nextItems);
+    setUnreadCount(nextUnread);
+    persistCache({ items: nextItems, unreadCount: nextUnread, page, hasMore });
     try {
       await apiClient(`/notifications/${encodeURIComponent(target.id)}/read`, { method: 'PATCH' });
     } catch (err) {
-      setItems(snapshot);
-      notificationMemoryCache.set(userId, snapshot);
+      setItems(prevItems);
+      setUnreadCount(prevUnread);
+      persistCache({ items: prevItems, unreadCount: prevUnread, page, hasMore });
       setErrorMessage(
         err instanceof ApiError ? err.message : 'Không thể cập nhật trạng thái thông báo.',
       );
     } finally {
-      setMarkingId(null);
+      setMarkingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(target.id);
+        return next;
+      });
     }
   }
 
-  const unreadCount = items.reduce((acc, item) => acc + (item.status === 'UNREAD' ? 1 : 0), 0);
+  async function handleMarkAllRead() {
+    if (unreadCount === 0 || isMarkingAll) return;
+    const prevItems = items;
+    const prevUnread = unreadCount;
+    const nowIso = new Date().toISOString();
+    const nextItems = items.map((entry) =>
+      entry.status === 'UNREAD' ? { ...entry, status: 'READ', readAt: nowIso } : entry,
+    );
+
+    setIsMarkingAll(true);
+    setErrorMessage(null);
+    setItems(nextItems);
+    setUnreadCount(0);
+    persistCache({ items: nextItems, unreadCount: 0, page, hasMore });
+    try {
+      await apiClient('/notifications/read-all', { method: 'PATCH' });
+    } catch (err) {
+      setItems(prevItems);
+      setUnreadCount(prevUnread);
+      persistCache({ items: prevItems, unreadCount: prevUnread, page, hasMore });
+      setErrorMessage(
+        err instanceof ApiError ? err.message : 'Không thể đánh dấu tất cả thông báo đã đọc.',
+      );
+    } finally {
+      setIsMarkingAll(false);
+    }
+  }
+
+  function handleNavigateNotification(item: InAppNotificationItem, href: string) {
+    if (item.status === 'UNREAD') {
+      void handleMarkAsRead(item);
+    }
+    setOpen(false);
+    router.push(href);
+  }
+
+  const bellAriaLabel =
+    unreadCount > 0 ? `Thông báo hệ thống (${unreadCount} chưa đọc)` : 'Thông báo hệ thống';
 
   return (
     <>
@@ -179,10 +312,10 @@ function NotificationBellDialogInner({
         type="button"
         onClick={() => {
           setOpen(true);
-          if (canViewNotifications) void fetchNotifications(items.length > 0);
+          void fetchNotifications({ silent: items.length > 0, targetPage: 1, append: false });
         }}
-        aria-label="Thông báo hệ thống"
-        title="Thông báo hệ thống"
+        aria-label={bellAriaLabel}
+        title={bellAriaLabel}
         className="relative flex h-11 w-11 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors cursor-pointer shadow-2xs"
       >
         <Bell size={20} strokeWidth={1.75} aria-hidden="true" />
@@ -212,7 +345,8 @@ function NotificationBellDialogInner({
               </span>
             </div>
             <DialogDescription className="text-xs text-[#717171]">
-              Cập nhật trạng thái cấp quyền, thu hồi quyền truy cập và thông báo vận hành nội bộ.
+              Cập nhật trạng thái cấp quyền, từ chối, thu hồi quyền truy cập và thông báo vận hành
+              nội bộ.
             </DialogDescription>
           </DialogHeader>
 
@@ -223,9 +357,23 @@ function NotificationBellDialogInner({
             </Alert>
           )}
 
-          <div className="flex items-center justify-between gap-2 pb-3 border-b border-[#ebebeb]">
-            <span className="text-xs text-[#717171]">Hiển thị {items.length} mục gần nhất</span>
-            {canViewNotifications && (
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#ebebeb]">
+            <span className="text-xs text-[#717171]">
+              Đang hiển thị {items.length} mục{hasMore ? '+' : ''}
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {unreadCount > 0 && (
+                <InteractiveHoverButton
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  isLoading={isMarkingAll}
+                  disabled={isMarkingAll}
+                  icon={<CheckCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
+                  text="Đọc tất cả"
+                  onClick={() => void handleMarkAllRead()}
+                />
+              )}
               <InteractiveHoverButton
                 type="button"
                 variant="secondary"
@@ -234,17 +382,15 @@ function NotificationBellDialogInner({
                 disabled={isLoading}
                 icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
                 text="Làm mới"
-                onClick={() => void fetchNotifications(false)}
+                onClick={() =>
+                  void fetchNotifications({ silent: false, targetPage: 1, append: false })
+                }
               />
-            )}
+            </div>
           </div>
 
           <div className="mt-3 max-h-[56dvh] space-y-2.5 overflow-y-auto pr-1">
-            {!canViewNotifications ? (
-              <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4 text-xs text-[#717171] leading-relaxed">
-                Vai trò hiện tại không thuộc phạm vi hộp thư thông báo tài liệu nghiệp vụ.
-              </div>
-            ) : isLoading && items.length === 0 ? (
+            {isLoading && items.length === 0 ? (
               <div className="py-8 text-center text-xs text-[#717171]">
                 Đang tải hộp thư thông báo…
               </div>
@@ -253,58 +399,93 @@ function NotificationBellDialogInner({
                 Hiện chưa có thông báo nào trong hộp thư của bạn.
               </div>
             ) : (
-              items.map((item) => {
-                const isUnread = item.status === 'UNREAD';
-                return (
-                  <article
-                    key={item.id}
-                    className={`rounded-[20px] border p-3.5 text-xs ${isUnread ? 'border-[#FF385C]/30 bg-[#ffffff] shadow-2xs' : 'border-[#ebebeb] bg-[#f7f7f7]'}`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className={`dot ${isUnread ? 'dot-primary' : 'dot-neutral'}`}
-                          aria-hidden="true"
-                        />
-                        <h3 className="font-bold text-[#222222] break-words">{item.title}</h3>
+              <>
+                {items.map((item) => {
+                  const isUnread = item.status === 'UNREAD';
+                  const isMarkingThis = markingIds.has(item.id);
+                  const targetHref = resolveNotificationHref(item);
+                  return (
+                    <article
+                      key={item.id}
+                      className={`rounded-[20px] border p-3.5 text-xs ${isUnread ? 'border-[#FF385C]/30 bg-[#ffffff] shadow-2xs' : 'border-[#ebebeb] bg-[#f7f7f7]'}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className={`dot ${isUnread ? 'dot-primary' : 'dot-neutral'}`}
+                            aria-hidden="true"
+                          />
+                          <h3 className="font-bold text-[#222222] break-words">{item.title}</h3>
+                        </div>
+                        {isUnread ? (
+                          <button
+                            type="button"
+                            disabled={isMarkingThis}
+                            onClick={() => void handleMarkAsRead(item)}
+                            aria-label={`Đánh dấu đã đọc: ${item.title}`}
+                            className="shrink-0 min-h-11 sm:min-h-8 inline-flex items-center gap-1 rounded-full border border-[#dddddd] bg-[#ffffff] hover:bg-[#f7f7f7] px-3 py-1 text-xs font-semibold text-[#222222] cursor-pointer disabled:opacity-50"
+                          >
+                            <Check
+                              size={16}
+                              strokeWidth={2}
+                              className="text-[#008A05]"
+                              aria-hidden="true"
+                            />
+                            <span>Đánh dấu đã đọc</span>
+                          </button>
+                        ) : (
+                          <span className="staff-badge bg-transparent border-0 p-0 shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-[#717171]">
+                            <Check
+                              size={16}
+                              strokeWidth={2}
+                              className="text-[#008A05]"
+                              aria-hidden="true"
+                            />
+                            <span>Đã đọc</span>
+                          </span>
+                        )}
                       </div>
-                      {isUnread ? (
-                        <button
-                          type="button"
-                          disabled={markingId === item.id}
-                          onClick={() => void handleMarkAsRead(item)}
-                          aria-label={`Đánh dấu đã đọc: ${item.title}`}
-                          className="shrink-0 min-h-11 sm:min-h-8 inline-flex items-center gap-1 rounded-full border border-[#dddddd] bg-[#ffffff] hover:bg-[#f7f7f7] px-3 py-1 text-xs font-semibold text-[#222222] cursor-pointer disabled:opacity-50"
-                        >
-                          <Check
-                            size={16}
-                            strokeWidth={2}
-                            className="text-[#008A05]"
-                            aria-hidden="true"
-                          />
-                          <span>Đã đọc</span>
-                        </button>
-                      ) : (
-                        <span className="staff-badge bg-transparent border-0 p-0 shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-[#717171]">
-                          <Check
-                            size={16}
-                            strokeWidth={2}
-                            className="text-[#008A05]"
-                            aria-hidden="true"
-                          />
-                          <span>Đã đọc</span>
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1.5 text-xs text-[#717171] leading-relaxed break-words">
-                      {item.body}
-                    </p>
-                    <div className="mt-2 text-[12px] text-[#717171]">
-                      {formatNotificationTime(item.createdAt)}
-                    </div>
-                  </article>
-                );
-              })
+                      <p className="mt-1.5 text-xs text-[#717171] leading-relaxed break-words">
+                        {item.body}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-[#717171]">
+                        <span>{formatNotificationTime(item.createdAt)}</span>
+                        {targetHref && (
+                          <button
+                            type="button"
+                            onClick={() => handleNavigateNotification(item, targetHref)}
+                            className="inline-flex min-h-11 sm:min-h-7 items-center gap-1 rounded-full px-2.5 text-xs font-semibold text-[#E31C5F] hover:bg-[#f7f7f7] cursor-pointer"
+                          >
+                            <span>Xem chi tiết</span>
+                            <ArrowUpRight size={16} strokeWidth={1.75} aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+
+                {hasMore && (
+                  <div className="pt-1 text-center">
+                    <InteractiveHoverButton
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      isLoading={isLoadingMore}
+                      disabled={isLoadingMore}
+                      text="Tải thêm thông báo"
+                      onClick={() =>
+                        void fetchNotifications({
+                          silent: false,
+                          targetPage: page + 1,
+                          append: true,
+                        })
+                      }
+                      className="w-full sm:w-auto"
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
         </DialogContent>

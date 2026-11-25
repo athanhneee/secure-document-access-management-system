@@ -95,12 +95,34 @@ export async function resolveVerifiedAnchorCheckpoint(params: {
   const latest = validCandidates[validCandidates.length - 1];
   if (!latest) return null;
 
-  const anchorKey = getHmacKey(parseSignerKeyVersion(latest.signer_key_id));
-  const expectedSig = createHmac('sha256', anchorKey)
-    .update(`${latest.chain_partition}:${latest.anchor_sequence}:${latest.entry_hash}`)
-    .digest('hex');
-  if (!safeTimingEqualString(latest.signature, expectedSig)) {
-    return null;
+  // Thuật toán: Xác minh chữ ký toàn bộ điểm neo lịch sử (< latest) và đếm số bản ghi [1..K] trước khi cho phép nối tiếp.
+  // Nếu có điểm neo lịch sử bị giả mạo hoặc thiếu bản ghi trước điểm neo, tự động lùi về quét toàn phần từ sequence = 1.
+  for (const priorAnchor of preloadedAnchors) {
+    if (priorAnchor.anchor_sequence > latest.anchor_sequence) continue;
+    if (priorAnchor.status === 'INVALID') {
+      return null;
+    }
+    const priorKey = getHmacKey(parseSignerKeyVersion(priorAnchor.signer_key_id));
+    const expectedPriorSig = createHmac('sha256', priorKey)
+      .update(
+        `${priorAnchor.chain_partition}:${priorAnchor.anchor_sequence}:${priorAnchor.entry_hash}`,
+      )
+      .digest('hex');
+    if (!safeTimingEqualString(priorAnchor.signature, expectedPriorSig)) {
+      return null;
+    }
+  }
+
+  if (typeof database.auditLog?.count === 'function') {
+    const priorLogCount = await database.auditLog.count({
+      where: {
+        chain_partition: partition,
+        chain_sequence: { lte: latest.anchor_sequence },
+      },
+    });
+    if (BigInt(priorLogCount) !== latest.anchor_sequence) {
+      return null;
+    }
   }
 
   const anchoredLog = (await database.auditLog.findFirst({

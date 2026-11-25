@@ -31,6 +31,7 @@ export interface PartitionVerificationResult {
   valid: boolean;
   totalChecked: number;
   anchorsChecked: number;
+  resumedFromAnchorSequence?: string | undefined;
   violations: AuditViolation[];
   alertId?: string | undefined;
 }
@@ -78,6 +79,7 @@ export class AuditVerifierService {
         : undefined;
     let anchorsToVerify = preloadedAnchors;
     let resumedFromCheckpoint = false;
+    let resumedFromAnchorSequence: string | undefined;
 
     if (options?.fromSequence === undefined && preloadedAnchors.length > 0) {
       const checkpoint = await resolveVerifiedAnchorCheckpoint({
@@ -89,6 +91,7 @@ export class AuditVerifierService {
       });
       if (checkpoint) {
         resumedFromCheckpoint = true;
+        resumedFromAnchorSequence = checkpoint.anchor.anchor_sequence.toString();
         totalChecked = Number(checkpoint.anchor.anchor_sequence);
         previousHash = checkpoint.entryHash;
         expectedSequence = checkpoint.anchor.anchor_sequence + 1n;
@@ -185,7 +188,8 @@ export class AuditVerifierService {
       partition,
       valid: violations.length === 0,
       totalChecked,
-      anchorsChecked: anchorCheck.anchorsChecked,
+      anchorsChecked: resumedFromCheckpoint ? preloadedAnchors.length : anchorCheck.anchorsChecked,
+      ...(resumedFromAnchorSequence !== undefined ? { resumedFromAnchorSequence } : {}),
       violations,
       alertId,
     };

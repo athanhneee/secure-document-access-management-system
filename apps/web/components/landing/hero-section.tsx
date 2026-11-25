@@ -36,8 +36,13 @@ const HERO_METRICS = [
 
 export function HeroSection() {
   const { isAuthenticated, user, accessiblePortals } = useAuth();
-  const primaryHref = isAuthenticated ? resolveDefaultPortalForRoles(user) : '/login';
-  const primaryText = isAuthenticated ? 'Vào phân hệ làm việc' : 'Bắt đầu ngay';
+  const resolvedPortal = isAuthenticated ? resolveDefaultPortalForRoles(user) : '/login';
+  const primaryHref = isAuthenticated && resolvedPortal === '/' ? '/sessions' : resolvedPortal;
+  const primaryText = isAuthenticated
+    ? resolvedPortal === '/'
+      ? 'Quản lý phiên & thiết bị'
+      : 'Vào phân hệ làm việc'
+    : 'Bắt đầu ngay';
   const showPortalChooser = !isAuthenticated || accessiblePortals.length > 1;
 
   return (

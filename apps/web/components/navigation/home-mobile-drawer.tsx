@@ -111,7 +111,10 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
     isAuthenticated && user
       ? QUICK_ROLES.filter((item) => canAccessPortal(item.role))
       : QUICK_ROLES;
-  const workspaceHref = resolveDefaultPortalForRoles(user);
+  const resolvedPortal = resolveDefaultPortalForRoles(user);
+  const workspaceHref = resolvedPortal === '/' ? '/sessions' : resolvedPortal;
+  const workspaceCtaText =
+    resolvedPortal === '/' ? 'Quản lý phiên & thiết bị' : 'Vào phân hệ làm việc';
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -333,7 +336,7 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
               <InteractiveHoverButton
                 href={workspaceHref}
                 variant="solid"
-                text="Vào phân hệ làm việc"
+                text={workspaceCtaText}
                 className="w-full min-h-11 text-xs"
                 onClick={onClose}
               />

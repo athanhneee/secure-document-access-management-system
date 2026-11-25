@@ -15,9 +15,16 @@ export function HomeHeader() {
   const { isAuthenticated, user } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const ctaHref = isAuthenticated && user ? resolveDefaultPortalForRoles(user) : '/login';
-  const desktopCtaText = isAuthenticated && user ? 'Vào phân hệ làm việc' : 'Đăng nhập hệ thống';
-  const mobileCtaText = isAuthenticated && user ? 'Phân hệ' : 'Đăng nhập';
+  const resolvedPortal = isAuthenticated && user ? resolveDefaultPortalForRoles(user) : '/login';
+  const ctaHref = isAuthenticated && user && resolvedPortal === '/' ? '/sessions' : resolvedPortal;
+  const desktopCtaText =
+    isAuthenticated && user
+      ? resolvedPortal === '/'
+        ? 'Phiên & thiết bị'
+        : 'Vào phân hệ làm việc'
+      : 'Đăng nhập hệ thống';
+  const mobileCtaText =
+    isAuthenticated && user ? (resolvedPortal === '/' ? 'Phiên' : 'Phân hệ') : 'Đăng nhập';
 
   function closeMenu() {
     setMobileMenuOpen(false);

@@ -1745,20 +1745,20 @@ VALUES
     'DOCUMENT',
     NULL,
     'DENY_OVERRIDES',
-    '["NO_CACHE"]'::jsonb,
+    '[{"type":"NO_CACHE"}]'::jsonb,
     TRUE,
     (SELECT id FROM public.users WHERE username = 'system.seed')
   ),
   (
     'POL-DENY-TOP-SECRET-WITHOUT-MFA',
     'Bắt buộc xác thực đa yếu tố (MFA) đối với tài liệu Tuyệt mật',
-    'Chặn xem/tải tài liệu hạng 4 (TOP_SECRET) khi phiên chưa hoàn tất xác thực MFA',
+    'Chặn mọi thao tác (tra cứu, xem, tải, chia sẻ, quản trị) trên tài liệu hạng 4 (TOP_SECRET) khi phiên chưa hoàn tất xác thực MFA',
     'DENY',
     20,
     'DOCUMENT',
-    'VIEW',
+    NULL,
     'DENY_OVERRIDES',
-    '["REQUIRE_MFA"]'::jsonb,
+    '[{"type":"REQUIRE_MFA"}]'::jsonb,
     TRUE,
     (SELECT id FROM public.users WHERE username = 'system.seed')
   ),
@@ -1771,7 +1771,7 @@ VALUES
     'DOCUMENT',
     NULL,
     'DENY_OVERRIDES',
-    '["REQUIRE_WATERMARK", "NO_CACHE"]'::jsonb,
+    '[{"type":"REQUIRE_WATERMARK"},{"type":"NO_CACHE"}]'::jsonb,
     TRUE,
     (SELECT id FROM public.users WHERE username = 'system.seed')
   )
@@ -1781,6 +1781,7 @@ SET
   description = EXCLUDED.description,
   effect = EXCLUDED.effect,
   priority = EXCLUDED.priority,
+  target_action = EXCLUDED.target_action,
   obligations = EXCLUDED.obligations;
 
 INSERT INTO public.policy_rule_conditions (policy_rule_id, attribute_definition_id, context_key, operator, expected_value, condition_group, sequence_no)

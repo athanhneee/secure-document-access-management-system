@@ -201,7 +201,7 @@ export const tierWatermarkConfigs = [
   ],
 ] as const;
 
-// CONFLICT-RESOLVED: Chuẩn hóa nghĩa vụ hợp lệ theo VALID_SIMPLE_OBLIGATION_TYPES ('NO_CACHE' thay cho 'AUDIT_ELEVATED') và bổ sung luật PERMIT nền tảng cho nhân sự đang hoạt động trên tài liệu ACTIVE.
+// CONFLICT-RESOLVED: Chuẩn hóa nghĩa vụ sang định dạng đối tượng `{ type }` khớp tuyệt đối lược đồ `PUT /abac/policies/:id`, mở rộng `POL-DENY-TOP-SECRET-WITHOUT-MFA` lên mọi hành động (`target_action: null`) và duy trì luật PERMIT nền tảng cho nhân sự đang hoạt động trên tài liệu ACTIVE.
 export const baselineAbacPolicies = [
   {
     code: 'POL-DENY-HIGH-RISK-SESSION',
@@ -212,7 +212,7 @@ export const baselineAbacPolicies = [
     target_resource: 'DOCUMENT',
     target_action: null,
     combining_algorithm: 'DENY_OVERRIDES' as const,
-    obligations: ['NO_CACHE'],
+    obligations: [{ type: 'NO_CACHE' }],
     conditions: [
       {
         context_key: 'environment.riskScore',
@@ -226,13 +226,14 @@ export const baselineAbacPolicies = [
   {
     code: 'POL-DENY-TOP-SECRET-WITHOUT-MFA',
     name: 'Bắt buộc xác thực đa yếu tố (MFA) đối với tài liệu Tuyệt mật',
-    description: 'Chặn xem/tải tài liệu hạng 4 (TOP_SECRET) khi phiên chưa hoàn tất xác thực MFA',
+    description:
+      'Chặn mọi thao tác (tra cứu, xem, tải, chia sẻ, quản trị) trên tài liệu hạng 4 (TOP_SECRET) khi phiên chưa hoàn tất xác thực MFA',
     effect: 'DENY' as const,
     priority: 20,
     target_resource: 'DOCUMENT',
-    target_action: 'VIEW',
+    target_action: null,
     combining_algorithm: 'DENY_OVERRIDES' as const,
-    obligations: ['REQUIRE_MFA'],
+    obligations: [{ type: 'REQUIRE_MFA' }],
     conditions: [
       {
         context_key: 'resource.classificationRank',
@@ -260,7 +261,7 @@ export const baselineAbacPolicies = [
     target_resource: 'DOCUMENT',
     target_action: null,
     combining_algorithm: 'DENY_OVERRIDES' as const,
-    obligations: ['REQUIRE_WATERMARK', 'NO_CACHE'],
+    obligations: [{ type: 'REQUIRE_WATERMARK' }, { type: 'NO_CACHE' }],
     conditions: [
       {
         context_key: 'subject.employmentStatus',

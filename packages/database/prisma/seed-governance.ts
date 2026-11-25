@@ -73,6 +73,7 @@ export async function seedGovernanceConfigsAndPolicies(params: {
   }
 
   for (const policy of baselineAbacPolicies) {
+    const normalizedObligations = policy.obligations.map((ob) => ({ ...ob }));
     const savedPolicy = await transaction.policyRule.upsert({
       where: { code: policy.code },
       update: {
@@ -83,7 +84,7 @@ export async function seedGovernanceConfigsAndPolicies(params: {
         target_resource: policy.target_resource,
         target_action: policy.target_action,
         combining_algorithm: policy.combining_algorithm,
-        obligations: [...policy.obligations],
+        obligations: normalizedObligations,
         is_active: true,
       },
       create: {
@@ -95,7 +96,7 @@ export async function seedGovernanceConfigsAndPolicies(params: {
         target_resource: policy.target_resource,
         target_action: policy.target_action,
         combining_algorithm: policy.combining_algorithm,
-        obligations: [...policy.obligations],
+        obligations: normalizedObligations,
         is_active: true,
         created_by: seedActorId,
       },

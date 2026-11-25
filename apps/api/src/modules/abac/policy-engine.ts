@@ -84,10 +84,18 @@ export function evaluatePolicy(
         group.conditions.every((condition) => matchesCondition(condition, attributes)),
       ),
   );
-  // Thuật toán kết hợp XACML DENY_OVERRIDES kết hợp Default-Deny
+  // Thuật toán kết hợp XACML DENY_OVERRIDES kết hợp Default-Deny và nhận diện nghĩa vụ Step-Up MFA trên luật DENY
   const matchedRuleIds = matched.map((rule) => rule.id);
-  if (matched.some((rule) => rule.effect === 'DENY')) {
-    return { ...deny(policy, 'EXPLICIT_DENY'), matchedRuleIds };
+  const matchedDenyRules = matched.filter((rule) => rule.effect === 'DENY');
+  if (matchedDenyRules.length > 0) {
+    // CONFLICT-RESOLVED: Khi mọi luật DENY khớp đều mang nghĩa vụ REQUIRE_MFA trên phiên chưa xác thực MFA, trả mã STEP_UP_MFA_REQUIRED thay vì EXPLICIT_DENY chung để PEP yêu cầu xác thực đa yếu tố bổ sung.
+    const canResolveWithStepUpMfa =
+      !input.environment.mfa &&
+      matchedDenyRules.every((rule) => rule.obligations.some((o) => o.type === 'REQUIRE_MFA'));
+    return {
+      ...deny(policy, canResolveWithStepUpMfa ? 'STEP_UP_MFA_REQUIRED' : 'EXPLICIT_DENY'),
+      matchedRuleIds,
+    };
   }
   const permitted = matched.filter((rule) => rule.effect === 'PERMIT');
   if (permitted.length === 0) return deny(policy, 'DEFAULT_DENY');

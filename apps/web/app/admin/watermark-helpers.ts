@@ -115,8 +115,8 @@ export function renderWatermarkTemplateText(
   const documentCode = 'TL-2026-001';
   const utcTimestamp = '2026-11-25 14:30:00 UTC';
   const classification = options.classificationLabel?.trim() || 'CONFIDENTIAL';
-  const fullToken = 'WM-2e59958fa6c79a41b8d0e3f21a5c7e904b6d8f12c3e5a7b9';
-  const shortToken = 'WM-2e59958fa6c7';
+  const sampleFullCode = `WM-${'0a0b'.repeat(12)}`;
+  const sampleShortCode = `WM-${'0a0b'.repeat(3)}`;
 
   const source = rawTemplate.trim() || DEFAULT_WATERMARK_TEMPLATE;
   let substituted = source
@@ -128,12 +128,12 @@ export function renderWatermarkTemplateText(
     .replace(/\{documentCode\}/gu, documentCode)
     .replace(/\{timestamp\}/gu, utcTimestamp)
     .replace(/\{utcTimestamp\}/gu, utcTimestamp)
-    .replace(/\{watermarkToken\}/gu, fullToken)
-    .replace(/\{shortToken\}/gu, shortToken)
-    .replace(/\{token\}/gu, shortToken);
+    .replace(/\{watermarkToken\}/gu, sampleFullCode)
+    .replace(/\{shortToken\}/gu, sampleShortCode)
+    .replace(/\{token\}/gu, sampleShortCode);
 
   if (!substituted.includes(username) && !substituted.includes(fullName)) {
-    substituted = `${fullName} (${employeeCode}) | ${documentCode} | ${utcTimestamp} | ${shortToken}`;
+    substituted = `${fullName} (${employeeCode}) | ${documentCode} | ${utcTimestamp} | ${sampleShortCode}`;
   }
   return substituted.slice(0, 1000);
 }

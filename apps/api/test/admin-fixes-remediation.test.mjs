@@ -294,7 +294,7 @@ test('RBAC replacePermissions allows global SYSTEM_ADMIN to manage non-admin rol
 
 test('RBAC role assignment rejects past validTo & past validFrom, and executeEnableRole re-enables custom role', async () => {
   const csrf = new CsrfService(new AppConfigService({ CORS_ORIGIN: 'http://localhost:3000' }));
-  const token = 'test-csrf-token-rbac-past-dates-0000000';
+  const token = 'test-placeholder-csrf-rbac-000000000000';
   let assignedPayload = null;
   const controller = new RbacController(
     {

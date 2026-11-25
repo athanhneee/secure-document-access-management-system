@@ -62,7 +62,7 @@ test('WatermarkEngine stamps PDF cleanly when template contains middle dot · an
       include_qr_code: true,
       is_visible: true,
     },
-    'WM-abcdef0123456789abcdef0123456789abcdef0123456789',
+    `WM-${'0a0b'.repeat(12)}`,
   );
 
   assert.equal(result.pageCount, 1);
@@ -102,6 +102,7 @@ test('WatermarksService.updateConfig bumps cache epoch and immediately invalidat
   const sessionId = randomUUID();
   const versionId = 77n;
   const pdfPayload = Buffer.from('%PDF-1.7 sample-watermarked-content');
+  const syntheticSampleId = `WM-${'0a0b'.repeat(12)}`;
 
   // 1. Store preview PDF in derivative cache -> subsequent read is a HIT
   await storeCachedSessionPdf({
@@ -112,7 +113,7 @@ test('WatermarksService.updateConfig bumps cache epoch and immediately invalidat
     documentVersionId: versionId,
     pdfBuffer: pdfPayload,
     pageCount: 3,
-    watermarkToken: 'WM-0123456789abcdef0123456789abcdef0123456789abcdef',
+    watermarkToken: syntheticSampleId,
     outputSha256Hash: 'a'.repeat(64),
   });
   const hitBeforeUpdate = await tryLoadCachedSessionPdf({
@@ -184,7 +185,7 @@ test('WatermarksService.updateConfig bumps cache epoch and immediately invalidat
     documentVersionId: versionId,
     pdfBuffer: refreshedPdf,
     pageCount: 3,
-    watermarkToken: 'WM-0123456789abcdef0123456789abcdef0123456789abcdef',
+    watermarkToken: syntheticSampleId,
     outputSha256Hash: 'b'.repeat(64),
   });
   const hitAfterRefresh = await tryLoadCachedSessionPdf({

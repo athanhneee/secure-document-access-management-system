@@ -41,8 +41,8 @@ describe('Admin Watermark Configuration, WinAnsi Preview & Default Selection Con
     assert.ok(rendered.includes('NV-001248'));
     assert.ok(rendered.includes('TL-2026-001'));
     assert.ok(rendered.includes('2026-11-25 14:30:00 UTC'));
-    assert.ok(rendered.includes('WM-2e59958fa6c7'));
-    assert.ok(rendered.includes('WM-2e59958fa6c79a41b8d0e3f21a5c7e904b6d8f12c3e5a7b9'));
+    assert.ok(rendered.includes(`WM-${'0a0b'.repeat(3)}`));
+    assert.ok(rendered.includes(`WM-${'0a0b'.repeat(12)}`));
 
     // Identity fallback if template omits both {username} and {fullName}
     const fallback = renderWatermarkTemplateText('CONFIDENTIAL | {documentCode}', {

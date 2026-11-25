@@ -21,10 +21,10 @@ export interface ExpectedValueWidgetProps {
 }
 
 /**
- * Thuật toán: Điều Khiển Nhập Liệu Giá Trị Kỳ Vọng Đa Hình & Ép Kiểu Tập Hợp Số (`ExpectedValueWidget`)
- * Mục đích: Tự động chọn giao diện nhập phù hợp tổ hợp `(attributeMeta, operator)` và ép kiểu số học khi `valueType === 'NUMBER'` hoặc `type === 'NUMBER'` trong toán tử `IN` / `NOT_IN`.
- * Cơ chế hoạt động:
- *   - Hiển thị tập hợp giá trị `IN` / `NOT_IN` theo mẫu phẳng `staff-001` (nền trong suốt, không đóng khung viên thuốc, chữ màu ngữ nghĩa kèm biểu tượng 16px).
+ * Thuật toán: Điều Khiển Nhập Liệu Giá Trị Kỳ Vọng Đa Hình (`ExpectedValueWidget`)
+ * Mục đích:
+ *   - Tự động chọn giao diện nhập chuẩn kiểu cho `(attributeMeta, operator)` bao gồm `EXISTS` (Boolean nghiêm ngặt), `TIME_BETWEEN`, `BETWEEN`, `IN`/`NOT_IN` (hỗ trợ chọn trực tiếp từ danh mục động CSDL), và `EQ`/`NEQ`.
+ *   - Hiển thị tập hợp giá trị `IN` / `NOT_IN` theo mẫu phẳng `staff-001` (nền trong suốt, không đóng khung viên thuốc).
  */
 export function ExpectedValueWidget({
   attributeMeta,
@@ -48,6 +48,21 @@ export function ExpectedValueWidget({
         value={value}
         onChange={onChange}
       />
+    );
+  }
+
+  if (operator === 'EXISTS') {
+    const boolVal = value === false || value === 'false' ? 'false' : 'true';
+    return (
+      <select
+        aria-label="Điều kiện tồn tại thuộc tính"
+        value={boolVal}
+        onChange={(e) => onChange(e.target.value === 'true')}
+        className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+      >
+        <option value="true">Phải có giá trị (Tồn tại)</option>
+        <option value="false">Không có giá trị (Rỗng)</option>
+      </select>
     );
   }
 
@@ -77,12 +92,13 @@ export function ExpectedValueWidget({
 
   if (operator === 'IN' || operator === 'NOT_IN') {
     const arr = Array.isArray(value) ? (value as Array<string | number | boolean>) : [];
-    const handleAddTag = () => {
-      const trimmed = tagInput.trim();
-      if (!trimmed) return;
-      let nextItem: string | number = trimmed;
-      if (isNumeric) {
-        const parsed = Number(trimmed);
+    const options = attributeMeta?.options ?? [];
+    const optionLabelMap = new Map(options.map((opt) => [String(opt.value), opt.label]));
+
+    const addValue = (rawVal: string | number | boolean) => {
+      let nextItem: string | number | boolean = rawVal;
+      if (isNumeric && typeof rawVal !== 'number') {
+        const parsed = Number(rawVal);
         if (!Number.isFinite(parsed)) return;
         nextItem = parsed;
       }
@@ -91,43 +107,68 @@ export function ExpectedValueWidget({
       );
       if (!alreadyExists) {
         onChange([...arr, nextItem]);
-        setTagInput('');
       }
+    };
+
+    const handleAddTag = () => {
+      const trimmed = tagInput.trim();
+      if (!trimmed) return;
+      addValue(trimmed);
+      setTagInput('');
     };
 
     return (
       <div className="space-y-2">
-        <div className="flex items-center gap-1.5">
-          <Input
-            type={isNumeric ? 'number' : 'text'}
-            aria-label="Nhập giá trị thêm vào danh sách"
-            value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleAddTag();
-              }
+        {options.length > 0 ? (
+          <select
+            aria-label="Chọn giá trị thêm vào danh sách"
+            value=""
+            onChange={(e) => {
+              if (!e.target.value) return;
+              addValue(isNumeric ? Number(e.target.value) : e.target.value);
             }}
-            placeholder={isNumeric ? 'Nhập số rồi nhấn Enter…' : 'Thêm giá trị rồi nhấn Enter…'}
-            className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleAddTag}
-            className="rounded-full border-[#dddddd] px-3 text-xs shrink-0"
+            className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
           >
-            Thêm
-          </Button>
-        </div>
+            <option value="">Chọn để thêm vào danh sách…</option>
+            {options.map((opt) => (
+              <option key={String(opt.value)} value={String(opt.value)}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            <Input
+              type={isNumeric ? 'number' : 'text'}
+              aria-label="Nhập giá trị thêm vào danh sách"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAddTag();
+                }
+              }}
+              placeholder={isNumeric ? 'Nhập số rồi nhấn Enter…' : 'Thêm giá trị rồi nhấn Enter…'}
+              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddTag}
+              className="rounded-full border-[#dddddd] px-3 text-xs shrink-0"
+            >
+              Thêm
+            </Button>
+          </div>
+        )}
         {arr.length > 0 && (
           <div className="flex flex-wrap items-center gap-3 pt-0.5">
             {arr.map((item, idx) => (
               <span
                 key={`${String(item)}-${idx}`}
-                className="staff-badge inline-flex items-center gap-1 bg-transparent border-0 p-0 text-xs font-mono font-semibold text-[#008489]"
+                className="staff-badge inline-flex items-center gap-1 bg-transparent border-0 p-0 text-xs font-semibold text-[#008489]"
               >
                 <Tag
                   size={16}
@@ -135,7 +176,7 @@ export function ExpectedValueWidget({
                   className="text-[#008489] shrink-0"
                   aria-hidden="true"
                 />
-                <span>{String(item)}</span>
+                <span>{optionLabelMap.get(String(item)) ?? String(item)}</span>
                 <button
                   type="button"
                   aria-label={`Xóa giá trị ${String(item)}`}
@@ -153,13 +194,18 @@ export function ExpectedValueWidget({
   }
 
   if (attributeMeta?.options && attributeMeta.options.length > 0) {
+    const stringVal = value !== undefined && value !== null ? String(value) : '';
+    const hasMatch = attributeMeta.options.some((opt) => String(opt.value) === stringVal);
     return (
       <select
         aria-label="Giá trị kỳ vọng"
-        value={String(value)}
+        value={stringVal}
         onChange={(e) => onChange(isNumeric ? Number(e.target.value) : e.target.value)}
         className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
       >
+        {!hasMatch && stringVal && (
+          <option value={stringVal}>{stringVal} (Giá trị hiện lưu)</option>
+        )}
         {attributeMeta.options.map((opt) => (
           <option key={String(opt.value)} value={String(opt.value)}>
             {opt.label}

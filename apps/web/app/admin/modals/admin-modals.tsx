@@ -1,7 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import type { ClearanceOptionRow, DepartmentRow, PermissionRow, RoleRow, UserRow } from '../types';
+import type {
+  AdminTab,
+  ClearanceOptionRow,
+  DepartmentRow,
+  PermissionRow,
+  RoleRow,
+  UserRow,
+} from '../types';
 import { AssignRoleModal } from './assign-role-modal';
 import { CreateRoleModal } from './create-role-modal';
 import { CreateUserModal } from './create-user-modal';
@@ -110,17 +117,19 @@ export type AdminModalState = ReturnType<typeof useAdminModalState>;
 
 interface AdminModalsProps {
   modals: AdminModalState;
+  currentUserId?: string | undefined;
   departments: DepartmentRow[];
   clearanceOptions: ClearanceOptionRow[];
   roles: RoleRow[];
   permissions: PermissionRow[];
   onClearError: () => void;
-  onSuccess: (message: string) => Promise<void>;
+  onSuccess: (message: string, targetTab?: AdminTab) => Promise<void>;
   onError: (errorMessage: string) => void;
 }
 
 export function AdminModals({
   modals,
+  currentUserId,
   departments,
   clearanceOptions,
   roles,
@@ -137,7 +146,7 @@ export function AdminModals({
         departments={departments}
         clearanceOptions={clearanceOptions}
         onClearError={onClearError}
-        onSuccess={onSuccess}
+        onSuccess={(msg) => onSuccess(msg, 'users')}
         onError={onError}
       />
 
@@ -151,7 +160,7 @@ export function AdminModals({
         departments={departments}
         clearanceOptions={clearanceOptions}
         onClearError={onClearError}
-        onSuccess={onSuccess}
+        onSuccess={(msg) => onSuccess(msg, 'users')}
         onError={onError}
       />
 
@@ -164,7 +173,7 @@ export function AdminModals({
         user={modals.selectedUserForClearance}
         clearanceOptions={clearanceOptions}
         onClearError={onClearError}
-        onSuccess={onSuccess}
+        onSuccess={(msg) => onSuccess(msg, 'users')}
         onError={onError}
       />
 
@@ -177,7 +186,7 @@ export function AdminModals({
         department={modals.selectedDepartment}
         departments={departments}
         onClearError={onClearError}
-        onSuccess={onSuccess}
+        onSuccess={(msg) => onSuccess(msg, 'departments')}
         onError={onError}
       />
 
@@ -185,7 +194,7 @@ export function AdminModals({
         open={modals.createRoleOpen}
         onOpenChange={modals.setCreateRoleOpen}
         onClearError={onClearError}
-        onSuccess={onSuccess}
+        onSuccess={(msg) => onSuccess(msg, 'rbac')}
         onError={onError}
       />
 
@@ -197,7 +206,7 @@ export function AdminModals({
         }}
         role={modals.selectedRoleForEdit}
         onClearError={onClearError}
-        onSuccess={onSuccess}
+        onSuccess={(msg) => onSuccess(msg, 'rbac')}
         onError={onError}
       />
 
@@ -210,7 +219,7 @@ export function AdminModals({
         role={modals.selectedRoleForPerms}
         permissions={permissions}
         onClearError={onClearError}
-        onSuccess={onSuccess}
+        onSuccess={(msg) => onSuccess(msg, 'rbac')}
         onError={onError}
       />
 
@@ -221,9 +230,10 @@ export function AdminModals({
           if (!open) modals.setSelectedUserForRole(null);
         }}
         targetUser={modals.selectedUserForRole}
+        currentUserId={currentUserId}
         roles={roles}
         onClearError={onClearError}
-        onSuccess={onSuccess}
+        onSuccess={(msg) => onSuccess(msg, 'users')}
         onError={onError}
       />
     </>

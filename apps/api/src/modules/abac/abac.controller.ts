@@ -9,6 +9,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -137,6 +138,29 @@ export class AbacController {
   activate(@Param('id') id: string, @Req() request: FastifyRequest) {
     this.csrf.assertRequest(request);
     return this.abacService.activateRule(
+      this.principal(request),
+      IdSchema.parse(id),
+      this.context(request),
+    );
+  }
+
+  @Post('policies/:id/deactivate')
+  @RequirePermission('POLICY', 'MANAGE', true)
+  deactivate(@Param('id') id: string, @Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    return this.abacService.deactivateRule(
+      this.principal(request),
+      IdSchema.parse(id),
+      this.context(request),
+    );
+  }
+
+  @Delete('policies/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('POLICY', 'MANAGE', true)
+  async deletePolicy(@Param('id') id: string, @Req() request: FastifyRequest): Promise<void> {
+    this.csrf.assertRequest(request);
+    await this.abacService.deleteRule(
       this.principal(request),
       IdSchema.parse(id),
       this.context(request),

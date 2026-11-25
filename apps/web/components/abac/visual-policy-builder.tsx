@@ -1,10 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AlertTriangle, Plus } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import type { VisualPolicyRule, VisualCondition, VisualConditionGroup } from './abac-models';
+import {
+  buildDynamicAttributeRegistry,
+  type DynamicCategoryOption,
+  type DynamicDepartmentOption,
+  type VisualCondition,
+  type VisualConditionGroup,
+  type VisualPolicyRule,
+} from './abac-models';
 import type { PolicyTemplate } from './policy-templates';
 import { PolicySimulatorDialog } from './policy-simulator-dialog';
 import {
@@ -31,6 +38,9 @@ import { ObligationsPanel } from './obligations-panel';
 
 export interface VisualPolicyBuilderProps {
   initialRule?: VisualPolicyRule | undefined;
+  departments?: readonly DynamicDepartmentOption[] | undefined;
+  businessCategories?: readonly DynamicCategoryOption[] | undefined;
+  canSimulateOnServer?: boolean | undefined;
   onSaveRule?: ((rule: VisualPolicyRule) => void | Promise<void>) | undefined;
   onCancel?: (() => void) | undefined;
   onClearError?: (() => void) | undefined;
@@ -38,17 +48,24 @@ export interface VisualPolicyBuilderProps {
 
 /**
  * Algorithm / Thuật toán: Trình Biên Tập Trực Quan & Chuyển Đổi Hai Chiều AST <-> DNF (Bidirectional DNF/AST Policy Builder)
- * Mục đích: Cung cấp môi trường kéo-thả No-Code xây dựng quy tắc ABAC dưới dạng Chuẩn Tuyển (DNF: OR của các nhóm liên hội AND) đồng bộ tức thời với JSON AST.
+ * Mục đích: Cung cấp môi trường kéo-thả No-Code xây dựng quy tắc ABAC dưới dạng Chuẩn Tuyển (DNF: OR của các nhóm liên hội AND) đồng bộ tức thời với JSON AST và từ điển phòng ban/danh mục động từ CSDL.
  * Cơ chế hoạt động:
- *   - Duy trì bất biến kiểu dữ liệu trên từng nút điều kiện dựa vào `ATTRIBUTE_REGISTRY`.
+ *   - Duy trì bất biến kiểu dữ liệu trên từng nút điều kiện dựa vào `buildDynamicAttributeRegistry(departments, businessCategories)`.
  *   - Điều phối đồng bộ hai chiều giữa cây giao diện kéo-thả, bộ soạn thảo JSON AST và trình giả lập PDP trực tiếp.
  */
 export function VisualPolicyBuilder({
   initialRule = DEFAULT_INITIAL_RULE,
+  departments,
+  businessCategories,
+  canSimulateOnServer = true,
   onSaveRule,
   onCancel,
   onClearError,
 }: VisualPolicyBuilderProps) {
+  const attributeRegistry = useMemo(
+    () => buildDynamicAttributeRegistry(departments, businessCategories),
+    [departments, businessCategories],
+  );
   const [rule, setRule] = useState<VisualPolicyRule>(initialRule);
   const [viewMode, setViewMode] = useState<'visual' | 'json'>('visual');
   const [jsonText, setJsonText] = useState(() => serializePolicyAst(initialRule));
@@ -91,7 +108,7 @@ export function VisualPolicyBuilder({
   };
 
   const handleSelectTemplate = (tpl: PolicyTemplate) => {
-    updateRule(clonePolicyTemplate(tpl));
+    updateRule(clonePolicyTemplate(tpl, departments));
     setTemplateDialogOpen(false);
   };
 
@@ -106,7 +123,7 @@ export function VisualPolicyBuilder({
     field: keyof VisualCondition,
     value: unknown,
   ) => {
-    updateRule(updateConditionField(rule, groupId, conditionId, field, value));
+    updateRule(updateConditionField(rule, groupId, conditionId, field, value, attributeRegistry));
   };
 
   const handleRemoveGroup = (groupId: number) => {
@@ -130,7 +147,11 @@ export function VisualPolicyBuilder({
     setDraggedCondition(null);
   };
 
-  const filteredAttributes = filterAttributePalette(selectedCategory, searchPalette);
+  const filteredAttributes = filterAttributePalette(
+    selectedCategory,
+    searchPalette,
+    attributeRegistry,
+  );
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -194,7 +215,7 @@ export function VisualPolicyBuilder({
             onSearchChange={setSearchPalette}
             firstGroupId={rule.groups[0]?.id ?? 1}
             onAddAttributeToFirstGroup={(gid, key) =>
-              updateRule(addConditionToGroup(rule, gid, key))
+              updateRule(addConditionToGroup(rule, gid, key, attributeRegistry))
             }
           />
 
@@ -205,7 +226,10 @@ export function VisualPolicyBuilder({
                   key={group.id}
                   group={group}
                   groupIdx={groupIdx}
-                  onAddCondition={(gid, key) => updateRule(addConditionToGroup(rule, gid, key))}
+                  attributeRegistry={attributeRegistry}
+                  onAddCondition={(gid, key) =>
+                    updateRule(addConditionToGroup(rule, gid, key, attributeRegistry))
+                  }
                   onDuplicateGroup={(g) => updateRule(duplicateDisjunctiveGroup(rule, g))}
                   onRemoveGroup={handleRemoveGroup}
                   onDropConditionOnGroup={handleDropOnGroup}
@@ -258,6 +282,9 @@ export function VisualPolicyBuilder({
         open={simulatorOpen}
         onOpenChange={setSimulatorOpen}
         activeRule={rule}
+        departments={departments}
+        businessCategories={businessCategories}
+        canSimulateOnServer={canSimulateOnServer}
       />
     </div>
   );

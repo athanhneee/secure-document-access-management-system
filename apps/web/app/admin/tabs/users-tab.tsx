@@ -53,6 +53,7 @@ import type { DepartmentRow, UserRow, UserStatusAction } from '../types';
 interface UsersTabProps {
   users: UserRow[];
   departments: DepartmentRow[];
+  currentUserId?: string | undefined;
   query: UserListQueryState;
   onQueryChange: (nextQuery: UserListQueryState) => void;
   onOpenEditUser: (user: UserRow) => void;
@@ -67,11 +68,12 @@ const SELECT_BASE_CLASS =
 
 /**
  * Thuật toán: Bảng Quản Lý Danh Tính Có Bộ Lọc Đa Chiều & Sắp Xếp Cột (`UsersTab`)
- * Mục đích: Kết hợp lọc tức thời theo trạng thái, phòng ban, thao tác khả dụng và tìm kiếm đa trường; hỗ trợ sắp xếp hai chiều ngay trên tiêu đề cột lẫn bộ chọn sắp xếp.
+ * Mục đích: Kết hợp lọc tức thời theo trạng thái, phòng ban, thao tác khả dụng và tìm kiếm đa trường; ẩn nút tự khóa/tự vô hiệu trên tài khoản hiện tại và tự co gọn cột thao tác tránh tràn ngang trên máy tính.
  */
 export function UsersTab({
   users,
   departments,
+  currentUserId,
   query,
   onQueryChange,
   onOpenEditUser,
@@ -82,7 +84,7 @@ export function UsersTab({
 }: UsersTabProps) {
   const [pendingAction, setPendingAction] = useState<{
     user: UserRow;
-    action: 'lock' | 'disable';
+    action: 'lock' | 'disable' | 'reactivate';
   } | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [unlockingUserId, setUnlockingUserId] = useState<string | null>(null);
@@ -429,10 +431,11 @@ export function UsersTab({
                     resolveUserDepartmentName(u, departmentNamesById) ??
                     UNASSIGNED_DEPARTMENT_LABEL;
                   const canReactivateDisabled = u.status === 'DISABLED';
+                  const isSelf = Boolean(currentUserId && u.id === currentUserId);
 
                   return (
                     <TableRow key={u.id}>
-                      <TableCell className="min-w-[200px] sm:min-w-[230px] max-w-[280px]">
+                      <TableCell className="min-w-[160px] max-w-[210px]">
                         <div
                           className="font-semibold text-xs text-[#222222] truncate"
                           title={`${u.fullName} (@${u.username})`}
@@ -449,12 +452,15 @@ export function UsersTab({
                         )}
                       </TableCell>
                       <TableCell
-                        className="text-xs text-[#717171] max-w-[220px] truncate"
+                        className="text-xs text-[#717171] max-w-[180px] truncate"
                         title={u.email}
                       >
                         {u.email}
                       </TableCell>
-                      <TableCell className="text-xs text-[#222222] whitespace-nowrap">
+                      <TableCell
+                        className="text-xs text-[#222222] max-w-[165px] truncate"
+                        title={deptName}
+                      >
                         {deptName}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
@@ -491,8 +497,8 @@ export function UsersTab({
                           {formatUserStatusLabel(u.status)}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right whitespace-nowrap">
-                        <div className="inline-flex items-center justify-end gap-1.5">
+                      <TableCell className="text-right">
+                        <div className="ml-auto flex flex-wrap items-center justify-end gap-1 min-w-[215px] max-w-[300px] 2xl:max-w-none">
                           <InteractiveHoverButton
                             variant="ghost"
                             size="sm"
@@ -514,7 +520,7 @@ export function UsersTab({
                             icon={<Key size={16} strokeWidth={1.75} aria-hidden="true" />}
                             onClick={() => onOpenAssignRole(u)}
                           />
-                          {u.status === 'ACTIVE' && (
+                          {!isSelf && u.status === 'ACTIVE' && (
                             <InteractiveHoverButton
                               variant="ghost"
                               size="sm"
@@ -543,12 +549,13 @@ export function UsersTab({
                               size="sm"
                               text="Kích hoạt"
                               icon={<Unlock size={16} strokeWidth={1.75} aria-hidden="true" />}
-                              isLoading={unlockingUserId === u.id}
-                              disabled={unlockingUserId === u.id}
-                              onClick={() => void handleDirectUnlock(u)}
+                              onClick={() => {
+                                onClearError();
+                                setPendingAction({ user: u, action: 'reactivate' });
+                              }}
                             />
                           )}
-                          {u.status !== 'DISABLED' && (
+                          {!isSelf && u.status !== 'DISABLED' && (
                             <InteractiveHoverButton
                               variant="danger"
                               size="sm"
@@ -579,15 +586,23 @@ export function UsersTab({
         title={
           pendingAction?.action === 'disable'
             ? 'Xác nhận vô hiệu hóa tài khoản'
-            : 'Xác nhận khóa tạm thời tài khoản'
+            : pendingAction?.action === 'reactivate'
+              ? 'Xác nhận kích hoạt lại tài khoản'
+              : 'Xác nhận khóa tạm thời tài khoản'
         }
         description={
           pendingAction?.action === 'disable'
-            ? `Tài khoản @${pendingAction.user.username} (${pendingAction.user.fullName}) sẽ bị vô hiệu hóa và thu hồi mọi phiên hoạt động.`
-            : `Tài khoản @${pendingAction?.user.username ?? ''} (${pendingAction?.user.fullName ?? ''}) sẽ bị khóa đăng nhập tạm thời.`
+            ? `Tài khoản @${pendingAction.user.username} (${pendingAction.user.fullName}) sẽ bị vô hiệu hóa và thu hồi tức thì mọi phiên hoạt động.`
+            : pendingAction?.action === 'reactivate'
+              ? `Tài khoản @${pendingAction.user.username} (${pendingAction.user.fullName}) sẽ được chuyển từ trạng thái Vô hiệu hóa sang Đang hoạt động và có thể đăng nhập trở lại.`
+              : `Tài khoản @${pendingAction?.user.username ?? ''} (${pendingAction?.user.fullName ?? ''}) sẽ bị khóa đăng nhập tạm thời và thu hồi tức thì mọi phiên đang mở.`
         }
         confirmLabel={
-          pendingAction?.action === 'disable' ? 'Xác nhận vô hiệu hóa' : 'Xác nhận khóa'
+          pendingAction?.action === 'disable'
+            ? 'Xác nhận vô hiệu hóa'
+            : pendingAction?.action === 'reactivate'
+              ? 'Xác nhận kích hoạt'
+              : 'Xác nhận khóa'
         }
         variant={pendingAction?.action === 'disable' ? 'danger' : 'primary'}
         isLoading={isUpdatingStatus}

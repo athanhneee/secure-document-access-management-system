@@ -16,15 +16,53 @@ import type {
   PolicyRuleConditionDto,
 } from './types';
 
+const SIMPLE_OBLIGATION_TYPES = new Set([
+  'REQUIRE_WATERMARK',
+  'REQUIRE_MFA',
+  'FORBID_DOWNLOAD',
+  'NO_CACHE',
+]);
+
+/**
+ * Thuật toán: Chuẩn Hóa Mảng Nghĩa Vụ ABAC Từ Dạng Chuỗi Hạt Giống Hoặc Đối Tượng Sang `VisualObligation[]` (`normalizeVisualObligations`)
+ * Mục đích: Đảm bảo các luật mặc định lưu `["NO_CACHE"]` hay `["REQUIRE_WATERMARK", "NO_CACHE"]` hiển thị đúng dấu tick trong Trình dựng trực quan và luôn vượt qua lược đồ `PUT /abac/policies/:id`.
+ */
+export function normalizeVisualObligations(raw: unknown): VisualObligation[] {
+  if (!Array.isArray(raw)) return [];
+  const normalized: VisualObligation[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      const code = item.trim();
+      if (SIMPLE_OBLIGATION_TYPES.has(code)) {
+        normalized.push({ type: code } as VisualObligation);
+      }
+      continue;
+    }
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const rec = item as Record<string, unknown>;
+      const type = typeof rec['type'] === 'string' ? rec['type'].trim() : '';
+      if (type === 'MAX_SESSION_MINUTES') {
+        const minutes = Number(rec['minutes']);
+        normalized.push({
+          type: 'MAX_SESSION_MINUTES',
+          minutes: Number.isFinite(minutes) && minutes >= 1 ? Math.round(minutes) : 30,
+        });
+      } else if (SIMPLE_OBLIGATION_TYPES.has(type)) {
+        normalized.push({ type } as VisualObligation);
+      }
+    }
+  }
+  return normalized;
+}
+
 /**
  * Thuật toán: Chuẩn Hóa Dữ Liệu Chính Sách & Định Nghĩa Thuộc Tính ABAC Giữa Snake_Case và CamelCase (`normalizeAbacPolicyRow` & `normalizeAttributeDefinitionRow`)
  * Mục đích: Đồng bộ nhất quán phản hồi REST API của máy chủ PDP sang lược đồ hiển thị trên bảng quản trị ABAC.
  */
 export function normalizeAbacPolicyRow(raw: AbacPolicyApiDto): AbacPolicyRow {
   const rawAction = (raw.targetAction ?? raw.target_action ?? 'ALL').toUpperCase() as TargetAction;
-  const rawObligations = Array.isArray(raw.obligations)
-    ? (raw.obligations as VisualObligation[])
-    : undefined;
+  const rawObligations =
+    raw.obligations !== undefined ? normalizeVisualObligations(raw.obligations) : undefined;
 
   return {
     id: String(raw.id),
@@ -62,9 +100,13 @@ export function normalizeAttributeDefinitionRow(
 const DEFINITION_CODE_TO_CONTEXT_KEY: Record<string, string> = {
   CLEARANCE_LEVEL: 'subject.clearanceRank',
   DEPARTMENT: 'subject.departmentId',
+  SUBJECT_DEPARTMENT: 'subject.departmentId',
+  EMPLOYMENT_STATUS: 'subject.employmentStatus',
   PROJECT: 'subject.projects',
   CLASSIFICATION_LEVEL: 'resource.classificationRank',
+  RESOURCE_DEPARTMENT: 'resource.departmentId',
   CATEGORY: 'resource.category',
+  RESOURCE_CATEGORY: 'resource.category',
 };
 
 function mapStoredConditionsToGroups(conditions: PolicyRuleConditionDto[]): VisualConditionGroup[] {
@@ -103,6 +145,7 @@ export function resolveVisualRuleForPolicy(p: AbacPolicyRow): VisualPolicyRule {
       .toUpperCase()
       .replace(/[^A-Z0-9]+/gu, '_')
       .slice(0, 24)}`;
+  const normalizedObligations = normalizeVisualObligations(p.obligations);
 
   if (p.groups && p.groups.length > 0) {
     return {
@@ -116,7 +159,7 @@ export function resolveVisualRuleForPolicy(p: AbacPolicyRow): VisualPolicyRule {
       targetAction: p.targetAction ?? 'ALL',
       combiningAlgorithm: 'DENY_OVERRIDES',
       groups: p.groups,
-      obligations: p.obligations ?? [],
+      obligations: normalizedObligations,
     };
   }
 
@@ -132,7 +175,7 @@ export function resolveVisualRuleForPolicy(p: AbacPolicyRow): VisualPolicyRule {
       targetAction: p.targetAction ?? 'ALL',
       combiningAlgorithm: 'DENY_OVERRIDES',
       groups: mapStoredConditionsToGroups(p.policy_rule_conditions),
-      obligations: p.obligations ?? [],
+      obligations: normalizedObligations,
     };
   }
 
@@ -157,6 +200,6 @@ export function resolveVisualRuleForPolicy(p: AbacPolicyRow): VisualPolicyRule {
     targetAction: p.targetAction ?? 'ALL',
     combiningAlgorithm: 'DENY_OVERRIDES',
     groups: [],
-    obligations: p.obligations ?? [],
+    obligations: normalizedObligations,
   };
 }

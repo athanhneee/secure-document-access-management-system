@@ -23,6 +23,7 @@ import {
 import {
   auditRoleSnapshot,
   executeDeleteRole,
+  executeEnableRole,
   executeReplaceRolePermissions,
   executeUpdateRole,
   presentRoleDto,
@@ -213,6 +214,27 @@ export class RbacService {
     );
     await this.authorization.invalidateAll();
     return this.getRole(role.id);
+  }
+
+  /**
+   * Thuật toán: Kích hoạt lại vai trò tùy chỉnh đã vô hiệu hóa bằng CAS (`expectedVersion`).
+   */
+  async enableRole(
+    principal: AuthPrincipal,
+    id: bigint,
+    expectedVersion: number,
+    context: RequestContext,
+  ) {
+    const roleId = await executeEnableRole({
+      database: this.database,
+      authorization: this.authorization,
+      audit: this.audit,
+      principal,
+      id,
+      expectedVersion,
+      context,
+    });
+    return this.getRole(roleId);
   }
 
   deleteRole(principal: AuthPrincipal, id: bigint, context: RequestContext): Promise<void> {

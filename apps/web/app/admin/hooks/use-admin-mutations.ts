@@ -13,15 +13,18 @@ import { normalizeAbacPolicyRow } from '../helpers';
 import type {
   AbacPolicyApiDto,
   AbacPolicyRow,
+  DepartmentRow,
   HealthStatusLabel,
   RoleRow,
   SystemHealthData,
   UserRow,
   UserStatusAction,
 } from '../types';
+import { useAdminLifecycleMutations } from './use-admin-lifecycle-mutations';
 
 interface UseAdminMutationsParams {
   setUsers: Dispatch<SetStateAction<UserRow[]>>;
+  setDepartments: Dispatch<SetStateAction<DepartmentRow[]>>;
   setRoles: Dispatch<SetStateAction<RoleRow[]>>;
   policies: AbacPolicyRow[];
   setPolicies: Dispatch<SetStateAction<AbacPolicyRow[]>>;
@@ -45,6 +48,7 @@ function mapSnapshotStatus(status: HealthStatusLabel | undefined): 'HEALTHY' | '
  */
 export function useAdminMutations({
   setUsers,
+  setDepartments,
   setRoles,
   policies,
   setPolicies,
@@ -52,6 +56,15 @@ export function useAdminMutations({
   setMessage,
   setErrorMessage,
 }: UseAdminMutationsParams) {
+  const lifecycle = useAdminLifecycleMutations({
+    setDepartments,
+    setRoles,
+    policies,
+    setPolicies,
+    setMessage,
+    setErrorMessage,
+  });
+
   async function changeUserStatus(targetUser: UserRow, action: UserStatusAction): Promise<boolean> {
     setErrorMessage(null);
     setUsers((prev) => applyOptimisticUserStatus(prev, targetUser.id, action));
@@ -60,11 +73,13 @@ export function useAdminMutations({
         method: 'POST',
         body: JSON.stringify({ expectedVersion: targetUser.version }),
       });
-      setMessage(
-        action === 'unlock' && targetUser.status === 'DISABLED'
-          ? `Đã kích hoạt lại tài khoản @${targetUser.username} thành công.`
-          : `Đã cập nhật trạng thái tài khoản @${targetUser.username} thành công.`,
-      );
+      const successByAction: Record<UserStatusAction, string> = {
+        lock: `Đã khóa tạm thời tài khoản @${targetUser.username} và thu hồi phiên đăng nhập.`,
+        unlock: `Đã mở khóa tài khoản @${targetUser.username} thành công.`,
+        disable: `Đã vô hiệu hóa tài khoản @${targetUser.username} và thu hồi mọi phiên hoạt động.`,
+        reactivate: `Đã kích hoạt lại tài khoản @${targetUser.username} thành công.`,
+      };
+      setMessage(successByAction[action]);
       return true;
     } catch (err) {
       setUsers((prev) => prev.map((user) => (user.id === targetUser.id ? targetUser : user)));
@@ -218,5 +233,6 @@ export function useAdminMutations({
     activatePolicy,
     saveDraftPolicy,
     captureHealthSnapshot,
+    ...lifecycle,
   };
 }

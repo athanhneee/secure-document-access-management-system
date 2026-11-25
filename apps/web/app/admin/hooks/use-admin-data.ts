@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import {
   mapHealthReadyResponse,
@@ -13,7 +13,9 @@ import type {
   AdminTab,
   AttributeDefinitionApiDto,
   AttributeDefinitionRow,
+  BusinessCategoryOptionRow,
   ClearanceOptionRow,
+  DepartmentLookupRow,
   DepartmentRow,
   HealthDashboardResponse,
   HealthReadyResponse,
@@ -43,10 +45,29 @@ function buildOfflineHealthData(): SystemHealthData {
  *   - Loại bỏ lời gọi trùng `/health/ready` vì `/health/dashboard` đã chứa đầy đủ `dependencies.checks` (`database`, `redis`, `storage`) và số liệu tiến trình.
  *   - Khử trùng lặp yêu cầu đồng thời (`inFlightTabsRef`) và chỉ làm mới đúng phạm vi tab được yêu cầu sau thao tác hộp thoại.
  */
-export function useAdminData(activeTab: AdminTab) {
+export interface AdminTabPermissions {
+  canManageDepartments?: boolean;
+  canManageRoles?: boolean;
+  canManagePolicies: boolean;
+  canManageAttributes: boolean;
+  canSimulatePolicy: boolean;
+}
+
+export function useAdminData(
+  activeTab: AdminTab,
+  tabPerms: AdminTabPermissions = {
+    canManageDepartments: true,
+    canManageRoles: true,
+    canManagePolicies: true,
+    canManageAttributes: true,
+    canSimulatePolicy: true,
+  },
+) {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [clearanceOptions, setClearanceOptions] = useState<ClearanceOptionRow[]>([]);
   const [departments, setDepartments] = useState<DepartmentRow[]>([]);
+  const [departmentLookup, setDepartmentLookup] = useState<DepartmentLookupRow[]>([]);
+  const [businessCategories, setBusinessCategories] = useState<BusinessCategoryOptionRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [permissions, setPermissions] = useState<PermissionRow[]>([]);
   const [policies, setPolicies] = useState<AbacPolicyRow[]>([]);
@@ -56,8 +77,16 @@ export function useAdminData(activeTab: AdminTab) {
   const [loadedTabs, setLoadedTabs] = useState<Partial<Record<AdminTab, boolean>>>({});
   const loadedTabsRef = useRef<Set<AdminTab>>(new Set());
   const departmentsLoadedRef = useRef(false);
+  const categoriesLoadedRef = useRef(false);
   const clearanceLoadedRef = useRef(false);
   const inFlightTabsRef = useRef<Map<AdminTab, Promise<void>>>(new Map());
+  const {
+    canManageDepartments = true,
+    canManageRoles = true,
+    canManagePolicies,
+    canManageAttributes,
+    canSimulatePolicy,
+  } = tabPerms;
 
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -105,7 +134,9 @@ export function useAdminData(activeTab: AdminTab) {
           const [usersRes, deptsRes, clearanceOptsRes] = await Promise.allSettled([
             apiClient<{ data: UserRow[] }>('/users'),
             needDepartments
-              ? apiClient<{ data: DepartmentRow[] }>('/departments')
+              ? canManageDepartments
+                ? apiClient<{ data: DepartmentRow[] }>('/departments')
+                : apiClient<{ data: DepartmentLookupRow[] }>('/departments/lookup')
               : Promise.resolve(null),
             needClearance
               ? apiClient<{ data: ClearanceOptionRow[] }>('/users/clearance-options')
@@ -114,9 +145,24 @@ export function useAdminData(activeTab: AdminTab) {
 
           if (usersRes.status === 'fulfilled') setUsers(usersRes.value.data || []);
           if (deptsRes.status === 'fulfilled' && deptsRes.value) {
-            setDepartments(deptsRes.value.data || []);
+            if (canManageDepartments) {
+              setDepartments((deptsRes.value.data as DepartmentRow[]) || []);
+              markTabLoaded('departments');
+            } else {
+              const lookupRows = (deptsRes.value.data as DepartmentLookupRow[]) || [];
+              setDepartmentLookup(lookupRows);
+              setDepartments(
+                lookupRows.map((d) => ({
+                  id: String(d.id),
+                  code: d.code,
+                  name: d.name,
+                  parentId: null,
+                  isActive: true,
+                  version: 0,
+                })),
+              );
+            }
             departmentsLoadedRef.current = true;
-            markTabLoaded('departments');
           }
           if (clearanceOptsRes.status === 'fulfilled' && clearanceOptsRes.value) {
             setClearanceOptions(clearanceOptsRes.value.data || []);
@@ -139,6 +185,34 @@ export function useAdminData(activeTab: AdminTab) {
         }
 
         if (tab === 'rbac') {
+          if (!canManageRoles) {
+            const [lookupRes] = await Promise.allSettled([
+              apiClient<{
+                data: Array<{
+                  id: string;
+                  code: string;
+                  name: string;
+                  description?: string | null;
+                }>;
+              }>('/rbac/roles/lookup'),
+            ]);
+            if (lookupRes.status === 'fulfilled') {
+              setRoles(
+                (lookupRes.value.data || []).map((r) => ({
+                  id: String(r.id),
+                  code: r.code,
+                  name: r.name,
+                  description: r.description ?? null,
+                  isSystemRole: false,
+                  isActive: true,
+                  version: 0,
+                  permissions: [],
+                })),
+              );
+            }
+            markTabLoaded('rbac');
+            return;
+          }
           const [rolesRes, permsRes] = await Promise.allSettled([
             apiClient<{ data: RoleRow[] }>('/rbac/roles'),
             apiClient<{ data: PermissionRow[] }>('/rbac/permissions'),
@@ -150,14 +224,35 @@ export function useAdminData(activeTab: AdminTab) {
         }
 
         if (tab === 'abac') {
-          const [policiesRes, attrsRes] = await Promise.allSettled([
-            apiClient<{ data: AbacPolicyApiDto[] }>('/abac/policies'),
-            apiClient<{ data: AttributeDefinitionApiDto[] }>('/abac/attributes'),
+          const needDeptLookup = !departmentsLoadedRef.current || Boolean(options?.force);
+          const needCategories = !categoriesLoadedRef.current || Boolean(options?.force);
+          const canReadCategories = canManagePolicies || canSimulatePolicy;
+
+          const [policiesRes, attrsRes, deptLookupRes, categoriesRes] = await Promise.allSettled([
+            canManagePolicies
+              ? apiClient<{ data: AbacPolicyApiDto[] }>('/abac/policies')
+              : Promise.resolve(null),
+            canManageAttributes
+              ? apiClient<{ data: AttributeDefinitionApiDto[] }>('/abac/attributes')
+              : Promise.resolve(null),
+            needDeptLookup
+              ? apiClient<{ data: DepartmentLookupRow[] }>('/departments/lookup')
+              : Promise.resolve(null),
+            needCategories && canReadCategories
+              ? apiClient<{ data: BusinessCategoryOptionRow[] }>('/classifications/categories')
+              : Promise.resolve(null),
           ]);
-          if (policiesRes.status === 'fulfilled') {
+          if (policiesRes.status === 'fulfilled' && policiesRes.value) {
             setPolicies((policiesRes.value.data || []).map(normalizeAbacPolicyRow));
           }
-          if (attrsRes.status === 'fulfilled') {
+          if (deptLookupRes.status === 'fulfilled' && deptLookupRes.value) {
+            setDepartmentLookup(deptLookupRes.value.data || []);
+          }
+          if (categoriesRes.status === 'fulfilled' && categoriesRes.value) {
+            setBusinessCategories(categoriesRes.value.data || []);
+            categoriesLoadedRef.current = true;
+          }
+          if (attrsRes.status === 'fulfilled' && attrsRes.value) {
             const normalizedAttrs = (attrsRes.value.data || []).map(
               normalizeAttributeDefinitionRow,
             );
@@ -230,7 +325,15 @@ export function useAdminData(activeTab: AdminTab) {
         }
       }
     },
-    [hydrateConfigs, markTabLoaded],
+    [
+      canManageAttributes,
+      canManageDepartments,
+      canManagePolicies,
+      canManageRoles,
+      canSimulatePolicy,
+      hydrateConfigs,
+      markTabLoaded,
+    ],
   );
 
   const ensureTabLoaded = useCallback(
@@ -265,8 +368,18 @@ export function useAdminData(activeTab: AdminTab) {
     };
   }, [activeTab, loadTab]);
 
+  const abacDepartments = useMemo<DepartmentLookupRow[]>(() => {
+    if (departments.length > 0) {
+      return departments
+        .filter((d) => d.isActive)
+        .map((d) => ({ id: String(d.id), code: d.code, name: d.name }));
+    }
+    return departmentLookup;
+  }, [departments, departmentLookup]);
+
   const mutations = useAdminMutations({
     setUsers,
+    setDepartments,
     setRoles,
     policies,
     setPolicies,
@@ -279,6 +392,8 @@ export function useAdminData(activeTab: AdminTab) {
     users,
     clearanceOptions,
     departments,
+    abacDepartments,
+    businessCategories,
     roles,
     permissions,
     policies,

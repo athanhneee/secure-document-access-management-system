@@ -18,7 +18,19 @@ export const UpsertAbacPolicySchema = z.object({
     .enum(['ALL', 'DISCOVER', 'VIEW', 'DOWNLOAD', 'SHARE', 'MANAGE'])
     .nullable()
     .optional(),
-  obligations: z.array(z.record(z.string(), z.unknown())).optional().default([]),
+  obligations: z
+    .array(
+      z.union([
+        z
+          .string()
+          .trim()
+          .min(1)
+          .transform((type) => ({ type })),
+        z.record(z.string(), z.unknown()),
+      ]),
+    )
+    .optional()
+    .default([]),
   isActive: z.boolean().optional(),
   groups: z
     .array(
@@ -75,6 +87,22 @@ export interface RawPolicyForSerialize {
 }
 
 /**
+ * Thuật toán: Chuẩn hóa danh sách nghĩa vụ ABAC về định dạng đối tượng `{ type, ... }` (tương thích dữ liệu hạt giống dạng mảng chuỗi như `["NO_CACHE"]`).
+ */
+export function normalizeObligationEntries(raw: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(raw)) return [];
+  const normalized: Array<Record<string, unknown>> = [];
+  for (const item of raw) {
+    if (typeof item === 'string' && item.trim().length > 0) {
+      normalized.push({ type: item.trim() });
+    } else if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+      normalized.push(item as Record<string, unknown>);
+    }
+  }
+  return normalized;
+}
+
+/**
  * Thuật toán: Chuẩn hóa bản ghi `policy_rules` sang DTO JSON không chứa `bigint`, đồng thời cung cấp cả `is_active` và `isActive` cùng cây nhóm DNF `groups`.
  */
 export function serializeAbacPolicyRow(policy: RawPolicyForSerialize): Record<string, unknown> {
@@ -119,7 +147,7 @@ export function serializeAbacPolicyRow(policy: RawPolicyForSerialize): Record<st
     targetAction: policy.target_action ?? 'ALL',
     combining_algorithm: policy.combining_algorithm,
     combiningAlgorithm: policy.combining_algorithm,
-    obligations: Array.isArray(policy.obligations) ? policy.obligations : [],
+    obligations: normalizeObligationEntries(policy.obligations),
     is_active: policy.is_active,
     isActive: policy.is_active,
     valid_from: policy.valid_from,

@@ -6,12 +6,13 @@
  *   - Đối với các thực thể có kiểm soát đồng thời lạc quan (`version`), tự động tăng `version + 1` cục bộ để khớp trạng thái dự kiến trước khi đồng bộ ngầm với máy chủ.
  */
 
-export type OptimisticUserAction = 'lock' | 'unlock' | 'disable';
+export type OptimisticUserAction = 'lock' | 'unlock' | 'disable' | 'reactivate';
 
 const USER_ACTION_TO_STATUS: Record<OptimisticUserAction, string> = {
   lock: 'LOCKED',
   unlock: 'ACTIVE',
   disable: 'DISABLED',
+  reactivate: 'ACTIVE',
 };
 
 /**
@@ -40,6 +41,39 @@ export function applyOptimisticRoleDisable<
 }
 
 /**
+ * Thuật toán: Kích Hoạt Lại Vai Trò RBAC Lạc Quan (`applyOptimisticRoleEnable`)
+ */
+export function applyOptimisticRoleEnable<
+  T extends { id: string; isActive: boolean; version: number },
+>(roles: readonly T[], roleId: string): T[] {
+  return roles.map((role) =>
+    role.id === roleId ? { ...role, isActive: true, version: role.version + 1 } : role,
+  );
+}
+
+/**
+ * Thuật toán: Chuyển Trạng Thái Hoạt Động Phòng Ban Lạc Quan (`applyOptimisticDepartmentActive`)
+ */
+export function applyOptimisticDepartmentActive<
+  T extends { id: string; isActive: boolean; version: number },
+>(departments: readonly T[], departmentId: string, isActive: boolean): T[] {
+  return departments.map((dept) =>
+    dept.id === departmentId ? { ...dept, isActive, version: dept.version + 1 } : dept,
+  );
+}
+
+/**
+ * Thuật toán: Chuyển Trạng Thái Thực Thi Chính Sách ABAC Lạc Quan (`applyOptimisticPolicyActive`)
+ */
+export function applyOptimisticPolicyActive<T extends { id: string; isActive: boolean }>(
+  policies: readonly T[],
+  policyId: string,
+  isActive: boolean,
+): T[] {
+  return policies.map((policy) => (policy.id === policyId ? { ...policy, isActive } : policy));
+}
+
+/**
  * Thuật toán: Kích Hoạt Chính Sách ABAC Lạc Quan (`applyOptimisticPolicyActivate`)
  * Độ phức tạp: Thời gian `O(N)` theo số chính sách trong bảng PDP.
  */
@@ -47,9 +81,7 @@ export function applyOptimisticPolicyActivate<T extends { id: string; isActive: 
   policies: readonly T[],
   policyId: string,
 ): T[] {
-  return policies.map((policy) =>
-    policy.id === policyId ? { ...policy, isActive: true } : policy,
-  );
+  return applyOptimisticPolicyActive(policies, policyId, true);
 }
 
 /**

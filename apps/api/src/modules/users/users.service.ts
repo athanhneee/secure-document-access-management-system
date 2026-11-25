@@ -9,6 +9,7 @@ import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { PasswordService } from '../auth/password.service.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
 import { RbacAuditService } from '../rbac/rbac-audit.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import {
   EMPTY_CLEARANCE_SUMMARY,
   lookupUsersWithClearance,
@@ -43,6 +44,7 @@ export class UsersService {
     private readonly passwords: PasswordService,
     private readonly audit: RbacAuditService,
     @Optional() databaseClient?: PrismaClient,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -69,14 +71,26 @@ export class UsersService {
       },
     });
     if (!user) throw new NotFoundException('User not found.');
-    const [grants, clearance] = await Promise.all([
+    const [grants, clearance, activeMfaCount] = await Promise.all([
       this.authorization.effectiveGrants(principal.userId),
       fetchActiveUserClearance(this.database, principal.userId),
+      typeof this.database.mfaMethod?.count === 'function'
+        ? this.database.mfaMethod
+            .count({
+              where: {
+                user_id: principal.userId,
+                enabled_at: { not: null },
+                disabled_at: null,
+              },
+            })
+            .catch(() => 0)
+        : Promise.resolve(0),
     ]);
     const { departments, ...userFields } = user;
     return {
       ...presentUserRecord(userFields),
       departmentName: departments?.name ?? null,
+      mfaEnabled: activeMfaCount > 0,
       ...clearance,
       roles: [...new Set(grants.map((grant) => grant.roleCode))].sort(),
       permissions: [...new Set(grants.map((grant) => `${grant.resource}:${grant.action}`))].sort(),
@@ -157,6 +171,8 @@ export class UsersService {
         id: assignment.id.toString(),
         roleId: assignment.role_id.toString(),
         roleCode: assignment.roles.code,
+        roleName: assignment.roles.name,
+        roleIsActive: assignment.roles.is_active,
         scopeDepartmentId: assignment.scope_department_id?.toString() ?? null,
         validFrom: assignment.valid_from.toISOString(),
         validTo: assignment.valid_to?.toISOString() ?? null,
@@ -205,12 +221,20 @@ export class UsersService {
     });
   }
 
-  lock(principal: AuthPrincipal, id: bigint, expectedVersion: number, context: RequestContext) {
+  /**
+   * Thuật toán: Khóa tài khoản, thu hồi toàn bộ phiên DB và đẩy sự kiện SSE `USER_SESSION_REVOKED` để đăng xuất trình duyệt tức thì.
+   */
+  async lock(
+    principal: AuthPrincipal,
+    id: bigint,
+    expectedVersion: number,
+    context: RequestContext,
+  ) {
     // CONFLICT-RESOLVED: Ngăn quản trị viên tự khóa tài khoản của chính mình gây mất quyền điều hành (MED-07)
     if (principal.userId === id) {
       throw new ForbiddenException('Administrators cannot lock themselves.');
     }
-    return executeChangeUserStatus({
+    const updated = await executeChangeUserStatus({
       database: this.database,
       authorization: this.authorization,
       audit: this.audit,
@@ -221,6 +245,12 @@ export class UsersService {
       action: 'USER_LOCKED',
       context,
     });
+    this.realtime?.publish({
+      type: 'USER_SESSION_REVOKED',
+      targetUserIds: [id.toString()],
+      payload: { userId: id.toString(), status: 'LOCKED', reason: 'USER_LOCKED' },
+    });
+    return updated;
   }
 
   unlock(principal: AuthPrincipal, id: bigint, expectedVersion: number, context: RequestContext) {
@@ -237,11 +267,42 @@ export class UsersService {
     });
   }
 
-  disable(principal: AuthPrincipal, id: bigint, expectedVersion: number, context: RequestContext) {
+  /**
+   * Thuật toán: Kích hoạt lại tài khoản đang ở trạng thái `DISABLED` qua luồng riêng biệt có kiểm toán `USER_REACTIVATED`.
+   */
+  reactivate(
+    principal: AuthPrincipal,
+    id: bigint,
+    expectedVersion: number,
+    context: RequestContext,
+  ) {
+    return executeChangeUserStatus({
+      database: this.database,
+      authorization: this.authorization,
+      audit: this.audit,
+      principal,
+      id,
+      expectedVersion,
+      status: 'ACTIVE',
+      action: 'USER_REACTIVATED',
+      context,
+      allowDisabledReactivation: true,
+    });
+  }
+
+  /**
+   * Thuật toán: Vô hiệu hóa tài khoản, thu hồi toàn bộ phiên DB và phát sự kiện SSE `USER_SESSION_REVOKED` để cưỡng chế đăng xuất tức thì.
+   */
+  async disable(
+    principal: AuthPrincipal,
+    id: bigint,
+    expectedVersion: number,
+    context: RequestContext,
+  ) {
     if (principal.userId === id) {
       throw new ForbiddenException('Administrators cannot disable themselves.');
     }
-    return executeChangeUserStatus({
+    const updated = await executeChangeUserStatus({
       database: this.database,
       authorization: this.authorization,
       audit: this.audit,
@@ -252,5 +313,11 @@ export class UsersService {
       action: 'USER_DISABLED',
       context,
     });
+    this.realtime?.publish({
+      type: 'USER_SESSION_REVOKED',
+      targetUserIds: [id.toString()],
+      payload: { userId: id.toString(), status: 'DISABLED', reason: 'USER_DISABLED' },
+    });
+    return updated;
   }
 }

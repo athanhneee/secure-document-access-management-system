@@ -81,9 +81,10 @@ export function toggleRuleObligation(
 export function filterAttributePalette(
   selectedCategory: 'ALL' | 'SUBJECT' | 'RESOURCE' | 'ENVIRONMENT',
   searchPalette: string,
+  registry: Readonly<Record<string, AttributeMetadata>> = ATTRIBUTE_REGISTRY,
 ): AttributeMetadata[] {
   const query = searchPalette.toLowerCase();
-  return Object.values(ATTRIBUTE_REGISTRY).filter((attr) => {
+  return Object.values(registry).filter((attr) => {
     const matchesCategory = selectedCategory === 'ALL' || attr.category === selectedCategory;
     return (
       matchesCategory &&

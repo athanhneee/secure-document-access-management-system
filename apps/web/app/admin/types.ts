@@ -35,6 +35,31 @@ export interface DepartmentRow {
   version: number;
 }
 
+export interface DepartmentLookupRow {
+  id: string;
+  code: string;
+  name: string;
+}
+
+export interface BusinessCategoryOptionRow {
+  id: string;
+  code: string;
+  name: string;
+  departmentId?: string | null;
+  departmentName?: string | null;
+}
+
+export interface UserRoleAssignmentRow {
+  id: string;
+  roleId: string;
+  roleCode: string;
+  roleName?: string | undefined;
+  roleIsActive?: boolean | undefined;
+  scopeDepartmentId: string | null;
+  validFrom: string;
+  validTo: string | null;
+}
+
 export interface RoleRow {
   id: string;
   code: string;
@@ -144,6 +169,16 @@ export interface AttributeDefinitionRow {
 export interface WatermarkConfigRow {
   id: string;
   name: string;
+  classificationLevelId?: string | null | undefined;
+  classificationLevel?:
+    | {
+        id: number;
+        code: string;
+        name: string;
+        rank: number;
+      }
+    | null
+    | undefined;
   opacityPercent: number;
   rotationDegrees?: number;
   fontSize: number;
@@ -199,6 +234,6 @@ export interface HealthDashboardResponse {
   };
 }
 
-export type UserStatusAction = 'lock' | 'unlock' | 'disable';
+export type UserStatusAction = 'lock' | 'unlock' | 'disable' | 'reactivate';
 
 export type AdminTab = 'users' | 'departments' | 'rbac' | 'abac' | 'watermark' | 'health';

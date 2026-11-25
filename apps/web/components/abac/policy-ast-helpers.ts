@@ -1,5 +1,6 @@
 import type {
   AttributeMetadata,
+  DynamicDepartmentOption,
   ExpectedValue,
   PolicyOperator,
   VisualCondition,
@@ -91,17 +92,54 @@ export function deserializePolicyAst(jsonText: string): VisualPolicyRule {
   return parsed;
 }
 
-export function clonePolicyTemplate(tpl: PolicyTemplate): VisualPolicyRule {
-  return JSON.parse(JSON.stringify(tpl.rule)) as VisualPolicyRule;
+/**
+ * Thuật toán: Nhân Bản Mẫu Chính Sách Kèm Ánh Xạ Mã Phòng Ban CSDL Thực Tế (`clonePolicyTemplate`)
+ * Mục đích: Thay thế mã phòng ban mẫu (`FINANCE_DEPT`, `AUDIT_DEPT`) sang ID phòng ban thật trong CSDL để mẫu hoạt động đúng ngay khi lưu.
+ */
+export function clonePolicyTemplate(
+  tpl: PolicyTemplate,
+  departments?: readonly DynamicDepartmentOption[],
+): VisualPolicyRule {
+  const cloned = JSON.parse(JSON.stringify(tpl.rule)) as VisualPolicyRule;
+  const fallbackDeptId = departments?.[0]?.id ? String(departments[0].id) : '1';
+  const financeDeptId =
+    departments?.find((d) => d.code.toUpperCase().includes('FINANCE'))?.id ?? fallbackDeptId;
+  const auditDeptId =
+    departments?.find(
+      (d) => d.code.toUpperCase().includes('AUDIT') || d.code.toUpperCase().includes('LEGAL'),
+    )?.id ?? fallbackDeptId;
+
+  return {
+    ...cloned,
+    groups: cloned.groups.map((group) => ({
+      ...group,
+      conditions: group.conditions.map((cond) => {
+        if (
+          cond.attribute !== 'subject.departmentId' &&
+          cond.attribute !== 'resource.departmentId'
+        ) {
+          return cond;
+        }
+        if (cond.expected === 'FINANCE_DEPT') {
+          return { ...cond, expected: String(financeDeptId) };
+        }
+        if (cond.expected === 'AUDIT_DEPT') {
+          return { ...cond, expected: String(auditDeptId) };
+        }
+        return cond;
+      }),
+    })),
+  };
 }
 
 export function addConditionToGroup(
   rule: VisualPolicyRule,
   groupId: number,
   attributeKey?: string,
+  registry: Readonly<Record<string, AttributeMetadata>> = ATTRIBUTE_REGISTRY,
 ): VisualPolicyRule {
   const attrKey = attributeKey || 'subject.clearanceRank';
-  const meta = ATTRIBUTE_REGISTRY[attrKey];
+  const meta = registry[attrKey] ?? ATTRIBUTE_REGISTRY[attrKey];
   const initialOp: PolicyOperator = meta ? meta.supportedOperators[0]! : 'EQ';
   const newCondition: VisualCondition = {
     id: createConditionId(),
@@ -170,6 +208,7 @@ export function updateConditionField(
   conditionId: string,
   field: keyof VisualCondition,
   value: unknown,
+  registry: Readonly<Record<string, AttributeMetadata>> = ATTRIBUTE_REGISTRY,
 ): VisualPolicyRule {
   return {
     ...rule,
@@ -180,7 +219,7 @@ export function updateConditionField(
         conditions: group.conditions.map((cond) => {
           if (cond.id !== conditionId) return cond;
           if (field === 'attribute') {
-            const meta = ATTRIBUTE_REGISTRY[value as string];
+            const meta = registry[value as string] ?? ATTRIBUTE_REGISTRY[value as string];
             const nextOp: PolicyOperator = meta ? meta.supportedOperators[0]! : 'EQ';
             return {
               ...cond,
@@ -191,7 +230,7 @@ export function updateConditionField(
           }
           if (field === 'operator') {
             const nextOp = value as PolicyOperator;
-            const meta = ATTRIBUTE_REGISTRY[cond.attribute];
+            const meta = registry[cond.attribute] ?? ATTRIBUTE_REGISTRY[cond.attribute];
             return { ...cond, operator: nextOp, expected: defaultExpectedValue(meta, nextOp) };
           }
           return { ...cond, [field]: value };

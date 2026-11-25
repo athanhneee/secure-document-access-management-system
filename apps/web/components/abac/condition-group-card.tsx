@@ -3,12 +3,18 @@
 import { Plus, Copy, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ATTRIBUTE_REGISTRY, type VisualCondition, type VisualConditionGroup } from './abac-models';
+import {
+  ATTRIBUTE_REGISTRY,
+  type AttributeMetadata,
+  type VisualCondition,
+  type VisualConditionGroup,
+} from './abac-models';
 import { ConditionRow } from './condition-row';
 
 interface ConditionGroupCardProps {
   group: VisualConditionGroup;
   groupIdx: number;
+  attributeRegistry?: Readonly<Record<string, AttributeMetadata>> | undefined;
   onAddCondition: (groupId: number, attributeKey?: string) => void;
   onDuplicateGroup: (group: VisualConditionGroup) => void;
   onRemoveGroup: (groupId: number) => void;
@@ -28,6 +34,7 @@ interface ConditionGroupCardProps {
 export function ConditionGroupCard({
   group,
   groupIdx,
+  attributeRegistry = ATTRIBUTE_REGISTRY,
   onAddCondition,
   onDuplicateGroup,
   onRemoveGroup,
@@ -51,7 +58,10 @@ export function ConditionGroupCard({
         onDrop={(e) => {
           e.preventDefault();
           const droppedAttrKey = e.dataTransfer.getData('text/plain');
-          if (droppedAttrKey && ATTRIBUTE_REGISTRY[droppedAttrKey]) {
+          if (
+            droppedAttrKey &&
+            (attributeRegistry[droppedAttrKey] || ATTRIBUTE_REGISTRY[droppedAttrKey])
+          ) {
             onAddCondition(group.id, droppedAttrKey);
           } else {
             onDropConditionOnGroup(group.id);
@@ -127,6 +137,7 @@ export function ConditionGroupCard({
                 condition={cond}
                 conditionIndex={condIdx}
                 totalConditions={group.conditions.length}
+                attributeRegistry={attributeRegistry}
                 onDragStart={onDragStartCondition}
                 onMove={onMoveCondition}
                 onChangeField={onChangeConditionField}

@@ -325,6 +325,7 @@ export async function executeChangeUserStatus(params: {
   status: 'ACTIVE' | 'LOCKED' | 'DISABLED';
   action: string;
   context: RequestContext;
+  allowDisabledReactivation?: boolean;
 }) {
   const {
     database,
@@ -336,15 +337,19 @@ export async function executeChangeUserStatus(params: {
     status,
     action,
     context,
+    allowDisabledReactivation = false,
   } = params;
   const result = await withSerializableTransaction(
     async (transaction) => {
       const before = await transaction.user.findUnique({ where: { id } });
       if (!before) throw new NotFoundException('User not found.');
       await assertUserDepartmentVisible(authorization, principal, before.department_id);
-      // CONFLICT-RESOLVED: Chặn mở khóa trực tiếp tài khoản đã bị vô hiệu hóa vĩnh viễn (`DISABLED`) qua luồng `unlock` (MED-07)
-      if (status === 'ACTIVE' && before.status === 'DISABLED') {
+      // CONFLICT-RESOLVED: Chặn mở khóa trực tiếp tài khoản đã bị vô hiệu hóa vĩnh viễn (`DISABLED`) qua luồng `unlock` (MED-07), chỉ cho phép kích hoạt lại qua luồng chuyên biệt `reactivate`.
+      if (status === 'ACTIVE' && before.status === 'DISABLED' && !allowDisabledReactivation) {
         throw new BadRequestException('Disabled accounts cannot be unlocked.');
+      }
+      if (allowDisabledReactivation && before.status !== 'DISABLED') {
+        throw new BadRequestException('Only disabled accounts can be reactivated.');
       }
       const now = new Date();
       const changed = await transaction.user.updateMany({

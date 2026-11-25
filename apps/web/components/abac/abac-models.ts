@@ -99,4 +99,15 @@ export const OPERATOR_LABELS: Record<PolicyOperator, string> = {
   EXISTS: 'Có giá trị',
 };
 
-export { CLEARANCE_OPTIONS, DEPARTMENT_OPTIONS, ATTRIBUTE_REGISTRY } from './abac-presets';
+export {
+  CLEARANCE_OPTIONS,
+  DEPARTMENT_OPTIONS,
+  CATEGORY_OPTIONS,
+  EMPLOYMENT_STATUS_OPTIONS,
+  ATTRIBUTE_REGISTRY,
+  buildDepartmentSelectOptions,
+  buildCategorySelectOptions,
+  buildDynamicAttributeRegistry,
+  type DynamicDepartmentOption,
+  type DynamicCategoryOption,
+} from './abac-presets';

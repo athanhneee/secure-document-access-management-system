@@ -41,6 +41,7 @@ export function CreateUserModal({
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newFullName, setNewFullName] = useState('');
+  const [newEmployeeCode, setNewEmployeeCode] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const activeDepartments = departments.filter((d) => d.isActive);
@@ -69,6 +70,7 @@ export function CreateUserModal({
           username: newUsername.trim(),
           email: newEmail.trim(),
           fullName: newFullName.trim(),
+          employeeCode: newEmployeeCode.trim() || null,
           password: newPassword,
           departmentId: effectiveDepartmentId,
           clearanceOptionId: effectiveClearanceOptionId ? effectiveClearanceOptionId : null,
@@ -78,6 +80,7 @@ export function CreateUserModal({
       onOpenChange(false);
       setNewUsername('');
       setNewFullName('');
+      setNewEmployeeCode('');
       setNewEmail('');
       setNewPassword('');
       setNewDepartmentId(null);
@@ -131,6 +134,20 @@ export function CreateUserModal({
               value={newFullName}
               onChange={(e) => setNewFullName(e.target.value)}
               placeholder="Nguyễn Văn A"
+              className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="modal-employee-code" className="text-xs font-medium text-[#222222]">
+              Mã nhân viên (tùy chọn)
+            </label>
+            <Input
+              id="modal-employee-code"
+              maxLength={50}
+              value={newEmployeeCode}
+              onChange={(e) => setNewEmployeeCode(e.target.value)}
+              placeholder="VD: NV-2026-001"
               className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
             />
           </div>

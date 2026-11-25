@@ -173,3 +173,51 @@ export async function executeDeleteRole(params: {
   });
   await authorization.invalidateAll();
 }
+
+/**
+ * Thuật toán: Kích hoạt lại vai trò tùy chỉnh đang bị vô hiệu hóa bằng Compare-And-Swap (`version`) dưới mức cô lập `SERIALIZABLE`.
+ */
+export async function executeEnableRole(params: {
+  database: PrismaClient;
+  authorization: AuthorizationService;
+  audit: RbacAuditService;
+  principal: AuthPrincipal;
+  id: bigint;
+  expectedVersion: number;
+  context: RequestContext;
+}): Promise<bigint> {
+  const { database, authorization, audit, principal, id, expectedVersion, context } = params;
+  const role = await withSerializableTransaction(
+    async (transaction) => {
+      const before = await transaction.role.findUnique({ where: { id } });
+      if (!before) throw new NotFoundException('Role not found.');
+      if (before.is_system_role) throw new ForbiddenException('System roles cannot be modified.');
+      if (await actorHoldsActiveRole(transaction, principal.userId, id)) {
+        throw new ForbiddenException('Administrators cannot change a role they hold.');
+      }
+      if (before.is_active) throw new ConflictException('Role is already active.');
+      const changed = await transaction.role.updateMany({
+        where: { id, version: expectedVersion },
+        data: { is_active: true, updated_at: new Date(), version: { increment: 1 } },
+      });
+      if (changed.count !== 1) throw new ConflictException('Role was changed by another request.');
+      const after = await transaction.role.findUniqueOrThrow({ where: { id } });
+      await audit.record(
+        transaction,
+        {
+          action: 'ROLE_ENABLED',
+          objectType: 'ROLE',
+          objectId: id.toString(),
+          before: auditRoleSnapshot(before),
+          after: auditRoleSnapshot(after),
+        },
+        principal,
+        context,
+      );
+      return after;
+    },
+    { client: database },
+  );
+  await authorization.invalidateAll();
+  return role.id;
+}

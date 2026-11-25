@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import {
   ATTRIBUTE_REGISTRY,
   OPERATOR_LABELS,
+  type AttributeMetadata,
   type PolicyOperator,
   type VisualCondition,
 } from './abac-models';
@@ -15,6 +16,7 @@ interface ConditionRowProps {
   condition: VisualCondition;
   conditionIndex: number;
   totalConditions: number;
+  attributeRegistry?: Readonly<Record<string, AttributeMetadata>> | undefined;
   onDragStart: (groupId: number, conditionIndex: number) => void;
   onMove: (groupId: number, index: number, direction: 'up' | 'down') => void;
   onChangeField: (
@@ -32,13 +34,14 @@ export function ConditionRow({
   condition,
   conditionIndex,
   totalConditions,
+  attributeRegistry = ATTRIBUTE_REGISTRY,
   onDragStart,
   onMove,
   onChangeField,
   onDuplicate,
   onRemove,
 }: ConditionRowProps) {
-  const meta = ATTRIBUTE_REGISTRY[condition.attribute];
+  const meta = attributeRegistry[condition.attribute] ?? ATTRIBUTE_REGISTRY[condition.attribute];
 
   return (
     <div
@@ -77,7 +80,7 @@ export function ConditionRow({
           onChange={(e) => onChangeField(groupId, condition.id, 'attribute', e.target.value)}
           className="w-full min-h-11 sm:h-9 text-xs font-medium rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
         >
-          {Object.values(ATTRIBUTE_REGISTRY).map((a) => (
+          {Object.values(attributeRegistry).map((a) => (
             <option key={a.key} value={a.key}>
               {a.label}
             </option>

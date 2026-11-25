@@ -14,7 +14,13 @@ import {
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 
 export interface AbacAuditEvent {
-  action: 'POLICY_SIMULATED' | 'POLICY_ACTIVATED' | 'POLICY_CREATED' | 'POLICY_UPDATED';
+  action:
+    | 'POLICY_SIMULATED'
+    | 'POLICY_ACTIVATED'
+    | 'POLICY_DEACTIVATED'
+    | 'POLICY_CREATED'
+    | 'POLICY_UPDATED'
+    | 'POLICY_DELETED';
   objectType: 'POLICY_SIMULATION' | 'POLICY';
   objectId: string;
   documentId?: string | undefined;

@@ -58,6 +58,7 @@ const VersionSchema = z.object({ expectedVersion: z.number().int().min(0) }).str
 const PermissionMappingSchema = z
   .object({ permissionIds: z.array(PositiveBigIntSchema).max(100) })
   .strict();
+const ROLE_ASSIGNMENT_CLOCK_SKEW_MS = 5 * 60_000;
 const AssignmentSchema = z
   .object({
     roleId: PositiveBigIntSchema,
@@ -68,6 +69,12 @@ const AssignmentSchema = z
   .strict()
   .refine((value) => value.validTo === null || value.validTo > value.validFrom, {
     message: 'validTo must be later than validFrom',
+  })
+  .refine((value) => value.validTo === null || value.validTo.getTime() > Date.now(), {
+    message: 'validTo must be in the future',
+  })
+  .refine((value) => value.validFrom.getTime() >= Date.now() - ROLE_ASSIGNMENT_CLOCK_SKEW_MS, {
+    message: 'validFrom cannot be in the past',
   });
 
 @Controller('rbac')
@@ -127,6 +134,18 @@ export class RbacController {
   disableRole(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {
     this.csrf.assertRequest(request);
     return this.rbac.disableRole(
+      this.principal(request),
+      IdSchema.parse(id),
+      VersionSchema.parse(body).expectedVersion,
+      this.context(request),
+    );
+  }
+
+  @Post('roles/:id/enable')
+  @RequirePermission('ROLE', 'MANAGE', true)
+  enableRole(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    return this.rbac.enableRole(
       this.principal(request),
       IdSchema.parse(id),
       VersionSchema.parse(body).expectedVersion,

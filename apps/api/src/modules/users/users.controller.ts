@@ -163,6 +163,18 @@ export class UsersController {
     );
   }
 
+  @Post(':id/reactivate')
+  @RequirePermission('USER', 'MANAGE')
+  reactivate(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    return this.users.reactivate(
+      this.principal(request),
+      IdSchema.parse(id),
+      VersionSchema.parse(body).expectedVersion,
+      this.context(request),
+    );
+  }
+
   @Post(':id/disable')
   @RequirePermission('USER', 'MANAGE')
   disable(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {

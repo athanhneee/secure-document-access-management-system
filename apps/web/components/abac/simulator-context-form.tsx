@@ -2,7 +2,14 @@
 
 import type { Dispatch, SetStateAction } from 'react';
 import { FileCheck2, KeyRound, Network } from 'lucide-react';
-import { CLEARANCE_OPTIONS, DEPARTMENT_OPTIONS, type TargetAction } from './abac-models';
+import {
+  CATEGORY_OPTIONS,
+  CLEARANCE_OPTIONS,
+  DEPARTMENT_OPTIONS,
+  EMPLOYMENT_STATUS_OPTIONS,
+  type AttributeOption,
+  type TargetAction,
+} from './abac-models';
 import type {
   SimulationEnvironment,
   SimulationResource,
@@ -18,8 +25,13 @@ interface SimulatorContextFormProps {
   setResource: Dispatch<SetStateAction<SimulationResource>>;
   environment: SimulationEnvironment;
   setEnvironment: Dispatch<SetStateAction<SimulationEnvironment>>;
+  departmentOptions?: readonly AttributeOption[] | undefined;
+  categoryOptions?: readonly AttributeOption[] | undefined;
 }
 
+/**
+ * Thuật toán: Biểu Mẫu Ngữ Cảnh Giả Lập ABAC Đồng Bộ Phòng Ban & Danh Mục Động Từ CSDL (`SimulatorContextForm`)
+ */
 export function SimulatorContextForm({
   action,
   setAction,
@@ -29,6 +41,8 @@ export function SimulatorContextForm({
   setResource,
   environment,
   setEnvironment,
+  departmentOptions = DEPARTMENT_OPTIONS,
+  categoryOptions = CATEGORY_OPTIONS,
 }: SimulatorContextFormProps) {
   const selectCls =
     'w-full text-xs min-h-11 sm:h-9 rounded-full border border-[#dddddd] px-3 bg-[#ffffff] focus:border-[#FF385C]';
@@ -70,7 +84,7 @@ export function SimulatorContextForm({
             onChange={(e) => setSubject((s) => ({ ...s, departmentId: e.target.value }))}
             className={selectCls}
           >
-            {DEPARTMENT_OPTIONS.map((d) => (
+            {departmentOptions.map((d) => (
               <option key={String(d.value)} value={String(d.value)}>
                 {d.label}
               </option>
@@ -88,9 +102,11 @@ export function SimulatorContextForm({
             onChange={(e) => setSubject((s) => ({ ...s, employmentStatus: e.target.value }))}
             className={selectCls}
           >
-            <option value="ACTIVE">Đang làm việc</option>
-            <option value="PROBATION">Đang thử việc</option>
-            <option value="SUSPENDED">Tạm đình chỉ</option>
+            {EMPLOYMENT_STATUS_OPTIONS.map((opt) => (
+              <option key={String(opt.value)} value={String(opt.value)}>
+                {opt.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -131,9 +147,27 @@ export function SimulatorContextForm({
             onChange={(e) => setResource((r) => ({ ...r, departmentId: e.target.value }))}
             className={selectCls}
           >
-            {DEPARTMENT_OPTIONS.map((d) => (
+            {departmentOptions.map((d) => (
               <option key={String(d.value)} value={String(d.value)}>
                 {d.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="sim-resource-category" className={labelCls}>
+            Danh mục tài liệu
+          </label>
+          <select
+            id="sim-resource-category"
+            value={resource.category}
+            onChange={(e) => setResource((r) => ({ ...r, category: e.target.value }))}
+            className={selectCls}
+          >
+            {categoryOptions.map((c) => (
+              <option key={String(c.value)} value={String(c.value)}>
+                {c.label}
               </option>
             ))}
           </select>

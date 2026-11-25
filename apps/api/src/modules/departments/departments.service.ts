@@ -280,4 +280,70 @@ export class DepartmentsService {
     await this.authorization.invalidateAll();
     return presentDepartment(department);
   }
+
+  /**
+   * Thuật toán: Kích Hoạt Lại Phòng Ban Đã Ngưng Hoạt Động Kèm Kiểm Tra Nút Cha Đang Mở & CAS Lạc Quan.
+   */
+  async activate(
+    principal: AuthPrincipal,
+    id: bigint,
+    expectedVersion: number,
+    context: RequestContext,
+  ) {
+    const canManageTarget = await this.authorization.hasPermission(
+      principal,
+      'DEPARTMENT',
+      'MANAGE',
+      { targetDepartmentId: id },
+    );
+    if (!canManageTarget) {
+      throw new NotFoundException('Department not found.');
+    }
+    const department = await withSerializableTransaction(
+      async (transaction) => {
+        const before = await transaction.department.findUnique({ where: { id } });
+        if (!before) {
+          throw new NotFoundException('Department not found.');
+        }
+        if (before.is_active) {
+          throw new ConflictException('Department is already active.');
+        }
+        if (before.parent_id !== null) {
+          const parent = await transaction.department.findFirst({
+            where: { id: before.parent_id, is_active: true },
+          });
+          if (!parent) {
+            throw new ConflictException(
+              'Cannot activate department while parent department is inactive.',
+            );
+          }
+        }
+        const now = new Date();
+        const changed = await transaction.department.updateMany({
+          where: { id, version: expectedVersion },
+          data: { is_active: true, updated_at: now, version: { increment: 1 } },
+        });
+        if (changed.count !== 1) {
+          throw new ConflictException('Department was changed by another request.');
+        }
+        const after = await transaction.department.findUniqueOrThrow({ where: { id } });
+        await this.audit.record(
+          transaction,
+          {
+            action: 'DEPARTMENT_ACTIVATED',
+            objectType: 'DEPARTMENT',
+            objectId: id.toString(),
+            before: presentDepartment(before),
+            after: presentDepartment(after),
+          },
+          principal,
+          context,
+        );
+        return after;
+      },
+      { client: this.database },
+    );
+    await this.authorization.invalidateAll();
+    return presentDepartment(department);
+  }
 }

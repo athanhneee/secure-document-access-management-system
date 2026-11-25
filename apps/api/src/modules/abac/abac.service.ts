@@ -15,6 +15,10 @@ import {
   type RawPolicyForSerialize,
   type UpsertAbacPolicyInput,
 } from './abac-policy-mutation.helper.js';
+import {
+  executeDeactivateAbacRule,
+  executeDeleteAbacRule,
+} from './abac-policy-lifecycle.helper.js';
 import { AbacRepository } from './abac.repository.js';
 import type { PdpResult, PolicyEvaluationInput } from './abac.types.js';
 import { PolicyCache } from './policy-cache.js';
@@ -211,6 +215,44 @@ export class AbacService {
     context: RequestContext,
   ): Promise<{ id: string; policyVersion: string }> {
     return executeActivateAbacRule({
+      ruleId,
+      principal,
+      context,
+      database: this.database,
+      repository: this.repository,
+      cache: this.cache,
+      audit: this.audit,
+    });
+  }
+
+  /**
+   * Thuật toán: Tạm tắt quy tắc chính sách ABAC và làm mới Epoch bộ nhớ đệm PDP.
+   */
+  async deactivateRule(
+    principal: AuthPrincipal,
+    ruleId: bigint,
+    context: RequestContext,
+  ): Promise<{ id: string; policyVersion: string }> {
+    return executeDeactivateAbacRule({
+      ruleId,
+      principal,
+      context,
+      database: this.database,
+      repository: this.repository,
+      cache: this.cache,
+      audit: this.audit,
+    });
+  }
+
+  /**
+   * Thuật toán: Xóa quy tắc chính sách ABAC cùng toàn bộ điều kiện DNF và làm mới Epoch PDP.
+   */
+  async deleteRule(
+    principal: AuthPrincipal,
+    ruleId: bigint,
+    context: RequestContext,
+  ): Promise<void> {
+    await executeDeleteAbacRule({
       ruleId,
       principal,
       context,

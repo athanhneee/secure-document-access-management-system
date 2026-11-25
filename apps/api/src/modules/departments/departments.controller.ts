@@ -63,6 +63,8 @@ export class DepartmentsController {
     { resource: 'DOCUMENT', action: 'DISCOVER' },
     { resource: 'DEPARTMENT', action: 'MANAGE' },
     { resource: 'USER', action: 'MANAGE' },
+    { resource: 'POLICY', action: 'MANAGE' },
+    { resource: 'POLICY', action: 'SIMULATE' },
     { resource: 'SYSTEM_REPORT', action: 'EXPORT' },
     { resource: 'AUDIT_LOG', action: 'EXPORT' },
   ])
@@ -105,6 +107,18 @@ export class DepartmentsController {
   deactivate(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {
     this.csrf.assertRequest(request);
     return this.departments.deactivate(
+      this.principal(request),
+      IdSchema.parse(id),
+      VersionSchema.parse(body).expectedVersion,
+      this.context(request),
+    );
+  }
+
+  @Post(':id/activate')
+  @RequirePermission('DEPARTMENT', 'MANAGE')
+  activate(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    return this.departments.activate(
       this.principal(request),
       IdSchema.parse(id),
       VersionSchema.parse(body).expectedVersion,

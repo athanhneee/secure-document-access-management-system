@@ -12,6 +12,7 @@ import type {
 export {
   normalizeAbacPolicyRow,
   normalizeAttributeDefinitionRow,
+  normalizeVisualObligations,
   resolveVisualRuleForPolicy,
 } from './abac-helpers';
 
@@ -73,7 +74,7 @@ export function resolveParentDepartmentLabel(
 /**
  * Thuật toán: Định Dạng Mốc Thời Gian Cục Bộ ISO-8601 & Khung Hiệu Lực Vai Trò 30 Ngày (`getDefaultRoleAssignmentWindow`)
  */
-function formatLocalDateTimeInput(d: Date): string {
+export function formatLocalDateTimeInput(d: Date): string {
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

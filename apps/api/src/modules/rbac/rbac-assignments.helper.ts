@@ -4,7 +4,12 @@
  * bao đóng phòng ban, trần ủy quyền, Phân tách Nhiệm vụ (SoD) và thu hồi tức thì mọi phiên chưa xác thực MFA
  * khi gán vai trò đặc quyền (`PRIVILEGED_ROLE_ASSIGNED_REQUIRES_MFA`).
  */
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { withSerializableTransaction, type getDatabaseClient } from '@sda/database';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from './authorization.service.js';
@@ -29,7 +34,7 @@ type RoleLookupClient = Pick<PrismaClient, 'userRole'>;
  * `scopeDepartmentId === null`, hệ thống mới cho phép cấp phát/thu hồi vai trò nghiệp vụ hoặc đặc quyền cho nhân sự
  * khác mà không bị chặn bởi tập con `targetRolePermissions ⊆ actorPermissions` (do SoD đã gỡ `DOCUMENT_*` khỏi `SYSTEM_ADMIN`).
  */
-async function isGlobalSystemAdminRoleManager(
+export async function isGlobalSystemAdminRoleManager(
   authorization: AuthorizationService,
   principal: AuthPrincipal,
 ): Promise<boolean> {
@@ -81,6 +86,13 @@ export async function executeAssignUserRole(
 ): Promise<{ id: string }> {
   if (principal.userId === userId) {
     throw new ForbiddenException('Administrators cannot assign roles to themselves.');
+  }
+  const now = new Date();
+  if (input.validTo !== null && input.validTo <= input.validFrom) {
+    throw new BadRequestException('validTo must be later than validFrom.');
+  }
+  if (input.validTo !== null && input.validTo <= now) {
+    throw new BadRequestException('validTo must be in the future.');
   }
   const bypassDelegationSubset = await isGlobalSystemAdminRoleManager(authorization, principal);
   const id = await withSerializableTransaction(

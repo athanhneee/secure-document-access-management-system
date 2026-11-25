@@ -2,7 +2,12 @@
 
 import { useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
-import { resolveUploadWizardDefaults } from '../helpers';
+import {
+  getMinRetentionDate,
+  isClassificationAllowedForClearance,
+  resolveUploadWizardDefaults,
+  validateRetentionDateInput,
+} from '../helpers';
 import type {
   BusinessCategoryLookupItem,
   ClassificationLevelLookupItem,
@@ -11,6 +16,7 @@ import type {
 
 interface UseUploadWizardParams {
   userDepartmentId?: string | number | null | undefined;
+  userClearanceRank?: number | null | undefined;
   departments: DepartmentLookupItem[];
   businessCategories: BusinessCategoryLookupItem[];
   classificationLevels: ClassificationLevelLookupItem[];
@@ -25,6 +31,7 @@ interface UseUploadWizardParams {
  */
 export function useUploadWizard({
   userDepartmentId,
+  userClearanceRank,
   departments,
   businessCategories,
   classificationLevels,
@@ -44,12 +51,57 @@ export function useUploadWizard({
   const [docRetentionDate, setDocRetentionDate] = useState('');
   const [isSubmittingDoc, setIsSubmittingDoc] = useState(false);
 
+  const minRetentionDate = getMinRetentionDate();
+  const retentionDateError = validateRetentionDateInput(docRetentionDate);
+
+  function resolveClearanceError(): string | null {
+    const chosenLevel = classificationLevels.find(
+      (l) => String(l.id) === String(docClassificationId),
+    );
+    if (chosenLevel && !isClassificationAllowedForClearance(chosenLevel.rank, userClearanceRank)) {
+      return `Vi phạm nguyên tắc Bell-LaPadula: cấp thẩm quyền hiện tại (Rank ${userClearanceRank ?? 0}) không đủ cho mức mật ${chosenLevel.name} (Rank ${chosenLevel.rank}).`;
+    }
+    return null;
+  }
+
+  function handleNextStep() {
+    if (wizardStep === 1) {
+      if (!docFile) {
+        setErrorMessage('Vui lòng chọn tệp tài liệu trước khi tiếp tục.');
+        return;
+      }
+      if (!docTitle.trim()) {
+        setErrorMessage('Tiêu đề tài liệu không được để trống.');
+        return;
+      }
+      const clearanceErr = resolveClearanceError();
+      if (clearanceErr) {
+        setErrorMessage(clearanceErr);
+        return;
+      }
+      setErrorMessage(null);
+      setWizardStep(2);
+      return;
+    }
+
+    if (wizardStep === 2) {
+      const retentionErr = validateRetentionDateInput(docRetentionDate);
+      if (retentionErr) {
+        setErrorMessage(retentionErr);
+        return;
+      }
+      setErrorMessage(null);
+      setWizardStep(3);
+    }
+  }
+
   function openUploadWizard() {
     setErrorMessage(null);
     // CONFLICT-RESOLVED: Khắc phục điều kiện chết (!docDepartmentId / !docCategoryId / !docClassificationId khi state ban đầu là 1, 1, 3) để luôn khởi tạo đúng mặc định khi mở trình tải lên mới.
     if (!docFile && !docTitle.trim()) {
       const defaults = resolveUploadWizardDefaults({
         userDepartmentId,
+        userClearanceRank,
         departments,
         businessCategories,
         classificationLevels,
@@ -72,6 +124,20 @@ export function useUploadWizard({
     if (!docTitle.trim()) {
       setErrorMessage('Tiêu đề tài liệu không được để trống.');
       setWizardStep(1);
+      return;
+    }
+
+    const clearanceErr = resolveClearanceError();
+    if (clearanceErr) {
+      setErrorMessage(clearanceErr);
+      setWizardStep(1);
+      return;
+    }
+
+    const retentionErr = validateRetentionDateInput(docRetentionDate);
+    if (retentionErr) {
+      setErrorMessage(retentionErr);
+      setWizardStep(2);
       return;
     }
 
@@ -172,8 +238,11 @@ export function useUploadWizard({
     setDocClassificationId,
     docRetentionDate,
     setDocRetentionDate,
+    minRetentionDate,
+    retentionDateError,
     isSubmittingDoc,
     openUploadWizard,
+    handleNextStep,
     handleFinishUpload,
   };
 }

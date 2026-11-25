@@ -14,9 +14,13 @@ import {
   buildGrantLookupMaps,
   expandGrantPermissions,
   extractAuditPagination,
+  formatIsoDateDisplay,
+  getMinRetentionDate,
+  isClassificationAllowedForClearance,
   mapDocumentDtoToItem,
   mapGrantDtoToItem,
   resolveUploadWizardDefaults,
+  validateRetentionDateInput,
 } from '../../apps/web/app/owner/helpers.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -208,6 +212,80 @@ describe('/owner DTO Mappers, Permission Inclusion, Pagination & Wizard Defaults
       ],
     });
     assert.deepEqual(defaults, { departmentId: 5, categoryId: 11, classificationId: 2 });
+  });
+
+  it('validates retention dates against past selection and wires min + Step 3 review in upload wizard', () => {
+    const refDate = new Date('2026-11-25T12:00:00.000Z');
+    const minDate = getMinRetentionDate(refDate);
+    assert.equal(minDate, '2026-11-25');
+    assert.equal(formatIsoDateDisplay('2026-11-25'), '25/11/2026');
+    assert.equal(validateRetentionDateInput('', refDate), null);
+    assert.equal(validateRetentionDateInput('2026-11-25', refDate), null);
+    assert.equal(validateRetentionDateInput('2026-12-31', refDate), null);
+    assert.match(validateRetentionDateInput('2026-11-24', refDate) ?? '', /quá khứ/);
+    assert.match(validateRetentionDateInput('2026-02-31', refDate) ?? '', /không hợp lệ/);
+
+    const policyReviewTsx = fs.readFileSync(
+      path.join(webRoot, 'app/owner/modals/upload-step-policy-review.tsx'),
+      'utf8',
+    );
+    assert.match(policyReviewTsx, /min=\{minRetentionDate\}/);
+    assert.match(policyReviewTsx, /Thời hạn lưu trữ:/);
+
+    const uploadModalTsx = fs.readFileSync(
+      path.join(webRoot, 'app/owner/modals/upload-document-modal.tsx'),
+      'utf8',
+    );
+    assert.match(uploadModalTsx, /Boolean\(retentionDateError\)/);
+    assert.match(uploadModalTsx, /onClick=\{handleNextStep\}/);
+  });
+
+  it('enforces Bell-LaPadula clearance gating on Step 1 upload wizard defaults and controls', () => {
+    assert.equal(isClassificationAllowedForClearance(3, 3), true);
+    assert.equal(isClassificationAllowedForClearance(4, 3), false);
+    assert.equal(isClassificationAllowedForClearance(1, 0), false);
+    assert.equal(isClassificationAllowedForClearance(4, undefined), true);
+
+    const limitedDefaults = resolveUploadWizardDefaults({
+      userDepartmentId: '5',
+      userClearanceRank: 1,
+      departments: [{ id: 5, code: 'ENG', name: 'Kỹ thuật' }],
+      businessCategories: [{ id: 11, code: 'OPS', name: 'Vận hành', departmentId: 5 }],
+      classificationLevels: [
+        {
+          id: 1,
+          code: 'INTERNAL',
+          name: 'Nội bộ',
+          rank: 1,
+          allowDownload: true,
+          requireWatermark: true,
+        },
+        {
+          id: 2,
+          code: 'CONFIDENTIAL',
+          name: 'Mật',
+          rank: 2,
+          allowDownload: true,
+          requireWatermark: true,
+        },
+        {
+          id: 3,
+          code: 'SECRET',
+          name: 'Tối mật',
+          rank: 3,
+          allowDownload: false,
+          requireWatermark: true,
+        },
+      ],
+    });
+    assert.equal(limitedDefaults.classificationId, 1);
+
+    const stepMetadataTsx = fs.readFileSync(
+      path.join(webRoot, 'app/owner/modals/upload-step-metadata.tsx'),
+      'utf8',
+    );
+    assert.match(stepMetadataTsx, /isClassificationAllowedForClearance/);
+    assert.match(stepMetadataTsx, /disabled=\{isAboveClearance\}/);
   });
 });
 

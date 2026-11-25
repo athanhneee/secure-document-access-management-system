@@ -1,4 +1,8 @@
-import { ClassificationRank, resolveClassificationRank } from '@sda/contracts';
+import {
+  ClassificationRank,
+  isValidIsoCalendarDate,
+  resolveClassificationRank,
+} from '@sda/contracts';
 import type { ClassificationCode } from '@/components/classification-badge';
 import type {
   AccessGrantApiDto,
@@ -19,6 +23,55 @@ import type {
 export function toLocalISO(d: Date): string {
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Thuật toán: Chuẩn hóa Ngày Cục bộ `YYYY-MM-DD` Tương thích `<input type="date">` (`toLocalDateISO`)
+ */
+export function toLocalDateISO(d: Date = new Date()): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Thuật toán: Xác định Ngày Tối thiểu Hợp lệ cho Thời hạn Lưu trữ (`getMinRetentionDate`)
+ * Lấy mốc lớn hơn giữa ngày cục bộ và ngày UTC hiện tại để vừa đồng bộ nút "Hôm nay" ở múi giờ dương,
+ * vừa tránh lệch ngày bị máy chủ UTC từ chối ở múi giờ âm.
+ */
+export function getMinRetentionDate(referenceDate: Date = new Date()): string {
+  const localToday = toLocalDateISO(referenceDate);
+  const utcToday = referenceDate.toISOString().slice(0, 10);
+  return localToday >= utcToday ? localToday : utcToday;
+}
+
+/**
+ * Thuật toán: Định dạng Chuỗi Ngày ISO `YYYY-MM-DD` sang Hiển thị `DD/MM/YYYY` (`formatIsoDateDisplay`)
+ */
+export function formatIsoDateDisplay(isoDate: string): string {
+  const trimmed = isoDate.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(trimmed)) return trimmed;
+  const [year, month, day] = trimmed.split('-');
+  return `${day}/${month}/${year}`;
+}
+
+/**
+ * Thuật toán: Kiểm định Ngày Thời hạn Lưu trữ Ở Biên Giao diện (`validateRetentionDateInput`)
+ * Trả về `null` khi để trống hoặc hợp lệ (`>= getMinRetentionDate`); trả về thông báo tiếng Việt nếu không hợp lệ hoặc nằm trong quá khứ.
+ */
+export function validateRetentionDateInput(
+  value: string,
+  referenceDate: Date = new Date(),
+): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!isValidIsoCalendarDate(trimmed)) {
+    return 'Thời hạn lưu trữ bảo mật không hợp lệ theo lịch (định dạng YYYY-MM-DD).';
+  }
+  const minDate = getMinRetentionDate(referenceDate);
+  if (trimmed < minDate) {
+    return `Thời hạn lưu trữ bảo mật không được chọn ngày trong quá khứ (tối thiểu từ ${formatIsoDateDisplay(minDate)}).`;
+  }
+  return null;
 }
 
 /**
@@ -214,15 +267,36 @@ export function extractAuditPagination(res: {
 }
 
 /**
+ * Thuật toán: Kiểm Định Nhanh Mức Mật Cho Phép Theo Trần Thẩm Tra Bell-LaPadula (`isClassificationAllowedForClearance`)
+ * Mục đích: Xác định liệu bậc phân loại mật `levelRank` có nằm trong phạm vi `userClearanceRank` của tài khoản hay không (`levelRank <= userClearanceRank`).
+ */
+export function isClassificationAllowedForClearance(
+  levelRank: number,
+  userClearanceRank?: number | null,
+): boolean {
+  if (typeof userClearanceRank !== 'number' || !Number.isFinite(userClearanceRank)) {
+    return true;
+  }
+  return levelRank <= userClearanceRank;
+}
+
+/**
  * Thuật toán: Khởi tạo Giá trị Mặc định Trình Tải lên Tài liệu 3 Bước (`resolveUploadWizardDefaults`)
  */
 export function resolveUploadWizardDefaults(params: {
   userDepartmentId?: string | number | null | undefined;
+  userClearanceRank?: number | null | undefined;
   departments: ReadonlyArray<DepartmentLookupItem>;
   businessCategories: ReadonlyArray<BusinessCategoryLookupItem>;
   classificationLevels: ReadonlyArray<ClassificationLevelLookupItem>;
 }): { departmentId: number; categoryId: number; classificationId: number } {
-  const { userDepartmentId, departments, businessCategories, classificationLevels } = params;
+  const {
+    userDepartmentId,
+    userClearanceRank,
+    departments,
+    businessCategories,
+    classificationLevels,
+  } = params;
   const parsedUserDept =
     userDepartmentId !== null && userDepartmentId !== undefined && userDepartmentId !== ''
       ? Number(userDepartmentId)
@@ -237,10 +311,20 @@ export function resolveUploadWizardDefaults(params: {
   );
 
   const categoryId = Number(businessCategories[0]?.id ?? 1);
-  const classificationId = Number(
-    (classificationLevels.find((l) => l.code === 'CONFIDENTIAL') ?? classificationLevels[0])?.id ??
-      3,
+  const permittedLevels =
+    typeof userClearanceRank === 'number' && Number.isFinite(userClearanceRank)
+      ? classificationLevels.filter((l) => l.rank <= userClearanceRank)
+      : classificationLevels;
+  const highestPermitted = permittedLevels.reduce<ClassificationLevelLookupItem | undefined>(
+    (best, lvl) => (!best || lvl.rank > best.rank ? lvl : best),
+    undefined,
   );
+  const defaultLevel =
+    permittedLevels.find((l) => l.code === 'CONFIDENTIAL') ??
+    highestPermitted ??
+    classificationLevels.find((l) => l.code === 'CONFIDENTIAL') ??
+    classificationLevels[0];
+  const classificationId = Number(defaultLevel?.id ?? 3);
 
   return { departmentId, categoryId, classificationId };
 }

@@ -9,6 +9,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { isClassificationAllowedForClearance } from '../helpers';
 import type { useUploadWizard } from '../hooks/use-upload-wizard';
 import { UploadStepMetadata } from './upload-step-metadata';
 import { UploadStepPolicyReview } from './upload-step-policy-review';
@@ -23,6 +24,8 @@ interface UploadDocumentModalProps {
   departments: DepartmentLookupItem[];
   businessCategories: BusinessCategoryLookupItem[];
   classificationLevels: ClassificationLevelLookupItem[];
+  userClearanceRank?: number | null | undefined;
+  userClearanceCode?: string | null | undefined;
 }
 
 export function UploadDocumentModal({
@@ -30,6 +33,8 @@ export function UploadDocumentModal({
   departments,
   businessCategories,
   classificationLevels,
+  userClearanceRank,
+  userClearanceCode,
 }: UploadDocumentModalProps) {
   const {
     uploadWizardOpen,
@@ -39,11 +44,24 @@ export function UploadDocumentModal({
     docFile,
     docTitle,
     docClassificationId,
+    retentionDateError,
     isSubmittingDoc,
+    handleNextStep,
     handleFinishUpload,
   } = wizard;
 
-  const currentSelectedLevel = classificationLevels.find((l) => l.id === docClassificationId);
+  const currentSelectedLevel = classificationLevels.find(
+    (l) => String(l.id) === String(docClassificationId),
+  );
+  const isSelectedAboveClearance =
+    currentSelectedLevel !== undefined &&
+    !isClassificationAllowedForClearance(currentSelectedLevel.rank, userClearanceRank);
+  const hasNoUploadClearance =
+    typeof userClearanceRank === 'number' &&
+    classificationLevels.length > 0 &&
+    classificationLevels.every(
+      (l) => !isClassificationAllowedForClearance(l.rank, userClearanceRank),
+    );
 
   return (
     <Dialog open={uploadWizardOpen} onOpenChange={setUploadWizardOpen}>
@@ -84,6 +102,8 @@ export function UploadDocumentModal({
               departments={departments}
               businessCategories={businessCategories}
               classificationLevels={classificationLevels}
+              userClearanceRank={userClearanceRank}
+              userClearanceCode={userClearanceCode}
             />
           ) : (
             <UploadStepPolicyReview
@@ -121,8 +141,14 @@ export function UploadDocumentModal({
               variant="primary"
               size="sm"
               text="Tiếp theo"
-              disabled={!docTitle.trim() || !docFile}
-              onClick={() => setWizardStep((prev) => (prev + 1) as 2 | 3)}
+              disabled={
+                !docTitle.trim() ||
+                !docFile ||
+                hasNoUploadClearance ||
+                isSelectedAboveClearance ||
+                (wizardStep === 2 && Boolean(retentionDateError))
+              }
+              onClick={handleNextStep}
             />
           ) : (
             <InteractiveHoverButton
@@ -130,7 +156,13 @@ export function UploadDocumentModal({
               variant="primary"
               size="sm"
               text={isSubmittingDoc ? 'Đang tải lên...' : 'Xác nhận tải lên'}
-              disabled={isSubmittingDoc || !docFile}
+              disabled={
+                isSubmittingDoc ||
+                !docFile ||
+                hasNoUploadClearance ||
+                isSelectedAboveClearance ||
+                Boolean(retentionDateError)
+              }
               isLoading={isSubmittingDoc}
               onClick={() => void handleFinishUpload()}
             />

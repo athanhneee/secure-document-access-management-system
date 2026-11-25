@@ -36,11 +36,51 @@ import { GrantsTab } from './tabs/grants-tab';
 import { RequestsTab } from './tabs/requests-tab';
 
 /**
- * Thuật toán: Không gian Điều phối Vòng đời Tài liệu Mật & Cấp phép Chủ sở hữu (`OwnerWorkspace`)
+ * Thuật toán: Không Gian Chủ Sở Hữu Cô Lập Sau `AuthGuard` & Lọc Thao Tác Theo Quyền Hạt Mịn (`OwnerWorkspace`)
+ * Mục đích:
+ *   - Chặn toàn bộ hook dữ liệu (`useOwnerData`) chạy trước khi `AuthGuard` xác nhận vai trò `DOCUMENT_OWNER`.
+ *   - Ẩn hoàn toàn các thẻ tab và nút thao tác không thuộc tập quyền hiệu lực của tài khoản.
  */
 export function OwnerWorkspace() {
-  const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('documents');
+  return (
+    <AuthGuard requiredRole="DOCUMENT_OWNER">
+      <AppLayout>
+        <OwnerWorkspaceContent />
+      </AppLayout>
+    </AuthGuard>
+  );
+}
+
+function OwnerWorkspaceContent() {
+  const { user, hasPermission } = useAuth();
+
+  const canUpload = hasPermission('DOCUMENT:UPLOAD');
+  const canManageDoc = hasPermission('DOCUMENT:MANAGE');
+  const canViewDoc = hasPermission('DOCUMENT:VIEW');
+  const canDownloadDoc = hasPermission('DOCUMENT:DOWNLOAD');
+  const canCreateVersion = hasPermission('DOCUMENT_VERSION:CREATE');
+  const canClassifyDoc = hasPermission('DOCUMENT:CLASSIFY');
+  const canArchiveDoc = hasPermission('DOCUMENT:ARCHIVE');
+  const canDecideRequest = hasPermission('ACCESS_REQUEST:DECIDE');
+  const canViewRequests = canDecideRequest || hasPermission('ACCESS_REQUEST:VIEW_OWN');
+  const canCreateGrant = hasPermission('ACCESS_GRANT:CREATE');
+  const canRevokeGrant = hasPermission('ACCESS_GRANT:REVOKE');
+  const canViewGrants = hasPermission('ACCESS_GRANT:VIEW') || canCreateGrant || canRevokeGrant;
+  const canViewHistory = hasPermission('AUDIT_LOG:VIEW');
+  const canViewDocsTab =
+    hasPermission('DOCUMENT:DISCOVER') || canViewDoc || canManageDoc || canUpload;
+
+  const permittedTabs = [
+    canViewDocsTab ? 'documents' : null,
+    canViewRequests ? 'requests' : null,
+    canViewGrants ? 'grants' : null,
+    canViewHistory ? 'history' : null,
+  ].filter((t): t is string => t !== null);
+
+  const [selectedTab, setSelectedTab] = useState('documents');
+  const activeTab = permittedTabs.includes(selectedTab)
+    ? selectedTab
+    : (permittedTabs[0] ?? 'documents');
   const [searchQuery, setSearchQuery] = useState('');
 
   const data = useOwnerData();
@@ -50,6 +90,7 @@ export function OwnerWorkspace() {
   });
   const uploadWizard = useUploadWizard({
     userDepartmentId: user?.departmentId,
+    userClearanceRank: user?.clearanceRank,
     departments: data.departments,
     businessCategories: data.businessCategories,
     classificationLevels: data.classificationLevels,
@@ -88,89 +129,99 @@ export function OwnerWorkspace() {
   const activeGrantCount = data.grants.filter((g) => g.status === 'ACTIVE').length;
 
   return (
-    <AuthGuard requiredRole="DOCUMENT_OWNER">
-      <AppLayout>
-        <DialogErrorProvider
-          errorMessage={data.errorMessage}
-          onDismiss={() => data.setErrorMessage(null)}
-        >
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="min-w-0">
-                <Badge variant="warning">Document Owner</Badge>
-                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
-                  Quản lý &amp; Cấp phép Tài liệu Mật
-                </h1>
-              </div>
-              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
-                <InteractiveHoverButton
-                  variant="secondary"
-                  size="sm"
-                  text="Làm mới"
-                  icon={
-                    <RefreshCw
-                      size={16}
-                      strokeWidth={1.75}
-                      className={data.isLoading ? 'animate-spin' : ''}
-                      aria-hidden="true"
-                    />
-                  }
-                  onClick={() => void data.refreshData()}
-                  disabled={data.isLoading}
-                />
-                <InteractiveHoverButton
-                  variant="primary"
-                  size="sm"
-                  text="Tải lên tài liệu mới"
-                  icon={<FileUp size={16} strokeWidth={1.75} aria-hidden="true" />}
-                  onClick={uploadWizard.openUploadWizard}
-                />
-              </div>
-            </div>
-
-            {data.message && (
-              <Alert variant="success" className="text-xs">
-                <CheckCircle2
+    <DialogErrorProvider
+      errorMessage={data.errorMessage}
+      onDismiss={() => data.setErrorMessage(null)}
+    >
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="min-w-0">
+            <Badge variant="warning">Document Owner</Badge>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
+              Quản lý &amp; Cấp phép Tài liệu Mật
+            </h1>
+          </div>
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
+            <InteractiveHoverButton
+              variant="secondary"
+              size="sm"
+              text="Làm mới"
+              icon={
+                <RefreshCw
                   size={16}
                   strokeWidth={1.75}
-                  className="shrink-0 text-[#008A05]"
+                  className={data.isLoading ? 'animate-spin' : ''}
                   aria-hidden="true"
                 />
-                <AlertDescription className="ml-2">{data.message}</AlertDescription>
-              </Alert>
+              }
+              onClick={() => void data.refreshData()}
+              disabled={data.isLoading}
+            />
+            {canUpload && (
+              <InteractiveHoverButton
+                variant="primary"
+                size="sm"
+                text="Tải lên tài liệu mới"
+                icon={<FileUp size={16} strokeWidth={1.75} aria-hidden="true" />}
+                onClick={uploadWizard.openUploadWizard}
+              />
             )}
-            {data.errorMessage && (
-              <Alert variant="destructive" className="text-xs">
-                <AlertTriangle
-                  size={16}
-                  strokeWidth={1.75}
-                  className="shrink-0 text-[#C13515]"
-                  aria-hidden="true"
-                />
-                <AlertDescription className="ml-2">{data.errorMessage}</AlertDescription>
-              </Alert>
-            )}
+          </div>
+        </div>
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3.5">
-              <TabsList className="grid w-full grid-cols-2 lg:inline-flex lg:w-auto h-auto min-h-10 rounded-[18px] lg:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+        {data.message && (
+          <Alert variant="success" className="text-xs">
+            <CheckCircle2
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#008A05]"
+              aria-hidden="true"
+            />
+            <AlertDescription className="ml-2">{data.message}</AlertDescription>
+          </Alert>
+        )}
+        {data.errorMessage && (
+          <Alert variant="destructive" className="text-xs">
+            <AlertTriangle
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#C13515]"
+              aria-hidden="true"
+            />
+            <AlertDescription className="ml-2">{data.errorMessage}</AlertDescription>
+          </Alert>
+        )}
+
+        {permittedTabs.length > 0 && (
+          <Tabs value={activeTab} onValueChange={setSelectedTab} className="space-y-3.5">
+            <TabsList className="grid w-full grid-cols-2 lg:inline-flex lg:w-auto h-auto min-h-10 rounded-[18px] lg:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+              {canViewDocsTab && (
                 <TabsTrigger value="documents" className="flex items-center gap-1.5 text-xs">
                   <FolderLock size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Tài liệu sở hữu ({data.documents.length})</span>
                 </TabsTrigger>
+              )}
+              {canViewRequests && (
                 <TabsTrigger value="requests" className="flex items-center gap-1.5 text-xs">
                   <Clock size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Yêu cầu cần duyệt ({pendingCount})</span>
                 </TabsTrigger>
+              )}
+              {canViewGrants && (
                 <TabsTrigger value="grants" className="flex items-center gap-1.5 text-xs">
                   <KeyRound size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Giấy phép hiệu lực ({activeGrantCount})</span>
                 </TabsTrigger>
+              )}
+              {canViewHistory && (
                 <TabsTrigger value="history" className="flex items-center gap-1.5 text-xs">
                   <History size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Lịch sử truy cập</span>
                 </TabsTrigger>
-              </TabsList>
+              )}
+            </TabsList>
 
+            {canViewDocsTab && (
               <TabsContent value="documents" className="space-y-4">
                 <DocumentsTab
                   documents={filteredDocs}
@@ -178,6 +229,12 @@ export function OwnerWorkspace() {
                   onSearchChange={setSearchQuery}
                   isLoadingPreview={delivery.isLoadingPreview}
                   downloadingDocId={delivery.downloadingDocId}
+                  canManage={canManageDoc}
+                  canView={canViewDoc}
+                  canDownload={canDownloadDoc}
+                  canCreateVersion={canCreateVersion}
+                  canClassify={canClassifyDoc}
+                  canArchive={canArchiveDoc}
                   onActivate={(doc) => void lifecycle.handleActivateDocument(doc)}
                   onOpenPreview={(doc) => void delivery.handleOpenPreview(doc)}
                   onDownload={(doc) => void delivery.handleDownloadWithTicket(doc)}
@@ -187,21 +244,30 @@ export function OwnerWorkspace() {
                   onOpenVersionHistory={(doc) => void history.handleOpenVersionHistory(doc)}
                 />
               </TabsContent>
+            )}
+            {canViewRequests && (
               <TabsContent value="requests" className="space-y-4">
                 <RequestsTab
                   requests={data.requests}
+                  canDecideRequest={canDecideRequest}
                   onOpenApprove={requestsControl.openApproveModal}
                   onReject={requestsControl.handleRejectRequest}
                   onClearError={clearError}
                 />
               </TabsContent>
+            )}
+            {canViewGrants && (
               <TabsContent value="grants" className="space-y-4">
                 <GrantsTab
                   grants={data.grants}
+                  canCreateGrant={canCreateGrant}
+                  canRevokeGrant={canRevokeGrant}
                   onOpenDirectGrant={grantsControl.openDirectGrantModal}
                   onOpenRevoke={grantsControl.openRevokeModal}
                 />
               </TabsContent>
+            )}
+            {canViewHistory && (
               <TabsContent value="history" className="space-y-4">
                 <AuditHistoryTab
                   auditLogs={data.auditLogs}
@@ -217,36 +283,38 @@ export function OwnerWorkspace() {
                   }}
                 />
               </TabsContent>
-            </Tabs>
+            )}
+          </Tabs>
+        )}
 
-            <UploadDocumentModal
-              wizard={uploadWizard}
-              departments={data.departments}
-              businessCategories={data.businessCategories}
-              classificationLevels={data.classificationLevels}
-            />
-            <DocumentLifecycleModals
-              lifecycle={lifecycle}
-              history={history}
-              classificationLevels={data.classificationLevels}
-              businessCategories={data.businessCategories}
-            />
-            <AccessAndAuditModals
-              grantsControl={grantsControl}
-              requestsControl={requestsControl}
-              delivery={delivery}
-              documents={data.documents}
-              usersLookup={data.usersLookup}
-              rolesLookup={data.rolesLookup}
-              auditDetailOpen={data.auditDetailOpen}
-              onAuditDetailOpenChange={data.setAuditDetailOpen}
-              selectedAuditLog={data.selectedAuditLog}
-              userFullName={user?.fullName}
-              username={user?.username}
-            />
-          </div>
-        </DialogErrorProvider>
-      </AppLayout>
-    </AuthGuard>
+        <UploadDocumentModal
+          wizard={uploadWizard}
+          departments={data.departments}
+          businessCategories={data.businessCategories}
+          classificationLevels={data.classificationLevels}
+          userClearanceRank={user?.clearanceRank}
+          userClearanceCode={user?.clearanceCode}
+        />
+        <DocumentLifecycleModals
+          lifecycle={lifecycle}
+          history={history}
+          classificationLevels={data.classificationLevels}
+          businessCategories={data.businessCategories}
+        />
+        <AccessAndAuditModals
+          grantsControl={grantsControl}
+          requestsControl={requestsControl}
+          delivery={delivery}
+          documents={data.documents}
+          usersLookup={data.usersLookup}
+          rolesLookup={data.rolesLookup}
+          auditDetailOpen={data.auditDetailOpen}
+          onAuditDetailOpenChange={data.setAuditDetailOpen}
+          selectedAuditLog={data.selectedAuditLog}
+          userFullName={user?.fullName}
+          username={user?.username}
+        />
+      </div>
+    </DialogErrorProvider>
   );
 }

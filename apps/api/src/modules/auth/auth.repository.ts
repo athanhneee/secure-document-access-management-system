@@ -3,7 +3,7 @@
  * Thuật toán: Mặt tiền kho dữ liệu xác thực, xoay vòng phiên/Refresh Token, MFA và vô hiệu hóa bộ đệm phiên phân tán theo Epoch.
  */
 import { Injectable, Optional } from '@nestjs/common';
-import { getDatabaseClient } from '@sda/database';
+import { getDatabaseClient, type Prisma } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
 import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 import {
@@ -14,6 +14,7 @@ import {
 } from './auth.types.js';
 import {
   activateMfaAuthSession,
+  completeAuthLoginSession,
   createAuthSession,
   revokeAllUserSessions,
   revokeSingleSession,
@@ -126,8 +127,33 @@ export class AuthRepository {
       ...input,
       maxConcurrentSessions: input.maxConcurrentSessions ?? this.maxConcurrentSessions,
     });
-    for (const evictedId of evictedIds) {
-      await this.stateStore.deleteKey('auth-session', evictedId);
+    if (evictedIds.length > 0) {
+      await Promise.all(
+        evictedIds.map((evictedId) => this.stateStore.deleteKey('auth-session', evictedId)),
+      );
+    }
+  }
+
+  /**
+   * Thuật toán: Gộp cập nhật `last_login_at`, khởi tạo phiên và ghi kiểm toán `AUTH` trong cùng 1 giao dịch DB,
+   * sau đó xóa song song đệm phiên cũ bị thu hồi (nếu vượt trần phiên đồng thời).
+   */
+  async completeLoginSession(
+    input: SessionTokensInput,
+    recordAuditInTx: (transaction: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    const evictedIds = await completeAuthLoginSession(
+      this.database,
+      {
+        ...input,
+        maxConcurrentSessions: input.maxConcurrentSessions ?? this.maxConcurrentSessions,
+      },
+      recordAuditInTx,
+    );
+    if (evictedIds.length > 0) {
+      await Promise.all(
+        evictedIds.map((evictedId) => this.stateStore.deleteKey('auth-session', evictedId)),
+      );
     }
   }
 

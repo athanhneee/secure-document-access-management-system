@@ -4,7 +4,7 @@
  * kèm cơ chế thử lại giao dịch có trễ lũy tiến + nhiễu ngẫu nhiên khi gặp xung đột tuần tự hóa (`40001` / `P2034`).
  */
 import { Injectable } from '@nestjs/common';
-import { getDatabaseClient } from '@sda/database';
+import { getDatabaseClient, type Prisma } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
 import {
   appendChainedAuditLog,
@@ -38,27 +38,37 @@ export class AuthAuditService {
   }
 
   /**
-   * Thuật toán: Ghi bản ghi kiểm toán `AUTH` nguyên tử kèm thử lại tự động khi đụng độ khóa tuần tự hóa tạm thời.
+   * Thuật toán: Ghi bản ghi kiểm toán `AUTH` nguyên tử (hỗ trợ tái dùng `externalTx` để gộp chung giao dịch đăng nhập/MFA,
+   * hoặc mở giao dịch độc lập kèm thử lại khi đụng độ khóa tuần tự hóa tạm thời).
    */
-  async record(event: AuditEvent, context: RequestContext): Promise<void> {
-    await executeAuditWithRetry(() =>
-      this.database.$transaction(async (transaction) => {
-        await appendChainedAuditLog(transaction, {
-          partition: 'AUTH',
-          hmacKey: this.hmacKey,
-          keyVersion: this.keyVersion,
-          action: event.action,
-          outcome: event.outcome,
-          objectType: 'AUTHENTICATION',
-          objectId: event.objectId ?? null,
-          actorUserId: event.actorUserId ?? null,
-          actorUsername: event.actorUsername ?? null,
-          accessSessionId: event.sessionId ?? null,
-          reasonCode: event.reasonCode ?? null,
-          details: event.details ?? {},
-          context,
-        });
-      }),
-    );
+  async record(
+    event: AuditEvent,
+    context: RequestContext,
+    externalTx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const appendInTx = async (transaction: Prisma.TransactionClient): Promise<void> => {
+      await appendChainedAuditLog(transaction, {
+        partition: 'AUTH',
+        hmacKey: this.hmacKey,
+        keyVersion: this.keyVersion,
+        action: event.action,
+        outcome: event.outcome,
+        objectType: 'AUTHENTICATION',
+        objectId: event.objectId ?? null,
+        actorUserId: event.actorUserId ?? null,
+        actorUsername: event.actorUsername ?? null,
+        accessSessionId: event.sessionId ?? null,
+        reasonCode: event.reasonCode ?? null,
+        details: event.details ?? {},
+        context,
+      });
+    };
+
+    if (externalTx) {
+      await appendInTx(externalTx);
+      return;
+    }
+
+    await executeAuditWithRetry(() => this.database.$transaction(appendInTx));
   }
 }

@@ -1,12 +1,18 @@
 /**
  * @module AuthorizationCache
- * Bộ nhớ đệm quyền hiệu lực RBAC phân tán qua `DistributedStateService` (Redis + dự phòng cục bộ có trần)
- * với thuật toán cắt trần TTL theo chân trời hết hạn vai trò (`Horizon-Clamped TTL`) kết hợp số hiệu thế hệ
- * toàn cục và theo từng người dùng (`rbac-global`, `rbac-user:<id>`) để vô hiệu hóa tức thì trên mọi bản sao.
+ * Thuật toán: Bộ nhớ đệm quyền RBAC hai tầng L1 In-Memory + L2 Redis `MGET` 1-RTT (TTL mặc định 60 giây),
+ * kẹp trần TTL theo chân trời hết hạn vai trò (`Horizon-Clamped TTL`) và vô hiệu hóa tức thì xuyên bản sao
+ * qua Redis Pub/Sub (`rbac-global`, `rbac-user:<id>`, `auth-global`, `auth-user:<id>`).
  */
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable, Optional, type OnModuleDestroy } from '@nestjs/common';
 import { AppConfigService } from '../../config/config.service.js';
-import { DistributedStateService } from '../concurrency/distributed-state.service.js';
+import {
+  DistributedStateService,
+  type CacheInvalidationEvent,
+} from '../concurrency/distributed-state.service.js';
+
+const DEFAULT_RBAC_CACHE_TTL_MS = 60_000;
+const MAX_L1_USERS = 5_000;
 
 export interface EffectiveGrant {
   permissionId: bigint;
@@ -33,11 +39,20 @@ interface SerializedEffectiveGrant {
 interface SerializedCacheEntry {
   grants: SerializedEffectiveGrant[];
   expiresAt: number;
+  globalEpoch: number;
+  userEpoch: number;
+}
+
+interface L1GrantEntry {
+  grants: EffectiveGrant[];
+  expiresAt: number;
 }
 
 @Injectable()
-export class AuthorizationCache {
+export class AuthorizationCache implements OnModuleDestroy {
   private readonly stateStore: DistributedStateService;
+  private readonly l1Grants = new Map<string, L1GrantEntry>();
+  private readonly unsubscribeInvalidation: (() => void) | null = null;
   private generation = 0;
 
   constructor(
@@ -45,22 +60,71 @@ export class AuthorizationCache {
     @Optional() stateStore?: DistributedStateService,
   ) {
     this.stateStore = stateStore ?? new DistributedStateService(config);
+    if (typeof this.stateStore.onInvalidate === 'function') {
+      this.unsubscribeInvalidation = this.stateStore.onInvalidate((event) => {
+        this.handleCacheInvalidation(event);
+      });
+    }
+  }
+
+  onModuleDestroy(): void {
+    this.unsubscribeInvalidation?.();
+    this.l1Grants.clear();
   }
 
   /**
-   * Thuật toán: Tra cứu bộ nhớ đệm quyền phân tán gắn phiên bản Epoch kèm thu hồi lười khi quá hạn (`Epoch-Scoped Lazy-Expiration Lookup`).
-   * Cơ chế hoạt động: Ghép khóa `${globalEpoch}:${userEpoch}:${userId}` từ `DistributedStateService`, kiểm tra `entry.expiresAt <= now`
-   * để đảm bảo quyền có `valid_to` hữu hạn không bao giờ sống sót quá thời điểm hết hạn ngay cả khi TTL mặc định chưa trôi hết.
+   * Thuật toán: Tra cứu quyền hiệu lực 2 tầng L1 RAM (~0ms) -> L2 Redis `MGET` 1-RTT gắn xác thực Epoch & kẹp trần `valid_to`.
    */
   async get(userId: bigint, now = Date.now()): Promise<EffectiveGrant[] | undefined> {
-    const scopedKey = await this.buildScopedKey(userId);
-    const entry = await this.stateStore.getJson<SerializedCacheEntry>('rbac-grants', scopedKey);
-    if (!entry) return undefined;
-    if (entry.expiresAt <= now) {
-      await this.stateStore.deleteKey('rbac-grants', scopedKey);
+    const id = userId.toString();
+    const l1Hit = this.l1Grants.get(id);
+    if (l1Hit) {
+      if (l1Hit.expiresAt <= now) {
+        this.l1Grants.delete(id);
+        return undefined;
+      }
+      return l1Hit.grants;
+    }
+
+    let globalEpoch = 0;
+    let userEpoch = 0;
+    let entry: SerializedCacheEntry | null = null;
+
+    if (typeof this.stateStore.mgetBatch === 'function') {
+      const [rawGlobal, rawUser, rawGrants] = await this.stateStore.mgetBatch([
+        { kind: 'epoch', namespace: 'rbac-global' },
+        { kind: 'epoch', namespace: `rbac-user:${id}` },
+        { kind: 'state', namespace: 'rbac-grants', id },
+      ]);
+      globalEpoch = rawGlobal ? Number(rawGlobal) || 0 : 0;
+      userEpoch = rawUser ? Number(rawUser) || 0 : 0;
+      if (rawGrants) {
+        try {
+          entry = JSON.parse(rawGrants) as SerializedCacheEntry;
+        } catch {
+          entry = null;
+        }
+      }
+    } else {
+      const [g, u, c] = await Promise.all([
+        this.stateStore.getNamespaceEpoch('rbac-global'),
+        this.stateStore.getNamespaceEpoch(`rbac-user:${id}`),
+        this.stateStore.getJson<SerializedCacheEntry>('rbac-grants', id),
+      ]);
+      globalEpoch = g;
+      userEpoch = u;
+      entry = c;
+    }
+
+    if (!entry || entry.globalEpoch !== globalEpoch || entry.userEpoch !== userEpoch) {
       return undefined;
     }
-    return entry.grants.map((grant) => ({
+    if (entry.expiresAt <= now) {
+      await this.stateStore.deleteKey('rbac-grants', id);
+      return undefined;
+    }
+
+    const hydrated: EffectiveGrant[] = entry.grants.map((grant) => ({
       permissionId: BigInt(grant.permissionId),
       code: grant.code,
       resource: grant.resource,
@@ -70,55 +134,91 @@ export class AuthorizationCache {
       scopeDepartmentId: grant.scopeDepartmentId !== null ? BigInt(grant.scopeDepartmentId) : null,
       validTo: grant.validTo !== null ? new Date(grant.validTo) : null,
     }));
+    this.setL1Entry(id, hydrated, entry.expiresAt);
+    return hydrated;
   }
 
   /**
-   * Thuật toán: Cắt trần TTL theo chân trời hết hạn vai trò gần nhất (`Temporal Horizon TTL Clamping`).
-   * Cơ chế hoạt động: Tính `nearestExpiry = min(now + ttlMs, min_{g}(g.validTo))` trên toàn bộ các phép gán
-   * vai trò có thời hạn hữu hạn, sau đó lưu vào `DistributedStateService` với TTL đã kẹp chặt.
+   * Thuật toán: Cắt trần TTL theo chân trời hết hạn vai trò gần nhất (`Horizon-Clamped TTL`),
+   * ghi đồng bộ vào L1 RAM và đẩy nền sang L2 Redis với 1 vòng `MGET` Epoch.
    */
   async set(
     userId: bigint,
     grants: EffectiveGrant[],
-    ttlMs = 30_000,
+    ttlMs = DEFAULT_RBAC_CACHE_TTL_MS,
     now = Date.now(),
   ): Promise<void> {
+    const id = userId.toString();
     const nearestExpiry = grants.reduce(
       (minimum, grant) => (grant.validTo ? Math.min(minimum, grant.validTo.getTime()) : minimum),
       now + ttlMs,
     );
-    const scopedKey = await this.buildScopedKey(userId);
     if (nearestExpiry <= now) {
-      await this.stateStore.deleteKey('rbac-grants', scopedKey);
+      this.l1Grants.delete(id);
+      await this.stateStore.deleteKey('rbac-grants', id);
       return;
     }
-    const serialized: SerializedCacheEntry = {
-      expiresAt: nearestExpiry,
-      grants: grants.map((grant) => ({
-        permissionId: grant.permissionId.toString(),
-        code: grant.code,
-        resource: grant.resource,
-        action: grant.action,
-        roleId: grant.roleId.toString(),
-        roleCode: grant.roleCode,
-        scopeDepartmentId: grant.scopeDepartmentId?.toString() ?? null,
-        validTo: grant.validTo ? grant.validTo.toISOString() : null,
-      })),
+
+    this.setL1Entry(id, grants, nearestExpiry);
+
+    const writeL2 = async (): Promise<void> => {
+      let globalEpoch = 0;
+      let userEpoch = 0;
+      if (typeof this.stateStore.mgetBatch === 'function') {
+        const [rawGlobal, rawUser] = await this.stateStore.mgetBatch([
+          { kind: 'epoch', namespace: 'rbac-global' },
+          { kind: 'epoch', namespace: `rbac-user:${id}` },
+        ]);
+        globalEpoch = rawGlobal ? Number(rawGlobal) || 0 : 0;
+        userEpoch = rawUser ? Number(rawUser) || 0 : 0;
+      } else {
+        const [g, u] = await Promise.all([
+          this.stateStore.getNamespaceEpoch('rbac-global'),
+          this.stateStore.getNamespaceEpoch(`rbac-user:${id}`),
+        ]);
+        globalEpoch = g;
+        userEpoch = u;
+      }
+
+      const serialized: SerializedCacheEntry = {
+        expiresAt: nearestExpiry,
+        globalEpoch,
+        userEpoch,
+        grants: grants.map((grant) => ({
+          permissionId: grant.permissionId.toString(),
+          code: grant.code,
+          resource: grant.resource,
+          action: grant.action,
+          roleId: grant.roleId.toString(),
+          roleCode: grant.roleCode,
+          scopeDepartmentId: grant.scopeDepartmentId?.toString() ?? null,
+          validTo: grant.validTo ? grant.validTo.toISOString() : null,
+        })),
+      };
+      await this.stateStore.putEphemeral(
+        'rbac-grants',
+        id,
+        serialized,
+        Math.max(1_000, nearestExpiry - now),
+      );
     };
-    await this.stateStore.putEphemeral(
-      'rbac-grants',
-      scopedKey,
-      serialized,
-      Math.max(1_000, nearestExpiry - now),
-    );
+
+    const isRemote =
+      typeof this.stateStore.hasRemoteRedis === 'function' && this.stateStore.hasRemoteRedis();
+    if (isRemote) {
+      void writeL2().catch(() => undefined);
+    } else {
+      await writeL2();
+    }
   }
 
   /**
-   * Thuật toán: Vô hiệu hóa tức thì quyền RBAC và phiên xác thực của một người dùng trên toàn cụm bằng tăng Epoch `O(1)`.
+   * Thuật toán: Vô hiệu hóa tức thì đệm quyền L1/L2 và phiên xác thực của một người dùng trên toàn cụm bằng 1 RTT Lua + Pub/Sub.
    */
   async invalidateUser(userId: bigint): Promise<void> {
     const id = userId.toString();
     this.generation += 1;
+    this.l1Grants.delete(id);
     await Promise.all([
       this.stateStore.bumpNamespaceEpoch(`rbac-user:${id}`),
       this.stateStore.bumpNamespaceEpoch(`auth-user:${id}`),
@@ -126,10 +226,11 @@ export class AuthorizationCache {
   }
 
   /**
-   * Thuật toán: Xóa trắng toàn cục bộ nhớ đệm quyền và phiên xác thực trên mọi bản sao khi thay đổi định nghĩa vai trò/cây phòng ban.
+   * Thuật toán: Xóa trắng toàn cục bộ nhớ đệm L1/L2 quyền và phiên xác thực trên mọi bản sao khi thay đổi định nghĩa vai trò/cây phòng ban.
    */
   async invalidateAll(): Promise<void> {
     this.generation += 1;
+    this.l1Grants.clear();
     await Promise.all([
       this.stateStore.bumpNamespaceEpoch('rbac-global'),
       this.stateStore.bumpNamespaceEpoch('auth-global'),
@@ -140,12 +241,33 @@ export class AuthorizationCache {
     return this.generation;
   }
 
-  private async buildScopedKey(userId: bigint): Promise<string> {
-    const id = userId.toString();
-    const [globalEpoch, userEpoch] = await Promise.all([
-      this.stateStore.getNamespaceEpoch('rbac-global'),
-      this.stateStore.getNamespaceEpoch(`rbac-user:${id}`),
-    ]);
-    return `${globalEpoch}:${userEpoch}:${id}`;
+  private handleCacheInvalidation(event: CacheInvalidationEvent): void {
+    if (event.kind === 'key') {
+      if (event.namespace === 'rbac-grants') {
+        this.l1Grants.delete(event.id);
+      }
+      return;
+    }
+    if (event.namespace === 'rbac-global') {
+      this.l1Grants.clear();
+      return;
+    }
+    if (event.namespace.startsWith('rbac-user:')) {
+      this.l1Grants.delete(event.namespace.slice('rbac-user:'.length));
+    }
+  }
+
+  private setL1Entry(userId: string, grants: EffectiveGrant[], expiresAt: number): void {
+    if (!this.l1Grants.has(userId) && this.l1Grants.size >= MAX_L1_USERS) {
+      const now = Date.now();
+      for (const [key, entry] of this.l1Grants) {
+        if (entry.expiresAt <= now) this.l1Grants.delete(key);
+      }
+      if (this.l1Grants.size >= MAX_L1_USERS) {
+        const oldest = this.l1Grants.keys().next().value;
+        if (oldest !== undefined) this.l1Grants.delete(oldest);
+      }
+    }
+    this.l1Grants.set(userId, { grants, expiresAt });
   }
 }

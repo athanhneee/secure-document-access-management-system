@@ -3,7 +3,7 @@
  * Algorithm: RFC 9700 Refresh Token Family Rotation, Replay Theft Detection & Cascade Revocation.
  */
 import { randomUUID } from 'node:crypto';
-import type { getDatabaseClient } from '@sda/database';
+import type { getDatabaseClient, Prisma } from '@sda/database';
 import {
   enforceConcurrentSessionLimit,
   expireAuthSessionFamily,
@@ -39,6 +39,57 @@ export type RotationResult =
   | { kind: 'rotated'; user: AuthUser; sessionId: string; mfa: boolean }
   | { kind: 'reuse'; userId: bigint; sessionId: string }
   | { kind: 'invalid' | 'disabled' | 'locked' };
+
+/**
+ * Algorithm / Thuật toán: Gộp nguyên tử cập nhật đăng nhập thành công (`last_login_at`), cưỡng chế trần phiên,
+ * tạo phiên/Refresh Token và ghi chuỗi băm kiểm toán `AUTH` vào đúng 1 giao dịch PostgreSQL duy nhất.
+ */
+export async function completeAuthLoginSession(
+  database: PrismaClient,
+  input: SessionTokensInput,
+  recordAuditInTx: (transaction: Prisma.TransactionClient) => Promise<void>,
+): Promise<string[]> {
+  return database.$transaction(async (transaction) => {
+    const now = new Date();
+    const [, evictedIds] = await Promise.all([
+      transaction.user.update({
+        where: { id: input.userId },
+        data: { failed_login_count: 0, locked_until: null, last_login_at: now },
+      }),
+      typeof input.maxConcurrentSessions === 'number' && input.maxConcurrentSessions > 0
+        ? enforceConcurrentSessionLimit(transaction, input.userId, input.maxConcurrentSessions, now)
+        : Promise.resolve([] as string[]),
+    ]);
+    const validIp = normalizeValidInetAddress(input.context.ip);
+    await transaction.authSession.create({
+      data: {
+        id: input.sessionId,
+        user_id: input.userId,
+        token_family_id: input.familyId,
+        ip_address: validIp ?? null,
+        user_agent: input.context.userAgent ?? null,
+        mfa_verified_at: input.mfaVerified ? now : null,
+        expires_at: input.sessionExpiresAt,
+      },
+    });
+    const postSessionOps: Promise<unknown>[] = [recordAuditInTx(transaction)];
+    if (input.refreshTokenId && input.refreshTokenHash && input.refreshExpiresAt) {
+      postSessionOps.push(
+        transaction.refreshToken.create({
+          data: {
+            id: input.refreshTokenId,
+            auth_session_id: input.sessionId,
+            token_family_id: input.familyId,
+            token_hash: input.refreshTokenHash,
+            expires_at: input.refreshExpiresAt,
+          },
+        }),
+      );
+    }
+    await Promise.all(postSessionOps);
+    return evictedIds;
+  });
+}
 
 /**
  * Algorithm / Thuật toán: Khởi tạo nguyên tử phiên xác thực, cưỡng chế trần phiên đồng thời và lưu Refresh Token gốc của họ token.

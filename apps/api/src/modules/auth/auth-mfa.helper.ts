@@ -58,22 +58,24 @@ export async function assertMfaEnrollmentAllowed(
 }
 
 /**
- * Algorithm / Thuật toán: Thăng cấp phiên tiền-MFA thành phiên xác thực đầy đủ kèm phát hành Refresh Token & CSRF mới.
+ * Algorithm / Thuật toán: Thăng cấp phiên tiền-MFA thành phiên xác thực đầy đủ, nạp song song hồ sơ người dùng (`profile`)
+ * và phát hành Refresh Token & CSRF mới để giao diện bỏ qua lượt gọi thừa `GET /users/me`.
  */
 export async function activateVerifiedMfaSession(
   deps: Pick<AuthMfaDeps, 'repository' | 'tokens' | 'accessTtl' | 'refreshTtl'>,
   principal: AuthPrincipal,
 ): Promise<SessionArtifacts> {
   const refreshToken = deps.tokens.newOpaqueToken();
-  const activated = (await deps.repository.activateMfaSession(
-    principal.sessionId,
-    principal.userId,
-    {
+  const [activated, userRecord] = await Promise.all([
+    deps.repository.activateMfaSession(principal.sessionId, principal.userId, {
       id: randomUUID(),
       hash: deps.tokens.hashOpaqueToken(refreshToken),
       expiresAt: new Date(Date.now() + deps.refreshTtl * 1_000),
-    },
-  )) as string | boolean | null;
+    }) as Promise<string | boolean | null>,
+    typeof deps.repository.findUserById === 'function'
+      ? deps.repository.findUserById(principal.userId).catch(() => null)
+      : Promise.resolve(null),
+  ]);
   if (!activated) throw new UnauthorizedException('Session is no longer valid.');
   const rotatedSessionId = typeof activated === 'string' ? activated : randomUUID();
   return {
@@ -84,6 +86,7 @@ export async function activateVerifiedMfaSession(
     refreshMaxAge: deps.refreshTtl,
     mfaRequired: false,
     enrollmentRequired: false,
+    ...(userRecord?.profile ? { user: userRecord.profile } : {}),
   };
 }
 
@@ -209,8 +212,10 @@ export async function executeVerifyMfa(
     );
     throw new UnauthorizedException('MFA verification failed.');
   }
-  await deps.rateLimit.clearAccount(rateKey);
-  const artifacts = await activateVerifiedMfaSession(deps, principal);
+  const [, artifacts] = await Promise.all([
+    deps.rateLimit.clearAccount(rateKey),
+    activateVerifiedMfaSession(deps, principal),
+  ]);
   await deps.audit.record(
     { action: 'MFA_VERIFY', outcome: 'SUCCESS', actorUserId: principal.userId },
     context,

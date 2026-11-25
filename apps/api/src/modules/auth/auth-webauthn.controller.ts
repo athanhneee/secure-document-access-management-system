@@ -71,7 +71,10 @@ export class AuthWebAuthnController {
       context,
     );
     setAuthSessionCookies(reply, result, this.secureCookies);
-    return { recoveryCodes: result.recoveryCodes };
+    return {
+      recoveryCodes: result.recoveryCodes,
+      ...(result.user ? { user: result.user } : {}),
+    };
   }
 
   /**
@@ -112,6 +115,9 @@ export class AuthWebAuthnController {
       context,
     );
     setAuthSessionCookies(reply, result, this.secureCookies);
-    return { authenticated: true as const };
+    return {
+      authenticated: true as const,
+      ...(result.user ? { user: result.user } : {}),
+    };
   }
 }

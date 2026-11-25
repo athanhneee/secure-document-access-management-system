@@ -50,13 +50,28 @@ export class LoginRateLimitService {
   }
 
   /**
-   * Thuật toán: Kiểm tra khóa tạm thời trên hai chiều độc lập (`ip` và `account`) qua `DistributedStateService.getJson`.
+   * Thuật toán: Kiểm tra khóa tạm thời trên hai chiều độc lập (`ip` và `account`) qua `mgetBatch` gộp 1-RTT khi khả dụng.
    */
   async assertAllowed(ip: string, accountKey: string, now = Date.now()): Promise<void> {
     const keys = await this.resolveKeys(ip, accountKey);
-    const blocks = await Promise.all(
-      keys.map((key) => this.stateStore.getJson<BlockState>('login-block', key)),
-    );
+    let blocks: Array<BlockState | null>;
+    if (typeof this.stateStore.mgetBatch === 'function') {
+      const rawValues = await this.stateStore.mgetBatch(
+        keys.map((id) => ({ kind: 'state' as const, namespace: 'login-block', id })),
+      );
+      blocks = rawValues.map((raw) => {
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw) as BlockState;
+        } catch {
+          return null;
+        }
+      });
+    } else {
+      blocks = await Promise.all(
+        keys.map((key) => this.stateStore.getJson<BlockState>('login-block', key)),
+      );
+    }
     if (blocks.some((state) => state !== null && state.blockedUntil > now)) {
       throw new HttpException(
         'Authentication temporarily unavailable. Try again later.',
@@ -92,15 +107,10 @@ export class LoginRateLimitService {
   }
 
   /**
-   * Thuật toán: Xóa trạng thái phạt của tài khoản trên mọi bản sao trong `O(1)` bằng tăng Epoch tài khoản (giữ nguyên bộ đếm IP ngoại vi chống password spraying).
+   * Thuật toán: Xóa trạng thái phạt của tài khoản trên mọi bản sao trong đúng 1 vòng RTT Lua (`bumpNamespaceEpoch`),
+   * không còn tốn vòng đọc trước `getNamespaceEpoch` hay 2 lệnh `DEL` dư thừa vì khóa tài khoản gắn hậu tố `:e<epoch>`.
    */
   async clearAccount(accountKey: string): Promise<void> {
-    const currentEpoch = await this.stateStore.getNamespaceEpoch(`login-acct:${accountKey}`);
-    const scopedAccountKey = `account:${accountKey}:e${currentEpoch}`;
-    await Promise.all([
-      this.stateStore.deleteKey('login-block', scopedAccountKey),
-      this.stateStore.deleteKey('login-failures', scopedAccountKey),
-      this.stateStore.bumpNamespaceEpoch(`login-acct:${accountKey}`),
-    ]);
+    await this.stateStore.bumpNamespaceEpoch(`login-acct:${accountKey}`);
   }
 }

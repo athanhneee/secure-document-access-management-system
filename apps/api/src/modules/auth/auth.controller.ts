@@ -70,6 +70,7 @@ export class AuthController {
       authenticated: !res.mfaRequired,
       mfaRequired: res.mfaRequired,
       enrollmentRequired: res.enrollmentRequired,
+      ...(res.user ? { user: res.user } : {}),
     };
   }
 
@@ -199,7 +200,10 @@ export class AuthController {
     );
     const result = await this.auth.verifyMfaEnrollment(principal, input.code, context);
     setAuthSessionCookies(reply, result, this.secureCookies);
-    return { recoveryCodes: result.recoveryCodes };
+    return {
+      recoveryCodes: result.recoveryCodes,
+      ...(result.user ? { user: result.user } : {}),
+    };
   }
 
   @AllowPreMfa()
@@ -217,7 +221,10 @@ export class AuthController {
     );
     const result = await this.auth.verifyMfa(principal, input.code, input.recoveryCode, context);
     setAuthSessionCookies(reply, result, this.secureCookies);
-    return { authenticated: true as const };
+    return {
+      authenticated: true as const,
+      ...(result.user ? { user: result.user } : {}),
+    };
   }
 
   @Delete('mfa')

@@ -32,7 +32,7 @@ import {
   executeVerifyWebAuthnEnrollment,
 } from './auth-webauthn.helper.js';
 import { AuthRepository } from './auth.repository.js';
-import type { AuthPrincipal, RequestContext } from './auth.types.js';
+import type { AuthPrincipal, AuthUserProfile, RequestContext } from './auth.types.js';
 import { LoginRateLimitService } from './login-rate-limit.service.js';
 import { MfaService } from './mfa.service.js';
 import { PasswordService } from './password.service.js';
@@ -48,6 +48,7 @@ export interface SessionArtifacts {
   refreshMaxAge: number;
   mfaRequired: boolean;
   enrollmentRequired: boolean;
+  user?: AuthUserProfile | undefined;
 }
 
 @Injectable()

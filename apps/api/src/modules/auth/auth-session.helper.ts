@@ -60,24 +60,80 @@ export async function executeLogin(
     throw new UnauthorizedException(GENERIC_LOGIN_ERROR);
   }
 
-  await deps.rateLimit.clearAccount(accountKey);
-  await deps.repository.recordLoginSuccess(user.id);
   const mfaRequired =
     Boolean(user.requiresMfa) ||
     Boolean(user.mfaMethod) ||
     user.roles.some((role) => MFA_REQUIRED_ROLES.has(role));
-  const artifacts = await startAuthSession(deps, user.id, context, !mfaRequired, mfaRequired);
-  await deps.audit.record(
-    {
-      action: 'LOGIN',
-      outcome: 'SUCCESS',
-      actorUserId: user.id,
-      actorUsername: user.username,
-      objectId: artifacts.sessionId,
-      details: { mfaRequired },
-    },
-    context,
-  );
+
+  let artifacts: SessionArtifacts & { sessionId: string };
+  if (typeof deps.repository.completeLoginSession === 'function') {
+    const sessionId = randomUUID();
+    const familyId = randomUUID();
+    const issueRefresh = !mfaRequired;
+    const refreshToken = issueRefresh ? deps.tokens.newOpaqueToken() : undefined;
+    const lifetime = mfaRequired ? 300 : deps.refreshTtl;
+    const [, , accessToken] = await Promise.all([
+      deps.rateLimit.clearAccount(accountKey),
+      deps.repository.completeLoginSession(
+        {
+          userId: user.id,
+          sessionId,
+          familyId,
+          refreshTokenId: refreshToken ? randomUUID() : undefined,
+          refreshTokenHash: refreshToken ? deps.tokens.hashOpaqueToken(refreshToken) : undefined,
+          refreshExpiresAt: refreshToken
+            ? new Date(Date.now() + deps.refreshTtl * 1_000)
+            : undefined,
+          sessionExpiresAt: new Date(Date.now() + lifetime * 1_000),
+          mfaVerified: false,
+          context,
+        },
+        (tx) =>
+          deps.audit.record(
+            {
+              action: 'LOGIN',
+              outcome: 'SUCCESS',
+              actorUserId: user.id,
+              actorUsername: user.username,
+              objectId: sessionId,
+              details: { mfaRequired },
+            },
+            context,
+            tx,
+          ),
+      ),
+      deps.tokens.issueAccessToken(user.id, sessionId, false),
+    ]);
+    artifacts = {
+      sessionId,
+      accessToken,
+      refreshToken,
+      csrfToken: randomBytes(32).toString('base64url'),
+      accessMaxAge: mfaRequired ? 300 : deps.accessTtl,
+      refreshMaxAge: deps.refreshTtl,
+      mfaRequired,
+      enrollmentRequired: false,
+      ...(!mfaRequired && user.profile ? { user: user.profile } : {}),
+    };
+  } else {
+    await deps.rateLimit.clearAccount(accountKey);
+    await deps.repository.recordLoginSuccess(user.id);
+    artifacts = await startAuthSession(deps, user.id, context, !mfaRequired, mfaRequired);
+    if (!mfaRequired && user.profile) {
+      artifacts.user = user.profile;
+    }
+    await deps.audit.record(
+      {
+        action: 'LOGIN',
+        outcome: 'SUCCESS',
+        actorUserId: user.id,
+        actorUsername: user.username,
+        objectId: artifacts.sessionId,
+        details: { mfaRequired },
+      },
+      context,
+    );
+  }
   return { ...artifacts, mfaRequired, enrollmentRequired: mfaRequired && !user.mfaMethod };
 }
 

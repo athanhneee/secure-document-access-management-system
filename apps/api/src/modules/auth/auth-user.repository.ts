@@ -11,11 +11,35 @@ import type { AuthUser } from './auth.types.js';
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Algorithm / Thuật toán: Xây dựng điều kiện `include` chuẩn hóa cho vai trò còn hiệu lực, quyền SoD và nhân tố MFA đang bật.
+ * Algorithm / Thuật toán: Xây dựng điều kiện `include` chuẩn hóa cho vai trò còn hiệu lực, quyền SoD,
+ * phòng ban, cấp độ thẩm tra `CLEARANCE_LEVEL` và nhân tố MFA đang bật trong 1 lần truy vấn duy nhất
+ * để phản hồi `POST /auth/login` và `POST /auth/mfa/verify` trả luôn hồ sơ người dùng không cần gọi lại `/users/me`.
  */
 export function buildActiveUserInclude(now: Date) {
   // CONFLICT-RESOLVED: Unified duplicate active user role + MFA Prisma include block across findUserByIdentifier and findUserById
   return {
+    departments: { select: { id: true, name: true } },
+    user_attribute_assignments_user_attribute_assignments_user_idTousers: {
+      where: {
+        attribute_definitions: { code: 'CLEARANCE_LEVEL', is_active: true },
+        attribute_options: { is_active: true },
+        valid_from: { lte: now },
+        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+      },
+      include: {
+        attribute_options: {
+          select: {
+            id: true,
+            value_code: true,
+            display_name: true,
+            numeric_rank: true,
+            is_active: true,
+          },
+        },
+      },
+      orderBy: [{ attribute_options: { numeric_rank: 'desc' } }, { id: 'desc' }],
+      take: 1,
+    },
     user_roles_user_roles_user_idTousers: {
       where: {
         valid_from: { lte: now },
@@ -45,7 +69,7 @@ export function buildActiveUserInclude(now: Date) {
 }
 
 /**
- * Algorithm / Thuật toán: Ánh xạ bản ghi ORM người dùng kèm quan hệ vai trò, đặc quyền bắt buộc MFA và phương thức MFA sang thực thể miền `AuthUser`.
+ * Algorithm / Thuật toán: Ánh xạ bản ghi ORM người dùng kèm quan hệ vai trò, quyền hiệu lực, phòng ban, cấp thẩm tra và MFA sang thực thể miền `AuthUser`.
  */
 export function mapRecordToAuthUser(user: {
   id: bigint;
@@ -53,9 +77,21 @@ export function mapRecordToAuthUser(user: {
   email: string;
   password_hash: string;
   full_name: string;
+  department_id?: bigint | null;
+  version?: number;
   status: 'PENDING' | 'ACTIVE' | 'LOCKED' | 'DISABLED';
   locked_until: Date | null;
   failed_login_count: number;
+  departments?: { id?: bigint; name: string } | null;
+  user_attribute_assignments_user_attribute_assignments_user_idTousers?: Array<{
+    attribute_options?: {
+      id: bigint;
+      value_code: string;
+      display_name: string;
+      numeric_rank: number | null;
+      is_active?: boolean;
+    } | null;
+  }>;
   user_roles_user_roles_user_idTousers: Array<{
     roles: {
       code: string;
@@ -80,6 +116,26 @@ export function mapRecordToAuthUser(user: {
           .filter((perm): perm is NonNullable<typeof perm> => perm !== undefined),
       ),
     );
+  const roleCodes = [
+    ...new Set(user.user_roles_user_roles_user_idTousers.map((a) => a.roles.code)),
+  ];
+  const permissionCodes = [
+    ...new Set(
+      user.user_roles_user_roles_user_idTousers.flatMap((assignment) =>
+        (assignment.roles.role_permissions ?? [])
+          .map((rp) => rp.permissions)
+          .filter((p): p is { code: string; resource_type: string; action: string } =>
+            Boolean(p?.resource_type && p?.action),
+          )
+          .map((p) => `${p.resource_type}:${p.action}`),
+      ),
+    ),
+  ].sort();
+  const clearanceOpt =
+    user.user_attribute_assignments_user_attribute_assignments_user_idTousers?.[0]
+      ?.attribute_options;
+  const activeClearance = clearanceOpt && clearanceOpt.is_active !== false ? clearanceOpt : null;
+
   return {
     id: user.id,
     username: user.username,
@@ -91,6 +147,22 @@ export function mapRecordToAuthUser(user: {
     failedLoginCount: user.failed_login_count,
     roles: user.user_roles_user_roles_user_idTousers.map((assignment) => assignment.roles.code),
     requiresMfa,
+    profile: {
+      id: user.id.toString(),
+      username: user.username,
+      email: user.email,
+      fullName: user.full_name,
+      departmentId: user.department_id?.toString() ?? null,
+      departmentName: user.departments?.name ?? null,
+      clearanceOptionId: activeClearance ? activeClearance.id.toString() : null,
+      clearanceCode: activeClearance?.value_code ?? null,
+      clearanceName: activeClearance?.display_name ?? null,
+      clearanceRank: activeClearance?.numeric_rank ?? 0,
+      status: user.status,
+      version: user.version ?? 0,
+      roles: [...roleCodes].sort(),
+      permissions: permissionCodes,
+    },
     mfaMethod: method
       ? {
           id: method.id,

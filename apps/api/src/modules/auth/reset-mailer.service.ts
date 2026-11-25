@@ -79,8 +79,15 @@ export class ResetMailerService {
   async send(to: string, token: string): Promise<void> {
     const link = new URL(this.resetBaseUrl);
     link.searchParams.set('token', token);
-    const subject = 'Password reset request';
-    const text = `Use this one-time link within the configured expiry window: ${link.toString()}`;
+    const subject = '[SecureDocument] Yêu cầu đặt lại mật khẩu';
+    const text = [
+      'Bạn đã gửi yêu cầu đặt lại mật khẩu tài khoản SecureDocument.',
+      'Vui lòng mở liên kết dùng một lần dưới đây trong thời hạn hiệu lực để thiết lập mật khẩu mới:',
+      '',
+      link.toString(),
+      '',
+      'Nếu bạn không thực hiện yêu cầu này, vui lòng bỏ qua email này.',
+    ].join('\n');
 
     try {
       await this.transport.sendMail({

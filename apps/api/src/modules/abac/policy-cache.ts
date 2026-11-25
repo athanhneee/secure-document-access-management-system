@@ -31,7 +31,7 @@ export class PolicyCache implements OnModuleDestroy {
       return;
     }
     this.redis = new Redis(redisUrl, {
-      lazyConnect: true,
+      lazyConnect: false,
       enableOfflineQueue: false,
       maxRetriesPerRequest: 1,
       connectTimeout: 1_000,

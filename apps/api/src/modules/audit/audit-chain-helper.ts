@@ -165,13 +165,27 @@ export async function appendChainedAuditLog(
   chain_sequence: bigint;
 }> {
   const partition = input.partition || 'GLOBAL';
-  // CONFLICT-RESOLVED: Dùng hashtextextended($1, 0) 64-bit thay cho hashtext($1) 32-bit để triệt tiêu nguy cơ xung đột khóa tư vấn giữa các phân vùng.
-  await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', partition);
-
-  const previous = await tx.$queryRawUnsafe<Array<{ entry_hash: string; chain_sequence: bigint }>>(
-    'SELECT entry_hash, chain_sequence FROM audit_logs WHERE chain_partition=$1 ORDER BY chain_sequence DESC LIMIT 1',
-    partition,
-  );
+  // CONFLICT-RESOLVED: Gộp khóa tư vấn 64-bit `pg_advisory_xact_lock(hashtextextended($1, 0))` và truy vấn đỉnh chuỗi vào 1 RTT SQL duy nhất (`LEFT JOIN LATERAL`), giữ nhánh dự phòng `$executeRawUnsafe` cho mock chỉ định nghĩa execute.
+  let previous: Array<{ entry_hash: string | null; chain_sequence: bigint | null }>;
+  if (typeof tx.$queryRawUnsafe === 'function') {
+    previous = await tx.$queryRawUnsafe<
+      Array<{ entry_hash: string | null; chain_sequence: bigint | null }>
+    >(
+      `SELECT prev.entry_hash, prev.chain_sequence
+       FROM (SELECT pg_advisory_xact_lock(hashtextextended($1, 0))) AS _lock
+       LEFT JOIN LATERAL (
+         SELECT entry_hash, chain_sequence
+         FROM audit_logs
+         WHERE chain_partition = $1
+         ORDER BY chain_sequence DESC
+         LIMIT 1
+       ) AS prev ON true`,
+      partition,
+    );
+  } else {
+    await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', partition);
+    previous = [];
+  }
 
   const prior = previous[0];
   const sequence = (prior?.chain_sequence ?? 0n) + 1n;

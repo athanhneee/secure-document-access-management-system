@@ -1,7 +1,8 @@
 /**
  * @module AuthGuard
- * Thuật toán: Cổng kiểm soát xác thực phiên có trạng thái kết hợp bộ đệm phân tán TTL ngắn 5 giây (`auth-session:${sessionId}`)
- * và cưỡng chế cách ly phiên tiền-MFA theo vai trò đặc quyền / nhân tố MFA đã đăng ký.
+ * Thuật toán: Cổng xác thực phiên hai tầng L1 In-Memory + L2 Redis MGET (TTL 60 giây) đồng bộ vô hiệu hóa tức thì
+ * qua Redis Pub/Sub (`auth-global`, `auth-user:<id>`, `key:auth-session:<sid>`), kết hợp cập nhật `last_seen_at`
+ * phi chặn (non-blocking) trên luồng nóng và cách ly nghiêm ngặt phiên tiền-MFA.
  */
 import {
   Injectable,
@@ -9,19 +10,25 @@ import {
   UnauthorizedException,
   type CanActivate,
   type ExecutionContext,
+  type OnModuleDestroy,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { FastifyRequest } from 'fastify';
 import { AppConfigService } from '../../config/config.service.js';
 import { DefaultDenyGuard } from '../../default-deny.guard.js';
-import { DistributedStateService } from '../concurrency/distributed-state.service.js';
+import {
+  DistributedStateService,
+  type CacheInvalidationEvent,
+} from '../concurrency/distributed-state.service.js';
 import { ALLOW_PRE_MFA_METADATA } from './allow-pre-mfa.js';
 import { AuthRepository } from './auth.repository.js';
 import { MFA_REQUIRED_ROLES, type AuthPrincipal } from './auth.types.js';
 import { TokenService } from './token.service.js';
 
-const AUTH_SESSION_CACHE_TTL_MS = 5_000;
+const AUTH_SESSION_CACHE_TTL_MS = 60_000;
 const DEFAULT_SESSION_TOUCH_INTERVAL_MS = 60_000;
+const MAX_L1_SESSIONS = 5_000;
+const MAX_LOCAL_TOUCH_KEYS = 10_000;
 
 interface CachedAuthPrincipal {
   userId: string;
@@ -34,11 +41,19 @@ interface CachedAuthPrincipal {
   globalEpoch: number;
 }
 
+interface L1SessionEntry {
+  principal: AuthPrincipal;
+  expiresAt: number;
+}
+
 @Injectable()
-export class AuthGuard implements CanActivate {
+export class AuthGuard implements CanActivate, OnModuleDestroy {
   private readonly defaultDenyGuard: DefaultDenyGuard;
   private readonly stateStore: DistributedStateService;
   private readonly touchIntervalMs: number;
+  private readonly l1Sessions = new Map<string, L1SessionEntry>();
+  private readonly localTouchThrottle = new Map<string, number>();
+  private readonly unsubscribeInvalidation: (() => void) | null = null;
 
   constructor(
     private readonly reflector: Reflector,
@@ -55,11 +70,22 @@ export class AuthGuard implements CanActivate {
       typeof configuredTouchSec === 'number' && configuredTouchSec > 0
         ? configuredTouchSec * 1_000
         : DEFAULT_SESSION_TOUCH_INTERVAL_MS;
+    if (typeof this.stateStore.onInvalidate === 'function') {
+      this.unsubscribeInvalidation = this.stateStore.onInvalidate((event) => {
+        this.handleCacheInvalidation(event);
+      });
+    }
+  }
+
+  onModuleDestroy(): void {
+    this.unsubscribeInvalidation?.();
+    this.l1Sessions.clear();
+    this.localTouchThrottle.clear();
   }
 
   /**
-   * Thuật toán: Thẩm định JWT EdDSA, tra cứu bộ đệm phân tán `auth-session:${sessionId}` (TTL 5.000ms gắn Epoch người dùng & toàn cục),
-   * đóng an toàn (fail-closed) khi phiên bị thu hồi hoặc tài khoản khóa/vô hiệu hóa, và chặn phiên `mfaPending` trên endpoint thường.
+   * Thuật toán: Thẩm định JWT EdDSA, tra cứu đệm L1 (~0ms) -> L2 Redis `MGET` 1-RTT (TTL 60s) đồng bộ vô hiệu hóa tức thì
+   * qua Pub/Sub, đóng an toàn khi phiên bị thu hồi/khóa và cập nhật dấu vết hoạt động không chặn phản hồi HTTP.
    */
   async canActivate(context: ExecutionContext): Promise<boolean> {
     if (this.defaultDenyGuard.canActivate(context)) {
@@ -73,6 +99,7 @@ export class AuthGuard implements CanActivate {
     const sessionId = claims['sid'];
     const principal = await this.resolveSessionPrincipal(userId, sessionId);
     if (!principal || principal.mfa !== claims.mfa) {
+      this.l1Sessions.delete(sessionId);
       await this.stateStore.deleteKey('auth-session', sessionId);
       throw new UnauthorizedException('Session is no longer valid.');
     }
@@ -92,11 +119,9 @@ export class AuthGuard implements CanActivate {
   }
 
   /**
-   * Thuật toán: Điều tiết cập nhật `last_seen_at` & `ip_address` phiên đăng nhập bằng khóa phân tán (`claimOnce`).
-   * - Khóa mang cặp `${sessionId}:${ip}` có TTL `touchIntervalMs` (mặc định 60 giây):
-   *   + Cùng IP: chỉ ghi CSDL tối đa 1 lần mỗi cửa sổ `touchIntervalMs` tránh nghẽn PostgreSQL.
-   *   + Đổi IP (VD: Wi-Fi sang 4G): khóa đổi ngay lập tức -> cập nhật tức thì cả `ip_address` lẫn `last_seen_at`.
-   * - Lỗi không chặn luồng (fail-open cho thao tác ghi dấu vết hoạt động).
+   * Thuật toán: Điều tiết cập nhật `last_seen_at` & `ip_address` bằng bộ lọc cục bộ 0ms kết hợp nền phi chặn (Non-Blocking Background Touch).
+   * - Nếu cặp `${sessionId}:${ip}` đã được chạm trong cửa sổ `touchIntervalMs` trên tiến trình hiện tại -> bỏ qua ngay trong `O(1)` (`0ms`, 0 RTT mạng).
+   * - Khi đổi IP hoặc hết cửa sổ: với Redis thật chạy bất đồng bộ ở nền (không chặn phản hồi HTTP); trong kiểm thử cục bộ chờ đồng bộ để đảm bảo tính tất định.
    */
   private async touchSessionActivityThrottled(
     userId: bigint,
@@ -106,37 +131,88 @@ export class AuthGuard implements CanActivate {
     if (typeof this.repository.touchSessionActivity !== 'function') {
       return;
     }
-    try {
-      const claimKey = `${sessionId}:${ipAddress ?? ''}`;
-      const claimed = await this.stateStore.claimOnce(
-        'auth-session-touch',
-        claimKey,
-        this.touchIntervalMs,
-        { failClosedInProd: false },
-      );
-      if (!claimed) {
-        return;
-      }
-      await this.repository.touchSessionActivity(userId, sessionId, ipAddress);
-    } catch {
-      // Never block an authenticated request due to non-critical last_seen_at telemetry writes.
+    const now = Date.now();
+    const claimKey = `${sessionId}:${ipAddress ?? ''}`;
+    const localExpiry = this.localTouchThrottle.get(claimKey);
+    if (localExpiry !== undefined && localExpiry > now) {
+      return;
     }
+    this.setLocalTouchExpiry(claimKey, now + this.touchIntervalMs);
+
+    const runTouch = async (): Promise<void> => {
+      try {
+        const claimed = await this.stateStore.claimOnce(
+          'auth-session-touch',
+          claimKey,
+          this.touchIntervalMs,
+          { failClosedInProd: false },
+        );
+        if (!claimed) {
+          return;
+        }
+        await this.repository.touchSessionActivity(userId, sessionId, ipAddress);
+      } catch {
+        // Never block an authenticated request due to non-critical last_seen_at telemetry writes.
+      }
+    };
+
+    const isRemote =
+      typeof this.stateStore.hasRemoteRedis === 'function' && this.stateStore.hasRemoteRedis();
+    if (isRemote) {
+      void runTouch();
+      return;
+    }
+    await runTouch();
   }
 
   /**
-   * Thuật toán: Phân giải `AuthPrincipal` qua bộ đệm 5 giây có kiểm chứng số hiệu thế hệ (`auth-global` & `auth-user:${userId}`);
-   * tuyệt đối không lưu đệm kết quả `null` để tài khoản bị thu hồi/vô hiệu hóa luôn bị từ chối tức thì.
+   * Thuật toán: Tra cứu `AuthPrincipal` 2 tầng L1 RAM (~0ms) -> L2 Redis 1-RTT `MGET` -> PostgreSQL,
+   * tuyệt đối không lưu đệm `null` và tự xóa L1 tức thì ngay khi nhận sự kiện Pub/Sub thu hồi phiên/tài khoản.
    */
   private async resolveSessionPrincipal(
     userId: bigint,
     sessionId: string,
   ): Promise<AuthPrincipal | null> {
+    const now = Date.now();
+    const l1Hit = this.l1Sessions.get(sessionId);
+    if (l1Hit && l1Hit.expiresAt > now && l1Hit.principal.userId === userId) {
+      return l1Hit.principal;
+    }
+    if (l1Hit) {
+      this.l1Sessions.delete(sessionId);
+    }
+
     const userIdStr = userId.toString();
-    const [globalEpoch, userEpoch, cached] = await Promise.all([
-      this.stateStore.getNamespaceEpoch('auth-global'),
-      this.stateStore.getNamespaceEpoch(`auth-user:${userIdStr}`),
-      this.stateStore.getJson<CachedAuthPrincipal>('auth-session', sessionId),
-    ]);
+    let globalEpoch = 0;
+    let userEpoch = 0;
+    let cached: CachedAuthPrincipal | null = null;
+
+    if (typeof this.stateStore.mgetBatch === 'function') {
+      const [rawGlobal, rawUser, rawSession] = await this.stateStore.mgetBatch([
+        { kind: 'epoch', namespace: 'auth-global' },
+        { kind: 'epoch', namespace: `auth-user:${userIdStr}` },
+        { kind: 'state', namespace: 'auth-session', id: sessionId },
+      ]);
+      globalEpoch = rawGlobal ? Number(rawGlobal) || 0 : 0;
+      userEpoch = rawUser ? Number(rawUser) || 0 : 0;
+      if (rawSession) {
+        try {
+          cached = JSON.parse(rawSession) as CachedAuthPrincipal;
+        } catch {
+          cached = null;
+        }
+      }
+    } else {
+      const [g, u, c] = await Promise.all([
+        this.stateStore.getNamespaceEpoch('auth-global'),
+        this.stateStore.getNamespaceEpoch(`auth-user:${userIdStr}`),
+        this.stateStore.getJson<CachedAuthPrincipal>('auth-session', sessionId),
+      ]);
+      globalEpoch = g;
+      userEpoch = u;
+      cached = c;
+    }
+
     if (
       cached &&
       cached.globalEpoch === globalEpoch &&
@@ -144,7 +220,7 @@ export class AuthGuard implements CanActivate {
       cached.userId === userIdStr &&
       cached.sessionId === sessionId
     ) {
-      return {
+      const principal: AuthPrincipal = {
         userId: BigInt(cached.userId),
         sessionId: cached.sessionId,
         username: cached.username,
@@ -152,27 +228,92 @@ export class AuthGuard implements CanActivate {
         mfa: cached.mfa,
         mfaPending: cached.mfaPending,
       };
+      this.setL1Session(sessionId, principal, now + AUTH_SESSION_CACHE_TTL_MS);
+      return principal;
     }
 
     const fresh = await this.repository.principalForSession(userId, sessionId);
     if (!fresh) {
       return null;
     }
-    await this.stateStore.putEphemeral<CachedAuthPrincipal>(
+    this.setL1Session(sessionId, fresh, Date.now() + AUTH_SESSION_CACHE_TTL_MS);
+
+    const payload: CachedAuthPrincipal = {
+      userId: fresh.userId.toString(),
+      sessionId: fresh.sessionId,
+      username: fresh.username,
+      roles: fresh.roles,
+      mfa: fresh.mfa,
+      mfaPending: fresh.mfaPending,
+      userEpoch,
+      globalEpoch,
+    };
+    const isRemote =
+      typeof this.stateStore.hasRemoteRedis === 'function' && this.stateStore.hasRemoteRedis();
+    const putPromise = this.stateStore.putEphemeral<CachedAuthPrincipal>(
       'auth-session',
       sessionId,
-      {
-        userId: fresh.userId.toString(),
-        sessionId: fresh.sessionId,
-        username: fresh.username,
-        roles: fresh.roles,
-        mfa: fresh.mfa,
-        mfaPending: fresh.mfaPending,
-        userEpoch,
-        globalEpoch,
-      },
+      payload,
       AUTH_SESSION_CACHE_TTL_MS,
     );
+    if (isRemote) {
+      void putPromise.catch(() => undefined);
+    } else {
+      await putPromise;
+    }
     return fresh;
+  }
+
+  /** Thuật toán: Xóa tức thì mục đệm L1 bị ảnh hưởng khi nhận thông điệp vô hiệu hóa Epoch/Key qua Pub/Sub. */
+  private handleCacheInvalidation(event: CacheInvalidationEvent): void {
+    if (event.kind === 'key') {
+      if (event.namespace === 'auth-session') {
+        this.l1Sessions.delete(event.id);
+      }
+      return;
+    }
+    if (event.namespace === 'auth-global') {
+      this.l1Sessions.clear();
+      return;
+    }
+    if (event.namespace.startsWith('auth-user:')) {
+      const targetUserId = event.namespace.slice('auth-user:'.length);
+      for (const [sid, entry] of this.l1Sessions) {
+        if (entry.principal.userId.toString() === targetUserId) {
+          this.l1Sessions.delete(sid);
+        }
+      }
+    }
+  }
+
+  private setL1Session(sessionId: string, principal: AuthPrincipal, expiresAt: number): void {
+    if (!this.l1Sessions.has(sessionId) && this.l1Sessions.size >= MAX_L1_SESSIONS) {
+      const now = Date.now();
+      for (const [key, entry] of this.l1Sessions) {
+        if (entry.expiresAt <= now) this.l1Sessions.delete(key);
+      }
+      if (this.l1Sessions.size >= MAX_L1_SESSIONS) {
+        const oldest = this.l1Sessions.keys().next().value;
+        if (oldest !== undefined) this.l1Sessions.delete(oldest);
+      }
+    }
+    this.l1Sessions.set(sessionId, { principal, expiresAt });
+  }
+
+  private setLocalTouchExpiry(claimKey: string, expiresAt: number): void {
+    if (
+      !this.localTouchThrottle.has(claimKey) &&
+      this.localTouchThrottle.size >= MAX_LOCAL_TOUCH_KEYS
+    ) {
+      const now = Date.now();
+      for (const [key, exp] of this.localTouchThrottle) {
+        if (exp <= now) this.localTouchThrottle.delete(key);
+      }
+      if (this.localTouchThrottle.size >= MAX_LOCAL_TOUCH_KEYS) {
+        const oldest = this.localTouchThrottle.keys().next().value;
+        if (oldest !== undefined) this.localTouchThrottle.delete(oldest);
+      }
+    }
+    this.localTouchThrottle.set(claimKey, expiresAt);
   }
 }

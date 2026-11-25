@@ -17,12 +17,14 @@ import type { MyRequestItem } from '../types';
 interface MyRequestsTabProps {
   myRequests: MyRequestItem[];
   cancellingRequestId: string | null;
+  canCancelRequest?: boolean;
   onCancelRequest: (requestId: string) => void;
 }
 
 export function MyRequestsTab({
   myRequests,
   cancellingRequestId,
+  canCancelRequest = true,
   onCancelRequest,
 }: MyRequestsTabProps) {
   return (
@@ -94,7 +96,7 @@ export function MyRequestsTab({
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
-                    {req.status === 'PENDING' && (
+                    {req.status === 'PENDING' && canCancelRequest && (
                       <InteractiveHoverButton
                         size="sm"
                         variant="secondary"

@@ -31,6 +31,12 @@ interface DocumentsTabProps {
   onSearchChange: (value: string) => void;
   isLoadingPreview: boolean;
   downloadingDocId: string | null;
+  canManage?: boolean;
+  canView?: boolean;
+  canDownload?: boolean;
+  canCreateVersion?: boolean;
+  canClassify?: boolean;
+  canArchive?: boolean;
   onActivate: (doc: DocumentItem) => void;
   onOpenPreview: (doc: DocumentItem) => void;
   onDownload: (doc: DocumentItem) => void;
@@ -40,12 +46,22 @@ interface DocumentsTabProps {
   onOpenVersionHistory: (doc: DocumentItem) => void;
 }
 
+/**
+ * Thuật toán: Bảng Quản Lý Kho Tài Liệu Ẩn Thao Tác Không Đủ Quyền / Trạng Thái (`DocumentsTab`)
+ * Mục đích: Chỉ hiển thị các nút thao tác hợp lệ theo cả quyền RBAC của người dùng và trạng thái vòng đời (`DRAFT` / `ACTIVE`) cùng chính sách `allowDownload` của tài liệu.
+ */
 export function DocumentsTab({
   documents,
   searchQuery,
   onSearchChange,
   isLoadingPreview,
   downloadingDocId,
+  canManage = true,
+  canView = true,
+  canDownload = true,
+  canCreateVersion = true,
+  canClassify = true,
+  canArchive = true,
   onActivate,
   onOpenPreview,
   onDownload,
@@ -137,7 +153,7 @@ export function DocumentsTab({
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">
                     <div className="inline-flex items-center justify-end gap-1">
-                      {doc.status === 'DRAFT' && (
+                      {doc.status === 'DRAFT' && canManage && (
                         <InteractiveHoverButton
                           variant="primary"
                           size="sm"
@@ -146,57 +162,59 @@ export function DocumentsTab({
                           onClick={() => onActivate(doc)}
                         />
                       )}
-                      <InteractiveHoverButton
-                        variant="secondary"
-                        size="sm"
-                        text="Xem"
-                        icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
-                        onClick={() => onOpenPreview(doc)}
-                        disabled={isLoadingPreview || doc.status !== 'ACTIVE'}
-                      />
-                      <InteractiveHoverButton
-                        variant={doc.allowDownload ? 'secondary' : 'ghost'}
-                        size="sm"
-                        text="Tải"
-                        icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
-                        onClick={() => onDownload(doc)}
-                        disabled={
-                          !doc.allowDownload ||
-                          downloadingDocId === doc.id ||
-                          doc.status !== 'ACTIVE'
-                        }
-                        isLoading={downloadingDocId === doc.id}
-                      />
-                      {doc.status === 'ACTIVE' && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => onOpenNewVersion(doc)}
-                            title="Tải lên phiên bản mới"
-                            aria-label="Tải lên phiên bản mới"
-                            className="inline-flex h-11 w-11 sm:h-8 sm:w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:bg-[#f7f7f7] transition-colors cursor-pointer"
-                          >
-                            <Layers size={16} strokeWidth={1.75} aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onOpenReclassify(doc)}
-                            title="Đổi mức độ mật"
-                            aria-label="Đổi mức độ mật"
-                            className="inline-flex h-11 w-11 sm:h-8 sm:w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:bg-[#f7f7f7] transition-colors cursor-pointer"
-                          >
-                            <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onOpenArchive(doc)}
-                            title="Lưu trữ tài liệu"
-                            aria-label="Lưu trữ tài liệu"
-                            className="inline-flex h-11 w-11 sm:h-8 sm:w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#717171] hover:bg-[#f7f7f7] hover:text-[#C13515] transition-colors cursor-pointer"
-                          >
-                            <Archive size={16} strokeWidth={1.75} aria-hidden="true" />
-                          </button>
-                        </>
+                      {doc.status === 'ACTIVE' && canView && (
+                        <InteractiveHoverButton
+                          variant="secondary"
+                          size="sm"
+                          text="Xem"
+                          icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
+                          onClick={() => onOpenPreview(doc)}
+                          disabled={isLoadingPreview}
+                        />
+                      )}
+                      {doc.status === 'ACTIVE' && doc.allowDownload && canDownload && (
+                        <InteractiveHoverButton
+                          variant="secondary"
+                          size="sm"
+                          text="Tải"
+                          icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
+                          onClick={() => onDownload(doc)}
+                          disabled={downloadingDocId === doc.id}
+                          isLoading={downloadingDocId === doc.id}
+                        />
+                      )}
+                      {doc.status === 'ACTIVE' && canCreateVersion && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenNewVersion(doc)}
+                          title="Tải lên phiên bản mới"
+                          aria-label="Tải lên phiên bản mới"
+                          className="inline-flex h-11 w-11 sm:h-8 sm:w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:bg-[#f7f7f7] transition-colors cursor-pointer"
+                        >
+                          <Layers size={16} strokeWidth={1.75} aria-hidden="true" />
+                        </button>
+                      )}
+                      {doc.status === 'ACTIVE' && canClassify && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenReclassify(doc)}
+                          title="Đổi mức độ mật"
+                          aria-label="Đổi mức độ mật"
+                          className="inline-flex h-11 w-11 sm:h-8 sm:w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:bg-[#f7f7f7] transition-colors cursor-pointer"
+                        >
+                          <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
+                        </button>
+                      )}
+                      {doc.status === 'ACTIVE' && canArchive && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenArchive(doc)}
+                          title="Lưu trữ tài liệu"
+                          aria-label="Lưu trữ tài liệu"
+                          className="inline-flex h-11 w-11 sm:h-8 sm:w-8 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#717171] hover:bg-[#f7f7f7] hover:text-[#C13515] transition-colors cursor-pointer"
+                        >
+                          <Archive size={16} strokeWidth={1.75} aria-hidden="true" />
+                        </button>
                       )}
                       <button
                         type="button"

@@ -23,9 +23,13 @@ const DURATION_OPTIONS = [
 
 interface RequestAccessModalProps {
   catalog: ReturnType<typeof useReaderCatalog>;
+  canDownloadDocument?: boolean;
 }
 
-export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
+export function RequestAccessModal({
+  catalog,
+  canDownloadDocument = true,
+}: RequestAccessModalProps) {
   const {
     requestModalOpen,
     setRequestModalOpen,
@@ -71,7 +75,9 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
 
           <fieldset className="space-y-1 border-0 p-0 m-0 min-w-0">
             <legend className="font-medium text-[#222222] block mb-1">Mức quyền yêu cầu:</legend>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div
+              className={`grid grid-cols-1 gap-2 ${targetDoc?.allowDownload && canDownloadDocument ? 'sm:grid-cols-2' : ''}`}
+            >
               <button
                 type="button"
                 aria-pressed={requestedAction === 'VIEW'}
@@ -85,20 +91,21 @@ export function RequestAccessModal({ catalog }: RequestAccessModalProps) {
                 <Eye size={16} strokeWidth={1.75} aria-hidden="true" />
                 <span>Xem trực tuyến (VIEW)</span>
               </button>
-              <button
-                type="button"
-                aria-pressed={requestedAction === 'DOWNLOAD'}
-                disabled={!targetDoc?.allowDownload}
-                onClick={() => setRequestedAction('DOWNLOAD')}
-                className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
-                  requestedAction === 'DOWNLOAD'
-                    ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
-                    : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd] hover:bg-[#f7f7f7]'
-                } disabled:opacity-40 disabled:cursor-not-allowed`}
-              >
-                <Download size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>Xem &amp; Tải bản sao</span>
-              </button>
+              {Boolean(targetDoc?.allowDownload) && canDownloadDocument && (
+                <button
+                  type="button"
+                  aria-pressed={requestedAction === 'DOWNLOAD'}
+                  onClick={() => setRequestedAction('DOWNLOAD')}
+                  className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer ${
+                    requestedAction === 'DOWNLOAD'
+                      ? 'border-[#FF385C] bg-[#FF385C] text-white shadow-xs'
+                      : 'border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:border-[#dddddd] hover:bg-[#f7f7f7]'
+                  }`}
+                >
+                  <Download size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <span>Xem &amp; Tải bản sao</span>
+                </button>
+              )}
             </div>
           </fieldset>
 

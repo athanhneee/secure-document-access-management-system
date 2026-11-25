@@ -11,34 +11,79 @@ import {
   ShieldAlert,
   ClipboardCheck,
   Settings,
+  LogOut,
   X,
 } from 'lucide-react';
+import { resolveDefaultPortalForRoles, useAuth, type RoleType } from '@/lib/auth-context';
 import { getVisibleFocusables } from '@/components/ui/dialog-focus';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
-const QUICK_ROLES = [
-  { name: 'Chủ sở hữu', href: '/owner', icon: FileText, color: 'text-[#008489]' },
-  { name: 'Người đọc', href: '/reader', icon: Eye, color: 'text-[#008A05]' },
-  { name: 'Sĩ quan SOC', href: '/security', icon: ShieldAlert, color: 'text-[#C13515]' },
-  { name: 'Kiểm toán viên', href: '/auditor', icon: ClipboardCheck, color: 'text-[#008489]' },
-  { name: 'Quản trị viên', href: '/admin', icon: Settings, color: 'text-[#E31C5F]' },
-] as const;
+const QUICK_ROLES: ReadonlyArray<{
+  role: RoleType;
+  name: string;
+  href: string;
+  icon: typeof FileText;
+  color: string;
+}> = [
+  {
+    role: 'DOCUMENT_OWNER',
+    name: 'Chủ sở hữu',
+    href: '/owner',
+    icon: FileText,
+    color: 'text-[#008489]',
+  },
+  {
+    role: 'DOCUMENT_READER',
+    name: 'Người đọc',
+    href: '/reader',
+    icon: Eye,
+    color: 'text-[#008A05]',
+  },
+  {
+    role: 'SECURITY_OFFICER',
+    name: 'Sĩ quan SOC',
+    href: '/security',
+    icon: ShieldAlert,
+    color: 'text-[#C13515]',
+  },
+  {
+    role: 'AUDITOR',
+    name: 'Kiểm toán viên',
+    href: '/auditor',
+    icon: ClipboardCheck,
+    color: 'text-[#008489]',
+  },
+  {
+    role: 'SYSTEM_ADMIN',
+    name: 'Quản trị viên',
+    href: '/admin',
+    icon: Settings,
+    color: 'text-[#E31C5F]',
+  },
+];
 
 interface HomeMobileDrawerProps {
   onClose: () => void;
 }
 
 /**
- * Thuật toán: Ngăn Kéo Điều Hướng Di Động Phương Thức `<dialog>.showModal()` Trên Màn Hình `375px` (`HomeMobileDrawer`)
+ * Thuật toán: Ngăn Kéo Điều Hướng Di Động Phương Thức `<dialog>.showModal()` Có Lọc Quyền RBAC (`HomeMobileDrawer`)
  * Mục đích:
- *   - Nâng cấp ngăn kéo điều hướng trang chủ lên phần tử `<dialog>` chuẩn HTML5 Top-Layer kích hoạt qua `.showModal()`, bẫy vòng lặp phím `Tab` / `Shift+Tab`, đóng khi nhấn `Escape` (`onCancel`) hoặc nhấp nền mờ `::backdrop` và hoàn trả tiêu điểm về nút mở khi đóng.
- *   - Đảm bảo mọi mục điều hướng đạt vùng chạm tối thiểu `44x44px` và độ tương phản chuẩn WCAG 2.1 AA.
+ *   - Kích hoạt `<dialog>` chuẩn HTML5 Top-Layer qua `.showModal()`, bẫy vòng lặp phím `Tab` / `Shift+Tab`, đóng khi nhấn `Escape` hoặc nhấp `::backdrop` và hoàn trả tiêu điểm.
+ *   - Khi người dùng đã đăng nhập, chỉ hiển thị các lối tắt phân hệ khớp với `user.roles` và nút vào phân hệ/đăng xuất, tuyệt đối không hiển thị phân hệ không có quyền.
  */
 export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
+  const { isAuthenticated, user, logout } = useAuth();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   const titleId = useId();
+
+  const visibleRoles =
+    isAuthenticated && user
+      ? QUICK_ROLES.filter((item) => user.roles.includes(item.role))
+      : QUICK_ROLES;
+  const workspaceHref = resolveDefaultPortalForRoles(user?.roles);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -225,29 +270,31 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
           </a>
         </div>
 
-        <div className="mt-4 pt-4 border-t border-[#ebebeb]">
-          <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-[#717171]">
-            Cổng truy cập vai trò
+        {visibleRoles.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-[#ebebeb]">
+            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-[#717171]">
+              {isAuthenticated ? 'Phân hệ được cấp' : 'Cổng truy cập vai trò'}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {visibleRoles.map((role) => {
+                const Icon = role.icon;
+                return (
+                  <Link
+                    key={role.role}
+                    href={role.href}
+                    onClick={onClose}
+                    className="flex min-h-11 items-center gap-2 rounded-full border border-[#ebebeb] bg-[#ffffff] px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
+                  >
+                    <Icon size={16} strokeWidth={1.75} className={role.color} aria-hidden="true" />
+                    <span className="truncate">{role.name}</span>
+                  </Link>
+                );
+              })}
+            </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {QUICK_ROLES.map((role) => {
-              const Icon = role.icon;
-              return (
-                <Link
-                  key={role.name}
-                  href={role.href}
-                  onClick={onClose}
-                  className="flex min-h-11 items-center gap-2 rounded-full border border-[#ebebeb] bg-[#ffffff] px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
-                >
-                  <Icon size={16} strokeWidth={1.75} className={role.color} aria-hidden="true" />
-                  <span className="truncate">{role.name}</span>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
+        )}
 
-        <div className="mt-5 pt-4 border-t border-[#ebebeb] space-y-3">
+        <div className="mt-5 pt-4 border-t border-[#ebebeb] space-y-2.5">
           <div className="flex items-center justify-between px-1 text-xs text-[#717171]">
             <span>Trạng thái kiến trúc:</span>
             <span className="staff-badge bg-transparent border-0 p-0 inline-flex items-center gap-1.5 font-semibold text-[#008A05]">
@@ -256,13 +303,36 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
             </span>
           </div>
 
-          <InteractiveHoverButton
-            href="/login"
-            variant="solid"
-            text="Bắt đầu phiên làm việc"
-            className="w-full min-h-11 text-xs"
-            onClick={onClose}
-          />
+          {isAuthenticated && user ? (
+            <div className="space-y-2">
+              <InteractiveHoverButton
+                href={workspaceHref}
+                variant="solid"
+                text="Vào phân hệ làm việc"
+                className="w-full min-h-11 text-xs"
+                onClick={onClose}
+              />
+              <InteractiveHoverButton
+                type="button"
+                variant="secondary"
+                text="Đăng xuất"
+                icon={<LogOut size={16} strokeWidth={1.75} aria-hidden="true" />}
+                className="w-full min-h-11 text-xs"
+                onClick={() => {
+                  onClose();
+                  void logout();
+                }}
+              />
+            </div>
+          ) : (
+            <InteractiveHoverButton
+              href="/login"
+              variant="solid"
+              text="Bắt đầu phiên làm việc"
+              className="w-full min-h-11 text-xs"
+              onClick={onClose}
+            />
+          )}
         </div>
       </nav>
     </dialog>

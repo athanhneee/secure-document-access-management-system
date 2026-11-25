@@ -21,14 +21,40 @@ import { GrantedDocumentsTab } from './tabs/granted-documents-tab';
 import { MyRequestsTab } from './tabs/my-requests-tab';
 
 /**
- * Thuật toán: Không gian Khám phá Danh mục Không Rò rỉ & Đọc Tài liệu An toàn (`ReaderWorkspace`)
- * Mục đích: Cho phép người đọc tra cứu siêu dữ liệu danh mục được phép khám phá, gửi yêu cầu xin quyền và xem/tải tài liệu qua phiên PEP gắn thủy vân.
- * Cơ chế hoạt động:
- *   - Kết hợp lọc đa tiêu chí danh mục phía máy khách (`filterDiscoverableDocs`) với trình đọc PDF đóng hộp cát (`useReaderViewer`).
+ * Thuật toán: Không Gian Người Đọc Cô Lập Sau `AuthGuard` & Lọc Thao Tác Theo Quyền (`ReaderWorkspace`)
+ * Mục đích:
+ *   - Đảm bảo `useReaderCatalog()` không gọi API trước khi `AuthGuard` xác nhận vai trò `DOCUMENT_READER`.
+ *   - Ẩn triệt để các nút tải bản sao / gửi yêu cầu / hủy yêu cầu hoặc các thẻ tab không nằm trong tập quyền hiệu lực.
  */
 export function ReaderWorkspace() {
-  const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('discover');
+  return (
+    <AuthGuard requiredRole="DOCUMENT_READER">
+      <AppLayout>
+        <ReaderWorkspaceContent />
+      </AppLayout>
+    </AuthGuard>
+  );
+}
+
+function ReaderWorkspaceContent() {
+  const { user, hasPermission } = useAuth();
+  const canDiscover = hasPermission('DOCUMENT:DISCOVER');
+  const canViewDocument = hasPermission('DOCUMENT:VIEW');
+  const canDownloadDocument = hasPermission('DOCUMENT:DOWNLOAD');
+  const canRequestAccess = hasPermission('ACCESS_REQUEST:CREATE');
+  const canCancelRequest = hasPermission('ACCESS_REQUEST:CANCEL');
+  const canViewRequests = hasPermission('ACCESS_REQUEST:VIEW_OWN') || canRequestAccess;
+
+  const permittedTabs = [
+    canDiscover ? 'discover' : null,
+    canViewDocument ? 'my-docs' : null,
+    canViewRequests ? 'my-requests' : null,
+  ].filter((t): t is string => t !== null);
+
+  const [selectedTab, setSelectedTab] = useState('discover');
+  const activeTab = permittedTabs.includes(selectedTab)
+    ? selectedTab
+    : (permittedTabs[0] ?? 'discover');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClassification, setSelectedClassification] = useState<string>('ALL');
 
@@ -45,65 +71,65 @@ export function ReaderWorkspace() {
   );
 
   return (
-    <AuthGuard requiredRole="DOCUMENT_READER">
-      <AppLayout>
-        <DialogErrorProvider
-          errorMessage={catalog.errorMessage}
-          onDismiss={() => catalog.setErrorMessage(null)}
-        >
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="min-w-0">
-                <Badge variant="info">Document Reader</Badge>
-                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
-                  Khám phá &amp; Đọc Tài liệu Mật
-                </h1>
-              </div>
+    <DialogErrorProvider
+      errorMessage={catalog.errorMessage}
+      onDismiss={() => catalog.setErrorMessage(null)}
+    >
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="min-w-0">
+            <Badge variant="info">Document Reader</Badge>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
+              Khám phá &amp; Đọc Tài liệu Mật
+            </h1>
+          </div>
 
-              <InteractiveHoverButton
-                variant="secondary"
-                size="sm"
-                text="Làm mới"
-                icon={
-                  <RefreshCw
-                    size={16}
-                    strokeWidth={1.75}
-                    className={catalog.isLoading ? 'animate-spin' : ''}
-                    aria-hidden="true"
-                  />
-                }
-                onClick={() => void catalog.refreshData()}
-                disabled={catalog.isLoading}
-                className="shrink-0 self-start sm:self-auto"
+          <InteractiveHoverButton
+            variant="secondary"
+            size="sm"
+            text="Làm mới"
+            icon={
+              <RefreshCw
+                size={16}
+                strokeWidth={1.75}
+                className={catalog.isLoading ? 'animate-spin' : ''}
+                aria-hidden="true"
               />
-            </div>
+            }
+            onClick={() => void catalog.refreshData()}
+            disabled={catalog.isLoading}
+            className="shrink-0 self-start sm:self-auto"
+          />
+        </div>
 
-            {catalog.message && (
-              <Alert variant="success" className="text-xs">
-                <CheckCircle2
-                  size={16}
-                  strokeWidth={1.75}
-                  className="shrink-0 text-[#008A05]"
-                  aria-hidden="true"
-                />
-                <AlertDescription className="ml-2">{catalog.message}</AlertDescription>
-              </Alert>
-            )}
+        {catalog.message && (
+          <Alert variant="success" className="text-xs">
+            <CheckCircle2
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#008A05]"
+              aria-hidden="true"
+            />
+            <AlertDescription className="ml-2">{catalog.message}</AlertDescription>
+          </Alert>
+        )}
 
-            {catalog.errorMessage && (
-              <Alert variant="destructive" className="text-xs">
-                <AlertTriangle
-                  size={16}
-                  strokeWidth={1.75}
-                  className="shrink-0 text-[#C13515]"
-                  aria-hidden="true"
-                />
-                <AlertDescription className="ml-2">{catalog.errorMessage}</AlertDescription>
-              </Alert>
-            )}
+        {catalog.errorMessage && (
+          <Alert variant="destructive" className="text-xs">
+            <AlertTriangle
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#C13515]"
+              aria-hidden="true"
+            />
+            <AlertDescription className="ml-2">{catalog.errorMessage}</AlertDescription>
+          </Alert>
+        )}
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3.5">
-              <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto h-auto min-h-10 rounded-[18px] sm:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+        {permittedTabs.length > 0 && (
+          <Tabs value={activeTab} onValueChange={setSelectedTab} className="space-y-3.5">
+            <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto h-auto min-h-10 rounded-[18px] sm:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+              {canDiscover && (
                 <TabsTrigger
                   value="discover"
                   className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-1.5 px-1 sm:px-2"
@@ -118,6 +144,8 @@ export function ReaderWorkspace() {
                   <span className="sm:hidden">Khám phá</span>
                   <span className="text-xs opacity-80">({catalog.discoverDocs.length})</span>
                 </TabsTrigger>
+              )}
+              {canViewDocument && (
                 <TabsTrigger
                   value="my-docs"
                   className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-1.5 px-1 sm:px-2"
@@ -127,6 +155,8 @@ export function ReaderWorkspace() {
                   <span className="sm:hidden">Được xem</span>
                   <span className="text-xs opacity-80">({catalog.myDocs.length})</span>
                 </TabsTrigger>
+              )}
+              {canViewRequests && (
                 <TabsTrigger
                   value="my-requests"
                   className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-1.5 px-1 sm:px-2"
@@ -136,8 +166,10 @@ export function ReaderWorkspace() {
                   <span className="sm:hidden">Yêu cầu</span>
                   <span className="text-xs opacity-80">({catalog.myRequests.length})</span>
                 </TabsTrigger>
-              </TabsList>
+              )}
+            </TabsList>
 
+            {canDiscover && (
               <TabsContent value="discover" className="space-y-4">
                 <CatalogTab
                   documents={filteredDiscover}
@@ -146,53 +178,62 @@ export function ReaderWorkspace() {
                   onSearchChange={setSearchQuery}
                   selectedClassification={selectedClassification}
                   onClassificationChange={setSelectedClassification}
+                  canViewDocument={canViewDocument}
+                  canRequestAccess={canRequestAccess}
                   onOpenPreview={(doc) => void viewer.handleOpenPreview(doc)}
                   onOpenRequestModal={catalog.openRequestModal}
                 />
               </TabsContent>
+            )}
 
+            {canViewDocument && (
               <TabsContent value="my-docs" className="space-y-4">
                 <GrantedDocumentsTab
                   myDocs={catalog.myDocs}
                   downloadingDocId={viewer.downloadingDocId}
+                  canViewDocument={canViewDocument}
+                  canDownloadDocument={canDownloadDocument}
                   onOpenPreview={(doc) => void viewer.handleOpenPreview(doc)}
                   onDownload={(doc) => void viewer.handleDownloadWithTicket(doc)}
                 />
               </TabsContent>
+            )}
 
+            {canViewRequests && (
               <TabsContent value="my-requests" className="space-y-4">
                 <MyRequestsTab
                   myRequests={catalog.myRequests}
                   cancellingRequestId={catalog.cancellingRequestId}
+                  canCancelRequest={canCancelRequest}
                   onCancelRequest={(id) => {
                     catalog.setErrorMessage(null);
                     catalog.setPendingCancelRequestId(id);
                   }}
                 />
               </TabsContent>
-            </Tabs>
+            )}
+          </Tabs>
+        )}
 
-            <RequestAccessModal catalog={catalog} />
-            <DocumentViewerModal
-              viewer={viewer}
-              userFullName={user?.fullName}
-              username={user?.username}
-            />
-            <ConfirmDialog
-              open={catalog.pendingCancelRequestId !== null}
-              onOpenChange={(open) => {
-                if (!open) catalog.setPendingCancelRequestId(null);
-              }}
-              title="Xác nhận hủy yêu cầu cấp quyền"
-              description="Bạn có chắc chắn muốn hủy yêu cầu cấp quyền đang chờ phê duyệt này không?"
-              confirmText="Hủy yêu cầu"
-              variant="danger"
-              isLoading={catalog.cancellingRequestId !== null}
-              onConfirm={() => void catalog.handleCancelRequest()}
-            />
-          </div>
-        </DialogErrorProvider>
-      </AppLayout>
-    </AuthGuard>
+        <RequestAccessModal catalog={catalog} canDownloadDocument={canDownloadDocument} />
+        <DocumentViewerModal
+          viewer={viewer}
+          userFullName={user?.fullName}
+          username={user?.username}
+        />
+        <ConfirmDialog
+          open={catalog.pendingCancelRequestId !== null}
+          onOpenChange={(open) => {
+            if (!open) catalog.setPendingCancelRequestId(null);
+          }}
+          title="Xác nhận hủy yêu cầu cấp quyền"
+          description="Bạn có chắc chắn muốn hủy yêu cầu cấp quyền đang chờ phê duyệt này không?"
+          confirmText="Hủy yêu cầu"
+          variant="danger"
+          isLoading={catalog.cancellingRequestId !== null}
+          onConfirm={() => void catalog.handleCancelRequest()}
+        />
+      </div>
+    </DialogErrorProvider>
   );
 }

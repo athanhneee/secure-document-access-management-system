@@ -18,6 +18,7 @@ import type { AccessRequestItem } from '../types';
 
 interface RequestsTabProps {
   requests: AccessRequestItem[];
+  canDecideRequest?: boolean;
   onOpenApprove: (req: AccessRequestItem) => void;
   onReject: (req: AccessRequestItem) => Promise<boolean>;
   onClearError: () => void;
@@ -26,7 +27,13 @@ interface RequestsTabProps {
 /**
  * Thuật toán: Hàng Đợi Xét Duyệt Yêu Cầu Cấp Quyền Chủ Sở Hữu (`RequestsTab`)
  */
-export function RequestsTab({ requests, onOpenApprove, onReject, onClearError }: RequestsTabProps) {
+export function RequestsTab({
+  requests,
+  canDecideRequest = true,
+  onOpenApprove,
+  onReject,
+  onClearError,
+}: RequestsTabProps) {
   const [requestToReject, setRequestToReject] = useState<AccessRequestItem | null>(null);
   const [isRejecting, setIsRejecting] = useState(false);
 
@@ -91,7 +98,7 @@ export function RequestsTab({ requests, onOpenApprove, onReject, onClearError }:
                       {req.justification}
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
-                      {req.status === 'PENDING' ? (
+                      {req.status === 'PENDING' && canDecideRequest ? (
                         <div className="flex items-center justify-end gap-1.5">
                           <InteractiveHoverButton
                             size="sm"

@@ -9,18 +9,20 @@ interface SecurityWorkspaceHeaderProps {
   isLoading: boolean;
   message: string | null;
   errorMessage: string | null;
+  canCreateIncident?: boolean;
   onRefresh: () => void;
   onOpenCreateIncident: () => void;
 }
 
 /**
  * Thuật toán: Thanh tiêu đề & Biểu ngữ trạng thái Trung tâm Giám sát An ninh SOC (`SecurityWorkspaceHeader`)
- * Mục đích: Hiển thị định danh phân hệ Security Officer, nút làm mới dữ liệu / lập báo cáo sự cố và cảnh báo phản hồi từ API.
+ * Mục đích: Hiển thị định danh phân hệ Security Officer, nút làm mới dữ liệu / lập báo cáo sự cố (nếu có quyền `INCIDENT_REPORT:CREATE`) và cảnh báo phản hồi từ API.
  */
 export function SecurityWorkspaceHeader({
   isLoading,
   message,
   errorMessage,
+  canCreateIncident = true,
   onRefresh,
   onOpenCreateIncident,
 }: SecurityWorkspaceHeaderProps) {
@@ -50,13 +52,15 @@ export function SecurityWorkspaceHeader({
             onClick={onRefresh}
             disabled={isLoading}
           />
-          <InteractiveHoverButton
-            variant="primary"
-            size="sm"
-            text="Lập báo cáo sự cố"
-            icon={<FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
-            onClick={onOpenCreateIncident}
-          />
+          {canCreateIncident && (
+            <InteractiveHoverButton
+              variant="primary"
+              size="sm"
+              text="Lập báo cáo sự cố"
+              icon={<FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
+              onClick={onOpenCreateIncident}
+            />
+          )}
         </div>
       </div>
 

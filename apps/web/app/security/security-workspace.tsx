@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { AlertOctagon, FileText, Laptop, Network, QrCode, Settings } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
 import { AuthGuard } from '@/components/auth-guard';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { DialogErrorProvider } from '@/components/ui/dialog';
@@ -23,11 +24,44 @@ import { WatermarkForensicsTab } from './tabs/watermark-forensics-tab';
 import type { DetectionRuleItem, IncidentItem, SecurityAlertItem } from './types';
 
 /**
- * Thuật toán: Trung tâm Giám sát An ninh SOC, Truy vết Thủy vân & Điều phối Phản ứng Sự cố (`SecurityWorkspace`)
- * Mục đích: Xử lý cảnh báo bất thường, truy nguyên rò rỉ qua mã thủy vân, ngắt phiên đọc khẩn cấp có ghi lý do kiểm toán, điều phối vòng đời sự cố và cấu hình luật phát hiện.
+ * Thuật toán: Trung Tâm Giám Sát SOC Cô Lập Sau `AuthGuard` & Lọc Thao Tác Theo Quyền (`SecurityWorkspace`)
+ * Mục đích:
+ *   - Chỉ thực thi `useSecurityData()` sau khi `AuthGuard` xác nhận vai trò `SECURITY_OFFICER`.
+ *   - Ẩn các tab và nút thao tác không thuộc tập quyền hiệu lực (`SECURITY_ALERT:VIEW`/`MANAGE`, `WATERMARK_INSTANCE:TRACE`, `INCIDENT_REPORT:CREATE`/`MANAGE`, `ACCESS_SESSION:TERMINATE`).
  */
 export function SecurityWorkspace() {
-  const [activeTab, setActiveTab] = useState('alerts');
+  return (
+    <AuthGuard requiredRole="SECURITY_OFFICER">
+      <AppLayout>
+        <SecurityWorkspaceContent />
+      </AppLayout>
+    </AuthGuard>
+  );
+}
+
+function SecurityWorkspaceContent() {
+  const { hasPermission } = useAuth();
+  const canViewAlerts = hasPermission('SECURITY_ALERT:VIEW');
+  const canManageAlerts = hasPermission('SECURITY_ALERT:MANAGE');
+  const canTraceWatermark = hasPermission('WATERMARK_INSTANCE:TRACE');
+  const canCreateIncident = hasPermission('INCIDENT_REPORT:CREATE');
+  const canManageIncidents = hasPermission('INCIDENT_REPORT:MANAGE') || canCreateIncident;
+  const canTerminateSession = hasPermission('ACCESS_SESSION:TERMINATE');
+
+  const permittedTabs = [
+    canViewAlerts ? 'alerts' : null,
+    canTraceWatermark ? 'watermark-trace' : null,
+    canManageIncidents ? 'incidents' : null,
+    canTerminateSession ? 'sessions' : null,
+    canViewAlerts || canManageAlerts ? 'detection' : null,
+    canViewAlerts ? 'network-dlp' : null,
+  ].filter((t): t is string => t !== null);
+
+  const [selectedTab, setSelectedTab] = useState('alerts');
+  const activeTab = permittedTabs.includes(selectedTab)
+    ? selectedTab
+    : (permittedTabs[0] ?? 'alerts');
+
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [alertDetailOpen, setAlertDetailOpen] = useState(false);
   const [createIncidentOpen, setCreateIncidentOpen] = useState(false);
@@ -77,52 +111,67 @@ export function SecurityWorkspace() {
   }
 
   return (
-    <AuthGuard requiredRole="SECURITY_OFFICER">
-      <AppLayout>
-        <DialogErrorProvider
+    <DialogErrorProvider
+      errorMessage={data.errorMessage}
+      onDismiss={() => data.setErrorMessage(null)}
+    >
+      <div className="space-y-4">
+        <SecurityWorkspaceHeader
+          isLoading={data.isLoading}
+          message={data.message}
           errorMessage={data.errorMessage}
-          onDismiss={() => data.setErrorMessage(null)}
-        >
-          <div className="space-y-4">
-            <SecurityWorkspaceHeader
-              isLoading={data.isLoading}
-              message={data.message}
-              errorMessage={data.errorMessage}
-              onRefresh={() => void data.refreshData()}
-              onOpenCreateIncident={handleOpenCreateIncident}
-            />
+          canCreateIncident={canCreateIncident}
+          onRefresh={() => void data.refreshData()}
+          onOpenCreateIncident={handleOpenCreateIncident}
+        />
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 xl:inline-flex xl:w-auto h-auto min-h-10 rounded-[18px] xl:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+        {permittedTabs.length > 0 && (
+          <Tabs value={activeTab} onValueChange={setSelectedTab} className="space-y-4">
+            <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 xl:inline-flex xl:w-auto h-auto min-h-10 rounded-[18px] xl:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+              {canViewAlerts && (
                 <TabsTrigger value="alerts" className="flex items-center gap-1.5 text-xs">
                   <AlertOctagon size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Cảnh báo ({data.alerts.length})</span>
                 </TabsTrigger>
+              )}
+              {canTraceWatermark && (
                 <TabsTrigger value="watermark-trace" className="flex items-center gap-1.5 text-xs">
                   <QrCode size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Truy vết Watermark</span>
                 </TabsTrigger>
+              )}
+              {canManageIncidents && (
                 <TabsTrigger value="incidents" className="flex items-center gap-1.5 text-xs">
                   <FileText size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Báo cáo sự cố ({data.incidents.length})</span>
                 </TabsTrigger>
+              )}
+              {canTerminateSession && (
                 <TabsTrigger value="sessions" className="flex items-center gap-1.5 text-xs">
                   <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Phiên đọc ({activeSessionCount})</span>
                 </TabsTrigger>
+              )}
+              {(canViewAlerts || canManageAlerts) && (
                 <TabsTrigger value="detection" className="flex items-center gap-1.5 text-xs">
                   <Settings size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Luật phát hiện ({data.detectionRules.length})</span>
                 </TabsTrigger>
+              )}
+              {canViewAlerts && (
                 <TabsTrigger value="network-dlp" className="flex items-center gap-1.5 text-xs">
                   <Network size={16} strokeWidth={1.75} aria-hidden="true" />
                   <span>Network DLP ({dlpAlerts.length})</span>
                 </TabsTrigger>
-              </TabsList>
+              )}
+            </TabsList>
 
+            {canViewAlerts && (
               <TabsContent value="alerts" className="space-y-4">
                 <AlertsTab alerts={data.alerts} onSelectAlert={handleSelectAlert} />
               </TabsContent>
+            )}
+            {canTraceWatermark && (
               <TabsContent value="watermark-trace" className="space-y-4">
                 <WatermarkForensicsTab
                   onClearError={() => data.setErrorMessage(null)}
@@ -130,27 +179,38 @@ export function SecurityWorkspace() {
                   onError={data.setErrorMessage}
                 />
               </TabsContent>
+            )}
+            {canManageIncidents && (
               <TabsContent value="incidents" className="space-y-4">
                 <IncidentsTab
                   incidents={data.incidents}
+                  canCreateIncident={canCreateIncident}
                   onOpenCreateIncident={handleOpenCreateIncident}
                   onSelectIncident={handleSelectIncident}
                 />
               </TabsContent>
+            )}
+            {(canViewAlerts || canManageAlerts) && (
               <TabsContent value="detection" className="space-y-4">
                 <DetectionRulesTab
                   detectionRules={data.detectionRules}
+                  canManageRules={canManageAlerts}
                   onRunDetection={data.runDetection}
                   onEditRule={handleOpenEditRule}
                 />
               </TabsContent>
+            )}
+            {canTerminateSession && (
               <TabsContent value="sessions" className="space-y-4">
                 <ActiveSessionsTab
                   documentSessions={data.documentSessions}
                   terminatingSessionId={data.terminatingSessionId}
+                  canTerminateSession={canTerminateSession}
                   onTerminateSession={handleOpenTerminateSession}
                 />
               </TabsContent>
+            )}
+            {canViewAlerts && (
               <TabsContent value="network-dlp" className="space-y-4">
                 <NetworkDlpTab
                   dlpAlerts={dlpAlerts}
@@ -158,66 +218,66 @@ export function SecurityWorkspace() {
                   onSelectAlert={handleSelectAlert}
                 />
               </TabsContent>
-            </Tabs>
+            )}
+          </Tabs>
+        )}
 
-            <AlertDetailModal
-              open={alertDetailOpen}
-              onOpenChange={(open) => {
-                setAlertDetailOpen(open);
-                if (!open) setSelectedAlertId(null);
-              }}
-              alert={selectedAlert}
-              onClearError={() => data.setErrorMessage(null)}
-              onOptimisticUpdate={data.applyOptimisticAlertUpdate}
-              onSuccess={handleModalSuccess}
-              onError={data.setErrorMessage}
-            />
+        <AlertDetailModal
+          open={alertDetailOpen}
+          onOpenChange={(open) => {
+            setAlertDetailOpen(open);
+            if (!open) setSelectedAlertId(null);
+          }}
+          alert={selectedAlert}
+          onClearError={() => data.setErrorMessage(null)}
+          onOptimisticUpdate={data.applyOptimisticAlertUpdate}
+          onSuccess={handleModalSuccess}
+          onError={data.setErrorMessage}
+        />
 
-            <CreateIncidentModal
-              open={createIncidentOpen}
-              onOpenChange={setCreateIncidentOpen}
-              onClearError={() => data.setErrorMessage(null)}
-              onSuccess={handleModalSuccess}
-              onError={data.setErrorMessage}
-            />
+        <CreateIncidentModal
+          open={createIncidentOpen}
+          onOpenChange={setCreateIncidentOpen}
+          onClearError={() => data.setErrorMessage(null)}
+          onSuccess={handleModalSuccess}
+          onError={data.setErrorMessage}
+        />
 
-            <IncidentDetailModal
-              open={incidentDetailOpen}
-              onOpenChange={(open) => {
-                setIncidentDetailOpen(open);
-                if (!open) setSelectedIncidentId(null);
-              }}
-              incidentId={selectedIncidentId}
-              onClearError={() => data.setErrorMessage(null)}
-              onSuccess={handleModalSuccess}
-              onError={data.setErrorMessage}
-            />
+        <IncidentDetailModal
+          open={incidentDetailOpen}
+          onOpenChange={(open) => {
+            setIncidentDetailOpen(open);
+            if (!open) setSelectedIncidentId(null);
+          }}
+          incidentId={selectedIncidentId}
+          onClearError={() => data.setErrorMessage(null)}
+          onSuccess={handleModalSuccess}
+          onError={data.setErrorMessage}
+        />
 
-            <EditDetectionRuleModal
-              open={editRuleOpen}
-              onOpenChange={(open) => {
-                setEditRuleOpen(open);
-                if (!open) setSelectedRule(null);
-              }}
-              rule={selectedRule}
-              onClearError={() => data.setErrorMessage(null)}
-              onSuccess={handleModalSuccess}
-              onError={data.setErrorMessage}
-            />
+        <EditDetectionRuleModal
+          open={editRuleOpen}
+          onOpenChange={(open) => {
+            setEditRuleOpen(open);
+            if (!open) setSelectedRule(null);
+          }}
+          rule={selectedRule}
+          onClearError={() => data.setErrorMessage(null)}
+          onSuccess={handleModalSuccess}
+          onError={data.setErrorMessage}
+        />
 
-            <TerminateSessionModal
-              open={data.pendingTerminateSessionId !== null}
-              onOpenChange={(open) => {
-                if (!open) data.setPendingTerminateSessionId(null);
-              }}
-              session={pendingTerminateSession}
-              isSubmitting={data.terminatingSessionId !== null}
-              onConfirm={(reason) => data.terminateSession(reason)}
-              onError={data.setErrorMessage}
-            />
-          </div>
-        </DialogErrorProvider>
-      </AppLayout>
-    </AuthGuard>
+        <TerminateSessionModal
+          open={data.pendingTerminateSessionId !== null}
+          onOpenChange={(open) => {
+            if (!open) data.setPendingTerminateSessionId(null);
+          }}
+          session={pendingTerminateSession}
+          isSubmitting={data.terminatingSessionId !== null}
+          onConfirm={(reason) => data.terminateSession(reason)}
+          onError={data.setErrorMessage}
+        />
+      </div>
+    </DialogErrorProvider>
   );
 }

@@ -9,6 +9,7 @@ import type { HealthStatusLabel, SystemHealthData } from '../types';
 interface SystemHealthTabProps {
   healthData: SystemHealthData | null;
   onCaptureSnapshot: () => Promise<boolean>;
+  canManageHealth?: boolean;
 }
 
 /**
@@ -35,7 +36,11 @@ function formatUptimeDuration(seconds: number | undefined): string {
   return `${secs}s`;
 }
 
-export function SystemHealthTab({ healthData, onCaptureSnapshot }: SystemHealthTabProps) {
+export function SystemHealthTab({
+  healthData,
+  onCaptureSnapshot,
+  canManageHealth = true,
+}: SystemHealthTabProps) {
   const [isCapturing, setIsCapturing] = useState(false);
 
   const gatewayStatus: HealthStatusLabel = healthData?.status ?? 'OFFLINE';
@@ -74,16 +79,18 @@ export function SystemHealthTab({ healthData, onCaptureSnapshot }: SystemHealthT
             Giám sát hạ tầng &amp; tiến trình
           </h3>
         </div>
-        <InteractiveHoverButton
-          variant="primary"
-          size="sm"
-          text="Chụp bản ghi sức khỏe"
-          icon={<Camera size={16} strokeWidth={1.75} aria-hidden="true" />}
-          isLoading={isCapturing}
-          disabled={isCapturing}
-          onClick={() => void handleCapture()}
-          className="shrink-0"
-        />
+        {canManageHealth && (
+          <InteractiveHoverButton
+            variant="primary"
+            size="sm"
+            text="Chụp bản ghi sức khỏe"
+            icon={<Camera size={16} strokeWidth={1.75} aria-hidden="true" />}
+            isLoading={isCapturing}
+            disabled={isCapturing}
+            onClick={() => void handleCapture()}
+            className="shrink-0"
+          />
+        )}
       </div>
 
       <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">

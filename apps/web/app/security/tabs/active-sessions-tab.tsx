@@ -16,16 +16,18 @@ import type { DocumentSessionItem } from '../types';
 interface ActiveSessionsTabProps {
   documentSessions: DocumentSessionItem[];
   terminatingSessionId: string | null;
+  canTerminateSession?: boolean;
   onTerminateSession: (sessionId: string) => void;
 }
 
 /**
  * Thuật toán: Giám Sát Phiên Đọc Trực Tuyến & Thu Hồi Cưỡng Bức Tức Thời (`ActiveSessionsTab`)
- * Mục đích: Hiển thị danh sách phiên đọc có nhúng thủy vân và mở hộp thoại nhập lý do cưỡng bức ngắt phiên đối với các phiên `ACTIVE`.
+ * Mục đích: Hiển thị danh sách phiên đọc có nhúng watermark và mở hộp thoại nhập lý do cưỡng bức ngắt phiên đối với các phiên `ACTIVE`.
  */
 export function ActiveSessionsTab({
   documentSessions,
   terminatingSessionId,
+  canTerminateSession = true,
   onTerminateSession,
 }: ActiveSessionsTabProps) {
   return (
@@ -79,7 +81,7 @@ export function ActiveSessionsTab({
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">
-                    {sess.status === 'ACTIVE' && (
+                    {sess.status === 'ACTIVE' && canTerminateSession && (
                       <InteractiveHoverButton
                         size="sm"
                         variant="destructive"

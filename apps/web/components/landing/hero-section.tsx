@@ -1,7 +1,10 @@
+'use client';
+
 /**
- * Thuật toán: Khu Vực Giới Thiệu Đầu Trang & Lưới Chỉ Số Mật Mã Thích Ứng Di Động (`HeroSection`)
- * Mục đích: Trình bày thông điệp cốt lõi Zero-Trust và 4 trụ cột bảo vệ tài liệu mật với bố cục 2 cột gọn nhẹ trên điện thoại `375px`.
+ * Thuật toán: Khu Vực Giới Thiệu Đầu Trang Nhận Thức Phiên Đăng Nhập & Lưới Chỉ Số Mật Mã (`HeroSection`)
+ * Mục đích: Trình bày thông điệp cốt lõi Zero-Trust và định tuyến nút kêu gọi hành động chính trực tiếp vào phân hệ được cấp quyền khi người dùng đã xác thực.
  */
+import { resolveDefaultPortalForRoles, useAuth } from '@/lib/auth-context';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
 const HERO_METRICS = [
@@ -32,6 +35,10 @@ const HERO_METRICS = [
 ] as const;
 
 export function HeroSection() {
+  const { isAuthenticated, user } = useAuth();
+  const primaryHref = isAuthenticated ? resolveDefaultPortalForRoles(user?.roles) : '/login';
+  const primaryText = isAuthenticated ? 'Vào phân hệ làm việc' : 'Bắt đầu ngay';
+
   return (
     <section className="relative border-b border-[#ebebeb] bg-linear-to-b from-[#ffffff] to-[#f7f7f7] py-8 sm:py-12 lg:py-14">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -55,9 +62,9 @@ export function HeroSection() {
 
             <div className="mt-5 sm:mt-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 animate-fade-in-up delay-100">
               <InteractiveHoverButton
-                href="/login"
+                href={primaryHref}
                 variant="solid"
-                text="Bắt đầu ngay"
+                text={primaryText}
                 className="w-full sm:w-auto px-5"
               />
               <InteractiveHoverButton

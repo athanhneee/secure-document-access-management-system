@@ -22,6 +22,8 @@ interface CatalogTabProps {
   onSearchChange: (value: string) => void;
   selectedClassification: string;
   onClassificationChange: (value: string) => void;
+  canViewDocument?: boolean;
+  canRequestAccess?: boolean;
   onOpenPreview: (doc: MyGrantedDoc) => void;
   onOpenRequestModal: (doc: DiscoverableDoc) => void;
 }
@@ -33,6 +35,8 @@ export function CatalogTab({
   onSearchChange,
   selectedClassification,
   onClassificationChange,
+  canViewDocument = true,
+  canRequestAccess = true,
   onOpenPreview,
   onOpenRequestModal,
 }: CatalogTabProps) {
@@ -129,23 +133,25 @@ export function CatalogTab({
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      {grantedDoc ? (
-                        <InteractiveHoverButton
-                          size="sm"
-                          variant="primary"
-                          text="Xem tài liệu"
-                          icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
-                          onClick={() => onOpenPreview(grantedDoc)}
-                        />
-                      ) : (
-                        <InteractiveHoverButton
-                          size="sm"
-                          variant="secondary"
-                          text="Yêu cầu quyền"
-                          icon={<Send size={16} strokeWidth={1.75} aria-hidden="true" />}
-                          onClick={() => onOpenRequestModal(doc)}
-                        />
-                      )}
+                      {grantedDoc
+                        ? canViewDocument && (
+                            <InteractiveHoverButton
+                              size="sm"
+                              variant="primary"
+                              text="Xem tài liệu"
+                              icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
+                              onClick={() => onOpenPreview(grantedDoc)}
+                            />
+                          )
+                        : canRequestAccess && (
+                            <InteractiveHoverButton
+                              size="sm"
+                              variant="secondary"
+                              text="Yêu cầu quyền"
+                              icon={<Send size={16} strokeWidth={1.75} aria-hidden="true" />}
+                              onClick={() => onOpenRequestModal(doc)}
+                            />
+                          )}
                     </TableCell>
                   </TableRow>
                 );

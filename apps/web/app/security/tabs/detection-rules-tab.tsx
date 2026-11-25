@@ -16,16 +16,18 @@ import type { DetectionRuleItem } from '../types';
 
 interface DetectionRulesTabProps {
   detectionRules: DetectionRuleItem[];
+  canManageRules?: boolean;
   onRunDetection: () => void | Promise<void>;
   onEditRule: (rule: DetectionRuleItem) => void;
 }
 
 /**
  * Thuật toán: Quản Trị Bảng Tham Số Luật Phát Hiện Bất Thường SOC (`DetectionRulesTab`)
- * Mục đích: Hiển thị 6 quy tắc phát hiện tự động kèm ngưỡng, cửa sổ thời gian, thời gian hạ nhiệt và nút mở `<dialog>` cấu hình trực tiếp.
+ * Mục đích: Hiển thị 6 quy tắc phát hiện tự động kèm ngưỡng, cửa sổ thời gian, thời gian hạ nhiệt và nút mở `<dialog>` cấu hình trực tiếp khi có quyền `SECURITY_ALERT:MANAGE`.
  */
 export function DetectionRulesTab({
   detectionRules,
+  canManageRules = true,
   onRunDetection,
   onEditRule,
 }: DetectionRulesTabProps) {
@@ -35,14 +37,16 @@ export function DetectionRulesTab({
         <CardTitle className="text-sm sm:text-base text-[#222222]">
           Quy tắc phát hiện bất thường ({detectionRules.length})
         </CardTitle>
-        <InteractiveHoverButton
-          size="sm"
-          variant="danger"
-          text="Quét toàn bộ ngay"
-          icon={<Play size={16} strokeWidth={1.75} aria-hidden="true" />}
-          onClick={onRunDetection}
-          className="shrink-0"
-        />
+        {canManageRules && (
+          <InteractiveHoverButton
+            size="sm"
+            variant="danger"
+            text="Quét toàn bộ ngay"
+            icon={<Play size={16} strokeWidth={1.75} aria-hidden="true" />}
+            onClick={onRunDetection}
+            className="shrink-0"
+          />
+        )}
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -97,13 +101,15 @@ export function DetectionRulesTab({
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">
-                    <InteractiveHoverButton
-                      size="sm"
-                      variant="secondary"
-                      text="Cấu hình"
-                      icon={<Settings size={16} strokeWidth={1.75} aria-hidden="true" />}
-                      onClick={() => onEditRule(r)}
-                    />
+                    {canManageRules && (
+                      <InteractiveHoverButton
+                        size="sm"
+                        variant="secondary"
+                        text="Cấu hình"
+                        icon={<Settings size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        onClick={() => onEditRule(r)}
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               );

@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { apiClient, ApiError, getCsrfToken, sanitizeRedirectPath } from './api-client';
+import { checkEffectivePermission, type SystemRoleType } from './role-permissions';
 
 export interface AuthUser {
   id: string;
@@ -10,14 +11,17 @@ export interface AuthUser {
   fullName: string;
   email: string;
   departmentId: string | null;
+  clearanceOptionId?: string | null;
+  clearanceCode?: string | null;
+  clearanceName?: string | null;
+  clearanceRank?: number;
   status: string;
   version: number;
   roles: string[];
   permissions: string[];
 }
 
-export type RoleType =
-  'SYSTEM_ADMIN' | 'DOCUMENT_OWNER' | 'DOCUMENT_READER' | 'SECURITY_OFFICER' | 'AUDITOR';
+export type RoleType = SystemRoleType;
 
 export const ROLE_LABELS: Record<RoleType, string> = {
   SYSTEM_ADMIN: 'Quản trị viên hệ thống',
@@ -124,7 +128,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(data);
       return data;
     } catch (err) {
-      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      // Chỉ xóa phiên khi 401 (hết hạn / chưa xác thực); tuyệt đối không tự ý đăng xuất khi gặp 403 Forbidden hoặc lỗi mạng tạm thời
+      if (err instanceof ApiError && err.status === 401) {
         setUser(null);
         setRoleOverride(null);
       }
@@ -186,13 +191,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   const hasPermission = useCallback(
-    (permission: string) => {
-      if (!user) return false;
-      const canonical = permission.replace(':', '_');
-      return user.permissions.some(
-        (granted) => granted === permission || granted.replace(':', '_') === canonical,
-      );
-    },
+    (permission: string) => checkEffectivePermission(user, permission),
     [user],
   );
 

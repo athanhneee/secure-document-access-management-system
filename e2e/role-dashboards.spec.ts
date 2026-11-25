@@ -84,17 +84,29 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
       page.getByRole('heading', { name: 'Users · RBAC · ABAC · Watermark', level: 1 }),
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Tạo tài khoản' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Thông báo hệ thống' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Chủ sở hữu tài liệu' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: /Vai trò RBAC/i })).toBeVisible();
     await expect(page.getByRole('tab', { name: /Chính sách ABAC/i })).toBeVisible();
     await expect(page.getByRole('tab', { name: /Cấu hình Watermark/i })).toBeVisible();
     expect(errors).toEqual([]);
   });
 
-  test('Owner workspace renders document lifecycle controls and blocks cross-role /admin with 403', async ({
+  test('Owner workspace hides unauthorized portals and blocks direct cross-role /admin with 403 without logout', async ({
     page,
   }) => {
     const errors: string[] = [];
+    const adminApiCalls: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
+    page.on('request', (req) => {
+      if (
+        req.url().includes('/api/v1/users') &&
+        !req.url().endsWith('/users/me') &&
+        !req.url().includes('/users/lookup')
+      ) {
+        adminApiCalls.push(req.url());
+      }
+    });
     await mockAuthenticatedRoleSession(page, 'DOCUMENT_OWNER');
 
     await page.goto('/owner');
@@ -102,9 +114,17 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
       page.getByRole('heading', { name: 'Quản lý & Cấp phép Tài liệu Mật', level: 1 }),
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Tải lên tài liệu mới' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Thông báo hệ thống' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Quản trị hệ thống' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Người đọc tài liệu' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'An ninh thông tin' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Kiểm toán độc lập' })).toHaveCount(0);
 
     await page.goto('/admin');
     await expect(page.getByText('403 · Truy cập bị từ chối')).toBeVisible();
+    expect(adminApiCalls).toEqual([]);
+    await page.getByRole('button', { name: 'Về phân hệ làm việc' }).click();
+    await expect(page).toHaveURL(/\/owner$/);
     expect(errors).toEqual([]);
   });
 

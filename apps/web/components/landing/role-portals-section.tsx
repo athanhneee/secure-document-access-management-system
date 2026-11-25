@@ -1,6 +1,10 @@
+'use client';
+
 /**
- * Thuật toán: Danh Mục Điều Hướng 6 Không Gian Vai Trò Tách Biệt Mobile/Desktop (`RolePortalsSection`)
- * Mục đích: Hiển thị danh bạ chạm một chạm bo tròn viên thuốc trên màn hình `< 640px` và lưới thẻ chi tiết kèm nhãn phẳng `staff-001` trên màn hình lớn.
+ * Thuật toán: Danh Mục Điều Hướng Không Gian Vai Trò Có Lọc Theo Quyền Phiên Hiện Tại (`RolePortalsSection`)
+ * Mục đích:
+ *   - Với khách chưa đăng nhập: giới thiệu tổng quan kiến trúc 6 không gian vai trò (bấm vào sẽ qua bước xác thực `/login`).
+ *   - Với người dùng đã đăng nhập: chỉ hiển thị đúng các không gian làm việc mà tài khoản được cấp quyền (`user.roles`) cùng mục quản lý phiên cá nhân (`DEVICE_SESSIONS`), ẩn hoàn toàn các phân hệ không thuộc thẩm quyền.
  */
 import Link from 'next/link';
 import {
@@ -12,6 +16,7 @@ import {
   Laptop,
   ChevronRight,
 } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
 const rolePortals = [
@@ -29,7 +34,7 @@ const rolePortals = [
     role: 'DOCUMENT_READER',
     roleShort: 'READER',
     title: 'Người đọc tài liệu',
-    description: 'Tra cứu danh mục, gửi yêu cầu và đọc tài liệu gắn thủy vân.',
+    description: 'Tra cứu danh mục, gửi yêu cầu và đọc tài liệu gắn watermark.',
     path: '/reader',
     icon: Eye,
     badgeColor: 'text-[#008A05]',
@@ -87,21 +92,29 @@ const STAGGER_DELAYS = [
 ] as const;
 
 export function RolePortalsSection() {
+  const { isAuthenticated, user } = useAuth();
+
+  const visiblePortals =
+    isAuthenticated && user
+      ? rolePortals.filter(
+          (portal) => portal.role === 'DEVICE_SESSIONS' || user.roles.includes(portal.role),
+        )
+      : rolePortals;
+
   return (
     <section id="vai-tro" className="py-8 sm:py-12 border-b border-[#ebebeb] bg-[#ffffff]">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="mb-5 sm:mb-7">
           <p className="text-xs font-semibold uppercase tracking-wider text-[#008489]">
-            KHÔNG GIAN LÀM VIỆC CHUYÊN BIỆT
+            {isAuthenticated ? 'PHÂN HỆ ĐƯỢC CẤP QUYỀN' : 'KHÔNG GIAN LÀM VIỆC CHUYÊN BIỆT'}
           </p>
           <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
             Đúng vai trò · Đúng nhiệm vụ · Đúng phạm vi
           </h2>
         </div>
 
-        {/* Mobile View: Sleek, Compact Tappable Directory */}
         <div className="grid grid-cols-1 gap-2 sm:hidden">
-          {rolePortals.map((portal) => {
+          {visiblePortals.map((portal) => {
             const IconComponent = portal.icon;
             return (
               <Link
@@ -134,9 +147,8 @@ export function RolePortalsSection() {
           })}
         </div>
 
-        {/* Desktop / Tablet View: Rich Detailed Cards */}
         <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4">
-          {rolePortals.map((portal, idx) => {
+          {visiblePortals.map((portal, idx) => {
             const IconComponent = portal.icon;
             return (
               <article

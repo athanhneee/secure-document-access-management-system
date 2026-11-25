@@ -26,11 +26,24 @@ interface AppHeaderProps {
   isSidebarOpen?: boolean | undefined;
 }
 
+const ROLE_NAV_ITEMS: ReadonlyArray<{
+  role: RoleType;
+  label: string;
+  href: string;
+  icon: React.ElementType;
+}> = [
+  { role: 'SYSTEM_ADMIN', label: 'Quản trị viên', href: '/admin', icon: Sliders },
+  { role: 'DOCUMENT_OWNER', label: 'Chủ sở hữu', href: '/owner', icon: FolderLock },
+  { role: 'DOCUMENT_READER', label: 'Người đọc', href: '/reader', icon: BookOpen },
+  { role: 'SECURITY_OFFICER', label: 'An ninh thông tin', href: '/security', icon: AlertOctagon },
+  { role: 'AUDITOR', label: 'Kiểm toán viên', href: '/auditor', icon: FileCheck },
+];
+
 /**
- * Thuật toán: Thanh Đầu Đề Điều Phối Góc Nhìn RBAC, Hộp Thư Chuông Nội Bộ & Quản Lý Phiên Thích Ứng `375px` (`AppHeader`)
+ * Thuật toán: Thanh Đầu Đề Điều Phối Góc Nhìn RBAC Đã Lọc Quyền, Chuông Nội Bộ Có Điều Kiện & Quản Lý Phiên `375px` (`AppHeader`)
  * Mục đích:
- *   - Cho phép chuyển đổi tức thì giữa các cổng vai trò được gán (`roleNavItems`), đóng menu thả xuống an toàn khi nhấp ra ngoài hoặc nhấn phím `Escape`.
- *   - Tích hợp chuông thông báo nội bộ (`NotificationBellDialog`), lối tắt quản lý phiên thiết bị và thao tác đăng xuất với vùng chạm tối thiểu `44x44px` không tràn ngang trên màn hình `375px`.
+ *   - Chỉ hiển thị bộ chuyển đổi góc nhìn thả xuống khi tài khoản sở hữu từ 2 vai trò trở lên (và chỉ liệt kê các vai trò được cấp); nếu chỉ có 1 vai trò thì hiển thị nhãn phẳng `staff-badge` tĩnh, tuyệt đối không hiển thị các vai trò bị khóa.
+ *   - Chỉ hiển thị biểu tượng chuông thông báo (`NotificationBellDialog`) khi tài khoản thực sự có quyền `NOTIFICATION:VIEW`.
  */
 export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
   const { user, activeRole, setActiveRole, logout, isAuthenticated, hasPermission } = useAuth();
@@ -60,18 +73,16 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
     };
   }, [roleMenuOpen]);
 
-  const roleNavItems: Array<{
-    role: RoleType;
-    label: string;
-    href: string;
-    icon: React.ElementType;
-  }> = [
-    { role: 'SYSTEM_ADMIN', label: 'Quản trị viên', href: '/admin', icon: Sliders },
-    { role: 'DOCUMENT_OWNER', label: 'Chủ sở hữu', href: '/owner', icon: FolderLock },
-    { role: 'DOCUMENT_READER', label: 'Người đọc', href: '/reader', icon: BookOpen },
-    { role: 'SECURITY_OFFICER', label: 'An ninh thông tin', href: '/security', icon: AlertOctagon },
-    { role: 'AUDITOR', label: 'Kiểm toán viên', href: '/auditor', icon: FileCheck },
-  ];
+  const authorizedRoleItems = user
+    ? ROLE_NAV_ITEMS.filter((item) => user.roles.includes(item.role))
+    : [];
+  const canViewNotifications = hasPermission('NOTIFICATION:VIEW');
+  const singleRoleLabel =
+    authorizedRoleItems.length === 1
+      ? ROLE_LABELS[authorizedRoleItems[0]!.role]
+      : activeRole
+        ? ROLE_LABELS[activeRole]
+        : null;
 
   return (
     <header className="sticky top-0 z-40 flex h-14 w-full items-center justify-between border-b border-[#ebebeb] bg-[#ffffff]/90 px-3 sm:px-6 backdrop-blur-md">
@@ -103,7 +114,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
           </span>
         </Link>
 
-        {isAuthenticated && user && (
+        {isAuthenticated && user && authorizedRoleItems.length > 1 && (
           <div className="relative ml-0.5 sm:ml-2 min-w-0" ref={menuRef}>
             <button
               type="button"
@@ -114,7 +125,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
             >
               <span className="dot dot-success shrink-0" aria-hidden="true" />
               <span className="min-w-0 max-w-[80px] sm:max-w-none truncate">
-                {activeRole ? ROLE_LABELS[activeRole] : 'Góc nhìn'}
+                {activeRole ? ROLE_LABELS[activeRole] : 'Chuyển vai trò'}
               </span>
               <ChevronDown
                 size={16}
@@ -126,14 +137,13 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
 
             {roleMenuOpen && (
               <div
-                className="absolute left-0 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-[24px] border border-[#ebebeb] bg-[#ffffff] p-2 shadow-[0_12px_36px_rgba(0,0,0,0.1)] backdrop-blur-xl z-50 animate-in fade-in zoom-in-95 duration-100"
+                className="absolute left-0 mt-2 w-60 max-w-[calc(100vw-2rem)] rounded-[24px] border border-[#ebebeb] bg-[#ffffff] p-2 shadow-[0_12px_36px_rgba(0,0,0,0.1)] backdrop-blur-xl z-50 animate-in fade-in zoom-in-95 duration-100"
                 role="menu"
               >
-                <div className="px-2.5 py-1 text-[13px] font-semibold uppercase tracking-wider text-[#717171]">
-                  Góc nhìn theo vai trò (RBAC)
+                <div className="px-2.5 py-1 text-[12px] font-semibold uppercase tracking-wider text-[#717171]">
+                  Chuyển phân hệ được cấp
                 </div>
-                {roleNavItems.map((item) => {
-                  const hasAccess = user.roles.includes(item.role);
+                {authorizedRoleItems.map((item) => {
                   const isCurrent = activeRole === item.role;
                   const Icon = item.icon;
 
@@ -141,7 +151,6 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                     <button
                       key={item.role}
                       type="button"
-                      disabled={!hasAccess}
                       onClick={() => {
                         setActiveRole(item.role);
                         setRoleMenuOpen(false);
@@ -150,9 +159,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                       className={`flex min-h-11 sm:min-h-9 w-full items-center justify-between rounded-full px-3 py-2 text-xs transition-colors cursor-pointer ${
                         isCurrent
                           ? 'bg-[#FF385C]/10 font-semibold text-[#E31C5F] border border-[#E31C5F]/30'
-                          : hasAccess
-                            ? 'text-[#222222] hover:bg-[#f7f7f7]'
-                            : 'cursor-not-allowed text-[#717171] opacity-75'
+                          : 'text-[#222222] hover:bg-[#f7f7f7]'
                       }`}
                       role="menuitem"
                     >
@@ -160,11 +167,6 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                         <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
                         <span>{item.label}</span>
                       </div>
-                      {hasAccess ? (
-                        <span className="text-[12px] text-[#008A05] font-bold">Được cấp</span>
-                      ) : (
-                        <span className="text-[12px] text-[#717171]">Khóa</span>
-                      )}
                     </button>
                   );
                 })}
@@ -172,15 +174,21 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
             )}
           </div>
         )}
+
+        {isAuthenticated && user && authorizedRoleItems.length === 1 && singleRoleLabel && (
+          <span className="staff-badge bg-transparent border-0 p-0 ml-1 sm:ml-2 inline-flex min-w-0 items-center gap-1.5 text-xs font-semibold text-[#222222] select-none">
+            <span className="dot dot-success shrink-0" aria-hidden="true" />
+            <span className="min-w-0 max-w-[110px] sm:max-w-none truncate">{singleRoleLabel}</span>
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
         {isAuthenticated && user ? (
           <>
-            <NotificationBellDialog
-              userId={user.id}
-              canViewNotifications={hasPermission('NOTIFICATION:VIEW')}
-            />
+            {canViewNotifications && (
+              <NotificationBellDialog userId={user.id} canViewNotifications />
+            )}
 
             <Link
               href="/sessions"

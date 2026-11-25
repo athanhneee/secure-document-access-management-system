@@ -3,15 +3,21 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ShieldCheck, Menu, X } from 'lucide-react';
+import { resolveDefaultPortalForRoles, useAuth } from '@/lib/auth-context';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { HomeMobileDrawer } from './home-mobile-drawer';
 
 /**
- * Thuật toán: Thanh Đầu Đề Trang Giới Thiệu & Kích Hoạt Ngăn Kéo Phương Thức Di Động (`HomeHeader`)
- * Mục đích: Hiển thị nhận diện thương hiệu, lối tắt neo nội dung trên màn hình rộng và mở ngăn kéo `<dialog>.showModal()` (`HomeMobileDrawer`) trên thiết bị di động `375px`.
+ * Thuật toán: Thanh Đầu Đề Trang Giới Thiệu Nhận Thức Phiên & Kích Hoạt Ngăn Kéo Di Động (`HomeHeader`)
+ * Mục đích: Hiển thị nhận diện thương hiệu, định tuyến lối tắt chính vào phân hệ được cấp quyền khi đã đăng nhập và mở ngăn kéo `<dialog>.showModal()` (`HomeMobileDrawer`) trên thiết bị di động `375px`.
  */
 export function HomeHeader() {
+  const { isAuthenticated, user } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const ctaHref = isAuthenticated && user ? resolveDefaultPortalForRoles(user.roles) : '/login';
+  const desktopCtaText = isAuthenticated && user ? 'Vào phân hệ làm việc' : 'Đăng nhập hệ thống';
+  const mobileCtaText = isAuthenticated && user ? 'Phân hệ' : 'Đăng nhập';
 
   function closeMenu() {
     setMobileMenuOpen(false);
@@ -60,19 +66,19 @@ export function HomeHeader() {
 
             <div className="hidden md:block">
               <InteractiveHoverButton
-                href="/login"
-                text="Đăng nhập hệ thống"
+                href={ctaHref}
+                text={desktopCtaText}
                 className="min-h-9 px-4 text-xs font-semibold"
               />
             </div>
 
             <div className="md:hidden">
               <Link
-                href="/login"
+                href={ctaHref}
                 className="inline-flex min-h-11 items-center justify-center px-3.5 rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-xs font-semibold text-[#ffffff] active:scale-95 transition-all shadow-2xs"
                 onClick={closeMenu}
               >
-                Đăng nhập
+                {mobileCtaText}
               </Link>
             </div>
 

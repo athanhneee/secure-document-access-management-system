@@ -1,8 +1,10 @@
 'use client';
 
 /**
- * Thuật toán: Danh Mục Phân Hệ Theo Vai Trò RBAC Dùng Chung Cho `<aside>` Desktop & `<dialog>` Mobile (`SidebarDirectory`)
- * Mục đích: Đánh dấu tuyến đường đang hoạt động (`aria-current="page"`), hiển thị trạng thái phân quyền vai trò (`Chưa gán`) và cung cấp nút đóng `44x44px` khi hiển thị trong ngăn kéo di động.
+ * Thuật toán: Lọc Tối Thiểu Đặc Quyền Danh Mục Phân Hệ RBAC Dùng Chung Desktop & Mobile (`SidebarDirectory`)
+ * Mục đích:
+ *   - Chỉ dựng các liên kết phân hệ vai trò mà tài khoản hiện tại thực sự sở hữu trong `userRoles`, loại bỏ hoàn toàn các mục bị khóa gây hiểu nhầm và tránh điều hướng vào tuyến đường `403`.
+ *   - Đánh dấu tuyến đường đang hoạt động (`aria-current="page"`) và giữ nguyên vùng chạm tối thiểu `44x44px` trên ngăn kéo di động `375px`.
  */
 import type React from 'react';
 import Link from 'next/link';
@@ -15,7 +17,6 @@ import {
   Laptop,
   Shield,
   ExternalLink,
-  Lock,
   X,
 } from 'lucide-react';
 import type { RoleType } from '@/lib/auth-context';
@@ -81,6 +82,8 @@ export function SidebarDirectory({
   headingId,
   onCloseButton,
 }: SidebarDirectoryProps) {
+  const authorizedItems = NAV_ITEMS.filter((item) => Boolean(userRoles?.includes(item.role)));
+
   return (
     <>
       <div className="mb-2 flex items-center justify-between gap-2 px-2.5">
@@ -89,7 +92,7 @@ export function SidebarDirectory({
           className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#717171]"
         >
           <Shield size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
-          <span>Phân hệ vai trò</span>
+          <span>Phân hệ được cấp</span>
         </div>
         {onCloseButton && (
           <button
@@ -104,56 +107,43 @@ export function SidebarDirectory({
         )}
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto" aria-label="Danh sách phân hệ">
-        {NAV_ITEMS.map((item) => {
-          const isActive = pathname?.startsWith(item.href);
-          const hasAccess = userRoles?.includes(item.role);
-          const Icon = item.icon;
+      {authorizedItems.length > 0 && (
+        <nav className="flex-1 space-y-1 overflow-y-auto" aria-label="Danh sách phân hệ">
+          {authorizedItems.map((item) => {
+            const isActive = pathname?.startsWith(item.href);
+            const Icon = item.icon;
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={() => onNavigate?.()}
-              title={item.description}
-              className={`group flex min-h-11 sm:min-h-9 items-center justify-between gap-2 rounded-full px-3 py-2 text-xs transition-colors ${
-                isActive
-                  ? 'border border-[#E31C5F]/35 bg-[#FF385C]/10 font-semibold text-[#E31C5F]'
-                  : hasAccess
-                    ? 'border border-transparent font-medium text-[#222222] hover:bg-[#f7f7f7]'
-                    : 'border border-transparent font-medium text-[#717171] hover:bg-[#f7f7f7]'
-              }`}
-              aria-current={isActive ? 'page' : undefined}
-            >
-              <span className="flex min-w-0 items-center gap-2.5">
-                <Icon
-                  className={`shrink-0 ${
-                    isActive
-                      ? 'text-[#E31C5F]'
-                      : hasAccess
-                        ? 'text-[#717171] group-hover:text-[#222222]'
-                        : 'text-[#b0b0b0]'
-                  }`}
-                  size={16}
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
-                <span className="truncate">{item.title}</span>
-              </span>
-              {!hasAccess && (
-                <Lock
-                  size={16}
-                  strokeWidth={1.75}
-                  className="shrink-0 text-[#b0b0b0]"
-                  aria-label="Chưa gán vai trò"
-                />
-              )}
-            </Link>
-          );
-        })}
-      </nav>
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => onNavigate?.()}
+                title={item.description}
+                className={`group flex min-h-11 sm:min-h-9 items-center justify-between gap-2 rounded-full px-3 py-2 text-xs transition-colors ${
+                  isActive
+                    ? 'border border-[#E31C5F]/35 bg-[#FF385C]/10 font-semibold text-[#E31C5F]'
+                    : 'border border-transparent font-medium text-[#222222] hover:bg-[#f7f7f7]'
+                }`}
+                aria-current={isActive ? 'page' : undefined}
+              >
+                <span className="flex min-w-0 items-center gap-2.5">
+                  <Icon
+                    className={`shrink-0 ${
+                      isActive ? 'text-[#E31C5F]' : 'text-[#717171] group-hover:text-[#222222]'
+                    }`}
+                    size={16}
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                  />
+                  <span className="truncate">{item.title}</span>
+                </span>
+              </Link>
+            );
+          })}
+        </nav>
+      )}
 
-      <div className="mt-3 border-t border-[#ebebeb] pt-2.5 space-y-1">
+      <div className="mt-auto border-t border-[#ebebeb] pt-2.5 space-y-1">
         <Link
           href="/sessions"
           onClick={() => onNavigate?.()}

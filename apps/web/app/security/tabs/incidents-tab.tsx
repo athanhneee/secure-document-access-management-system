@@ -16,6 +16,7 @@ import type { IncidentItem } from '../types';
 
 interface IncidentsTabProps {
   incidents: IncidentItem[];
+  canCreateIncident?: boolean;
   onOpenCreateIncident: () => void;
   onSelectIncident: (incident: IncidentItem) => void;
 }
@@ -26,6 +27,7 @@ interface IncidentsTabProps {
  */
 export function IncidentsTab({
   incidents,
+  canCreateIncident = true,
   onOpenCreateIncident,
   onSelectIncident,
 }: IncidentsTabProps) {
@@ -35,14 +37,16 @@ export function IncidentsTab({
         <CardTitle className="text-sm sm:text-base text-[#222222]">
           Hồ sơ sự cố an ninh ({incidents.length})
         </CardTitle>
-        <InteractiveHoverButton
-          size="sm"
-          variant="primary"
-          text="Tạo báo cáo mới"
-          icon={<FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
-          onClick={onOpenCreateIncident}
-          className="shrink-0"
-        />
+        {canCreateIncident && (
+          <InteractiveHoverButton
+            size="sm"
+            variant="primary"
+            text="Tạo báo cáo mới"
+            icon={<FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
+            onClick={onOpenCreateIncident}
+            className="shrink-0"
+          />
+        )}
       </CardHeader>
       <CardContent className="p-0">
         <Table>

@@ -16,25 +16,35 @@ import type { AccessGrantItem } from '../types';
 
 interface GrantsTabProps {
   grants: AccessGrantItem[];
+  canCreateGrant?: boolean;
+  canRevokeGrant?: boolean;
   onOpenDirectGrant: () => void;
   onOpenRevoke: (grant: AccessGrantItem) => void;
 }
 
-export function GrantsTab({ grants, onOpenDirectGrant, onOpenRevoke }: GrantsTabProps) {
+export function GrantsTab({
+  grants,
+  canCreateGrant = true,
+  canRevokeGrant = true,
+  onOpenDirectGrant,
+  onOpenRevoke,
+}: GrantsTabProps) {
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <CardTitle className="text-sm sm:text-base text-[#222222]">
           Giấy phép truy cập ({grants.length})
         </CardTitle>
-        <InteractiveHoverButton
-          variant="primary"
-          size="sm"
-          text="Cấp quyền trực tiếp"
-          icon={<Plus size={16} strokeWidth={2} aria-hidden="true" />}
-          onClick={onOpenDirectGrant}
-          className="shrink-0"
-        />
+        {canCreateGrant && (
+          <InteractiveHoverButton
+            variant="primary"
+            size="sm"
+            text="Cấp quyền trực tiếp"
+            icon={<Plus size={16} strokeWidth={2} aria-hidden="true" />}
+            onClick={onOpenDirectGrant}
+            className="shrink-0"
+          />
+        )}
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -97,7 +107,7 @@ export function GrantsTab({ grants, onOpenDirectGrant, onOpenRevoke }: GrantsTab
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
-                    {grant.status === 'ACTIVE' && (
+                    {grant.status === 'ACTIVE' && canRevokeGrant && (
                       <InteractiveHoverButton
                         size="sm"
                         variant="danger"

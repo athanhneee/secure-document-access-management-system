@@ -18,6 +18,8 @@ import type { MyGrantedDoc } from '../types';
 interface GrantedDocumentsTabProps {
   myDocs: MyGrantedDoc[];
   downloadingDocId: string | null;
+  canViewDocument?: boolean;
+  canDownloadDocument?: boolean;
   onOpenPreview: (doc: MyGrantedDoc) => void;
   onDownload: (doc: MyGrantedDoc) => void;
 }
@@ -25,6 +27,8 @@ interface GrantedDocumentsTabProps {
 export function GrantedDocumentsTab({
   myDocs,
   downloadingDocId,
+  canViewDocument = true,
+  canDownloadDocument = true,
   onOpenPreview,
   onDownload,
 }: GrantedDocumentsTabProps) {
@@ -55,7 +59,8 @@ export function GrantedDocumentsTab({
               </TableRow>
             ) : (
               myDocs.map((doc) => {
-                const canDownload = doc.permissions.includes('DOWNLOAD') && doc.allowDownload;
+                const canDownload =
+                  doc.permissions.includes('DOWNLOAD') && doc.allowDownload && canDownloadDocument;
                 const isDownloading = downloadingDocId === doc.documentId;
 
                 return (
@@ -89,28 +94,28 @@ export function GrantedDocumentsTab({
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
                       <div className="inline-flex items-center justify-end gap-1.5">
-                        <InteractiveHoverButton
-                          size="sm"
-                          variant="primary"
-                          text="Xem"
-                          icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
-                          onClick={() => onOpenPreview(doc)}
-                        />
+                        {canViewDocument && (
+                          <InteractiveHoverButton
+                            size="sm"
+                            variant="primary"
+                            text="Xem"
+                            icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
+                            onClick={() => onOpenPreview(doc)}
+                          />
+                        )}
 
-                        <InteractiveHoverButton
-                          size="sm"
-                          variant="secondary"
-                          text="Tải bản sao"
-                          icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
-                          disabled={!canDownload || isDownloading}
-                          isLoading={isDownloading}
-                          onClick={() => onDownload(doc)}
-                          title={
-                            !canDownload
-                              ? 'Chính sách mức mật hoặc giấy phép không cho phép tải về'
-                              : 'Tải bản sao có watermark bảo mật'
-                          }
-                        />
+                        {canDownload && (
+                          <InteractiveHoverButton
+                            size="sm"
+                            variant="secondary"
+                            text="Tải bản sao"
+                            icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
+                            disabled={isDownloading}
+                            isLoading={isDownloading}
+                            onClick={() => onDownload(doc)}
+                            title="Tải bản sao có watermark bảo mật"
+                          />
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

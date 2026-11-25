@@ -4,20 +4,13 @@
  * Thuật toán: Điều Phối Đăng Nhập Bước Một & Chống Bẫy Điều Hướng Chéo Vai Trò (`LoginPage`, `LoginForm`)
  * Mục đích: Xác thực định danh/mật khẩu qua cookie `HttpOnly`, chuyển tiếp thử thách MFA khi cần và đối chiếu tham số `?redirect=` với tập vai trò thực tế từ `/users/me` để người dùng luôn vào đúng cổng phân quyền thay vì rơi vào màn hình `403`.
  */
-import { useState, Suspense, type FormEvent } from 'react';
+import { useEffect, useState, Suspense, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ShieldCheck, AlertCircle, KeyRound } from 'lucide-react';
+import { ShieldCheck, AlertCircle } from 'lucide-react';
 import { apiClient, ApiError, sanitizeRedirectPath } from '@/lib/api-client';
 import { resolveAuthorizedRedirectPath, useAuth } from '@/lib/auth-context';
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardFooter,
-} from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { LoginFormFields, type FormFieldErrors } from './login-form-fields';
 import { LoginDemoPanel } from './login-demo-panel';
@@ -26,13 +19,23 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTarget = sanitizeRedirectPath(searchParams.get('redirect'));
-  const { refreshUser } = useAuth();
+  const { user, isAuthenticated, isLoading: isAuthLoading, refreshUser } = useAuth();
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FormFieldErrors>({});
+
+  /**
+   * Thuật toán: Tự Động Chuyển Tiếp Phiên Đã Xác Thực Khỏi Màn Hình Đăng Nhập
+   * Mục đích: Nếu người dùng đã có phiên đăng nhập hợp lệ mà vô tình mở `/login`, tự động đưa về đúng phân hệ được cấp quyền thay vì hiển thị lại biểu mẫu đăng nhập.
+   */
+  useEffect(() => {
+    if (!isAuthLoading && isAuthenticated && user) {
+      router.replace(resolveAuthorizedRedirectPath(redirectTarget, user.roles));
+    }
+  }, [isAuthLoading, isAuthenticated, user, redirectTarget, router]);
 
   /**
    * Algorithm / Thuật toán: Máy Trạng Thái Đăng Nhập Đa Bước & Điều Hướng Phân Quyền (Multi-Step Authentication & RBAC Routing)
@@ -147,18 +150,6 @@ function LoginForm() {
               onSubmit={handleLogin}
             />
           </CardContent>
-
-          <CardFooter className="flex justify-center pt-3 border-t border-[#ebebeb]">
-            <div className="flex items-center gap-1.5 text-xs text-[#717171]">
-              <KeyRound
-                size={16}
-                strokeWidth={1.75}
-                className="text-[#717171]"
-                aria-hidden="true"
-              />
-              <span>Bảo mật phiên bằng HttpOnly Cookie &amp; CSRF</span>
-            </div>
-          </CardFooter>
         </Card>
 
         <LoginDemoPanel

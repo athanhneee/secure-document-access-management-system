@@ -45,6 +45,7 @@ export function UploadDocumentModal({
     docTitle,
     docClassificationId,
     retentionDateError,
+    subjectReadiness,
     isSubmittingDoc,
     handleNextStep,
     handleFinishUpload,
@@ -62,6 +63,7 @@ export function UploadDocumentModal({
     classificationLevels.every(
       (l) => !isClassificationAllowedForClearance(l.rank, userClearanceRank),
     );
+  const isSubjectBlocked = !subjectReadiness.ready;
 
   return (
     <Dialog open={uploadWizardOpen} onOpenChange={setUploadWizardOpen}>
@@ -69,7 +71,7 @@ export function UploadDocumentModal({
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle className="text-base font-semibold text-[#222222]">
-              Quy trình tải lên tài liệu an toàn (Bước {wizardStep}/3)
+              Tải lên tài liệu mới (Bước {wizardStep}/3)
             </DialogTitle>
             <div className="flex gap-1.5">
               {[1, 2, 3].map((step) => (
@@ -88,10 +90,10 @@ export function UploadDocumentModal({
           </div>
           <DialogDescription className="text-xs text-[#717171]">
             {wizardStep === 1 &&
-              'Bước 1: Chọn tập tin nguồn, phòng ban, danh mục và mức độ mật bắt buộc'}
+              'Chọn tệp tài liệu, phòng ban, danh mục nghiệp vụ và mức độ mật áp dụng.'}
             {wizardStep === 2 &&
-              'Bước 2: Xem xét chính sách tải về theo quy định mật và thời hạn bảo quản'}
-            {wizardStep === 3 && 'Bước 3: Xác minh thông tin và kích hoạt lưu trữ mã hóa'}
+              'Xem lại chính sách tải về theo mức độ mật và thiết lập thời hạn lưu trữ.'}
+            {wizardStep === 3 && 'Kiểm tra lại toàn bộ thông tin trước khi xác nhận tải lên.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -130,7 +132,7 @@ export function UploadDocumentModal({
               type="button"
               variant="ghost"
               size="sm"
-              text="Hủy bỏ"
+              text="Hủy"
               onClick={() => setUploadWizardOpen(false)}
             />
           )}
@@ -144,6 +146,7 @@ export function UploadDocumentModal({
               disabled={
                 !docTitle.trim() ||
                 !docFile ||
+                isSubjectBlocked ||
                 hasNoUploadClearance ||
                 isSelectedAboveClearance ||
                 (wizardStep === 2 && Boolean(retentionDateError))
@@ -155,10 +158,11 @@ export function UploadDocumentModal({
               type="button"
               variant="primary"
               size="sm"
-              text={isSubmittingDoc ? 'Đang tải lên...' : 'Xác nhận tải lên'}
+              text={isSubmittingDoc ? 'Đang tải lên…' : 'Xác nhận tải lên'}
               disabled={
                 isSubmittingDoc ||
                 !docFile ||
+                isSubjectBlocked ||
                 hasNoUploadClearance ||
                 isSelectedAboveClearance ||
                 Boolean(retentionDateError)

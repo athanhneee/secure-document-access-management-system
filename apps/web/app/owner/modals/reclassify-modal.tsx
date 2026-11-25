@@ -62,11 +62,11 @@ export function ReclassifyModal({
               aria-hidden="true"
             />
             <DialogTitle className="text-base font-semibold text-[#222222]">
-              Điều chỉnh phân loại mật (Reclassify)
+              Điều chỉnh mức độ mật
             </DialogTitle>
           </div>
           <DialogDescription className="text-xs text-[#717171]">
-            Lịch sử phân loại SCD Type 2 sẽ được ghi nhận phục vụ kiểm toán
+            Mọi thay đổi về mức độ mật sẽ được lưu vào lịch sử phân loại phục vụ kiểm toán.
           </DialogDescription>
         </DialogHeader>
 
@@ -76,7 +76,7 @@ export function ReclassifyModal({
               Tài liệu: <strong>{document?.title}</strong>
             </div>
             <div>
-              Mức mật hiện tại:{' '}
+              Mức độ mật hiện tại:{' '}
               <ClassificationBadge
                 level={document?.classificationCode ?? 'CONFIDENTIAL'}
                 size="sm"
@@ -96,7 +96,7 @@ export function ReclassifyModal({
             >
               {classificationLevels.map((lvl) => (
                 <option key={lvl.id} value={String(lvl.id)}>
-                  {lvl.name} ({lvl.code}) · Rank {lvl.rank}
+                  {lvl.name} · Cấp {lvl.rank}
                 </option>
               ))}
             </select>
@@ -114,7 +114,7 @@ export function ReclassifyModal({
             >
               {businessCategories.map((c) => (
                 <option key={c.id} value={String(c.id)}>
-                  {c.name} ({c.code})
+                  {c.name}
                 </option>
               ))}
             </select>
@@ -122,7 +122,7 @@ export function ReclassifyModal({
 
           <div className="space-y-1">
             <label htmlFor="reclass-reason" className="font-medium text-[#222222]">
-              Lý do điều chỉnh (Kiểm toán bắt buộc) <span className="text-[#C13515]">*</span>
+              Lý do điều chỉnh (bắt buộc lưu nhật ký) <span className="text-[#C13515]">*</span>
             </label>
             <Textarea
               id="reclass-reason"
@@ -130,7 +130,7 @@ export function ReclassifyModal({
               rows={3}
               value={reclassReason}
               onChange={(e) => onReasonChange(e.target.value)}
-              placeholder="Ví dụ: Hạ cấp độ mật sau khi báo cáo được công bố chính thức..."
+              placeholder="Ví dụ: Hạ mức độ mật sau khi báo cáo được công bố chính thức…"
               className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222]"
             />
           </div>

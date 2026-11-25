@@ -10,6 +10,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { formatAuditActionLabel, formatAuditOutcomeLabel, formatSafeDateVi } from '@/lib/ui-labels';
 import type { AuditLogItem } from '../types';
 
 interface AuditDetailModalProps {
@@ -24,10 +25,10 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
       <DialogContent className="max-w-lg border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Chi tiết bản ghi kiểm toán #{auditLog?.id}
+            Chi tiết lịch sử truy cập
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Chữ ký chuỗi Merkle/Hash chain đảm bảo tính toàn vẹn không thể làm giả
+            Thông tin ghi nhận sự kiện truy cập tài liệu trong nhật ký kiểm toán.
           </DialogDescription>
         </DialogHeader>
 
@@ -39,15 +40,15 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
                   Thời điểm
                 </div>
                 <div className="mt-0.5 font-semibold text-[#222222]">
-                  {new Date(auditLog.occurredAt).toLocaleString('vi-VN')}
+                  {formatSafeDateVi(auditLog.occurredAt, { includeTime: true })}
                 </div>
               </div>
               <div className="min-w-0">
                 <div className="text-[11px] font-medium uppercase tracking-wider text-[#717171]">
                   Hành động
                 </div>
-                <div className="mt-0.5 font-semibold text-[#222222] break-all">
-                  {auditLog.action}
+                <div className="mt-0.5 font-semibold text-[#222222] break-words">
+                  {formatAuditActionLabel(auditLog.action)}
                 </div>
               </div>
               <div className="min-w-0">
@@ -55,7 +56,7 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
                   Người thực hiện
                 </div>
                 <div className="mt-0.5 font-semibold text-[#222222] break-all">
-                  {auditLog.actorUsername || 'system'}
+                  {auditLog.actorUsername || 'Hệ thống'}
                 </div>
               </div>
               <div className="min-w-0">
@@ -64,7 +65,7 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
                 </div>
                 <div className="mt-0.5">
                   <Badge variant={auditLog.outcome === 'SUCCESS' ? 'success' : 'destructive'}>
-                    {auditLog.outcome}
+                    {formatAuditOutcomeLabel(auditLog.outcome)}
                   </Badge>
                 </div>
               </div>
@@ -78,28 +79,23 @@ export function AuditDetailModal({ open, onOpenChange, auditLog }: AuditDetailMo
               </div>
               <div className="min-w-0">
                 <div className="text-[11px] font-medium uppercase tracking-wider text-[#717171]">
-                  Mã phiên
+                  Phiên truy cập
                 </div>
-                <div className="mt-0.5 font-mono text-[#222222] break-all">
-                  {auditLog.accessSessionId || '—'}
+                <div className="mt-0.5 font-semibold text-[#222222]">
+                  {auditLog.accessSessionId ? 'Đã ghi nhận phiên bảo mật' : '—'}
                 </div>
               </div>
             </div>
 
-            <div className="space-y-1">
-              <span className="font-medium text-[#222222]">Mã băm chuỗi (Entry Hash)</span>
-              <div className="p-2.5 rounded-[12px] bg-[#f7f7f7] border border-[#ebebeb] font-mono text-xs break-all text-[#717171]">
-                {auditLog.entryHash}
-              </div>
-            </div>
-
-            {auditLog.details && Object.keys(auditLog.details).length > 0 && (
-              <div className="space-y-1">
-                <span className="font-medium text-[#222222]">Chi tiết sự kiện</span>
-                <pre className="sda-table-scroll p-2.5 rounded-[12px] bg-[#f7f7f7] border border-[#ebebeb] font-mono text-xs text-[#222222] overflow-x-auto overflow-y-auto max-h-44">
-                  {JSON.stringify(auditLog.details, null, 2)}
-                </pre>
-              </div>
+            {auditLog.entryHash && (
+              <details className="rounded-[12px] border border-[#ebebeb] bg-[#f7f7f7] px-3 py-2">
+                <summary className="cursor-pointer font-medium text-[#717171] hover:text-[#222222]">
+                  Thông tin đối soát toàn vẹn
+                </summary>
+                <div className="mt-2 font-mono text-xs break-all text-[#717171]">
+                  {auditLog.entryHash}
+                </div>
+              </details>
             )}
           </div>
         )}

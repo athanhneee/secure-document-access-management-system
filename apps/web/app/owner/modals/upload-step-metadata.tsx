@@ -41,6 +41,7 @@ export function UploadStepMetadata({
     setDocCode,
     docClassificationId,
     setDocClassificationId,
+    subjectReadiness,
   } = wizard;
 
   const hasClearanceInfo =
@@ -57,9 +58,31 @@ export function UploadStepMetadata({
 
   return (
     <div className="space-y-3.5">
+      {subjectReadiness.missingDepartment && (
+        <div
+          role="alert"
+          className="rounded-[18px] border border-[#C13515]/30 bg-[#f7f7f7] p-3 flex items-start gap-2 text-xs text-[#222222]"
+        >
+          <AlertTriangle
+            size={16}
+            strokeWidth={1.75}
+            className="shrink-0 text-[#C13515] mt-0.5"
+            aria-hidden="true"
+          />
+          <div className="space-y-0.5 leading-relaxed">
+            <div className="font-semibold text-[#C13515]">
+              Tài khoản chưa được gán phòng ban trực thuộc
+            </div>
+            <p className="text-[#717171]">
+              Bạn cần được quản trị viên gán phòng ban trực thuộc trước khi tải lên tài liệu mới.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-1">
         <label htmlFor="doc-file-upload" className="text-xs font-medium text-[#222222]">
-          Chọn tệp tài liệu (Bắt buộc: PDF, DOCX, XLSX, PPTX){' '}
+          Chọn tệp tài liệu (hỗ trợ: PDF, DOCX, XLSX, PPTX){' '}
           <span className="text-[#C13515]">*</span>
         </label>
         <input
@@ -85,8 +108,8 @@ export function UploadStepMetadata({
             </span>
           </div>
         ) : (
-          <div className="text-xs text-[#C13515]">
-            * Bạn phải chọn một tệp tài liệu trước khi tiếp tục
+          <div className="text-xs text-[#717171]">
+            Vui lòng chọn một tệp tài liệu trước khi chuyển sang bước tiếp theo.
           </div>
         )}
       </div>
@@ -118,7 +141,7 @@ export function UploadStepMetadata({
           >
             {departments.map((dept) => (
               <option key={dept.id} value={String(dept.id)}>
-                {dept.name} ({dept.code})
+                {dept.name}
               </option>
             ))}
           </select>
@@ -136,7 +159,7 @@ export function UploadStepMetadata({
           >
             {businessCategories.map((cat) => (
               <option key={cat.id} value={String(cat.id)}>
-                {cat.name} ({cat.code})
+                {cat.name}
               </option>
             ))}
           </select>
@@ -145,13 +168,13 @@ export function UploadStepMetadata({
 
       <div className="space-y-1">
         <label htmlFor="doc-code" className="text-xs font-medium text-[#222222]">
-          Mã số tài liệu (Để trống để hệ thống tự cấp)
+          Mã tài liệu (để trống để hệ thống tự cấp)
         </label>
         <Input
           id="doc-code"
           value={docCode}
           onChange={(e) => setDocCode(e.target.value)}
-          placeholder="DOC-TC-2026-001"
+          placeholder="VD: TC-2026-001"
           className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
         />
       </div>
@@ -159,22 +182,23 @@ export function UploadStepMetadata({
       <fieldset className="space-y-2 border-0 p-0 m-0 min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
           <legend className="block text-xs font-medium text-[#222222] p-0">
-            Mức độ mật bắt buộc (Mandatory Classification) <span className="text-[#C13515]">*</span>
+            Mức độ mật bắt buộc <span className="text-[#C13515]">*</span>
           </legend>
           {hasClearanceInfo && (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-[#717171]">
-              <span>Thẩm quyền của bạn:</span>
+              <span>Cấp thẩm quyền của bạn:</span>
               {userClearanceCode ? (
                 <ClassificationBadge
                   code={userClearanceCode}
                   rank={userClearanceRank}
+                  subject="user"
                   showRank
                   size="sm"
                 />
               ) : (
                 <span className="inline-flex items-center gap-1 font-semibold text-[#C13515]">
                   <ShieldAlert size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>CHƯA CẤP · R0</span>
+                  <span>CHƯA CẤP · Cấp 0</span>
                 </span>
               )}
             </span>
@@ -194,12 +218,11 @@ export function UploadStepMetadata({
             />
             <div className="space-y-0.5 leading-relaxed">
               <div className="font-semibold text-[#C13515]">
-                Tài khoản chưa được cấp thẩm quyền bảo mật (CLEARANCE_LEVEL = Rank 0)
+                Tài khoản chưa được cấp thẩm quyền bảo mật
               </div>
               <p className="text-[#717171]">
-                Theo nguyên tắc Bell-LaPadula, bạn chưa thể tải lên tài liệu ở bất kỳ mức mật nào.
-                Vui lòng liên hệ Quản trị viên hệ thống để gán cấp độ thẩm tra tại mục Quản lý tài
-                khoản.
+                Bạn hiện chưa thể tải lên tài liệu ở mức độ mật nào. Vui lòng liên hệ quản trị viên
+                hệ thống để được gán cấp thẩm quyền bảo mật phù hợp.
               </p>
             </div>
           </div>
@@ -220,13 +243,13 @@ export function UploadStepMetadata({
                 disabled={isAboveClearance}
                 title={
                   isAboveClearance
-                    ? `Vượt cấp thẩm quyền Bell-LaPadula (yêu cầu Rank ${level.rank}, tài khoản hiện tại Rank ${userClearanceRank ?? 0})`
-                    : `Chọn mức độ mật ${level.name} (Rank ${level.rank})`
+                    ? `Vượt quá cấp thẩm quyền bảo mật (yêu cầu Cấp ${level.rank}, hiện tại Cấp ${userClearanceRank ?? 0})`
+                    : `Chọn mức độ mật ${level.name} (Cấp ${level.rank})`
                 }
                 aria-label={
                   isAboveClearance
-                    ? `${level.name} (${level.code}) — Bị khóa do vượt cấp thẩm quyền (yêu cầu Rank ${level.rank})`
-                    : `Chọn mức độ mật ${level.name} (${level.code})`
+                    ? `${level.name} — Bị giới hạn do vượt cấp thẩm quyền (yêu cầu Cấp ${level.rank})`
+                    : `Chọn mức độ mật ${level.name}`
                 }
                 aria-pressed={isSelected}
                 onClick={() => {
@@ -246,7 +269,7 @@ export function UploadStepMetadata({
                 {isAboveClearance && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#717171]">
                     <Lock size={16} strokeWidth={1.75} aria-hidden="true" />
-                    <span>Cần R{level.rank}</span>
+                    <span>Cần Cấp {level.rank}</span>
                   </span>
                 )}
               </button>
@@ -263,9 +286,9 @@ export function UploadStepMetadata({
               aria-hidden="true"
             />
             <span>
-              Các mức mật cao hơn{' '}
-              <strong className="text-[#222222]">Rank {userClearanceRank}</strong> đã bị giới hạn
-              theo nguyên tắc Bell-LaPadula để tránh từ chối khi xác nhận tải lên.
+              Các mức độ mật cao hơn{' '}
+              <strong className="text-[#222222]">Cấp {userClearanceRank}</strong> được giới hạn theo
+              cấp thẩm quyền bảo mật hiện tại của tài khoản.
             </span>
           </div>
         )}

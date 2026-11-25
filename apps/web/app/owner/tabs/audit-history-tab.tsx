@@ -13,6 +13,7 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { formatAuditActionLabel, formatAuditOutcomeLabel, formatSafeDateVi } from '@/lib/ui-labels';
 import type { AuditLogItem } from '../types';
 
 interface AuditHistoryTabProps {
@@ -48,7 +49,7 @@ export function AuditHistoryTab({
     <Card>
       <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <CardTitle className="text-sm sm:text-base text-[#222222]">
-          Nhật ký truy vết tài liệu ({auditTotal})
+          Lịch sử truy cập tài liệu ({auditTotal})
         </CardTitle>
         <InteractiveHoverButton
           variant="secondary"
@@ -74,10 +75,10 @@ export function AuditHistoryTab({
               <TableHead className="w-[172px] text-xs text-[#717171]">Thời điểm</TableHead>
               <TableHead className="w-[140px] text-xs text-[#717171]">Người thực hiện</TableHead>
               <TableHead className="w-[185px] text-xs text-[#717171]">Hành động</TableHead>
-              <TableHead className="text-xs text-[#717171]">Tài liệu / Phiên</TableHead>
+              <TableHead className="text-xs text-[#717171]">Thông tin liên quan</TableHead>
               <TableHead className="w-[115px] text-xs text-[#717171]">Địa chỉ IP</TableHead>
-              <TableHead className="w-[100px] text-xs text-[#717171]">Kết quả</TableHead>
-              <TableHead className="w-[92px] text-xs text-[#717171] text-right">Chi tiết</TableHead>
+              <TableHead className="w-[110px] text-xs text-[#717171]">Kết quả</TableHead>
+              <TableHead className="w-[92px] text-xs text-[#717171] text-right">Thao tác</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -90,50 +91,44 @@ export function AuditHistoryTab({
                     className="animate-spin mx-auto mb-2 text-[#FF385C]"
                     aria-hidden="true"
                   />
-                  Đang tải dữ liệu kiểm toán...
+                  Đang tải lịch sử truy cập…
                 </TableCell>
               </TableRow>
             ) : auditLogs.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-8 text-[#717171] text-xs">
-                  Chưa có sự kiện kiểm toán nào được ghi nhận cho tài liệu của bạn
+                  Chưa có sự kiện truy cập nào được ghi nhận cho tài liệu của bạn.
                 </TableCell>
               </TableRow>
             ) : (
               auditLogs.map((log) => (
                 <TableRow key={log.id} className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60">
                   <TableCell className="text-xs text-[#222222] whitespace-nowrap tabular-nums truncate">
-                    {new Date(log.occurredAt).toLocaleString('vi-VN')}
+                    {formatSafeDateVi(log.occurredAt, { includeTime: true })}
                   </TableCell>
                   <TableCell>
                     <div
-                      title={log.actorUsername || 'system'}
+                      title={log.actorUsername || 'Hệ thống'}
                       className="text-xs font-semibold text-[#222222] truncate"
                     >
-                      {log.actorUsername || 'system'}
+                      {log.actorUsername || 'Hệ thống'}
                     </div>
-                    {log.actorUserId && (
-                      <div className="text-xs text-[#717171] truncate">ID: {log.actorUserId}</div>
-                    )}
                   </TableCell>
-                  <TableCell title={log.action} className="truncate">
+                  <TableCell title={formatAuditActionLabel(log.action)} className="truncate">
                     <Badge variant="secondary" className="text-xs max-w-full truncate">
-                      {log.action}
+                      {formatAuditActionLabel(log.action)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-[#222222] truncate">
-                    {log.documentId && (
-                      <div
-                        title={log.documentId}
-                        className="text-xs font-mono text-[#717171] truncate"
-                      >
-                        Doc: {log.documentId.slice(0, 8)}...
+                    {log.documentId ? (
+                      <div className="text-xs text-[#717171] truncate">
+                        Tài liệu #{log.documentId.slice(0, 8)}
                       </div>
+                    ) : (
+                      <span className="text-[#717171]">—</span>
                     )}
                     {log.accessSessionId && (
-                      <div title={log.accessSessionId} className="text-xs text-[#008489] truncate">
-                        Sess: {log.accessSessionId.slice(0, 12)}
-                      </div>
+                      <div className="text-xs text-[#008489] truncate">Có phiên đọc bảo mật</div>
                     )}
                   </TableCell>
                   <TableCell
@@ -147,7 +142,7 @@ export function AuditHistoryTab({
                       variant={log.outcome === 'SUCCESS' ? 'success' : 'destructive'}
                       className="text-xs"
                     >
-                      {log.outcome}
+                      {formatAuditOutcomeLabel(log.outcome)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">

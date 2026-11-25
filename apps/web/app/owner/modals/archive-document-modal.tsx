@@ -40,12 +40,12 @@ export function ArchiveDocumentModal({
           <div className="flex items-center gap-2 text-[#C13515]">
             <Archive size={20} strokeWidth={1.75} aria-hidden="true" />
             <DialogTitle className="text-base font-semibold text-[#C13515]">
-              Lưu trữ tài liệu (Archive)
+              Lưu trữ tài liệu
             </DialogTitle>
           </div>
           <DialogDescription className="text-xs text-[#717171]">
-            Tài liệu sẽ bị đóng băng (ARCHIVED). Toàn bộ giấy phép truy cập sẽ bị tạm ngưng và các
-            phiên đọc hiện hành sẽ bị ngắt lập tức.
+            Tài liệu sẽ được chuyển sang trạng thái lưu trữ. Toàn bộ quyền truy cập đang hiệu lực sẽ
+            bị tạm ngưng và các phiên đọc hiện tại sẽ được ngắt ngay lập tức.
           </DialogDescription>
         </DialogHeader>
 
@@ -54,7 +54,7 @@ export function ArchiveDocumentModal({
             <div>
               Tài liệu: <strong>{document?.title}</strong>
             </div>
-            <div>Mã số: {document?.documentCode}</div>
+            <div>Mã tài liệu: {document?.documentCode || 'Chưa cấp mã'}</div>
           </div>
 
           <div className="space-y-1">
@@ -66,7 +66,7 @@ export function ArchiveDocumentModal({
               rows={3}
               value={archiveReason}
               onChange={(e) => onReasonChange(e.target.value)}
-              placeholder="Ví dụ: Tài liệu đã hoàn thành chu kỳ sử dụng và lưu kho an toàn..."
+              placeholder="Ví dụ: Tài liệu đã hoàn thành chu kỳ sử dụng và chuyển sang lưu trữ…"
               className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222]"
             />
           </div>

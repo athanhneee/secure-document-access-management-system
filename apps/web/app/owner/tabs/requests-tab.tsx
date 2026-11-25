@@ -14,6 +14,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  formatPermissionActionLabel,
+  formatRequestStatusLabel,
+  formatSafeDateVi,
+} from '@/lib/ui-labels';
 import type { AccessRequestItem } from '../types';
 
 interface RequestsTabProps {
@@ -42,7 +47,7 @@ export function RequestsTab({
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm sm:text-base text-[#222222]">
-            Hàng đợi yêu cầu cấp quyền ({requests.length})
+            Danh sách yêu cầu quyền truy cập ({requests.length})
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -50,18 +55,18 @@ export function RequestsTab({
             <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
               <TableRow>
                 <TableHead className="text-xs text-[#717171]">Người yêu cầu / Phòng ban</TableHead>
-                <TableHead className="text-xs text-[#717171]">Tài liệu mục tiêu</TableHead>
-                <TableHead className="text-xs text-[#717171]">Hành động</TableHead>
-                <TableHead className="text-xs text-[#717171]">Thời gian yêu cầu</TableHead>
+                <TableHead className="text-xs text-[#717171]">Tài liệu</TableHead>
+                <TableHead className="text-xs text-[#717171]">Quyền yêu cầu</TableHead>
+                <TableHead className="text-xs text-[#717171]">Thời hạn đề nghị</TableHead>
                 <TableHead className="text-xs text-[#717171]">Lý do nghiệp vụ</TableHead>
-                <TableHead className="text-xs text-[#717171] text-right">Quyết định</TableHead>
+                <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {requests.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-[#717171] text-xs">
-                    Không có yêu cầu cấp quyền nào đang chờ duyệt
+                    Không có yêu cầu quyền truy cập nào đang chờ duyệt.
                   </TableCell>
                 </TableRow>
               ) : (
@@ -80,18 +85,20 @@ export function RequestsTab({
                       {req.documentTitle}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{req.requestedAction}</Badge>
+                      <Badge variant="secondary">
+                        {formatPermissionActionLabel(req.requestedAction)}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-[#222222]">
                       {req.requestedFrom && req.requestedUntil ? (
                         <div>
-                          <div>{new Date(req.requestedFrom).toLocaleDateString('vi-VN')}</div>
+                          <div>{formatSafeDateVi(req.requestedFrom)}</div>
                           <div className="text-[#717171] font-semibold">
-                            đến {new Date(req.requestedUntil).toLocaleDateString('vi-VN')}
+                            đến {formatSafeDateVi(req.requestedUntil)}
                           </div>
                         </div>
                       ) : (
-                        <span className="text-[#717171]">Mặc định 7 ngày</span>
+                        <span className="text-[#717171]">7 ngày (mặc định)</span>
                       )}
                     </TableCell>
                     <TableCell className="text-xs text-[#222222] max-w-sm">
@@ -120,7 +127,7 @@ export function RequestsTab({
                         </div>
                       ) : (
                         <Badge variant="outline" className="text-[13px] text-[#717171]">
-                          {req.status}
+                          {formatRequestStatusLabel(req.status)}
                         </Badge>
                       )}
                     </TableCell>

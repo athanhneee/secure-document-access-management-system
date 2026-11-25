@@ -9,12 +9,13 @@ import type {
   DocumentApiDto,
   DocumentItem,
 } from '../types';
+import type { OwnerTab } from './use-owner-data';
 
 interface UseDocumentLifecycleParams {
   setDocuments: Dispatch<SetStateAction<DocumentItem[]>>;
   classificationLevels: ClassificationLevelLookupItem[];
   businessCategories: BusinessCategoryLookupItem[];
-  refreshData: (options?: { silent?: boolean }) => Promise<void>;
+  refreshData: (options?: { silent?: boolean; scope?: OwnerTab }) => Promise<void>;
   setMessage: (msg: string | null) => void;
   setErrorMessage: (msg: string | null) => void;
 }
@@ -55,7 +56,6 @@ export function useDocumentLifecycle({
       await apiClient(`/documents/${doc.id}/activate`, { method: 'POST' });
       setDocuments((prev) => applyOptimisticStatusById(prev, doc.id, 'ACTIVE'));
       setMessage(`Đã kích hoạt tài liệu "${doc.title}" thành công.`);
-      void refreshData({ silent: true });
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
@@ -110,7 +110,7 @@ export function useDocumentLifecycle({
     e.preventDefault();
     if (!docForReclassify) return;
     if (!reclassReason.trim()) {
-      setErrorMessage('Vui lòng nhập lý do điều chỉnh phân loại mật.');
+      setErrorMessage('Vui lòng nhập lý do điều chỉnh mức độ mật.');
       return;
     }
 
@@ -130,8 +130,8 @@ export function useDocumentLifecycle({
       setReclassifyOpen(false);
       setDocForReclassify(null);
       setReclassReason('');
-      setMessage(`Đã điều chỉnh phân loại tài liệu "${targetTitle}" thành công.`);
-      await refreshData({ silent: true });
+      setMessage(`Đã điều chỉnh mức độ mật tài liệu "${targetTitle}" thành công.`);
+      await refreshData({ silent: true, scope: 'documents' });
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
@@ -187,8 +187,8 @@ export function useDocumentLifecycle({
       setDocForNewVersion(null);
       setNewVersionFile(null);
       setNewVersionNote('');
-      setMessage(`Đã tải lên phiên bản v${res.versionNo}.0 cho tài liệu "${targetTitle}".`);
-      await refreshData({ silent: true });
+      setMessage(`Đã tải lên phiên bản ${res.versionNo} cho tài liệu "${targetTitle}".`);
+      await refreshData({ silent: true, scope: 'documents' });
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
@@ -227,9 +227,8 @@ export function useDocumentLifecycle({
       setArchiveReason('');
       setDocuments((prev) => applyOptimisticStatusById(prev, target.id, 'ARCHIVED'));
       setMessage(
-        `Tài liệu "${target.title}" đã được chuyển vào lưu trữ (ARCHIVED). Mọi phiên đọc đã bị chấm dứt.`,
+        `Tài liệu "${target.title}" đã được chuyển vào lưu trữ. Mọi phiên đọc đang mở đã được ngắt.`,
       );
-      void refreshData({ silent: true });
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError

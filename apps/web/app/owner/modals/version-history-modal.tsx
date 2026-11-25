@@ -11,6 +11,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { formatSafeDateVi, formatScanStatusLabel } from '@/lib/ui-labels';
 import type { DocumentItem, DocumentVersionItem } from '../types';
 
 interface VersionHistoryModalProps {
@@ -36,10 +37,10 @@ export function VersionHistoryModal({
         <DialogHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pr-12">
           <div>
             <DialogTitle className="text-base font-semibold text-[#222222]">
-              Lịch sử các phiên bản: {document?.title}
+              Lịch sử phiên bản: {document?.title}
             </DialogTitle>
             <DialogDescription className="text-xs text-[#717171]">
-              Danh sách các tệp nguồn, băm SHA-256 và trạng thái quét virus từng phiên bản
+              Danh sách các phiên bản tệp đã tải lên và kết quả kiểm tra an toàn mã độc.
             </DialogDescription>
           </div>
           <InteractiveHoverButton
@@ -64,10 +65,10 @@ export function VersionHistoryModal({
                 className="animate-spin mx-auto mb-2 text-[#FF385C]"
                 aria-hidden="true"
               />
-              Đang tải lịch sử phiên bản...
+              Đang tải lịch sử phiên bản…
             </div>
           ) : versions.length === 0 ? (
-            <div className="text-center py-6 text-[#717171]">Không có dữ liệu phiên bản</div>
+            <div className="text-center py-6 text-[#717171]">Không có dữ liệu phiên bản.</div>
           ) : (
             <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
               {versions.map((v) => (
@@ -76,12 +77,12 @@ export function VersionHistoryModal({
                   className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-[#222222]">Phiên bản v{v.versionNo}.0</span>
+                    <span className="font-bold text-[#222222]">Phiên bản {v.versionNo}</span>
                     <Badge
                       variant={v.scanStatus === 'CLEAN' ? 'success' : 'destructive'}
                       className="text-[13px]"
                     >
-                      {v.scanStatus}
+                      {formatScanStatusLabel(v.scanStatus)}
                     </Badge>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs text-[#717171]">
@@ -89,11 +90,8 @@ export function VersionHistoryModal({
                       Tệp: <strong className="text-[#222222]">{v.originalFilename}</strong>
                     </div>
                     <div>Kích thước: {(Number(v.fileSizeBytes) / 1024).toFixed(1)} KB</div>
-                    <div>Thời điểm: {new Date(v.createdAt).toLocaleString('vi-VN')}</div>
+                    <div>Thời điểm: {formatSafeDateVi(v.createdAt, { includeTime: true })}</div>
                     <div>Ghi chú: {v.changeNote || '—'}</div>
-                  </div>
-                  <div className="text-[13px] text-[#717171] font-mono truncate">
-                    SHA-256: {v.sha256Hash}
                   </div>
                 </div>
               ))}

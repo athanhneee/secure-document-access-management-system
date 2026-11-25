@@ -40,10 +40,10 @@ export function DecideRequestModal({
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Cấp giấy phép truy cập có thời hạn
+            Phê duyệt và cấp quyền truy cập
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Xác định quyền (VIEW hoặc DOWNLOAD) và giới hạn thời gian hiệu lực
+            Chọn phạm vi quyền truy cập và thời hạn hiệu lực áp dụng cho yêu cầu này.
           </DialogDescription>
         </DialogHeader>
 
@@ -57,14 +57,14 @@ export function DecideRequestModal({
             </div>
             {request?.requestedFrom && request?.requestedUntil && (
               <div className="text-[#008489] font-medium pt-1 border-t border-[#ebebeb]">
-                Thời gian yêu cầu: {new Date(request.requestedFrom).toLocaleDateString('vi-VN')} đến{' '}
+                Thời hạn đề nghị: {new Date(request.requestedFrom).toLocaleDateString('vi-VN')} đến{' '}
                 {new Date(request.requestedUntil).toLocaleDateString('vi-VN')}
               </div>
             )}
           </div>
 
           <fieldset className="space-y-1 border-0 p-0 m-0 min-w-0">
-            <legend className="font-medium text-[#222222] block mb-1">Phạm vi quyền cấp:</legend>
+            <legend className="font-medium text-[#222222] block mb-1">Phạm vi quyền cấp</legend>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
@@ -77,7 +77,7 @@ export function DecideRequestModal({
                 }`}
               >
                 <Eye size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>Chỉ xem (VIEW)</span>
+                <span>Chỉ xem</span>
               </button>
               <button
                 type="button"
@@ -90,14 +90,14 @@ export function DecideRequestModal({
                 }`}
               >
                 <Download size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>Xem &amp; Tải (DOWNLOAD)</span>
+                <span>Xem &amp; Tải về</span>
               </button>
             </div>
           </fieldset>
 
           <div className="space-y-1">
             <label htmlFor="grant-duration" className="font-medium text-[#222222]">
-              Thời hạn hiệu lực (Ngày):
+              Thời hạn hiệu lực (ngày)
             </label>
             <select
               id="grant-duration"
@@ -105,9 +105,9 @@ export function DecideRequestModal({
               onChange={(e) => onValidDaysChange(Number(e.target.value))}
               className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
-              <option value={1}>1 ngày (24 giờ khẩn cấp)</option>
+              <option value={1}>1 ngày (24 giờ)</option>
               <option value={3}>3 ngày</option>
-              <option value={7}>7 ngày (1 tuần làm việc)</option>
+              <option value={7}>7 ngày (1 tuần)</option>
               <option value={14}>14 ngày</option>
               <option value={30}>30 ngày</option>
             </select>

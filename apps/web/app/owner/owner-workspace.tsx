@@ -22,7 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { filterOwnerDocuments } from './helpers';
 import { useDocumentHistory } from './hooks/use-document-history';
 import { useDocumentLifecycle } from './hooks/use-document-lifecycle';
-import { useOwnerData } from './hooks/use-owner-data';
+import { useOwnerData, type OwnerTab } from './hooks/use-owner-data';
 import { useOwnerDelivery } from './hooks/use-owner-delivery';
 import { useOwnerGrants } from './hooks/use-owner-grants';
 import { useOwnerRequests } from './hooks/use-owner-requests';
@@ -70,20 +70,20 @@ function OwnerWorkspaceContent() {
   const canViewDocsTab =
     hasPermission('DOCUMENT:DISCOVER') || canViewDoc || canManageDoc || canUpload;
 
-  const permittedTabs = [
-    canViewDocsTab ? 'documents' : null,
-    canViewRequests ? 'requests' : null,
-    canViewGrants ? 'grants' : null,
-    canViewHistory ? 'history' : null,
-  ].filter((t): t is string => t !== null);
+  const permittedTabs: OwnerTab[] = [
+    canViewDocsTab ? ('documents' as const) : null,
+    canViewRequests ? ('requests' as const) : null,
+    canViewGrants ? ('grants' as const) : null,
+    canViewHistory ? ('history' as const) : null,
+  ].filter((t): t is OwnerTab => t !== null);
 
-  const [selectedTab, setSelectedTab] = useState('documents');
-  const activeTab = permittedTabs.includes(selectedTab)
+  const [selectedTab, setSelectedTab] = useState<OwnerTab>('documents');
+  const activeTab: OwnerTab = permittedTabs.includes(selectedTab)
     ? selectedTab
     : (permittedTabs[0] ?? 'documents');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const data = useOwnerData();
+  const data = useOwnerData(activeTab);
   const delivery = useOwnerDelivery({
     setMessage: data.setMessage,
     setErrorMessage: data.setErrorMessage,
@@ -94,6 +94,7 @@ function OwnerWorkspaceContent() {
     departments: data.departments,
     businessCategories: data.businessCategories,
     classificationLevels: data.classificationLevels,
+    ensureUploadLookups: data.ensureUploadLookups,
     refreshData: data.refreshData,
     setMessage: data.setMessage,
     setErrorMessage: data.setErrorMessage,
@@ -109,24 +110,27 @@ function OwnerWorkspaceContent() {
   });
   const history = useDocumentHistory(clearError);
   const grantsControl = useOwnerGrants({
+    currentUserId: user?.id,
     documents: data.documents,
     setGrants: data.setGrants,
+    setActiveGrantsCount: data.setActiveGrantsCount,
     usersLookup: data.usersLookup,
     rolesLookup: data.rolesLookup,
+    ensureGrantLookups: data.ensureGrantLookups,
     refreshData: data.refreshData,
     setMessage: data.setMessage,
     setErrorMessage: data.setErrorMessage,
   });
   const requestsControl = useOwnerRequests({
     setRequests: data.setRequests,
-    refreshData: data.refreshData,
+    onRequestApproved: data.invalidateGrants,
     setMessage: data.setMessage,
     setErrorMessage: data.setErrorMessage,
   });
 
   const filteredDocs = filterOwnerDocuments(data.documents, searchQuery);
   const pendingCount = data.requests.filter((r) => r.status === 'PENDING').length;
-  const activeGrantCount = data.grants.filter((g) => g.status === 'ACTIVE').length;
+  const activeGrantCount = data.activeGrantsCount;
 
   return (
     <DialogErrorProvider
@@ -136,9 +140,9 @@ function OwnerWorkspaceContent() {
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="min-w-0">
-            <Badge variant="warning">Document Owner</Badge>
+            <Badge variant="warning">Chủ sở hữu tài liệu</Badge>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222] mt-0.5">
-              Quản lý &amp; Cấp phép Tài liệu Mật
+              Quản lý và cấp quyền tài liệu mật
             </h1>
           </div>
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
@@ -193,24 +197,40 @@ function OwnerWorkspaceContent() {
         )}
 
         {permittedTabs.length > 0 && (
-          <Tabs value={activeTab} onValueChange={setSelectedTab} className="space-y-3.5">
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => setSelectedTab(value as OwnerTab)}
+            className="space-y-3.5"
+          >
             <TabsList className="grid w-full grid-cols-2 lg:inline-flex lg:w-auto h-auto min-h-10 rounded-[18px] lg:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
               {canViewDocsTab && (
                 <TabsTrigger value="documents" className="flex items-center gap-1.5 text-xs">
                   <FolderLock size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Tài liệu sở hữu ({data.documents.length})</span>
+                  <span>
+                    {data.loadedTabs.documents
+                      ? `Tài liệu quản lý (${data.documents.length})`
+                      : 'Tài liệu quản lý'}
+                  </span>
                 </TabsTrigger>
               )}
               {canViewRequests && (
                 <TabsTrigger value="requests" className="flex items-center gap-1.5 text-xs">
                   <Clock size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Yêu cầu cần duyệt ({pendingCount})</span>
+                  <span>
+                    {data.loadedTabs.requests
+                      ? `Yêu cầu cần duyệt (${pendingCount})`
+                      : 'Yêu cầu cần duyệt'}
+                  </span>
                 </TabsTrigger>
               )}
               {canViewGrants && (
                 <TabsTrigger value="grants" className="flex items-center gap-1.5 text-xs">
                   <KeyRound size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Giấy phép hiệu lực ({activeGrantCount})</span>
+                  <span>
+                    {data.loadedTabs.grants
+                      ? `Quyền truy cập (${activeGrantCount})`
+                      : 'Quyền truy cập'}
+                  </span>
                 </TabsTrigger>
               )}
               {canViewHistory && (
@@ -260,8 +280,15 @@ function OwnerWorkspaceContent() {
               <TabsContent value="grants" className="space-y-4">
                 <GrantsTab
                   grants={data.grants}
+                  activeGrantCount={activeGrantCount}
+                  grantsPage={data.grantsPage}
+                  grantsHasMore={data.grantsHasMore}
+                  grantsStatusFilter={data.grantsStatusFilter}
+                  isLoadingGrants={data.isLoadingGrants}
                   canCreateGrant={canCreateGrant}
                   canRevokeGrant={canRevokeGrant}
+                  onChangeStatusFilter={(status) => void data.loadGrants(1, status)}
+                  onLoadPage={(page) => void data.loadGrants(page, data.grantsStatusFilter)}
                   onOpenDirectGrant={grantsControl.openDirectGrantModal}
                   onOpenRevoke={grantsControl.openRevokeModal}
                 />
@@ -305,8 +332,6 @@ function OwnerWorkspaceContent() {
           grantsControl={grantsControl}
           requestsControl={requestsControl}
           delivery={delivery}
-          documents={data.documents}
-          usersLookup={data.usersLookup}
           rolesLookup={data.rolesLookup}
           auditDetailOpen={data.auditDetailOpen}
           onAuditDetailOpenChange={data.setAuditDetailOpen}

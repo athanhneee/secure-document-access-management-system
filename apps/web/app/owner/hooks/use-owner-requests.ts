@@ -3,23 +3,24 @@
 import { useState, type Dispatch, type SetStateAction } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { removeOptimisticById } from '@/lib/optimistic-state';
+import { formatPermissionActionLabel } from '@/lib/ui-labels';
 import { calculateRequestedDays, expandGrantPermissions } from '../helpers';
 import type { AccessRequestItem } from '../types';
 
 interface UseOwnerRequestsParams {
   setRequests: Dispatch<SetStateAction<AccessRequestItem[]>>;
-  refreshData: (options?: { silent?: boolean }) => Promise<void>;
+  onRequestApproved?: () => Promise<void>;
   setMessage: (msg: string | null) => void;
   setErrorMessage: (msg: string | null) => void;
 }
 
 /**
- * Thuật toán: Phán Quyết Phê Duyệt / Từ Chối Xác Thực Máy Chủ Trước Khi Đóng Hộp Thoại (`useOwnerRequests`)
- * Mục đích: Bắt buộc `await` phản hồi thành công từ `POST /access-requests/:id/decide` trước khi đóng `<dialog>`, rút yêu cầu khỏi hàng đợi `PENDING` và hiện thông báo thành công; giữ nguyên hộp thoại để hiển thị lỗi nếu máy chủ từ chối (`400`/`403`/`409`/`500`).
+ * Thuật toán: Phán Quyết Phê Duyệt / Từ Chối Cập Nhật State Trực Tiếp Không Reload Toàn Trang (`useOwnerRequests`)
+ * Mục đích: Rút ngay yêu cầu khỏi hàng đợi `PENDING` sau khi máy chủ xác nhận và chỉ đánh dấu đồng bộ riêng tab `grants` nếu đã mở, thay vì gọi lại toàn bộ 9 API `/owner`.
  */
 export function useOwnerRequests({
   setRequests,
-  refreshData,
+  onRequestApproved,
   setMessage,
   setErrorMessage,
 }: UseOwnerRequestsParams) {
@@ -60,14 +61,14 @@ export function useOwnerRequests({
       setSelectedRequest(null);
       setRequests((prev) => removeOptimisticById(prev, target.id));
       setMessage(
-        `Đã phê duyệt yêu cầu và cấp quyền ${actionSnapshot} tài liệu cho ${target.requestorName} trong ${daysSnapshot} ngày.`,
+        `Đã phê duyệt yêu cầu và cấp quyền "${formatPermissionActionLabel(actionSnapshot)}" cho ${target.requestorName} trong ${daysSnapshot} ngày.`,
       );
-      void refreshData({ silent: true });
+      void onRequestApproved?.();
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể phê duyệt yêu cầu.'
-          : 'Đã xảy ra lỗi khi tạo giấy phép truy cập.',
+          : 'Đã xảy ra lỗi khi cấp quyền truy cập.',
       );
     } finally {
       setIsApproving(false);
@@ -86,7 +87,6 @@ export function useOwnerRequests({
       });
       setRequests((prev) => removeOptimisticById(prev, req.id));
       setMessage(`Đã từ chối yêu cầu truy cập của ${req.requestorName}.`);
-      void refreshData({ silent: true });
       return true;
     } catch (err) {
       setErrorMessage(

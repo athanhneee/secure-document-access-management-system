@@ -44,11 +44,11 @@ export function UploadVersionModal({
           <div className="flex items-center gap-2">
             <Layers size={20} strokeWidth={1.75} className="text-[#008489]" aria-hidden="true" />
             <DialogTitle className="text-base font-semibold text-[#222222]">
-              Cập nhật phiên bản tài liệu mới
+              Tải lên phiên bản mới
             </DialogTitle>
           </div>
           <DialogDescription className="text-xs text-[#717171]">
-            Tải lên tệp mới để tăng số phiên bản cho tài liệu &quot;{document?.title}&quot;
+            Tải lên tệp mới để tạo phiên bản cập nhật cho tài liệu &quot;{document?.title}&quot;.
           </DialogDescription>
         </DialogHeader>
 
@@ -69,13 +69,13 @@ export function UploadVersionModal({
 
           <div className="space-y-1">
             <label htmlFor="new-version-note" className="font-medium text-[#222222]">
-              Ghi chú thay đổi (Change Note)
+              Ghi chú thay đổi
             </label>
             <Input
               id="new-version-note"
               value={newVersionNote}
               onChange={(e) => onNoteChange(e.target.value)}
-              placeholder="Ví dụ: Bổ sung phụ lục giải trình tài chính..."
+              placeholder="Ví dụ: Bổ sung phụ lục giải trình tài chính…"
               className="min-h-11 sm:h-9 text-xs rounded-full bg-white border-[#dddddd]"
             />
           </div>

@@ -23,6 +23,7 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { formatDocumentStatusLabel } from '@/lib/ui-labels';
 import type { DocumentItem } from '../types';
 
 interface DocumentsTabProps {
@@ -88,7 +89,7 @@ export function DocumentsTab({
             name="owner-documents-search"
             type="text"
             aria-label="Tìm kiếm tài liệu theo tiêu đề hoặc mã số"
-            placeholder="Tìm theo tiêu đề, mã số..."
+            placeholder="Tìm theo tiêu đề hoặc mã tài liệu…"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             className="pl-9 min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
@@ -100,8 +101,8 @@ export function DocumentsTab({
           <TableHeader>
             <TableRow>
               <TableHead>Tài liệu</TableHead>
-              <TableHead>Đơn vị &amp; Danh mục</TableHead>
-              <TableHead>Mức mật &amp; Chính sách</TableHead>
+              <TableHead>Phòng ban &amp; Danh mục</TableHead>
+              <TableHead>Mức độ mật &amp; Chính sách</TableHead>
               <TableHead>Trạng thái</TableHead>
               <TableHead className="text-right">Thao tác</TableHead>
             </TableRow>
@@ -110,7 +111,9 @@ export function DocumentsTab({
             {documents.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-center py-8 text-[#717171] text-xs">
-                  Chưa có tài liệu nào trong danh mục quản lý
+                  {searchQuery.trim()
+                    ? 'Không tìm thấy tài liệu phù hợp với từ khóa tìm kiếm.'
+                    : 'Chưa có tài liệu nào trong danh mục quản lý.'}
                 </TableCell>
               </TableRow>
             ) : (
@@ -121,7 +124,7 @@ export function DocumentsTab({
                       {doc.title}
                     </div>
                     <div className="text-xs text-[#717171]">
-                      {doc.documentCode || 'DOC-' + doc.id.slice(0, 8)} · v{doc.versionCount ?? 1}.0
+                      {doc.documentCode || 'Chưa cấp mã'} · Phiên bản {doc.versionCount ?? 1}
                     </div>
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
@@ -148,7 +151,7 @@ export function DocumentsTab({
                             : 'destructive'
                       }
                     >
-                      {doc.status}
+                      {formatDocumentStatusLabel(doc.status)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">

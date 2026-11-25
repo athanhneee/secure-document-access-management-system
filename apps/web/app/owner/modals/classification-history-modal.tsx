@@ -12,6 +12,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { formatSafeDateVi } from '@/lib/ui-labels';
 import type { ClassificationHistoryItem, DocumentItem } from '../types';
 
 interface ClassificationHistoryModalProps {
@@ -34,10 +35,10 @@ export function ClassificationHistoryModal({
       <DialogContent className="max-w-2xl border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
-            Lịch sử phân loại SCD Type 2: {document?.title}
+            Lịch sử phân loại mức độ mật: {document?.title}
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Truy vết thay đổi mức độ mật và danh mục nghiệp vụ qua các thời kỳ
+            Theo dõi các lần thay đổi mức độ mật và danh mục nghiệp vụ theo thời gian.
           </DialogDescription>
         </DialogHeader>
 
@@ -50,11 +51,11 @@ export function ClassificationHistoryModal({
                 className="animate-spin mx-auto mb-2 text-[#FF385C]"
                 aria-hidden="true"
               />
-              Đang tải lịch sử phân loại...
+              Đang tải lịch sử phân loại…
             </div>
           ) : history.length === 0 ? (
             <div className="text-center py-6 text-[#717171]">
-              Không có dữ liệu lịch sử phân loại
+              Không có dữ liệu lịch sử phân loại.
             </div>
           ) : (
             <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
@@ -72,7 +73,7 @@ export function ClassificationHistoryModal({
                     </div>
                     <span className="text-[13px] text-[#717171]">
                       {ch.effectiveTo ? (
-                        `Hiệu lực đến: ${new Date(ch.effectiveTo).toLocaleDateString('vi-VN')}`
+                        `Hiệu lực đến: ${formatSafeDateVi(ch.effectiveTo, { includeTime: true })}`
                       ) : (
                         <Badge variant="success" className="text-[13px]">
                           Đang hiệu lực
@@ -81,7 +82,9 @@ export function ClassificationHistoryModal({
                     </span>
                   </div>
                   <div className="text-xs text-[#717171]">
-                    <div>Hiệu lực từ: {new Date(ch.effectiveFrom).toLocaleString('vi-VN')}</div>
+                    <div>
+                      Hiệu lực từ: {formatSafeDateVi(ch.effectiveFrom, { includeTime: true })}
+                    </div>
                     <div>
                       Lý do: <span className="text-[#222222]">{ch.reason || '—'}</span>
                     </div>

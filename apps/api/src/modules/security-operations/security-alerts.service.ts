@@ -14,6 +14,7 @@ import {
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import {
   buildSecurityAlertsWhere,
   mapAlertBaseDetail,
@@ -39,6 +40,7 @@ export class SecurityAlertsService {
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
     @Optional() private readonly authorization?: AuthorizationService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -180,7 +182,13 @@ export class SecurityAlertsService {
       });
     }
 
-    return this.getAlertById(updated.id, actor);
+    const detail = await this.getAlertById(updated.id, actor);
+    this.realtime?.publish({
+      type: 'SECURITY_ALERT_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: { id: detail.id, status: detail.status, action: 'STATUS_UPDATED' },
+    });
+    return detail;
   }
 
   /**
@@ -225,7 +233,13 @@ export class SecurityAlertsService {
       });
     }
 
-    return this.getAlertById(updated.id, actor);
+    const detail = await this.getAlertById(updated.id, actor);
+    this.realtime?.publish({
+      type: 'SECURITY_ALERT_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: { id: detail.id, status: detail.status, action: 'ASSIGNED' },
+    });
+    return detail;
   }
 
   /**
@@ -257,7 +271,13 @@ export class SecurityAlertsService {
       });
     }
 
-    return this.getAlertById(id, actor);
+    const detail = await this.getAlertById(id, actor);
+    this.realtime?.publish({
+      type: 'SECURITY_ALERT_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: { id: detail.id, status: detail.status, action: 'NOTE_ADDED' },
+    });
+    return detail;
   }
 
   /**

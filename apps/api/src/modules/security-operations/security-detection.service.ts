@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { AppErrorCode } from '@sda/contracts';
 import { getDatabaseClient } from '@sda/database';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import {
   resolveActiveDetectionRules,
   upsertDetectionRuleConfig,
@@ -23,6 +24,7 @@ export class SecurityDetectionService {
   constructor(
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -172,6 +174,17 @@ export class SecurityDetectionService {
     this.logger.warn(
       `Created new SecurityAlert [${rule.severity}] ${rule.ruleCode} (id: ${newAlertId}) for user ${userId?.toString() ?? 'system'} with ${matchingLogIds.length} linked logs.`,
     );
+    this.realtime?.publish({
+      type: 'SECURITY_ALERT_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: {
+        id: newAlertId,
+        alertType: rule.ruleCode,
+        severity: rule.severity,
+        status: 'OPEN',
+        action: 'CREATED',
+      },
+    });
 
     return {
       ruleCode: rule.ruleCode,

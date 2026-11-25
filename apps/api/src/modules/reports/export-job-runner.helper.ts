@@ -12,6 +12,7 @@ import type { getDatabaseClient } from '@sda/database';
 import type { CreateExportJobInput, ExportFormat, ExportType } from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
+import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { renderExportBuffer } from './export-artifact.helper.js';
 import { buildExportDataset } from './export-dataset.builder.js';
 import { encryptExportArtifactBuffer } from './export-disk-cipher.helper.js';
@@ -73,6 +74,7 @@ export async function executeExportJobPipeline(params: {
   actor: AuthPrincipal;
   correlationId?: string | undefined;
   preResolvedDepartmentIds?: bigint[] | null | undefined;
+  realtime?: RealtimeEventsService | undefined;
 }): Promise<void> {
   const {
     database,
@@ -84,6 +86,7 @@ export async function executeExportJobPipeline(params: {
     actor,
     correlationId,
     preResolvedDepartmentIds,
+    realtime,
   } = params;
   const activeCorrId = correlationId || 'worker-internal';
   logger.log(
@@ -94,6 +97,16 @@ export async function executeExportJobPipeline(params: {
     await database.asyncExportJob.update({
       where: { id: jobId },
       data: { status: 'PROCESSING' },
+    });
+    realtime?.publish({
+      type: 'EXPORT_JOB_UPDATED',
+      targetUserIds: [actor.userId.toString()],
+      payload: {
+        id: jobId,
+        exportType: input.exportType,
+        format: input.format,
+        status: 'PROCESSING',
+      },
     });
 
     const allowedDeptIds =
@@ -125,11 +138,12 @@ export async function executeExportJobPipeline(params: {
       filePath = s3Uri;
     }
 
+    const completedAt = new Date();
     await database.asyncExportJob.update({
       where: { id: jobId },
       data: {
         status: 'COMPLETED',
-        completed_at: new Date(),
+        completed_at: completedAt,
         file_path: filePath,
         file_size_bytes: BigInt(contentBuffer.length),
         sha256_hash: sha256Hash,
@@ -137,14 +151,39 @@ export async function executeExportJobPipeline(params: {
         row_count: dataset.rows.length,
       },
     });
+    realtime?.publish({
+      type: 'EXPORT_JOB_UPDATED',
+      targetUserIds: [actor.userId.toString()],
+      payload: {
+        id: jobId,
+        exportType: input.exportType,
+        format: input.format,
+        status: 'COMPLETED',
+        rowCount: dataset.rows.length,
+        fileSizeBytes: contentBuffer.length,
+        completedAt: completedAt.toISOString(),
+      },
+    });
   } catch (err) {
     logger.error(`Export job ${jobId} failed:`, err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
     await database.asyncExportJob
       .update({
         where: { id: jobId },
-        data: { status: 'FAILED', error_message: err instanceof Error ? err.message : String(err) },
+        data: { status: 'FAILED', error_message: errorMessage },
       })
       .catch((uErr) => logger.error(`Failed to persist FAILED status for job ${jobId}:`, uErr));
+    realtime?.publish({
+      type: 'EXPORT_JOB_UPDATED',
+      targetUserIds: [actor.userId.toString()],
+      payload: {
+        id: jobId,
+        exportType: input.exportType,
+        format: input.format,
+        status: 'FAILED',
+        errorMessage,
+      },
+    });
   }
 }
 

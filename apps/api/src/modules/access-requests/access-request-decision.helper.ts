@@ -9,6 +9,7 @@ import { AppErrorCode, type DecideAccessRequestInput } from '@sda/contracts';
 import type { AccessGrantAuditService } from '../access-grants/access-grant-audit.service.js';
 import type { AccessGrantsService } from '../access-grants/access-grants.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -20,6 +21,7 @@ export interface ExecuteDecisionParams {
   database: PrismaClient;
   audit: AccessGrantAuditService;
   grantsService: AccessGrantsService;
+  realtime?: RealtimeEventsService | undefined;
 }
 
 /**
@@ -33,7 +35,7 @@ export interface ExecuteDecisionParams {
 export async function executeAccessRequestDecision(
   params: ExecuteDecisionParams,
 ): Promise<{ id: string; status: string; grantId?: string }> {
-  const { id, input, principal, context, database, audit, grantsService } = params;
+  const { id, input, principal, context, database, audit, grantsService, realtime } = params;
   const now = new Date();
 
   const request = await database.accessRequest.findUnique({
@@ -120,6 +122,16 @@ export async function executeAccessRequestDecision(
       );
     });
 
+    realtime?.publish({
+      type: 'ACCESS_REQUEST_UPDATED',
+      targetUserIds: [principal.userId.toString(), request.requester_id.toString()],
+      payload: {
+        id,
+        status: 'REJECTED',
+        documentId: request.document_id,
+        decisionNote: input.decisionNote?.trim() ?? null,
+      },
+    });
     return { id, status: 'REJECTED' };
   }
 
@@ -167,5 +179,15 @@ export async function executeAccessRequestDecision(
     context,
   );
 
+  realtime?.publish({
+    type: 'ACCESS_REQUEST_UPDATED',
+    targetUserIds: [principal.userId.toString(), request.requester_id.toString()],
+    payload: {
+      id,
+      status: 'APPROVED',
+      documentId: request.document_id,
+      grantId: grant.id,
+    },
+  });
   return { id, status: 'APPROVED', grantId: grant.id };
 }

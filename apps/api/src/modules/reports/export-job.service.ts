@@ -19,6 +19,7 @@ import { AppErrorCode, type CreateExportJobInput } from '@sda/contracts';
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import {
   normalizeExportFilters,
   resolveExportAuthorizationScope,
@@ -57,6 +58,7 @@ export class ExportJobService {
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
     @Optional() private readonly authorization?: AuthorizationService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     this.isInjectedDatabaseClient = Boolean(databaseClient);
     try {
@@ -143,7 +145,18 @@ export class ExportJobService {
         (err) => this.logger.error(`Unhandled export job ${id} rejection:`, err),
       );
     }
-    return mapExportJobToDetail(job);
+    const detail = mapExportJobToDetail(job);
+    this.realtime?.publish({
+      type: 'EXPORT_JOB_UPDATED',
+      targetUserIds: [actor.userId.toString()],
+      payload: {
+        id: detail.id,
+        exportType: detail.exportType,
+        format: detail.format,
+        status: detail.status,
+      },
+    });
+    return detail;
   }
 
   /**
@@ -239,7 +252,7 @@ export class ExportJobService {
     correlationId?: string,
     preResolvedDepartmentIds?: bigint[] | null,
   ): Promise<void> {
-    const { database, authorization, exportDir, logger } = this;
+    const { database, authorization, exportDir, logger, realtime } = this;
     await executeExportJobPipeline({
       database,
       authorization,
@@ -250,6 +263,7 @@ export class ExportJobService {
       actor,
       correlationId,
       preResolvedDepartmentIds,
+      realtime,
     });
   }
 }

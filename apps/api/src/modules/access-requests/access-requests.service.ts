@@ -23,6 +23,7 @@ import { AccessGrantAuditService } from '../access-grants/access-grant-audit.ser
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { RedlockService } from '../concurrency/redlock.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { executeAccessRequestDecision } from './access-request-decision.helper.js';
 import {
   mapAccessRequestDetail,
@@ -59,6 +60,7 @@ export class AccessRequestsService {
     private readonly grantsService: AccessGrantsService,
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly redlock?: RedlockService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -125,7 +127,20 @@ export class AccessRequestsService {
       return req;
     });
 
-    return mapAccessRequestDetail(created, input.requestedAction);
+    const detail = mapAccessRequestDetail(created, input.requestedAction);
+    const ownerId = (created as { documents?: { owner_id?: bigint | null } }).documents?.owner_id;
+    const targets = [principal.userId.toString(), ...(ownerId ? [ownerId.toString()] : [])];
+    this.realtime?.publish({
+      type: 'ACCESS_REQUEST_UPDATED',
+      targetUserIds: targets,
+      payload: {
+        id: detail.id,
+        status: detail.status,
+        documentId: detail.documentId,
+        action: 'CREATED',
+      },
+    });
+    return detail;
   }
 
   /**
@@ -169,7 +184,10 @@ export class AccessRequestsService {
   ): Promise<{ id: string; status: string }> {
     const runCancel = async (): Promise<{ id: string; status: string }> => {
       const now = new Date();
-      const request = await this.database.accessRequest.findUnique({ where: { id } });
+      const request = await this.database.accessRequest.findUnique({
+        where: { id },
+        include: { documents: { select: { owner_id: true } } },
+      });
 
       if (!request) {
         throw new NotFoundException({
@@ -240,6 +258,17 @@ export class AccessRequestsService {
         );
       });
 
+      const ownerId = (request as { documents?: { owner_id?: bigint | null } }).documents?.owner_id;
+      this.realtime?.publish({
+        type: 'ACCESS_REQUEST_UPDATED',
+        targetUserIds: [principal.userId.toString(), ...(ownerId ? [ownerId.toString()] : [])],
+        payload: {
+          id,
+          status: 'CANCELLED',
+          documentId: request.document_id,
+          action: 'CANCELLED',
+        },
+      });
       return { id, status: 'CANCELLED' };
     };
 
@@ -266,6 +295,7 @@ export class AccessRequestsService {
         database: this.database,
         audit: this.audit,
         grantsService: this.grantsService,
+        realtime: this.realtime,
       });
 
     return this.redlock

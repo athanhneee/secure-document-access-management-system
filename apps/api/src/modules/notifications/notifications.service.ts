@@ -5,6 +5,7 @@ import { Injectable, NotFoundException, Logger, Optional } from '@nestjs/common'
 import { randomUUID } from 'node:crypto';
 import { getDatabaseClient, type Prisma } from '@sda/database';
 import { AppErrorCode, type QueryNotificationsInput } from '@sda/contracts';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { enqueueNotificationOutbox } from './notification-outbox.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -34,7 +35,10 @@ export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
   private readonly database: PrismaClient;
 
-  constructor(@Optional() databaseClient?: PrismaClient) {
+  constructor(
+    @Optional() databaseClient?: PrismaClient,
+    @Optional() private readonly realtime?: RealtimeEventsService,
+  ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
     } catch {
@@ -68,6 +72,7 @@ export class NotificationsService {
 
     if (channel === 'IN_APP' || channel === 'BOTH') {
       notificationId = randomUUID();
+      const createdAtIso = new Date().toISOString();
       try {
         await this.database.notification.create({
           data: {
@@ -79,6 +84,21 @@ export class NotificationsService {
             related_object_type: options.relatedObjectType ?? null,
             related_object_id: options.relatedObjectId ?? null,
             status: 'UNREAD',
+          },
+        });
+        this.realtime?.publish({
+          type: 'NOTIFICATION_CREATED',
+          targetUserIds: [options.recipientId.toString()],
+          payload: {
+            id: notificationId,
+            notificationType: options.notificationType,
+            title: options.title,
+            body: options.body,
+            relatedObjectType: options.relatedObjectType ?? null,
+            relatedObjectId: options.relatedObjectId ?? null,
+            status: 'UNREAD',
+            createdAt: createdAtIso,
+            readAt: null,
           },
         });
       } catch (err) {

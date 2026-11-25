@@ -16,6 +16,7 @@ import { getDatabaseClient, type Prisma, type session_status } from '@sda/databa
 import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -50,6 +51,7 @@ export class AccessSessionsService {
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly auditWriter?: AuditWriterService,
     @Optional() private readonly authorization?: AuthorizationService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -263,6 +265,11 @@ export class AccessSessionsService {
         : await executeInTx(this.database);
 
     this.logger.warn(`Access session ${id} terminated manually. Reason: ${reason}`);
+    this.realtime?.publish({
+      type: 'ACCESS_SESSION_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: { id: result.id, status: result.status, action: 'TERMINATED' },
+    });
     return result;
   }
 }

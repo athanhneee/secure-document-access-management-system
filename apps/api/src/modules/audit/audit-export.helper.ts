@@ -2,14 +2,20 @@
  * @module AuditExportHelper
  * Algorithm: Allowlist Audit Filter Builder & Formula-Injection-Safe CSV/JSON Export Serializer.
  */
+import { BadRequestException } from '@nestjs/common';
 import type { Prisma } from '@sda/database';
 import { formatCsvRow } from '../reports/csv-formula-sanitizer.js';
 
+const ISO_DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface AuditLogFilterParams {
   actorUserId?: bigint | undefined;
+  actorUsername?: string | undefined;
   action?: string | undefined;
   outcome?: 'SUCCESS' | 'DENIED' | 'FAILED' | undefined;
   chainPartition?: string | undefined;
+  correlationId?: string | undefined;
   from?: string | undefined;
   to?: string | undefined;
 }
@@ -58,21 +64,57 @@ const CSV_EXPORT_HEADERS = [
 ];
 
 /**
+ * Thuật toán: Phân tích mốc thời gian đầu/cuối ngày an toàn cho chuỗi ngày thuần `YYYY-MM-DD` (Inclusive End-of-Day Bound).
+ * Nếu người dùng gửi `to = "2026-11-25"` (không có phần giờ), mở rộng về `2026-11-25T23:59:59.999Z` để không bỏ sót toàn bộ bản ghi trong ngày cuối.
+ */
+export function parseAuditDateBound(raw: string, endOfDay: boolean): Date {
+  const trimmed = raw.trim();
+  const normalized = ISO_DATE_ONLY_REGEX.test(trimmed)
+    ? `${trimmed}${endOfDay ? 'T23:59:59.999Z' : 'T00:00:00.000Z'}`
+    : trimmed;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new BadRequestException(`Invalid audit date filter value: ${raw}`);
+  }
+  return parsed;
+}
+
+/**
  * Algorithm / Thuật toán: Áp bộ lọc danh sách trắng cho truy vấn nhật ký kiểm toán (Strict Allowlist Filter Builder).
+ * Hỗ trợ tìm kiếm chuỗi con không phân biệt hoa/thường cho `action` và `actorUsername`, mở rộng cuối ngày cho `to`, và chặn khoảng ngày nghịch (`from > to`).
  */
 export function applyAuditFilterAllowlist(
   where: Prisma.AuditLogWhereInput,
   filter: AuditLogFilterParams,
 ): void {
-  // CONFLICT-RESOLVED: Unified duplicate allowlist filter construction across queryAuditLogs and exportAuditLogs
+  // CONFLICT-RESOLVED: Unified allowlist filter with case-insensitive partial action/actor search and inclusive end-of-day date parsing
   if (filter.actorUserId !== undefined) where.actor_user_id = filter.actorUserId;
-  if (filter.action) where.action = filter.action;
+  const trimmedActor = filter.actorUsername?.trim();
+  if (trimmedActor) {
+    where.actor_username = { contains: trimmedActor, mode: 'insensitive' };
+  }
+  const trimmedAction = filter.action?.trim();
+  if (trimmedAction) {
+    where.action = { contains: trimmedAction, mode: 'insensitive' };
+  }
   if (filter.outcome) where.outcome = filter.outcome;
-  if (filter.chainPartition) where.chain_partition = filter.chainPartition;
+  const trimmedPartition = filter.chainPartition?.trim();
+  if (trimmedPartition) where.chain_partition = trimmedPartition;
+  const trimmedCorr = filter.correlationId?.trim();
+  if (trimmedCorr) {
+    where.correlation_id = UUID_REGEX.test(trimmedCorr)
+      ? trimmedCorr
+      : '00000000-0000-0000-0000-000000000000';
+  }
   if (filter.from || filter.to) {
+    const fromDate = filter.from ? parseAuditDateBound(filter.from, false) : undefined;
+    const toDate = filter.to ? parseAuditDateBound(filter.to, true) : undefined;
+    if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+      throw new BadRequestException('Invalid date range: "from" must not be later than "to".');
+    }
     where.occurred_at = {};
-    if (filter.from) where.occurred_at.gte = new Date(filter.from);
-    if (filter.to) where.occurred_at.lte = new Date(filter.to);
+    if (fromDate) where.occurred_at.gte = fromDate;
+    if (toDate) where.occurred_at.lte = toDate;
   }
 }
 

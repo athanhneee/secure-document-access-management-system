@@ -119,30 +119,58 @@ export class AccessGrantsService {
       ? await this.redlock.withLock(lockResource, 5000, runTx)
       : await runTx();
 
-    if (this.notifications && created.principalType === 'USER' && created.principalUserId) {
+    const roleRecipientIds: bigint[] = [];
+    if (
+      created.principalType === 'ROLE' &&
+      created.principalRoleId &&
+      typeof this.database?.userRole?.findMany === 'function'
+    ) {
+      const holders = await this.database.userRole
+        .findMany({
+          where: {
+            role_id: BigInt(created.principalRoleId),
+            valid_from: { lte: now },
+            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          },
+          select: { user_id: true },
+          take: 200,
+        })
+        .catch(() => []);
+      for (const holder of holders) {
+        roleRecipientIds.push(holder.user_id);
+      }
+    }
+
+    if (this.notifications) {
+      const recipientIds: bigint[] =
+        created.principalType === 'USER' && created.principalUserId
+          ? [BigInt(created.principalUserId)]
+          : roleRecipientIds;
       const docLabel = documentTitle
         ? `"${documentTitle}"${documentCode ? ` (${documentCode})` : ''}`
         : 'được chỉ định';
       const permissionLabel = formatGrantPermissionsVi(created.permissions);
       const expiryLabel = formatGrantExpiryVi(created.validUntil);
-      try {
-        await this.notifications.sendNotification({
-          recipientId: BigInt(created.principalUserId),
-          notificationType: 'ACCESS_GRANT_ISSUED',
-          title: 'Bạn vừa được cấp quyền truy cập tài liệu',
-          body: `Quyền truy cập (${permissionLabel}) đối với tài liệu ${docLabel} có hiệu lực đến ${expiryLabel}.`,
-          relatedObjectType: 'ACCESS_GRANT',
-          relatedObjectId: created.id,
-          deduplicationKey: `ACCESS_GRANT_ISSUED:${created.principalUserId}:${created.id}:v${created.version}`,
-          payload: {
-            grantId: created.id,
-            documentId: created.documentId,
-            permissions: created.permissions,
-            validUntil: created.validUntil,
-          },
-        });
-      } catch {
-        // Non-fatal post-commit notification dispatch
+      for (const recipientId of recipientIds) {
+        try {
+          await this.notifications.sendNotification({
+            recipientId,
+            notificationType: 'ACCESS_GRANT_ISSUED',
+            title: 'Bạn vừa được cấp quyền truy cập tài liệu',
+            body: `Quyền truy cập (${permissionLabel}) đối với tài liệu ${docLabel} có hiệu lực đến ${expiryLabel}.`,
+            relatedObjectType: 'ACCESS_GRANT',
+            relatedObjectId: created.id,
+            deduplicationKey: `ACCESS_GRANT_ISSUED:${recipientId.toString()}:${created.id}:v${created.version}`,
+            payload: {
+              grantId: created.id,
+              documentId: created.documentId,
+              permissions: created.permissions,
+              validUntil: created.validUntil,
+            },
+          });
+        } catch {
+          // Non-fatal post-commit notification dispatch
+        }
       }
     }
 
@@ -151,6 +179,7 @@ export class AccessGrantsService {
       targetUserIds: [
         principal.userId.toString(),
         ...(created.principalUserId ? [created.principalUserId] : []),
+        ...roleRecipientIds.map((id) => id.toString()),
       ],
       ...(created.principalType === 'ROLE' ? { targetRoles: ['DOCUMENT_READER'] } : {}),
       payload: {

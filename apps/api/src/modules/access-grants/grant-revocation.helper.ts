@@ -108,6 +108,7 @@ export async function executeRevokeGrantWorkflow(
   let terminatedSessionCount = 0;
   let didTransitionToRevoked = false;
   const affectedUserIds = new Set<bigint>();
+  const terminatedSessionIds: string[] = [];
 
   // CONFLICT-RESOLVED: Bọc thu hồi bằng withSerializableTransaction và kiểm tra lại expectedVersion sau FOR UPDATE (MED-02)
   await withSerializableTransaction(
@@ -115,6 +116,7 @@ export async function executeRevokeGrantWorkflow(
       terminatedSessionCount = 0;
       didTransitionToRevoked = false;
       affectedUserIds.clear();
+      terminatedSessionIds.length = 0;
 
       await tx.$executeRawUnsafe(
         'SELECT id FROM access_grants WHERE id = $1::uuid FOR UPDATE',
@@ -161,6 +163,7 @@ export async function executeRevokeGrantWorkflow(
 
       for (const session of activeSessions) {
         affectedUserIds.add(session.user_id);
+        terminatedSessionIds.push(session.id);
       }
 
       if (activeSessions.length > 0) {
@@ -214,6 +217,28 @@ export async function executeRevokeGrantWorkflow(
     if (grant.principal_user_id) {
       recipients.add(grant.principal_user_id);
     }
+    // Thuật toán: Mở rộng thông báo thu hồi sang các thành viên đang giữ vai trò khi thu hồi ROLE grant (V-36).
+    if (
+      grant.principal_type === 'ROLE' &&
+      grant.principal_role_id &&
+      typeof database?.userRole?.findMany === 'function'
+    ) {
+      const roleHolders = await database.userRole
+        .findMany({
+          where: {
+            role_id: grant.principal_role_id,
+            valid_from: { lte: now },
+            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          },
+          select: { user_id: true },
+          take: 200,
+        })
+        .catch(() => []);
+      for (const holder of roleHolders) {
+        recipients.add(holder.user_id);
+        affectedUserIds.add(holder.user_id);
+      }
+    }
     const docTitle = grant.documents?.title;
     const docCode = grant.documents?.document_code;
     const docLabel = docTitle ? `"${docTitle}"${docCode ? ` (${docCode})` : ''}` : 'được chỉ định';
@@ -261,13 +286,24 @@ export async function executeRevokeGrantWorkflow(
         documentId: grant.document_id,
         status: 'REVOKED',
         action: 'REVOKED',
+        terminatedSessionIds,
       },
     });
     if (terminatedSessionCount > 0) {
+      // CONFLICT-RESOLVED: Phát sự kiện ngắt phiên tới cả SOC lẫn người dùng có phiên bị chấm dứt để đóng ngay hộp thoại xem tài liệu (V-05).
+      const affectedSessionUserIds = [...affectedUserIds].map((id) => id.toString());
       realtime.publish({
         type: 'ACCESS_SESSION_UPDATED',
         targetRoles: ['SECURITY_OFFICER'],
-        payload: { grantId, terminatedSessions: terminatedSessionCount, action: 'GRANT_REVOKED' },
+        ...(affectedSessionUserIds.length > 0 ? { targetUserIds: affectedSessionUserIds } : {}),
+        payload: {
+          grantId,
+          documentId: grant.document_id,
+          terminatedSessions: terminatedSessionCount,
+          terminatedSessionIds,
+          status: 'TERMINATED',
+          action: 'GRANT_REVOKED',
+        },
       });
     }
   }

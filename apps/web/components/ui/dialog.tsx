@@ -59,15 +59,11 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.style.overflow = 'hidden';
 
-    if (dialogEl && !dialogEl.open) {
-      if (typeof dialogEl.showModal === 'function') {
-        try {
-          dialogEl.showModal();
-        } catch {
-          dialogEl.setAttribute('open', '');
-        }
-      } else {
-        dialogEl.setAttribute('open', '');
+    if (dialogEl && !dialogEl.open && typeof dialogEl.showModal === 'function') {
+      try {
+        dialogEl.showModal();
+      } catch {
+        // Bỏ qua nếu trình duyệt đã mở hộp thoại Top-Layer trong cùng chu kỳ render (V-64)
       }
     }
 
@@ -151,7 +147,7 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
           e.preventDefault();
           onOpenChange(false);
         }}
-        className="fixed inset-0 z-50 m-0 flex h-full w-full max-h-none max-w-none items-center justify-center border-none bg-[#222222]/40 p-3 sm:p-4 overflow-y-auto backdrop-blur-xs outline-none"
+        className="fixed inset-0 z-50 m-0 flex h-full w-full max-h-none max-w-none items-center justify-center border-none bg-transparent p-3 sm:p-4 overflow-y-auto outline-none"
       >
         <div className="relative z-10 flex w-full justify-center my-auto">{children}</div>
       </dialog>
@@ -163,8 +159,12 @@ export function DialogContent({
   className,
   children,
   showClose = true,
+  showContextError = true,
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { showClose?: boolean | undefined }) {
+}: React.HTMLAttributes<HTMLDivElement> & {
+  showClose?: boolean | undefined;
+  showContextError?: boolean | undefined;
+}) {
   const { open, onOpenChange } = React.useContext(DialogContext);
   const { errorMessage, onDismiss } = React.useContext(DialogErrorContext);
 
@@ -188,7 +188,7 @@ export function DialogContent({
           <X size={16} strokeWidth={2} aria-hidden="true" />
         </button>
       )}
-      {open && errorMessage && (
+      {showContextError && open && errorMessage && (
         <Alert variant="destructive" className="mb-4 pr-12">
           <AlertTriangle size={16} strokeWidth={1.75} aria-hidden="true" />
           <div className="flex items-start justify-between gap-2">

@@ -17,30 +17,43 @@ function generateRequestNonce(): string {
 }
 
 /**
- * Thuật toán: Bảo Toàn Chuỗi Chuyển Tiếp Địa Chỉ IP Thực & Siêu Dữ Liệu Giao Thức Khi Rewrite `/api/v1` (`buildApiProxyHeaders`)
- * Mục đích: Đảm bảo Fastify phía sau reverse proxy (Cloudflare/Nginx/ALB) và container Next.js luôn nhận đủ
- * `x-forwarded-for`, `x-forwarded-proto`, `x-forwarded-host` và `user-agent` để ghi nhận chính xác IP thiết bị.
+ * Thuật toán: Chống Giả Mạo Header Chuyển Tiếp IP & Bảo Toàn Siêu Dữ Liệu Giao Thức Khi Rewrite `/api/v1` (`buildApiProxyHeaders`)
+ * Mục đích:
+ *   - Chỉ tin cậy `x-forwarded-for`, `cf-connecting-ip`, `x-real-ip` khi chạy sau Reverse Proxy biên được khai báo tường minh (`TRUSTED_EDGE_PROXY=true`).
+ *   - Khi không chạy sau Reverse Proxy biên (mặc định triển khai trực tiếp hoặc local), tước bỏ hoàn toàn các header IP do client tự gắn để ngăn Burp Suite giả mạo `X-Forwarded-For` vượt rate-limit hoặc làm sai lệch IP nhật ký kiểm toán (N02).
  */
-function buildApiProxyHeaders(request: NextRequest): Headers {
+export function buildApiProxyHeaders(
+  request: Pick<NextRequest, 'headers' | 'nextUrl'>,
+  trustedEdgeProxy = process.env['TRUSTED_EDGE_PROXY'] === 'true',
+): Headers {
   const upstreamHeaders = new Headers(request.headers);
-  const existingForwardedFor = upstreamHeaders.get('x-forwarded-for')?.trim();
-  if (!existingForwardedFor) {
-    const edgeClientIp = (
-      upstreamHeaders.get('cf-connecting-ip') ??
-      upstreamHeaders.get('x-real-ip') ??
-      ''
-    ).trim();
-    if (edgeClientIp) {
-      upstreamHeaders.set('x-forwarded-for', edgeClientIp);
+  if (trustedEdgeProxy) {
+    const existingForwardedFor = upstreamHeaders.get('x-forwarded-for')?.trim();
+    if (!existingForwardedFor) {
+      const edgeClientIp = (
+        upstreamHeaders.get('cf-connecting-ip') ??
+        upstreamHeaders.get('x-real-ip') ??
+        ''
+      ).trim();
+      if (edgeClientIp) {
+        upstreamHeaders.set('x-forwarded-for', edgeClientIp);
+      }
     }
+  } else {
+    // CONFLICT-RESOLVED: Tước bỏ mọi header chuyển tiếp IP do client tự gửi khi Next.js không đứng sau edge proxy tin cậy (N02).
+    upstreamHeaders.delete('x-forwarded-for');
+    upstreamHeaders.delete('cf-connecting-ip');
+    upstreamHeaders.delete('x-real-ip');
+    upstreamHeaders.delete('true-client-ip');
+    upstreamHeaders.delete('forwarded');
   }
-  if (!upstreamHeaders.get('x-forwarded-proto')) {
+  if (!trustedEdgeProxy || !upstreamHeaders.get('x-forwarded-proto')) {
     const proto = request.nextUrl.protocol.replace(/:$/u, '');
     if (proto === 'http' || proto === 'https') {
       upstreamHeaders.set('x-forwarded-proto', proto);
     }
   }
-  if (!upstreamHeaders.get('x-forwarded-host')) {
+  if (!trustedEdgeProxy || !upstreamHeaders.get('x-forwarded-host')) {
     const host = upstreamHeaders.get('host');
     if (host) {
       upstreamHeaders.set('x-forwarded-host', host);
@@ -85,7 +98,8 @@ export function proxy(request: NextRequest): NextResponse {
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       buildConnectSrcDirective(),
-      "frame-src 'self' blob:",
+      "worker-src 'self'",
+      "frame-src 'self'",
       "object-src 'none'",
       "frame-ancestors 'none'",
       "base-uri 'self'",
@@ -108,7 +122,7 @@ export function proxy(request: NextRequest): NextResponse {
 export const config: ProxyConfig = {
   matcher: [
     {
-      source: '/((?!_next/static|_next/image|favicon.ico|icon.svg).*)',
+      source: '/((?!_next/static|_next/image|favicon.ico|icon.svg|pdf\\.worker\\.min\\.mjs).*)',
     },
   ],
 };

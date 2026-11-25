@@ -9,6 +9,7 @@ test-results
 playwright-report
 pnpm-lock.yaml
 next-env.d.ts
+apps/web/public/pdf.worker.min.mjs
 .reports
 .logs
 .agents

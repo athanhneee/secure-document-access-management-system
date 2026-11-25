@@ -188,33 +188,6 @@ export async function readVerifiedExportArtifactAsync(
 }
 
 /**
- * Thuật toán: Đọc tệp báo cáo đồng bộ trên đĩa cục bộ kèm kiểm tra bao đóng đường dẫn, chống symlink (`O_NOFOLLOW`), giải mã `AES-256-GCM` và xác minh `SHA-256`.
- */
-export function readVerifiedExportArtifact(
-  exportDir: string,
-  id: string,
-  filePath: string | null,
-  logger: Logger,
-  expectedSha256Hash?: string | null,
-): Buffer | null {
-  if (!filePath) return null;
-
-  const resolvedBase = path.resolve(exportDir);
-  const resolvedTarget = path.resolve(filePath);
-  if (!resolvedTarget.startsWith(`${resolvedBase}${path.sep}`) && resolvedTarget !== resolvedBase) {
-    logger.error(`Blocked out-of-bounds export file_path read for job ${id}`);
-    throw new ForbiddenException({
-      errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
-      message: 'Export artifact path is invalid.',
-    });
-  }
-  const rawDiskBuffer = readContainedExportArtifactBuffer(resolvedTarget);
-  return rawDiskBuffer
-    ? decryptAndVerifyExportArtifactBuffer(id, rawDiskBuffer, expectedSha256Hash, true)
-    : null;
-}
-
-/**
  * Thuật toán: Ánh xạ bản ghi `async_export_jobs` sang DTO `ExportJobDetail` an toàn BigInt và tự động suy diễn trạng thái `EXPIRED`.
  */
 export function mapExportJobToDetail(job: {

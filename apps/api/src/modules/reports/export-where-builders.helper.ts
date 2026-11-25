@@ -19,9 +19,13 @@ export function buildAuditLogExportWhere(
     };
   }
   if (filters.actorUserId !== null) where.actor_user_id = filters.actorUserId;
-  if (filters.actorUsername) where.actor_username = filters.actorUsername;
+  if (filters.actorUsername) {
+    where.actor_username = { contains: filters.actorUsername, mode: 'insensitive' };
+  }
   if (filters.documentId) where.document_id = filters.documentId;
-  if (filters.action) where.action = filters.action;
+  if (filters.action) {
+    where.action = { contains: filters.action, mode: 'insensitive' };
+  }
   if (filters.outcome) where.outcome = filters.outcome;
   if (filters.chainPartition) where.chain_partition = filters.chainPartition;
   if (filters.effectiveDepartmentIds !== null) {

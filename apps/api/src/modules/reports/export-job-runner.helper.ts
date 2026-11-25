@@ -139,7 +139,7 @@ export async function executeExportJobPipeline(params: {
     }
 
     const completedAt = new Date();
-    await database.asyncExportJob.update({
+    const updatedJob = await database.asyncExportJob.update({
       where: { id: jobId },
       data: {
         status: 'COMPLETED',
@@ -160,8 +160,10 @@ export async function executeExportJobPipeline(params: {
         format: input.format,
         status: 'COMPLETED',
         rowCount: dataset.rows.length,
-        fileSizeBytes: contentBuffer.length,
+        fileSizeBytes: String(contentBuffer.length),
+        sha256Hash,
         completedAt: completedAt.toISOString(),
+        ...(updatedJob?.expires_at ? { expiresAt: updatedJob.expires_at.toISOString() } : {}),
       },
     });
   } catch (err) {

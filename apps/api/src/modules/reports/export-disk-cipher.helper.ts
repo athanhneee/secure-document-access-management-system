@@ -14,10 +14,17 @@ const EPHEMERAL_FALLBACK_KEY = randomBytes(32);
 
 /**
  * Thuật toán: Dẫn xuất khóa 256-bit bằng HKDF-SHA256 cho vùng lưu trữ tạm `.dat` trên đĩa.
+ * Khóa chặt Fail-Fast trên `production`/`staging` nếu thiếu cả `EXPORT_ENCRYPTION_KEY` lẫn `AUDIT_INTEGRITY_KEY`.
  */
 function resolveExportAtRestKey(): Buffer {
   const configured =
     process.env['EXPORT_ENCRYPTION_KEY']?.trim() || process.env['AUDIT_INTEGRITY_KEY']?.trim();
+  const nodeEnv = process.env['NODE_ENV']?.trim().toLowerCase();
+  if (!configured && (nodeEnv === 'production' || nodeEnv === 'staging')) {
+    throw new Error(
+      'EXPORT_ENCRYPTION_KEY (or AUDIT_INTEGRITY_KEY) is mandatory for export encryption in production and staging.',
+    );
+  }
   const ikm = configured ? Buffer.from(configured, 'utf8') : EPHEMERAL_FALLBACK_KEY;
   return Buffer.from(
     hkdfSync(

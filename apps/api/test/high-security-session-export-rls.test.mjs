@@ -141,7 +141,10 @@ test('[HIGH-05] ExportJobService enforces per-type RBAC permissions and applies 
     );
 
     assert.ok(capturedWhere);
-    assert.equal(capturedWhere.action, 'DOCUMENT_DOWNLOADED');
+    assert.deepEqual(capturedWhere.action, {
+      contains: 'DOCUMENT_DOWNLOADED',
+      mode: 'insensitive',
+    });
     assert.ok(capturedWhere.occurred_at?.gte instanceof Date);
     assert.ok(Array.isArray(capturedWhere.OR));
   } finally {

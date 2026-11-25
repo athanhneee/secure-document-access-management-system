@@ -83,8 +83,8 @@ describe('RBAC Least-Privilege UI Visibility & Non-Logout 403 Invariants', () =>
 
   it('isolates workspace data-fetching hooks inside AuthGuard so unauthorized routes fire zero API calls', () => {
     const guardedWorkspaces = [
-      { file: 'app/admin/workspace.tsx', hook: '= useAdminData()' },
-      { file: 'app/owner/owner-workspace.tsx', hook: '= useOwnerData()' },
+      { file: 'app/admin/workspace.tsx', hook: '= useAdminData(' },
+      { file: 'app/owner/owner-workspace.tsx', hook: '= useOwnerData(' },
       { file: 'app/reader/reader-workspace.tsx', hook: '= useReaderCatalog()' },
       { file: 'app/security/security-workspace.tsx', hook: '= useSecurityData()' },
       { file: 'app/auditor/auditor-workspace.tsx', hook: '= useAuditorData()' },

@@ -8,7 +8,7 @@ test('Vietnamese landing renders without browser errors', async ({ page }) => {
   await page.goto('/');
   await expect(
     page.getByRole('heading', {
-      name: /(Bảo vệ tài liệu tối mật với kiến trúc phân quyền đa tầng|Kiểm soát & Bảo vệ Tài liệu Tối mật)/i,
+      name: /(Bảo vệ tài liệu tối mật với kiến trúc phân quyền đa tầng|Kiểm soát và bảo vệ tài liệu mật)/i,
       level: 1,
     }),
   ).toBeVisible();

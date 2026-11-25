@@ -73,7 +73,7 @@ test.describe('Mobile 375x667 Layout & Top-Layer Modal Error Verification', () =
     });
 
     await page.goto('/security');
-    await page.getByRole('button', { name: 'Lập báo cáo sự cố' }).click();
+    await page.getByRole('button', { name: 'Tạo hồ sơ sự cố' }).click();
 
     const openDialog = page.locator('dialog[open]');
     await expect(openDialog).toBeVisible();
@@ -82,7 +82,7 @@ test.describe('Mobile 375x667 Layout & Top-Layer Modal Error Verification', () =
     await openDialog
       .locator('#inc-summary')
       .fill('Phát hiện nhiều truy vấn tải tài liệu mật bất thường từ dải mạng lạ.');
-    await openDialog.getByRole('button', { name: 'Tạo hồ sơ DRAFT' }).click();
+    await openDialog.getByRole('button', { name: 'Tạo hồ sơ sự cố' }).click();
 
     const modalAlert = openDialog.getByRole('alert');
     await expect(modalAlert).toBeVisible();

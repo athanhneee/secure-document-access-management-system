@@ -126,4 +126,31 @@ describe('Sub-100ms (< 0.1s) UI Feedback, Instant Modal/Tab & Navigation Gates',
     assert.ok(refreshMatch, 'refreshUser useCallback must exist');
     assert.doesNotMatch(refreshMatch[1], /pathname/);
   });
+
+  it('uses lazy tab fetching without duplicate /health/ready, inline login hydration, and SSE realtime listeners', () => {
+    const adminData = fs.readFileSync(
+      path.join(webRoot, 'app/admin/hooks/use-admin-data.ts'),
+      'utf8',
+    );
+    assert.doesNotMatch(adminData, /apiClient[\s\S]{0,60}['"]\/health\/ready['"]/);
+    assert.match(adminData, /\/health\/dashboard/);
+    assert.match(adminData, /ensureTabLoaded/);
+
+    const loginPage = fs.readFileSync(path.join(webRoot, 'app/login/page.tsx'), 'utf8');
+    assert.match(loginPage, /hydrateUser\(result\.user\)/);
+
+    const ownerData = fs.readFileSync(
+      path.join(webRoot, 'app/owner/hooks/use-owner-data.ts'),
+      'utf8',
+    );
+    assert.match(ownerData, /subscribeRealtimeEvent\('ACCESS_REQUEST_UPDATED'/);
+    assert.match(ownerData, /subscribeRealtimeEvent\('ACCESS_GRANT_UPDATED'/);
+
+    const exportPolling = fs.readFileSync(
+      path.join(webRoot, 'app/auditor/hooks/use-export-polling.ts'),
+      'utf8',
+    );
+    assert.match(exportPolling, /subscribeRealtimeEvent[\s\S]{0,80}'EXPORT_JOB_UPDATED'/);
+    assert.doesNotMatch(exportPolling, /,\s*2000\s*\)/);
+  });
 });

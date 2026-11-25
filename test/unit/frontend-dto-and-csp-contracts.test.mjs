@@ -12,6 +12,7 @@ import {
 } from '../../apps/web/app/reader/helpers.ts';
 import {
   buildGrantLookupMaps,
+  evaluateUploadSubjectReadiness,
   expandGrantPermissions,
   extractAuditPagination,
   formatIsoDateDisplay,
@@ -22,6 +23,16 @@ import {
   resolveUploadWizardDefaults,
   validateRetentionDateInput,
 } from '../../apps/web/app/owner/helpers.ts';
+import {
+  filterGrantEligibleUsers,
+  filterGrantableDocuments,
+  formatGrantPermissionSummary,
+  formatUserLookupOptionLabel,
+  isUserClearanceRedacted,
+  shouldWarnGrantClearance,
+  validateDirectGrantTimeRange,
+} from '../../apps/web/app/owner/grant-helpers.ts';
+import { localizeApiErrorMessage } from '../../apps/web/lib/api-error-messages.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(__dirname, '../../apps/web');
@@ -286,6 +297,87 @@ describe('/owner DTO Mappers, Permission Inclusion, Pagination & Wizard Defaults
     );
     assert.match(stepMetadataTsx, /isClassificationAllowedForClearance/);
     assert.match(stepMetadataTsx, /disabled=\{isAboveClearance\}/);
+    assert.match(stepMetadataTsx, /subjectReadiness\.missingDepartment/);
+  });
+
+  it('validates ABAC subject readiness before upload, requires department on user modals, and distinguishes ABAC denial reasons', () => {
+    const missingDept = evaluateUploadSubjectReadiness({
+      departmentId: null,
+      clearanceRank: 3,
+      status: 'ACTIVE',
+    });
+    assert.equal(missingDept.ready, false);
+    assert.equal(missingDept.missingDepartment, true);
+    assert.equal(missingDept.missingClearance, false);
+    assert.match(missingDept.blockingReason ?? '', /phòng ban trực thuộc/i);
+
+    const missingClearance = evaluateUploadSubjectReadiness({
+      departmentId: '9',
+      clearanceRank: 0,
+      status: 'ACTIVE',
+    });
+    assert.equal(missingClearance.ready, false);
+    assert.equal(missingClearance.missingClearance, true);
+    assert.match(missingClearance.blockingReason ?? '', /cấp thẩm quyền bảo mật/i);
+
+    const readySubject = evaluateUploadSubjectReadiness({
+      departmentId: '9',
+      clearanceRank: 3,
+      status: 'ACTIVE',
+    });
+    assert.equal(readySubject.ready, true);
+    assert.equal(readySubject.blockingReason, null);
+
+    const specificMissingDeptMsg = localizeApiErrorMessage(403, {
+      errorCode: 'POLICY_DENIED',
+      message: 'Access denied by policy: MISSING_REQUIRED_ATTRIBUTE (SUBJECT_DEPARTMENT)',
+      details: {
+        reasonCode: 'MISSING_REQUIRED_ATTRIBUTE',
+        missingAttributes: ['SUBJECT_DEPARTMENT'],
+      },
+    });
+    assert.match(specificMissingDeptMsg, /phòng ban trực thuộc/i);
+
+    const genericMissingAttrMsg = localizeApiErrorMessage(403, {
+      errorCode: 'POLICY_DENIED',
+      message: 'Access denied by policy: MISSING_REQUIRED_ATTRIBUTE',
+    });
+    assert.match(genericMissingAttrMsg, /thuộc tính bắt buộc \(phòng ban hoặc cấp thẩm tra\)/i);
+
+    const explicitDenyMsg = localizeApiErrorMessage(403, {
+      errorCode: 'POLICY_DENIED',
+      message: 'Access denied by policy: EXPLICIT_DENY',
+    });
+    assert.match(explicitDenyMsg, /MFA|rủi ro/i);
+
+    const grantMissingDeptMsg = localizeApiErrorMessage(403, {
+      errorCode: 'GRANT_ABAC_DENIED',
+      message: 'ABAC policy denied VIEW access: MISSING_REQUIRED_ATTRIBUTE (SUBJECT_DEPARTMENT).',
+    });
+    assert.match(grantMissingDeptMsg, /Đối tượng nhận quyền.*phòng ban trực thuộc/i);
+
+    const roleGrantClearanceMsg = localizeApiErrorMessage(403, {
+      errorCode: 'GRANT_CLEARANCE_INSUFFICIENT',
+      message:
+        'Target role holders do not all satisfy the clearance level required for this document classification.',
+    });
+    assert.match(roleGrantClearanceMsg, /vai trò này.*thành viên.*cấp thẩm quyền bảo mật/i);
+
+    const createUserModalTsx = fs.readFileSync(
+      path.join(webRoot, 'app/admin/modals/create-user-modal.tsx'),
+      'utf8',
+    );
+    const editUserModalTsx = fs.readFileSync(
+      path.join(webRoot, 'app/admin/modals/edit-user-modal.tsx'),
+      'utf8',
+    );
+    for (const [name, src] of [
+      ['create-user-modal.tsx', createUserModalTsx],
+      ['edit-user-modal.tsx', editUserModalTsx],
+    ]) {
+      assert.doesNotMatch(src, /Không gán phòng ban/, `${name} must require department selection`);
+      assert.match(src, /id="(?:modal|edit-user)-department"[\s\S]{0,80}\brequired\b/);
+    }
   });
 
   it('scopes /owner queries strictly to owned resources and uses production-ready preview copy without Sandbox, sess-active, Gotenberg, or Fail-Closed UI text', () => {
@@ -330,6 +422,124 @@ describe('/owner DTO Mappers, Permission Inclusion, Pagination & Wizard Defaults
     assert.match(previewModal, /Chế độ xem bảo mật · Có gắn (?:dấu Watermark|watermark bảo mật)/);
     assert.match(previewModal, /text="Đóng"/);
   });
+
+  it('enforces direct grant filters, REDACTED clearance handling, unified permission labels, 30-day/future bounds, and GrantsTab controls', () => {
+    const activeDoc = mapDocumentDtoToItem({
+      id: 'd-active',
+      title: 'Báo cáo tài chính quý 3/2026',
+      classificationLevelCode: 'SECRET',
+      status: 'ACTIVE',
+    });
+    const draftDoc = mapDocumentDtoToItem({
+      id: 'd-draft',
+      title: 'Bản nháp nội bộ',
+      classificationLevelCode: 'INTERNAL',
+      status: 'DRAFT',
+    });
+    const archivedDoc = mapDocumentDtoToItem({
+      id: 'd-arch',
+      title: 'Hồ sơ lưu trữ',
+      classificationLevelCode: 'CONFIDENTIAL',
+      status: 'ARCHIVED',
+    });
+    assert.deepEqual(
+      filterGrantableDocuments([activeDoc, draftDoc, archivedDoc]).map((d) => d.id),
+      ['d-active'],
+    );
+
+    const eligibleUsers = filterGrantEligibleUsers(
+      [
+        {
+          id: '10',
+          username: 'athanhnee',
+          fullName: 'Đặng Minh Thành',
+          departmentName: 'Khối văn phòng',
+          clearanceRank: 3,
+        },
+        {
+          id: '11',
+          username: 'reader.other',
+          fullName: 'Nguyễn Văn A',
+          departmentName: 'Phòng Tài chính',
+          clearanceRank: 0,
+          clearanceCode: 'REDACTED',
+        },
+      ],
+      '10',
+    );
+    assert.deepEqual(
+      eligibleUsers.map((u) => u.id),
+      ['11'],
+    );
+    assert.equal(isUserClearanceRedacted(eligibleUsers[0]), true);
+    assert.match(formatUserLookupOptionLabel(eligibleUsers[0]), /Độ mật ẩn/);
+    assert.doesNotMatch(formatUserLookupOptionLabel(eligibleUsers[0]), /Cấp 0/);
+    assert.equal(
+      shouldWarnGrantClearance({
+        principalType: 'USER',
+        document: activeDoc,
+        user: eligibleUsers[0],
+      }),
+      false,
+    );
+    assert.equal(
+      shouldWarnGrantClearance({
+        principalType: 'USER',
+        document: activeDoc,
+        user: { clearanceRank: 1, clearanceCode: 'INTERNAL' },
+      }),
+      true,
+    );
+
+    assert.deepEqual(formatGrantPermissionSummary(['VIEW', 'DOWNLOAD']), {
+      label: 'Xem & Tải về',
+      includesDownload: true,
+    });
+    assert.deepEqual(formatGrantPermissionSummary(['VIEW']), {
+      label: 'Chỉ xem',
+      includesDownload: false,
+    });
+
+    const refNow = new Date('2026-11-25T07:00:00.000Z');
+    assert.equal(
+      validateDirectGrantTimeRange('2026-11-25T07:00:00.000Z', '2026-12-02T07:00:00.000Z', {
+        now: refNow,
+      }),
+      null,
+    );
+    assert.match(
+      validateDirectGrantTimeRange('2026-11-20T07:00:00.000Z', '2026-11-24T07:00:00.000Z', {
+        now: refNow,
+      }) ?? '',
+      /hiện tại/i,
+    );
+    assert.match(
+      validateDirectGrantTimeRange('2026-11-25T07:00:00.000Z', '2027-01-10T07:00:00.000Z', {
+        now: refNow,
+      }) ?? '',
+      /tối đa là 30 ngày/i,
+    );
+
+    const createGrantModalTsx = fs.readFileSync(
+      path.join(webRoot, 'app/owner/modals/create-grant-modal.tsx'),
+      'utf8',
+    );
+    assert.match(createGrantModalTsx, /disabled=\{!canDownloadSelectedDoc\}/);
+    assert.match(createGrantModalTsx, /<legend[^>]*>Quyền được cấp<\/legend>/);
+    assert.match(createGrantModalTsx, /min=\{minValidUntil\}/);
+    assert.match(createGrantModalTsx, /max=\{maxValidUntil\}/);
+    assert.match(createGrantModalTsx, /disabled=\{isSubmitBlocked\}/);
+
+    const grantsTabTsx = fs.readFileSync(
+      path.join(webRoot, 'app/owner/tabs/grants-tab.tsx'),
+      'utf8',
+    );
+    assert.match(grantsTabTsx, /formatGrantPermissionSummary/);
+    assert.match(grantsTabTsx, /includeTime:\s*true/);
+    assert.match(grantsTabTsx, /Trang trước/);
+    assert.match(grantsTabTsx, /Trang sau/);
+    assert.match(grantsTabTsx, /Lọc trạng thái quyền truy cập/);
+  });
 });
 
 describe('Dialog Sizing, Tabs ARIA Linkage, DLP Regex Escaping & CSP Proxy Invariants', () => {
@@ -349,16 +559,15 @@ describe('Dialog Sizing, Tabs ARIA Linkage, DLP Regex Escaping & CSP Proxy Invar
     assert.match(tabsTsx, /\baria-labelledby=/);
   });
 
-  it('escapes {48} in network-dlp-overview.tsx so JSX renders literal regex braces', () => {
+  it('does not leak proxy configuration, loopback ICAP ports, or raw regex patterns in network-dlp-overview.tsx', () => {
     const dlpTsx = fs.readFileSync(
       path.join(webRoot, 'app/security/tabs/network-dlp-overview.tsx'),
       'utf8',
     );
-    assert.doesNotMatch(dlpTsx, />WM-\[a-f0-9\]\{48\}</);
-    assert.match(
-      dlpTsx,
-      /(?:\{'\{48\}'\}|\{['"`]WM-\[a-f0-9\]\{48\}['"`]\}|&#123;48&#125;|\\u007b48\\u007d)/,
-    );
+    assert.doesNotMatch(dlpTsx, /squid\.conf/i);
+    assert.doesNotMatch(dlpTsx, /127\.0\.0\.1:1344/);
+    assert.doesNotMatch(dlpTsx, /icap:\/\//i);
+    assert.doesNotMatch(dlpTsx, /WM-\[a-f0-9\]\{48\}/);
   });
 
   it('enforces per-request CSP nonce without prefetch header exclusion in proxy.ts', () => {

@@ -50,7 +50,7 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
       {
         path: '/security',
         redirectRe: /\/login\?redirect=%2Fsecurity/,
-        button: 'Lập báo cáo sự cố',
+        button: 'Tạo hồ sơ sự cố',
       },
       {
         path: '/auditor',
@@ -80,15 +80,13 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
     await mockAuthenticatedRoleSession(page, 'SYSTEM_ADMIN');
 
     await page.goto('/admin');
-    await expect(
-      page.getByRole('heading', { name: 'Users · RBAC · ABAC · Watermark', level: 1 }),
-    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Quản trị hệ thống', level: 1 })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Tạo tài khoản' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Thông báo hệ thống' })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Chủ sở hữu tài liệu' })).toHaveCount(0);
-    await expect(page.getByRole('tab', { name: /Vai trò RBAC/i })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /Chính sách ABAC/i })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /Cấu hình Watermark/i })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Vai trò/i })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Chính sách truy cập/i })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Watermark bảo mật/i })).toBeVisible();
     expect(errors).toEqual([]);
   });
 
@@ -111,7 +109,7 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
 
     await page.goto('/owner');
     await expect(
-      page.getByRole('heading', { name: 'Quản lý & Cấp phép Tài liệu Mật', level: 1 }),
+      page.getByRole('heading', { name: 'Quản lý và cấp quyền tài liệu mật', level: 1 }),
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Tải lên tài liệu mới' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Thông báo hệ thống' })).toBeVisible();
@@ -121,7 +119,7 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
     await expect(page.getByRole('link', { name: 'Kiểm toán độc lập' })).toHaveCount(0);
 
     await page.goto('/admin');
-    await expect(page.getByText('403 · Truy cập bị từ chối')).toBeVisible();
+    await expect(page.getByText('Không có quyền truy cập')).toBeVisible();
     expect(adminApiCalls).toEqual([]);
     await page.getByRole('button', { name: 'Về phân hệ làm việc' }).click();
     await expect(page).toHaveURL(/\/owner$/);
@@ -137,11 +135,13 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
 
     await page.goto('/reader');
     await expect(
-      page.getByRole('heading', { name: 'Khám phá & Đọc Tài liệu Mật', level: 1 }),
+      page.getByRole('heading', { name: 'Tra cứu và đọc tài liệu mật', level: 1 }),
     ).toBeVisible();
-    await expect(page.getByRole('tab', { name: /Khám phá/i })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /Tài liệu được xem|Được xem/i })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /Theo dõi yêu cầu|Yêu cầu/i })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Tra cứu/i })).toBeVisible();
+    await expect(
+      page.getByRole('tab', { name: /Tài liệu được cấp quyền|Được cấp/i }),
+    ).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Yêu cầu của tôi|Yêu cầu/i })).toBeVisible();
     expect(errors).toEqual([]);
   });
 
@@ -154,17 +154,17 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
 
     await page.goto('/security');
     await expect(
-      page.getByRole('heading', { name: 'Giám sát An ninh & Điều tra Sự cố', level: 1 }),
+      page.getByRole('heading', { name: 'Giám sát an ninh và điều tra sự cố', level: 1 }),
     ).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Lập báo cáo sự cố' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /Truy vết Watermark/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tạo hồ sơ sự cố' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Truy vết watermark/i })).toBeVisible();
 
     await mockAuthenticatedRoleSession(page, 'AUDITOR');
     await page.goto('/auditor');
     await expect(
-      page.getByRole('heading', { name: 'Kiểm toán Toàn vẹn & Báo cáo Tuân thủ', level: 1 }),
+      page.getByRole('heading', { name: 'Kiểm toán toàn vẹn và báo cáo tuân thủ', level: 1 }),
     ).toBeVisible();
-    await expect(page.getByText(/Nguyên tắc Phân tách Trách nhiệm \(SoD\):/i)).toBeVisible();
+    await expect(page.getByText(/Chế độ chỉ đọc:/i)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Xuất báo cáo kiểm toán' })).toBeVisible();
     expect(errors).toEqual([]);
   });
@@ -178,7 +178,7 @@ test.describe('Role Workspace Zero-Trust Guards & Authenticated Portals', () => 
 
     await page.goto('/sessions');
     await expect(
-      page.getByRole('heading', { name: 'Quản lý phiên làm việc & thiết bị', level: 1 }),
+      page.getByRole('heading', { name: 'Quản lý phiên và thiết bị', level: 1 }),
     ).toBeVisible();
     await expect(
       page.getByRole('button', { name: /Đăng xuất tất cả thiết bị khác/i }),

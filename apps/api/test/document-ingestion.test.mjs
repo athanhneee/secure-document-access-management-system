@@ -279,3 +279,41 @@ test('DocumentIngestionService & Controller: reject past or impossible retention
   }
   assert.equal(ingestionCalled, false);
 });
+
+test('DocumentIngestionService Anti-BOLA: rejects peer DOCUMENT_OWNER uploading a new version to another owner document', async () => {
+  const victimDocId = crypto.randomUUID();
+  const mockDb = {
+    document: {
+      findUnique: async ({ where }) =>
+        where.id === victimDocId
+          ? { id: victimDocId, owner_id: 9n, department_id: 10n, status: 'ACTIVE' }
+          : null,
+    },
+  };
+  const { ingestion } = createIngestionHarness({
+    mockDb,
+    authorization: { hasPermission: async () => true },
+  });
+
+  const peerOwner = {
+    userId: 30n,
+    sessionId: 'session-peer-bola',
+    username: 'athanhnee',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  };
+  const stream = Readable.from([createSamplePdfBuffer('Unauthorized version injection')]);
+
+  await assert.rejects(
+    ingestion.ingestDocument({
+      fileStream: stream,
+      rawFilename: 'trojan_v2.pdf',
+      declaredMime: 'application/pdf',
+      documentId: victimDocId,
+      principal: peerOwner,
+      context: { ip: '127.0.0.1', correlationId: crypto.randomUUID() },
+    }),
+    (err) => err.response?.errorCode === AppErrorCode.DOCUMENT_ACCESS_DENIED,
+  );
+  assert.equal(stream.destroyed, true);
+});

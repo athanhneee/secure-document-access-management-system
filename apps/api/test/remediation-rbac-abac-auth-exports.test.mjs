@@ -6,45 +6,73 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { ForbiddenException } from '@nestjs/common';
+import { DocumentsController } from '../dist/modules/documents/documents.controller.js';
 import { assertDocumentMutationPermission } from '../dist/modules/documents/document-access-guard.helper.js';
+import { REQUIRED_PERMISSION_METADATA } from '../dist/modules/rbac/require-permission.js';
 import { executeGrantedDocumentsQuery } from '../dist/modules/documents/document-grants-search.helper.js';
 import { toGrantDetail } from '../dist/modules/access-grants/access-grants.types.js';
 import { executeAccessRequestDecision } from '../dist/modules/access-requests/access-request-decision.helper.js';
 import { ExportJobService } from '../dist/modules/reports/export-job.service.js';
 
 /**
- * Thuật toán: Giả lập `AuthorizationService` chỉ cấp duy nhất quyền `DOCUMENT:ARCHIVE` để kiểm chứng cô lập quyền ghi tài liệu (CRIT-04).
+ * Thuật toán: Giả lập `AuthorizationService` trả về toàn quyền để kiểm chứng hàng rào sở hữu nghiêm ngặt chống BOLA ngang hàng.
  */
-function createArchiveOnlyAuthz() {
+function createPermissiveAuthz() {
   return {
-    hasPermission: async (_principal, resource, action) =>
-      resource === 'DOCUMENT' && action === 'ARCHIVE',
+    hasPermission: async () => true,
   };
 }
 
-test('[CRIT-04] Operation-specific document mutation guards block DOCUMENT:ARCHIVE from transferOwner, reclassify, updateMetadata & setCurrentVersion', async () => {
-  const authz = createArchiveOnlyAuthz();
+test('[CRIT-04] Strict ownership guard blocks non-owners across ALL document mutations & controller enforces operation-specific RBAC', async () => {
+  const authz = createPermissiveAuthz();
   const doc = { id: randomUUID(), owner_id: 10n, department_id: 1n };
-  const archiveClerk = { userId: 99n, sessionId: 's', username: 'archiver', roles: [], mfa: true };
+  const nonOwner = {
+    userId: 99n,
+    sessionId: 's',
+    username: 'peer.owner',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  };
+  const owner = {
+    userId: 10n,
+    sessionId: 's-owner',
+    username: 'true.owner',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  };
 
-  await assert.doesNotReject(() =>
-    assertDocumentMutationPermission(authz, doc, archiveClerk, 'ARCHIVE'),
+  for (const op of ['ARCHIVE', 'TRANSFER_OWNER', 'CLASSIFY', 'METADATA', 'VERSION', 'ACTIVATE']) {
+    await assert.rejects(
+      () => assertDocumentMutationPermission(authz, doc, nonOwner, op),
+      ForbiddenException,
+    );
+    await assert.doesNotReject(() => assertDocumentMutationPermission(authz, doc, owner, op));
+  }
+
+  assert.deepEqual(
+    Reflect.getMetadata(
+      REQUIRED_PERMISSION_METADATA,
+      DocumentsController.prototype.archiveDocument,
+    ),
+    { resource: 'DOCUMENT', action: 'ARCHIVE', global: false },
   );
-  await assert.rejects(
-    () => assertDocumentMutationPermission(authz, doc, archiveClerk, 'TRANSFER_OWNER'),
-    ForbiddenException,
+  assert.deepEqual(
+    Reflect.getMetadata(REQUIRED_PERMISSION_METADATA, DocumentsController.prototype.transferOwner),
+    { resource: 'DOCUMENT', action: 'MANAGE', global: false },
   );
-  await assert.rejects(
-    () => assertDocumentMutationPermission(authz, doc, archiveClerk, 'CLASSIFY'),
-    ForbiddenException,
+  assert.deepEqual(
+    Reflect.getMetadata(
+      REQUIRED_PERMISSION_METADATA,
+      DocumentsController.prototype.reclassifyDocument,
+    ),
+    { resource: 'DOCUMENT', action: 'CLASSIFY', global: false },
   );
-  await assert.rejects(
-    () => assertDocumentMutationPermission(authz, doc, archiveClerk, 'METADATA'),
-    ForbiddenException,
-  );
-  await assert.rejects(
-    () => assertDocumentMutationPermission(authz, doc, archiveClerk, 'VERSION'),
-    ForbiddenException,
+  assert.deepEqual(
+    Reflect.getMetadata(
+      REQUIRED_PERMISSION_METADATA,
+      DocumentsController.prototype.setCurrentVersion,
+    ),
+    { resource: 'DOCUMENT_VERSION', action: 'CREATE', global: false },
   );
 });
 

@@ -31,22 +31,23 @@ export async function executeTransferDocumentOwner(params: {
   const { database, authorization, cache, audit, documentId, input, principal, context } = params;
 
   const doc = await database.document.findUnique({ where: { id: documentId } });
-  if (!doc) {
+  if (!doc || doc.status === 'DELETED') {
     throw new NotFoundException({
       errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
       message: 'Document not found.',
-    });
-  }
-  if (doc.status === 'ARCHIVED' || doc.status === 'DELETED') {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
-      message: 'Cannot transfer ownership of an archived or deleted document.',
     });
   }
 
   await assertDocumentMutationPermission(authorization, doc, principal, 'TRANSFER_OWNER', {
     database,
   });
+
+  if (doc.status === 'ARCHIVED') {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
+      message: 'Cannot transfer ownership of an archived or deleted document.',
+    });
+  }
 
   const targetUser = await database.user.findUnique({ where: { id: input.newOwnerId } });
   if (!targetUser || targetUser.status !== 'ACTIVE') {

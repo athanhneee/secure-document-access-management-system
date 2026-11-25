@@ -13,6 +13,7 @@ import { AppErrorCode } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import type { DocumentAuditService } from './document-audit.service.js';
+import { isPureTechnicalOrAuditRole } from './document-access-guard.helper.js';
 import type { RetentionCheckResult } from './documents.types.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -34,6 +35,12 @@ export async function executeCheckRetentionWarnings(params: {
     throw new ForbiddenException({
       errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
       message: 'Authenticated principal is required for retention horizon scan.',
+    });
+  }
+  if (principal && isPureTechnicalOrAuditRole(principal)) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message: 'Separated privileged roles cannot inspect business document retention.',
     });
   }
   const now = new Date();

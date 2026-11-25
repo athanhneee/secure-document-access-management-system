@@ -153,7 +153,7 @@ export class DocumentPepService {
         current_version: true,
       },
     });
-    if (!document) {
+    if (!document || document.status === 'DELETED') {
       throw new NotFoundException({
         errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
         message: 'Document was not found.',
@@ -161,6 +161,12 @@ export class DocumentPepService {
     }
     if (document.status !== 'ACTIVE') {
       await deny(null, AppErrorCode.DOCUMENT_ACCESS_DENIED, 'Document is not in ACTIVE state.');
+      if (document.owner_id !== principal.userId) {
+        throw new NotFoundException({
+          errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+          message: 'Document was not found.',
+        });
+      }
       throw new ForbiddenException({
         errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
         message: `Cannot access document in ${document.status} status.`,

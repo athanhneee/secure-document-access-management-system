@@ -4,7 +4,7 @@
  * PostgreSQL `SELECT ... FOR UPDATE`), cấp phát số phiên bản tuần tự `max(version_no) + 1`, kiểm định trần độ mật
  * Bell-LaPadula của người tải lên và thực thi toàn bộ truy vấn bên trong giao dịch qua `tx` chống tự khóa chết Pool.
  */
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
@@ -89,10 +89,10 @@ export async function persistCleanIngestedVersion(params: {
         },
       });
 
-      if (existingDoc && (existingDoc.status === 'ARCHIVED' || existingDoc.status === 'DELETED')) {
-        throw new BadRequestException({
-          errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
-          message: 'Cannot upload new version to an archived or deleted document.',
+      if (existingDoc && existingDoc.status === 'DELETED') {
+        throw new NotFoundException({
+          errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+          message: 'Document not found.',
         });
       }
 
@@ -101,21 +101,17 @@ export async function persistCleanIngestedVersion(params: {
         existingDoc.owner_id !== undefined &&
         existingDoc.owner_id !== input.principal.userId
       ) {
-        const canCreateVersion = authorization
-          ? (await authorization.hasPermission(input.principal, 'DOCUMENT_VERSION', 'CREATE', {
-              targetDepartmentId: existingDoc.department_id,
-            })) ||
-            (await authorization.hasPermission(input.principal, 'DOCUMENT', 'CLASSIFY', {
-              targetDepartmentId: existingDoc.department_id,
-            }))
-          : false;
-        if (!canCreateVersion) {
-          throw new ForbiddenException({
-            errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
-            message:
-              'Only the document owner or authorized department administrator can upload a new version.',
-          });
-        }
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+          message: 'Only the document owner can upload a new version.',
+        });
+      }
+
+      if (existingDoc && existingDoc.status === 'ARCHIVED') {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
+          message: 'Cannot upload new version to an archived or deleted document.',
+        });
       }
 
       if (!existingDoc) {

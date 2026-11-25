@@ -76,6 +76,7 @@ export type RevokeAccessGrantInput = z.infer<typeof RevokeAccessGrantSchema>;
 export const ListAccessGrantsSchema = z
   .object({
     documentId: z.string().uuid().optional(),
+    scope: z.enum(['all', 'owned', 'received']).default('all'),
     status: z.enum(['ACTIVE', 'REVOKED', 'EXPIRED', 'SUSPENDED']).optional(),
     principalType: z.enum(['USER', 'ROLE']).optional(),
     sort: z.enum(['granted_at', 'valid_until', 'status']).default('granted_at'),

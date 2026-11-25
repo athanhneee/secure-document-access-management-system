@@ -216,3 +216,146 @@ test('createGrant — when extending existing grant with accessRequestId, update
   assert.equal(createdDecision.access_request_id, reqId);
   assert.equal(createdDecision.decision, 'APPROVED');
 });
+
+test('AccessGrantsService Anti-BOLA — peer DOCUMENT_OWNER cannot self-grant, inspect, list, or revoke grants on another owner document', async () => {
+  const docId = randomUUID();
+  const grantId = randomUUID();
+  const revokedGrantId = randomUUID();
+  const now = new Date();
+  let lastListWhere = null;
+
+  const activeGrantRow = {
+    id: grantId,
+    document_id: docId,
+    principal_type: 'USER',
+    principal_user_id: 77n,
+    principal_role_id: null,
+    source: 'DIRECT',
+    access_request_id: null,
+    valid_from: now,
+    valid_until: new Date(now.getTime() + 7 * 86400000),
+    status: 'ACTIVE',
+    granted_by: 9n,
+    granted_at: now,
+    revoked_by: null,
+    revoked_at: null,
+    revoke_reason: null,
+    version: 0,
+    access_grant_permissions: [{ permission: 'VIEW' }],
+    documents: { owner_id: 9n, department_id: 10n, status: 'ACTIVE' },
+  };
+  const revokedGrantRow = {
+    ...activeGrantRow,
+    id: revokedGrantId,
+    status: 'REVOKED',
+    revoke_reason: 'Owner revoked',
+  };
+
+  const mockDb = {
+    document: {
+      findUnique: async () => ({
+        id: docId,
+        owner_id: 9n,
+        department_id: 10n,
+        status: 'ACTIVE',
+        classification_history: [
+          {
+            classification_levels: { rank: 2, allow_download: true },
+            business_categories: { code: 'SEC' },
+          },
+        ],
+      }),
+    },
+    user: { findUnique: async () => ({ id: 30n, status: 'ACTIVE' }) },
+    userAttributeAssignment: {
+      findFirst: async () => ({ attribute_options: { numeric_rank: 3, is_active: true } }),
+    },
+    accessGrant: {
+      findUnique: async ({ where }) =>
+        where.id === revokedGrantId ? revokedGrantRow : activeGrantRow,
+      findMany: async ({ where }) => {
+        lastListWhere = where;
+        return [];
+      },
+    },
+  };
+
+  // Even when RBAC returns true globally (as happens with peer DOCUMENT_OWNER), BOLA must be blocked
+  const service = new AccessGrantsService(
+    { record: async () => {} },
+    { hasPermission: async () => true },
+    { invalidateUser: () => {} },
+    { evaluate: async () => ({ decision: 'PERMIT' }) },
+    { get: () => 365 },
+    mockDb,
+  );
+
+  const peerOwner = {
+    userId: 30n,
+    sessionId: 's-peer',
+    username: 'athanhnee',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  };
+  const ctx = { ip: '127.0.0.1' };
+
+  // 1. Peer owner CANNOT self-grant access to qa.owner's document
+  await assert.rejects(
+    () =>
+      service.createGrant(
+        {
+          documentId: docId,
+          principalType: 'USER',
+          principalUserId: 30n,
+          permissions: ['VIEW', 'DOWNLOAD'],
+          validFrom: now.toISOString(),
+          validUntil: new Date(now.getTime() + 7 * 86400000).toISOString(),
+        },
+        peerOwner,
+        ctx,
+      ),
+    (err) => err.status === 403,
+  );
+
+  // 2. Peer owner CANNOT inspect another owner's grant by UUID (Anti-Enumeration 404)
+  await assert.rejects(
+    () => service.getGrant(grantId, peerOwner),
+    (err) => err.status === 404,
+  );
+
+  // 3. Peer owner CANNOT revoke active OR already-revoked grant of another owner (no idempotent metadata leak)
+  await assert.rejects(
+    () =>
+      service.revokeGrant(grantId, { reason: 'Unauthorized revocation attempt' }, peerOwner, ctx),
+    (err) => err.status === 403,
+  );
+  await assert.rejects(
+    () =>
+      service.revokeGrant(
+        revokedGrantId,
+        { reason: 'Probe already revoked grant' },
+        peerOwner,
+        ctx,
+      ),
+    (err) => err.status === 403,
+  );
+
+  // 4. listGrants with scope=owned on another owner's document returns empty without querying DB
+  const peerOwnedByDoc = await service.listGrants(
+    { scope: 'owned', documentId: docId, page: 1, pageSize: 20, sort: 'granted_at', order: 'desc' },
+    peerOwner,
+  );
+  assert.deepEqual(peerOwnedByDoc.data, []);
+
+  // 5. listGrants with scope=owned without documentId strictly scopes to documents.owner_id = principal.userId
+  await service.listGrants(
+    { scope: 'owned', page: 1, pageSize: 20, sort: 'granted_at', order: 'desc' },
+    peerOwner,
+  );
+  assert.equal(lastListWhere?.documents?.owner_id, 30n);
+  assert.equal('OR' in (lastListWhere ?? {}), false);
+
+  // 6. ListAccessGrantsSchema accepts scope=owned and rejects forged ownerId
+  assert.equal(ListAccessGrantsSchema.safeParse({ scope: 'owned' }).success, true);
+  assert.equal(ListAccessGrantsSchema.safeParse({ ownerId: '9' }).success, false);
+});

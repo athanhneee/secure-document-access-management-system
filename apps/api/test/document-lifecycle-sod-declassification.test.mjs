@@ -76,7 +76,7 @@ test('Document Lifecycle: Reclassification to lower level does NOT automatically
   assert.equal(grant.status, 'REVOKED');
 });
 
-test('Document Lifecycle: Technical Admin cannot modify document metadata without business permission', async () => {
+test('Document Lifecycle: Technical Admin and peer DOCUMENT_OWNER cannot read or modify another owner document (Anti-BOLA)', async () => {
   const docId = randomUUID();
   const { db, mockAudit, cache, service } = createDocumentsTestService({
     documents: [
@@ -88,9 +88,15 @@ test('Document Lifecycle: Technical Admin cannot modify document metadata withou
           title: 'Protected business document',
           owner_id: 1n,
           department_id: 100n,
-          status: 'DRAFT',
+          status: 'ACTIVE',
+          discoverable: true,
         },
       ],
+    ],
+    userAttributeAssignments: [
+      [1n, { user_id: 1n, attribute_code: 'CLEARANCE_LEVEL', numeric_rank: 4 }],
+      [2n, { user_id: 555n, attribute_code: 'CLEARANCE_LEVEL', numeric_rank: 4 }],
+      [3n, { user_id: 666n, attribute_code: 'CLEARANCE_LEVEL', numeric_rank: 4 }],
     ],
   });
 
@@ -107,32 +113,95 @@ test('Document Lifecycle: Technical Admin cannot modify document metadata withou
     (err) => err.response?.errorCode === 'TECHNICAL_ADMIN_CANNOT_OWN',
   );
 
-  const businessAdminAuth = createMockAuthorization([
-    {
-      userId: 555n,
-      resource: 'DOCUMENT',
-      action: 'CLASSIFY',
-      scopeDepartmentId: 100n,
-    },
+  // Even a peer DOCUMENT_OWNER holding global DOCUMENT:MANAGE/CLASSIFY/ARCHIVE/DISCOVER cannot read or modify owner 1's document
+  const peerOwnerAuth = createMockAuthorization([
+    { userId: 555n, resource: 'DOCUMENT', action: 'MANAGE', scopeDepartmentId: null },
+    { userId: 555n, resource: 'DOCUMENT', action: 'CLASSIFY', scopeDepartmentId: null },
+    { userId: 555n, resource: 'DOCUMENT', action: 'ARCHIVE', scopeDepartmentId: null },
+    { userId: 555n, resource: 'DOCUMENT', action: 'DISCOVER', scopeDepartmentId: null },
   ]);
-  const businessService = new DocumentsService(mockAudit, businessAdminAuth, cache, db);
-  const businessAdminPrincipal = {
+  const peerService = new DocumentsService(mockAudit, peerOwnerAuth, cache, db);
+  const peerOwnerPrincipal = {
     userId: 555n,
-    username: 'dept.manager',
+    username: 'peer.owner',
     roles: ['DOCUMENT_OWNER'],
     mfa: true,
   };
+  const ungrantedReader = {
+    userId: 666n,
+    username: 'ungranted.reader',
+    roles: ['DOCUMENT_READER'],
+    mfa: true,
+  };
 
-  const updated = await businessService.updateMetadata(
+  await assert.rejects(
+    peerService.getDocumentById(docId, peerOwnerPrincipal),
+    (err) => err.response?.errorCode === 'DOCUMENT_NOT_FOUND',
+  );
+  await assert.rejects(
+    peerService.getDocumentById(docId, ungrantedReader),
+    (err) => err.response?.errorCode === 'DOCUMENT_NOT_FOUND',
+  );
+  await assert.rejects(
+    peerService.getDocumentVersions(docId, peerOwnerPrincipal),
+    (err) => err.response?.errorCode === 'DOCUMENT_NOT_FOUND',
+  );
+  await assert.rejects(
+    peerService.getClassificationHistory(docId, peerOwnerPrincipal),
+    (err) => err.response?.errorCode === 'DOCUMENT_NOT_FOUND',
+  );
+  await assert.rejects(
+    peerService.updateMetadata(docId, { title: 'Peer BOLA edit' }, peerOwnerPrincipal, context),
+    (err) => err.response?.errorCode === 'DOCUMENT_ACCESS_DENIED',
+  );
+  await assert.rejects(
+    peerService.archiveDocument(
+      docId,
+      { reason: 'Peer BOLA archive' },
+      peerOwnerPrincipal,
+      context,
+    ),
+    (err) => err.response?.errorCode === 'DOCUMENT_ACCESS_DENIED',
+  );
+  await assert.rejects(
+    peerService.transferOwner(
+      docId,
+      { newOwnerId: 555n, reason: 'Peer BOLA takeover' },
+      peerOwnerPrincipal,
+      context,
+    ),
+    (err) => err.response?.errorCode === 'DOCUMENT_ACCESS_DENIED',
+  );
+
+  // Only the legitimate document owner (userId: 1n) may update metadata
+  const ownerPrincipal = {
+    userId: 1n,
+    username: 'true.owner',
+    roles: ['DOCUMENT_OWNER'],
+    mfa: true,
+  };
+  const updated = await peerService.updateMetadata(
     docId,
-    { title: 'Authorized update by department manager' },
-    businessAdminPrincipal,
+    { title: 'Authorized update by true owner' },
+    ownerPrincipal,
     context,
   );
-  assert.equal(updated.title, 'Authorized update by department manager');
+  assert.equal(updated.title, 'Authorized update by true owner');
+
+  // Even after archival, an unauthorized peer must NOT receive 200 idempotent archive detail (no state/metadata leak)
+  await peerService.archiveDocument(docId, { reason: 'Owner archived' }, ownerPrincipal, context);
+  await assert.rejects(
+    peerService.archiveDocument(
+      docId,
+      { reason: 'Peer probe archived doc' },
+      peerOwnerPrincipal,
+      context,
+    ),
+    (err) => err.response?.errorCode === 'DOCUMENT_ACCESS_DENIED',
+  );
 });
 
-test('Document Lifecycle [CRIT-04]: Actor with lower clearance cannot downgrade a higher-ranked document & ARCHIVE cannot transfer owner', async () => {
+test('Document Lifecycle [CRIT-04]: Downgraded owner cannot reclassify above clearance & non-owner cannot steal ownership', async () => {
   const docId = randomUUID();
   const { db, mockAudit, cache } = createDocumentsTestService({
     documents: [
@@ -149,7 +218,7 @@ test('Document Lifecycle [CRIT-04]: Actor with lower clearance cannot downgrade 
       ],
     ],
     userAttributeAssignments: [
-      [1n, { user_id: 555n, attribute_code: 'CLEARANCE_LEVEL', numeric_rank: 2 }],
+      [1n, { user_id: 1n, attribute_code: 'CLEARANCE_LEVEL', numeric_rank: 2 }],
       [2n, { user_id: 2n, attribute_code: 'CLEARANCE_LEVEL', numeric_rank: 4 }],
     ],
   });
@@ -167,7 +236,7 @@ test('Document Lifecycle [CRIT-04]: Actor with lower clearance cannot downgrade 
   });
 
   const deptAuth = createMockAuthorization([
-    { userId: 555n, resource: 'DOCUMENT', action: 'CLASSIFY', scopeDepartmentId: 100n },
+    { userId: 777n, resource: 'DOCUMENT', action: 'MANAGE', scopeDepartmentId: 100n },
     { userId: 777n, resource: 'DOCUMENT', action: 'ARCHIVE', scopeDepartmentId: 100n },
   ]);
   const deptService = new DocumentsService(mockAudit, deptAuth, cache, db);
@@ -178,7 +247,7 @@ test('Document Lifecycle [CRIT-04]: Actor with lower clearance cannot downgrade 
       deptService.reclassifyDocument(
         docId,
         { classificationLevelId: 1n, businessCategoryId: 10n, reason: 'Unauthorized downgrade' },
-        { userId: 555n, username: 'dept.mgr', roles: ['DOCUMENT_OWNER'], mfa: true },
+        { userId: 1n, username: 'downgraded.owner', roles: ['DOCUMENT_OWNER'], mfa: true },
         context,
       ),
     (err) => err.response?.errorCode === 'BELL_LAPADULA_CLEARANCE_INSUFFICIENT',
@@ -188,10 +257,10 @@ test('Document Lifecycle [CRIT-04]: Actor with lower clearance cannot downgrade 
     () =>
       deptService.transferOwner(
         docId,
-        { newOwnerId: 2n, reason: 'Archive role attempting ownership takeover' },
-        { userId: 777n, username: 'archiver', roles: ['DOCUMENT_OWNER'], mfa: true },
+        { newOwnerId: 2n, reason: 'Peer role attempting ownership takeover' },
+        { userId: 777n, username: 'peer.archiver', roles: ['DOCUMENT_OWNER'], mfa: true },
         context,
       ),
-    (err) => err.response?.errorCode === 'TECHNICAL_ADMIN_CANNOT_OWN',
+    (err) => err.response?.errorCode === 'DOCUMENT_ACCESS_DENIED',
   );
 });

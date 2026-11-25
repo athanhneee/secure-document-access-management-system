@@ -202,6 +202,11 @@ export async function issueShortLivedDownloadTicket(params: {
     });
   }
 
+  assertSessionContextBinding(
+    session as { ip_address?: string | null; user_agent?: string | null },
+    context,
+  );
+
   if (typeof pep?.enforceSessionPolicy !== 'function') {
     throw new ForbiddenException({
       errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,

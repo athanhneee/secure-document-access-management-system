@@ -93,6 +93,7 @@ export type ArchiveDocumentInput = z.infer<typeof ArchiveDocumentSchema>;
 export const SearchDocumentsSchema = z
   .object({
     q: z.string().max(200).optional(),
+    scope: z.enum(['all', 'owned']).default('all'),
     status: z.enum(['DRAFT', 'ACTIVE', 'ARCHIVED']).optional(),
     departmentId: PositiveBigIntSchema.optional(),
     classificationLevelId: PositiveBigIntSchema.optional(),

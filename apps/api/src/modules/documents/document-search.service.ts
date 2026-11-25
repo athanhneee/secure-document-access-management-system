@@ -66,16 +66,22 @@ export class DocumentSearchService {
     }
     const sanitizedQuery = sanitizeSearchQuery(input.q);
     const userId = principal.userId;
+    const scope = input.scope ?? 'all';
 
-    const discoverableDeptIds = await this.authorization.visibleDepartmentIds(
-      principal,
-      'DOCUMENT',
-      'DISCOVER',
-    );
-    const hasGlobalDiscover = discoverableDeptIds === null;
+    let discoverableDeptIds: bigint[] | null = [];
+    let hasGlobalDiscover = false;
+    let roleIds: bigint[] = [];
+    if (scope !== 'owned') {
+      discoverableDeptIds = await this.authorization.visibleDepartmentIds(
+        principal,
+        'DOCUMENT',
+        'DISCOVER',
+      );
+      hasGlobalDiscover = discoverableDeptIds === null;
 
-    const userRoles = await this.authorization.effectiveGrants(userId);
-    const roleIds = [...new Set(userRoles.map((g) => g.roleId))];
+      const userRoles = await this.authorization.effectiveGrants(userId);
+      roleIds = [...new Set(userRoles.map((g) => g.roleId))];
+    }
     const userClearanceRank = await queryUserClearanceRank(this.database, userId);
 
     const whereClause = buildSearchWhereClause({
@@ -173,6 +179,7 @@ export class DocumentSearchService {
         actorUserId: principal.userId,
         actorUsername: principal.username,
         details: {
+          scope,
           queryHash: sanitizedQuery
             ? createHash('sha256').update(sanitizedQuery).digest('hex')
             : null,

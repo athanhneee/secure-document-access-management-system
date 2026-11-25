@@ -10,6 +10,10 @@ import type { AbacService } from '../abac/abac.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import {
+  assertActorClearanceDominatesDocument,
+  isPureTechnicalOrAuditRole,
+} from '../documents/document-access-guard.helper.js';
+import {
   buildGrantResourceAttributes,
   buildGrantSubjectAttributes,
   buildRoleGrantSubjectAttributes,
@@ -41,9 +45,16 @@ export interface ValidateCreateGrantParams {
 export async function validateCreateGrantPreconditions(
   params: ValidateCreateGrantParams,
 ): Promise<{ validFrom: Date; validUntil: Date; maxMs: number }> {
-  const { input, principal, now, maxDurationDays, database, authorization, abac } = params;
+  const { input, principal, now, maxDurationDays, database, abac } = params;
   const validFrom = input.validFrom ? new Date(input.validFrom) : now;
   const validUntil = new Date(input.validUntil);
+
+  if (isPureTechnicalOrAuditRole(principal)) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message: 'Separated privileged roles cannot grant document access.',
+    });
+  }
 
   if (
     Number.isNaN(validFrom.getTime()) ||
@@ -74,12 +85,25 @@ export async function validateCreateGrantPreconditions(
     },
   });
 
-  if (!document) {
+  if (!document || document.status === 'DELETED') {
     throw new NotFoundException({
       errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
       message: 'Document was not found.',
     });
   }
+
+  // CONFLICT-RESOLVED: Chỉ chủ sở hữu tài liệu mới được cấp quyền truy cập, triệt tiêu lỗ hổng BOLA tự cấp quyền vượt cổng PEP.
+  if (document.owner_id !== principal.userId) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.FORBIDDEN,
+      message: 'Only the document owner can grant access to this document.',
+    });
+  }
+
+  const currentClassification = document.classification_history[0];
+  const documentRank = currentClassification?.classification_levels?.rank ?? 0;
+  await assertActorClearanceDominatesDocument(database, principal.userId, documentRank, now);
+
   if (document.status === 'ARCHIVED') {
     throw new BadRequestException({
       errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
@@ -93,22 +117,7 @@ export async function validateCreateGrantPreconditions(
     });
   }
 
-  if (document.owner_id !== principal.userId) {
-    const hasPermission = await authorization.hasPermission(principal, 'ACCESS_GRANT', 'CREATE', {
-      targetDepartmentId: document.department_id,
-    });
-    if (!hasPermission) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.FORBIDDEN,
-        message: 'Only the document owner or authorized administrator can grant access.',
-      });
-    }
-  }
-
   await validateGrantTargetAndSod(database, input, now);
-
-  const currentClassification = document.classification_history[0];
-  const documentRank = currentClassification?.classification_levels?.rank ?? 0;
 
   if (input.principalType === 'USER' && input.principalUserId) {
     const userRank = (await fetchUserClearanceRank(database, input.principalUserId, now)) ?? 0;

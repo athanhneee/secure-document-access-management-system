@@ -7,7 +7,7 @@
  *     đánh giá chính sách ABAC theo ngữ cảnh mạng CIDR và khoảng nửa mở `[valid_from, valid_until)`.
  *   - Thu hồi tức thời kèm đóng phiên truy cập liên đới và vô hiệu hóa bộ nhớ đệm phân quyền.
  */
-import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import {
   AppErrorCode,
@@ -22,6 +22,7 @@ import { RedlockService } from '../concurrency/redlock.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { AuthorizationCache } from '../rbac/authorization-cache.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
+import { isPureTechnicalOrAuditRole } from '../documents/document-access-guard.helper.js';
 import { AccessGrantAuditService } from './access-grant-audit.service.js';
 import { toGrantDetail, type GrantDetail, type GrantListResult } from './access-grants.types.js';
 import { verifyGrantValidForAccess } from './grant-enforcement.helper.js';
@@ -150,15 +151,22 @@ export class AccessGrantsService {
    * Algorithm / Thuật toán: Truy Vấn Chi Tiết Quyền Truy Cập Chống Dò Quét Định Danh (Anti-Enumeration Visibility Check).
    */
   async getGrant(grantId: string, principal: AuthPrincipal): Promise<GrantDetail> {
+    if (isPureTechnicalOrAuditRole(principal)) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Separated privileged roles cannot view business document access grants.',
+      });
+    }
+
     const grant = await this.database.accessGrant.findUnique({
       where: { id: grantId },
       include: {
         access_grant_permissions: true,
-        documents: { select: { owner_id: true, department_id: true } },
+        documents: { select: { owner_id: true, department_id: true, status: true } },
       },
     });
 
-    if (!grant) {
+    if (!grant || grant.documents.status === 'DELETED') {
       throw new NotFoundException({
         errorCode: AppErrorCode.GRANT_NOT_FOUND,
         message: 'Access grant was not found.',
@@ -166,58 +174,70 @@ export class AccessGrantsService {
     }
 
     const isOwner = grant.documents.owner_id === principal.userId;
-    const isPrincipal = grant.principal_user_id === principal.userId;
+    const isPrincipal =
+      grant.principal_type === 'USER' && grant.principal_user_id === principal.userId;
     if (!isOwner && !isPrincipal) {
-      const hasPermission = await this.authorization.hasPermission(
-        principal,
-        'ACCESS_GRANT',
-        'VIEW',
-        { targetDepartmentId: grant.documents.department_id },
-      );
-      if (!hasPermission) {
-        throw new NotFoundException({
-          errorCode: AppErrorCode.GRANT_NOT_FOUND,
-          message: 'Access grant was not found.',
-        });
-      }
+      throw new NotFoundException({
+        errorCode: AppErrorCode.GRANT_NOT_FOUND,
+        message: 'Access grant was not found.',
+      });
     }
 
     return toGrantDetail(grant);
   }
 
   /**
-   * Algorithm / Thuật toán: Phân Trang Đọc Trước N+1 Theo Phạm Vi Quyền Nhìn Thấy (Visibility-Scoped N+1 Lookahead Pagination).
+   * Algorithm / Thuật toán: Phân Trang Đọc Trước N+1 Theo Phạm Vi Quyền Nhìn Thấy (`owned` | `received` | `all`) Chống BOLA.
    */
   async listGrants(
     input: ListAccessGrantsInput,
     principal: AuthPrincipal,
   ): Promise<GrantListResult> {
+    if (isPureTechnicalOrAuditRole(principal)) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Separated privileged roles cannot list business document access grants.',
+      });
+    }
+
     const where: Record<string, unknown> = {};
+    const scope = input.scope ?? 'all';
 
     if (input.documentId) {
       const doc = await this.database.document.findUnique({
         where: { id: input.documentId },
-        select: { owner_id: true, department_id: true },
+        select: { owner_id: true, status: true },
       });
-      if (!doc) {
+      if (!doc || doc.status === 'DELETED') {
         return { data: [], page: input.page, pageSize: input.pageSize, hasMore: false };
       }
-      if (doc.owner_id !== principal.userId) {
-        const hasPermission = await this.authorization.hasPermission(
-          principal,
-          'ACCESS_GRANT',
-          'VIEW',
-          { targetDepartmentId: doc.department_id },
-        );
-        if (!hasPermission) {
+      const isOwner = doc.owner_id === principal.userId;
+      if (scope === 'owned') {
+        if (!isOwner) {
           return { data: [], page: input.page, pageSize: input.pageSize, hasMore: false };
         }
+        where['document_id'] = input.documentId;
+      } else if (scope === 'received' || !isOwner) {
+        where['document_id'] = input.documentId;
+        where['principal_type'] = 'USER';
+        where['principal_user_id'] = principal.userId;
+      } else {
+        where['document_id'] = input.documentId;
       }
-      where['document_id'] = input.documentId;
+    } else if (scope === 'owned') {
+      where['documents'] = { owner_id: principal.userId, status: { not: 'DELETED' } };
+    } else if (scope === 'received') {
+      where['principal_type'] = 'USER';
+      where['principal_user_id'] = principal.userId;
+      where['documents'] = { status: { not: 'DELETED' } };
     } else {
       where['OR'] = [
-        { documents: { owner_id: principal.userId } },
-        { principal_user_id: principal.userId },
+        { documents: { owner_id: principal.userId, status: { not: 'DELETED' } } },
+        {
+          principal_type: 'USER',
+          principal_user_id: principal.userId,
+          documents: { status: { not: 'DELETED' } },
+        },
       ];
     }
 

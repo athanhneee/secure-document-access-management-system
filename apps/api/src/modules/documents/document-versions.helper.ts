@@ -32,20 +32,21 @@ export async function executeSetCurrentVersion(params: {
   const { database, authorization, audit, documentId, input, principal, context } = params;
 
   const doc = await database.document.findUnique({ where: { id: documentId } });
-  if (!doc) {
+  if (!doc || doc.status === 'DELETED') {
     throw new NotFoundException({
       errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
       message: 'Document not found.',
     });
   }
-  if (doc.status === 'ARCHIVED' || doc.status === 'DELETED') {
+
+  await assertDocumentMutationPermission(authorization, doc, principal, 'VERSION', { database });
+
+  if (doc.status === 'ARCHIVED') {
     throw new BadRequestException({
       errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
       message: 'Cannot update version of an archived or deleted document.',
     });
   }
-
-  await assertDocumentMutationPermission(authorization, doc, principal, 'VERSION', { database });
 
   let version;
   if (input.versionId) {

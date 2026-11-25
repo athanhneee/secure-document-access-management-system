@@ -92,8 +92,8 @@ export interface RetentionCheckResult {
 }
 
 /**
- * Algorithm: Anti-Enumeration Document Detail Hydration
- * Loads document relations, enforces `assertDocumentReadAccess(..., allowDiscoverable = true)`, and maps to `DocumentDetail`.
+ * Algorithm: Anti-Enumeration & Ownership/Grant-Verified Document Detail Hydration
+ * Loads document relations, enforces `assertDocumentReadAccess(..., allowActiveGrant = true)`, and maps to `DocumentDetail`.
  */
 export async function queryDocumentDetailById(
   database: PrismaClient,
@@ -115,7 +115,7 @@ export async function queryDocumentDetailById(
     },
   });
 
-  if (!doc) {
+  if (!doc || doc.status === 'DELETED') {
     throw new NotFoundException({
       errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
       message: 'Document not found.',

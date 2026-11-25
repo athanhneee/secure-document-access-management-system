@@ -14,6 +14,7 @@ import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { NotificationsService } from '../notifications/notifications.service.js';
 import type { AuthorizationCache } from '../rbac/authorization-cache.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
+import { isPureTechnicalOrAuditRole } from '../documents/document-access-guard.helper.js';
 import type { AccessGrantAuditService } from './access-grant-audit.service.js';
 import { toGrantDetail, type GrantDetail } from './access-grants.types.js';
 
@@ -41,32 +42,37 @@ export interface ExecuteRevokeGrantParams {
 export async function executeRevokeGrantWorkflow(
   params: ExecuteRevokeGrantParams,
 ): Promise<GrantDetail> {
-  const {
-    grantId,
-    input,
-    principal,
-    context,
-    database,
-    authorization,
-    cache,
-    audit,
-    notifications,
-  } = params;
+  const { grantId, input, principal, context, database, cache, audit, notifications } = params;
   const start = performance.now();
   const now = new Date();
+
+  if (isPureTechnicalOrAuditRole(principal)) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message: 'Separated privileged roles cannot revoke document access grants.',
+    });
+  }
 
   const grant = await database.accessGrant.findUnique({
     where: { id: grantId },
     include: {
       access_grant_permissions: true,
-      documents: { select: { owner_id: true, department_id: true } },
+      documents: { select: { owner_id: true, department_id: true, status: true } },
     },
   });
 
-  if (!grant) {
+  if (!grant || grant.documents.status === 'DELETED') {
     throw new NotFoundException({
       errorCode: AppErrorCode.GRANT_NOT_FOUND,
       message: 'Access grant was not found.',
+    });
+  }
+
+  // CONFLICT-RESOLVED: Xác minh quyền sở hữu tài liệu TRƯỚC kiểm tra lũy đẳng `REVOKED` để chặn rò rỉ siêu dữ liệu grant và chặn BOLA thu hồi quyền của chủ sở hữu khác.
+  if (grant.documents.owner_id !== principal.userId) {
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.FORBIDDEN,
+      message: 'Only the document owner can revoke access grants for this document.',
     });
   }
 
@@ -79,18 +85,6 @@ export async function executeRevokeGrantWorkflow(
       errorCode: AppErrorCode.GRANT_ALREADY_REVOKED,
       message: `Cannot revoke a grant with status ${grant.status}.`,
     });
-  }
-
-  if (grant.documents.owner_id !== principal.userId) {
-    const hasPermission = await authorization.hasPermission(principal, 'ACCESS_GRANT', 'REVOKE', {
-      targetDepartmentId: grant.documents.department_id,
-    });
-    if (!hasPermission) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.FORBIDDEN,
-        message: 'Only the document owner or authorized administrator can revoke grants.',
-      });
-    }
   }
 
   if (input.expectedVersion !== undefined && input.expectedVersion !== grant.version) {

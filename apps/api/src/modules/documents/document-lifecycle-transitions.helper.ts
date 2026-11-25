@@ -41,26 +41,27 @@ export async function executeActivateDocument(params: {
     },
   });
 
-  if (!doc) {
+  if (!doc || doc.status === 'DELETED') {
     throw new NotFoundException({
       errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
       message: 'Document not found.',
     });
   }
+
+  await assertDocumentMutationPermission(authorization, doc, principal, 'ACTIVATE', { database });
+
   if (doc.status === 'ACTIVE') {
     throw new BadRequestException({
       errorCode: AppErrorCode.DOCUMENT_ALREADY_ACTIVE,
       message: 'Document is already active.',
     });
   }
-  if (doc.status === 'ARCHIVED' || doc.status === 'DELETED') {
+  if (doc.status === 'ARCHIVED') {
     throw new BadRequestException({
       errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
       message: 'Archived or deleted document cannot be activated.',
     });
   }
-
-  await assertDocumentMutationPermission(authorization, doc, principal, 'ACTIVATE', { database });
 
   if (!doc.owner_id || !doc.users || doc.users.status !== 'ACTIVE') {
     throw new BadRequestException({
@@ -205,17 +206,18 @@ export async function executeArchiveDocument(params: {
   const { database, authorization, cache, audit, documentId, input, principal, context } = params;
 
   const doc = await database.document.findUnique({ where: { id: documentId } });
-  if (!doc) {
+  if (!doc || doc.status === 'DELETED') {
     throw new NotFoundException({
       errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
       message: 'Document not found.',
     });
   }
+
+  await assertDocumentMutationPermission(authorization, doc, principal, 'ARCHIVE', { database });
+
   if (doc.status === 'ARCHIVED') {
     return;
   }
-
-  await assertDocumentMutationPermission(authorization, doc, principal, 'ARCHIVE', { database });
 
   const now = new Date();
   let suspendedGrantsCount = 0;

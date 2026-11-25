@@ -1,6 +1,7 @@
 // @ts-check
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { SearchDocumentsSchema } from '../../../packages/contracts/dist/dto.js';
 import {
   MOCK_GRANTS,
   NO_DISCOVER_PRINCIPAL,
@@ -120,5 +121,50 @@ describe('Document Search', () => {
     assert.ok('hasMore' in result, 'hasMore should be present instead');
     assert.ok('page' in result, 'page should be present');
     assert.ok('pageSize' in result, 'pageSize should be present');
+  });
+
+  it('scope=owned restricts SQL visibility strictly to principal.userId without discoverable/grant branches and rejects client-supplied ownerId', async () => {
+    const validOwned = SearchDocumentsSchema.safeParse({ scope: 'owned', pageSize: '50' });
+    assert.equal(validOwned.success, true);
+    assert.equal(validOwned.data.scope, 'owned');
+
+    const forgedOwnerId = SearchDocumentsSchema.safeParse({ scope: 'owned', ownerId: '9' });
+    assert.equal(forgedOwnerId.success, false, 'Must reject forged ownerId parameter');
+
+    const invalidScope = SearchDocumentsSchema.safeParse({ scope: 'other' });
+    assert.equal(invalidScope.success, false);
+
+    const { service, capturedQueries, capturedAudits, mockAuthorization } = await buildService({
+      discoverableDeptIds: null,
+      grants: MOCK_GRANTS,
+    });
+
+    await service.searchDocuments(
+      { scope: 'owned', page: 1, pageSize: 50, sort: 'created_at', order: 'desc' },
+      READER_PRINCIPAL,
+      TEST_CONTEXT,
+    );
+
+    assert.equal(
+      mockAuthorization.visibleDepartmentIds.mock.callCount(),
+      0,
+      'scope=owned must not query global discoverable departments',
+    );
+    assert.equal(
+      mockAuthorization.effectiveGrants.mock.callCount(),
+      0,
+      'scope=owned must not query role grants',
+    );
+    const sqlQuery = capturedQueries.at(-1) ?? '';
+    assert.ok(sqlQuery.includes('d."owner_id" ='), 'SQL must filter strictly by d.owner_id');
+    assert.ok(
+      !sqlQuery.includes('d."discoverable" = true'),
+      'scope=owned must NEVER include discoverable documents of other owners',
+    );
+    assert.ok(
+      !sqlQuery.includes('FROM access_grants ag'),
+      'scope=owned must NEVER include documents merely granted by other owners',
+    );
+    assert.equal(capturedAudits.at(-1)?.details?.scope, 'owned');
   });
 });

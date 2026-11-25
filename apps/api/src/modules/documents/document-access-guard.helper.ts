@@ -111,10 +111,11 @@ export type DocumentMutationOperation =
   'METADATA' | 'ACTIVATE' | 'VERSION' | 'CLASSIFY' | 'ARCHIVE' | 'TRANSFER_OWNER';
 
 /**
- * Thuật toán: Kiểm định thẩm quyền thay đổi tài liệu kết hợp RBAC phạm vi phòng ban và kiểm tra độ mật Bell-LaPadula của chủ sở hữu/quản trị viên.
+ * Thuật toán: Kiểm định thẩm quyền thay đổi tài liệu theo nguyên tắc sở hữu nghiêm ngặt (chống BOLA liên chủ sở hữu),
+ * phân tách nhiệm vụ (SoD) và bất biến độ mật Bell-LaPadula (`actorClearanceRank >= documentRank`).
  */
 export async function assertDocumentMutationPermission(
-  authorization: AuthorizationService,
+  _authorization: AuthorizationService,
   document: {
     id: string;
     owner_id: bigint;
@@ -122,7 +123,7 @@ export async function assertDocumentMutationPermission(
     classification_history?: Array<{ classification_levels?: { rank?: number } | null }>;
   },
   principal: AuthPrincipal,
-  operation: DocumentMutationOperation = 'METADATA',
+  _operation: DocumentMutationOperation = 'METADATA',
   options?: {
     database?: PrismaClient | undefined;
     documentRank?: number | undefined;
@@ -133,45 +134,14 @@ export async function assertDocumentMutationPermission(
     throw new ForbiddenException({
       errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
       message:
-        'Only the document owner or an authorized business administrator for this department may modify this document.',
+        'Technical administrator, security officer, and auditor accounts cannot modify business documents.',
     });
   }
 
-  let authorizedByOwnershipOrRole = document.owner_id === principal.userId;
-  if (!authorizedByOwnershipOrRole) {
-    const scope = { targetDepartmentId: document.department_id };
-    const hasManage = await authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', scope);
-    if (hasManage) {
-      authorizedByOwnershipOrRole = true;
-    } else if (operation === 'METADATA' || operation === 'ACTIVATE' || operation === 'CLASSIFY') {
-      authorizedByOwnershipOrRole = await authorization.hasPermission(
-        principal,
-        'DOCUMENT',
-        'CLASSIFY',
-        scope,
-      );
-    } else if (operation === 'VERSION') {
-      authorizedByOwnershipOrRole = await authorization.hasPermission(
-        principal,
-        'DOCUMENT_VERSION',
-        'CREATE',
-        scope,
-      );
-    } else if (operation === 'ARCHIVE') {
-      authorizedByOwnershipOrRole = await authorization.hasPermission(
-        principal,
-        'DOCUMENT',
-        'ARCHIVE',
-        scope,
-      );
-    }
-  }
-
-  if (!authorizedByOwnershipOrRole) {
+  if (document.owner_id !== principal.userId) {
     throw new ForbiddenException({
-      errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
-      message:
-        'Only the document owner or an authorized business administrator for this department may modify this document.',
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message: 'Only the document owner may modify this document.',
     });
   }
 
@@ -188,11 +158,15 @@ export async function assertDocumentMutationPermission(
 }
 
 /**
- * Thuật toán: Cổng kiểm định quyền đọc siêu dữ liệu chống dò quét (Anti-Enumeration) và cưỡng chế độ mật cho cả chủ sở hữu.
+ * Thuật toán: Cổng kiểm định quyền đọc siêu dữ liệu chống dò quét (Anti-Enumeration) và chống BOLA liên chủ sở hữu.
+ *   1. Chặn tuyệt đối tài khoản quản trị/SOC/kiểm toán (SoD) và tài liệu đã xóa (`DELETED`).
+ *   2. Chủ sở hữu tài liệu (`doc.owner_id === principal.userId`) được phép đọc khi thỏa độ mật Bell-LaPadula.
+ *   3. Khi `allowActiveGrant === true` (dành cho chi tiết tài liệu `ACTIVE`), chỉ người có `AccessGrant` (`USER` hoặc `ROLE`)
+ *      còn hiệu lực và đủ độ mật Bell-LaPadula mới được phép truy cập; từ chối mọi chủ sở hữu ngang hàng hoặc tra cứu theo UUID trần bằng `404`.
  */
 export async function assertDocumentReadAccess(
   database: PrismaClient,
-  authorization: AuthorizationService,
+  _authorization: AuthorizationService,
   doc: {
     id: string;
     owner_id: bigint;
@@ -202,7 +176,7 @@ export async function assertDocumentReadAccess(
     classification_history?: Array<{ classification_levels?: { rank?: number } | null }>;
   },
   principal?: AuthPrincipal,
-  allowDiscoverable = false,
+  allowActiveGrant = false,
   options?: { internalTrustedRead?: boolean },
 ): Promise<void> {
   if (!principal) {
@@ -220,6 +194,13 @@ export async function assertDocumentReadAccess(
     });
   }
 
+  if (doc.status === 'DELETED') {
+    throw new NotFoundException({
+      errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+      message: 'Document not found.',
+    });
+  }
+
   const now = new Date();
   const documentRank = await resolveActiveDocumentClassificationRank(database, doc);
 
@@ -228,65 +209,47 @@ export async function assertDocumentReadAccess(
     return;
   }
 
-  const scope = { targetDepartmentId: doc.department_id };
-  const [hasClassify, hasManage, hasArchive] = await Promise.all([
-    authorization.hasPermission(principal, 'DOCUMENT', 'CLASSIFY', scope),
-    authorization.hasPermission(principal, 'DOCUMENT', 'MANAGE', scope),
-    authorization.hasPermission(principal, 'DOCUMENT', 'ARCHIVE', scope),
-  ]);
-  if (hasClassify || hasManage || hasArchive) {
-    await assertActorClearanceDominatesDocument(database, principal.userId, documentRank, now);
-    return;
-  }
-
-  const userRank = await getUserClearanceRank(database, principal.userId, now);
-  if (userRank >= documentRank && typeof database?.accessGrant?.findFirst === 'function') {
-    const directGrant = await database.accessGrant.findFirst({
-      where: {
-        document_id: doc.id,
-        principal_type: 'USER',
-        principal_user_id: principal.userId,
-        status: 'ACTIVE',
-        valid_from: { lte: now },
-        valid_until: { gt: now },
-      },
-    });
-    if (directGrant) return;
-
-    if (typeof database?.userRole?.findMany === 'function') {
-      const activeRoles = await database.userRole.findMany({
+  if (allowActiveGrant && doc.status === 'ACTIVE') {
+    const userRank = await getUserClearanceRank(database, principal.userId, now);
+    if (userRank >= documentRank && typeof database?.accessGrant?.findFirst === 'function') {
+      const directGrant = await database.accessGrant.findFirst({
         where: {
-          user_id: principal.userId,
+          document_id: doc.id,
+          principal_type: 'USER',
+          principal_user_id: principal.userId,
+          status: 'ACTIVE',
           valid_from: { lte: now },
-          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-          roles: { is_active: true },
+          valid_until: { gt: now },
         },
-        select: { role_id: true },
       });
-      const roleIds = activeRoles.map((r) => r.role_id);
-      if (roleIds.length > 0) {
-        const roleGrant = await database.accessGrant.findFirst({
+      if (directGrant) return;
+
+      if (typeof database?.userRole?.findMany === 'function') {
+        const activeRoles = await database.userRole.findMany({
           where: {
-            document_id: doc.id,
-            principal_type: 'ROLE',
-            principal_role_id: { in: roleIds },
-            status: 'ACTIVE',
+            user_id: principal.userId,
             valid_from: { lte: now },
-            valid_until: { gt: now },
+            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+            roles: { is_active: true },
           },
+          select: { role_id: true },
         });
-        if (roleGrant) return;
+        const roleIds = activeRoles.map((r) => r.role_id);
+        if (roleIds.length > 0) {
+          const roleGrant = await database.accessGrant.findFirst({
+            where: {
+              document_id: doc.id,
+              principal_type: 'ROLE',
+              principal_role_id: { in: roleIds },
+              status: 'ACTIVE',
+              valid_from: { lte: now },
+              valid_until: { gt: now },
+            },
+          });
+          if (roleGrant) return;
+        }
       }
     }
-  }
-
-  if (
-    allowDiscoverable &&
-    doc.discoverable &&
-    doc.status === 'ACTIVE' &&
-    userRank >= documentRank
-  ) {
-    if (await authorization.hasPermission(principal, 'DOCUMENT', 'DISCOVER', scope)) return;
   }
 
   throw new NotFoundException({

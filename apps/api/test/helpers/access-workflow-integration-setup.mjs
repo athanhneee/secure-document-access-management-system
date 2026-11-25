@@ -95,8 +95,9 @@ export async function setupAccessWorkflowIntegrationFixture(dbHarness) {
     [clearanceDef.id],
   );
   await sql.query(
-    "INSERT INTO user_attribute_assignments(user_id,attribute_definition_id,option_id,valid_from,assigned_by) VALUES ($1,$2,$3,now() - interval '1 hour',$4)",
-    [readerUser.id, clearanceDef.id, clearanceOpt.id, ownerUser.id],
+    `INSERT INTO user_attribute_assignments(user_id,attribute_definition_id,option_id,valid_from,assigned_by)
+     VALUES ($1,$3,$4,now() - interval '1 hour',$2),($2,$3,$4,now() - interval '1 hour',$2)`,
+    [readerUser.id, ownerUser.id, clearanceDef.id, clearanceOpt.id],
   );
 
   const docId = randomUUID();

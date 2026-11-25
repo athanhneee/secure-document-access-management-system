@@ -38,20 +38,21 @@ export async function executeReclassifyDocument(params: {
   const { database, authorization, cache, audit, documentId, input, principal, context } = params;
 
   const doc = await database.document.findUnique({ where: { id: documentId } });
-  if (!doc) {
+  if (!doc || doc.status === 'DELETED') {
     throw new NotFoundException({
       errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
       message: 'Document not found.',
     });
   }
-  if (doc.status === 'ARCHIVED' || doc.status === 'DELETED') {
+
+  await assertDocumentMutationPermission(authorization, doc, principal, 'CLASSIFY', { database });
+
+  if (doc.status === 'ARCHIVED') {
     throw new BadRequestException({
       errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
       message: 'Cannot reclassify an archived or deleted document.',
     });
   }
-
-  await assertDocumentMutationPermission(authorization, doc, principal, 'CLASSIFY', { database });
 
   const targetLevel = await database.classificationLevel.findUnique({
     where: { id: input.classificationLevelId },

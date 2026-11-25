@@ -2,7 +2,12 @@
  * Module: Document Ingestion Preconditions & Backpressure Stream Spooler
  * Thuật toán: Kiểm Định Tiên Quyết SoD/Độ Mật Trước Tải Lên & Ghi Đệm Luồng Một Lượt Có Điều Tiết Ngược Kèm Băm SHA-256.
  */
-import { BadRequestException, ForbiddenException, PayloadTooLargeException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+  PayloadTooLargeException,
+} from '@nestjs/common';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { Readable } from 'node:stream';
@@ -100,50 +105,45 @@ export async function validateIngestionPreconditions(
       where: { id: input.documentId },
       select: { id: true, owner_id: true, department_id: true, status: true },
     });
-    if (targetDoc) {
-      if (targetDoc.status === 'ARCHIVED' || targetDoc.status === 'DELETED') {
-        input.fileStream.destroy();
-        throw new BadRequestException({
-          errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
-          message: 'Cannot upload new version to an archived or deleted document.',
-        });
-      }
-      if (targetDoc.owner_id !== input.principal.userId) {
-        const canCreateVersion = authorization
-          ? (await authorization.hasPermission(input.principal, 'DOCUMENT_VERSION', 'CREATE', {
-              targetDepartmentId: targetDoc.department_id,
-            })) ||
-            (await authorization.hasPermission(input.principal, 'DOCUMENT', 'CLASSIFY', {
-              targetDepartmentId: targetDoc.department_id,
-            }))
-          : false;
-        if (!canCreateVersion) {
+    if (!targetDoc || targetDoc.status === 'DELETED') {
+      input.fileStream.destroy();
+      throw new NotFoundException({
+        errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+        message: 'Document not found.',
+      });
+    }
+    // CONFLICT-RESOLVED: Cưỡng chế quyền sở hữu nghiêm ngặt (`owner_id === principal.userId`) trước khi kiểm tra trạng thái để chặn BOLA tải đè phiên bản và loại bỏ state oracle.
+    if (targetDoc.owner_id !== input.principal.userId) {
+      input.fileStream.destroy();
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Only the document owner can upload a new version.',
+      });
+    }
+    if (targetDoc.status === 'ARCHIVED') {
+      input.fileStream.destroy();
+      throw new BadRequestException({
+        errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
+        message: 'Cannot upload new version to an archived or deleted document.',
+      });
+    }
+    if (
+      typeof database?.documentClassificationHistory?.findFirst === 'function' &&
+      typeof database?.userAttributeAssignment?.findFirst === 'function'
+    ) {
+      const currentClass = await database.documentClassificationHistory.findFirst({
+        where: { document_id: targetDoc.id, effective_to: null },
+        include: { classification_levels: true },
+      });
+      const existingRank = currentClass?.classification_levels?.rank ?? 0;
+      if (existingRank > 0) {
+        const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
+        if (rank < existingRank) {
           input.fileStream.destroy();
           throw new ForbiddenException({
-            errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
-            message:
-              'Only the document owner or authorized department administrator can upload a new version.',
+            errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+            message: `Insufficient clearance level (${rank}) to upload version to document at rank ${existingRank}.`,
           });
-        }
-      }
-      if (
-        typeof database?.documentClassificationHistory?.findFirst === 'function' &&
-        typeof database?.userAttributeAssignment?.findFirst === 'function'
-      ) {
-        const currentClass = await database.documentClassificationHistory.findFirst({
-          where: { document_id: targetDoc.id, effective_to: null },
-          include: { classification_levels: true },
-        });
-        const existingRank = currentClass?.classification_levels?.rank ?? 0;
-        if (existingRank > 0) {
-          const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
-          if (rank < existingRank) {
-            input.fileStream.destroy();
-            throw new ForbiddenException({
-              errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
-              message: `Insufficient clearance level (${rank}) to upload version to document at rank ${existingRank}.`,
-            });
-          }
         }
       }
     }

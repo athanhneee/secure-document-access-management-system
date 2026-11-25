@@ -186,32 +186,37 @@ export function buildSearchWhereClause(params: {
   // CONFLICT-RESOLVED: Luôn áp dụng bộ lọc trần độ mật Bell-LaPadula (mặc định `0` khi thiếu thuộc tính) để chặn rò rỉ tiêu đề/trích đoạn 200 ký tự vượt thẩm quyền (HIGH-08).
   const effectiveClearanceRank = userClearanceRank ?? 0;
   const clearanceSql = Prisma.sql` AND (cl."rank" IS NULL OR cl."rank" <= ${effectiveClearanceRank})`;
+  const scope = input.scope ?? 'all';
 
   const visibility: Prisma.Sql[] = [Prisma.sql`(d."owner_id" = ${userId}${clearanceSql})`];
-  if (hasGlobalDiscover) {
-    visibility.push(Prisma.sql`(d."discoverable" = true AND d."status" = 'ACTIVE'${clearanceSql})`);
-  } else if (discoverableDeptIds && discoverableDeptIds.length > 0) {
-    visibility.push(
-      Prisma.sql`(d."discoverable" = true AND d."status" = 'ACTIVE' AND d."department_id" = ANY(${discoverableDeptIds})${clearanceSql})`,
-    );
-  }
+  if (scope !== 'owned') {
+    if (hasGlobalDiscover) {
+      visibility.push(
+        Prisma.sql`(d."discoverable" = true AND d."status" = 'ACTIVE'${clearanceSql})`,
+      );
+    } else if (discoverableDeptIds && discoverableDeptIds.length > 0) {
+      visibility.push(
+        Prisma.sql`(d."discoverable" = true AND d."status" = 'ACTIVE' AND d."department_id" = ANY(${discoverableDeptIds})${clearanceSql})`,
+      );
+    }
 
-  visibility.push(
-    Prisma.sql`(EXISTS (
-      SELECT 1 FROM access_grants ag
-      WHERE ag.document_id = d.id AND ag.principal_type = 'USER' AND ag.principal_user_id = ${userId}
-        AND ag.status = 'ACTIVE' AND ag.valid_from <= now() AND ag.valid_until > now()
-    )${clearanceSql})`,
-  );
-
-  if (roleIds.length > 0) {
     visibility.push(
       Prisma.sql`(EXISTS (
         SELECT 1 FROM access_grants ag
-        WHERE ag.document_id = d.id AND ag.principal_type = 'ROLE' AND ag.principal_role_id = ANY(${roleIds})
+        WHERE ag.document_id = d.id AND ag.principal_type = 'USER' AND ag.principal_user_id = ${userId}
           AND ag.status = 'ACTIVE' AND ag.valid_from <= now() AND ag.valid_until > now()
       )${clearanceSql})`,
     );
+
+    if (roleIds.length > 0) {
+      visibility.push(
+        Prisma.sql`(EXISTS (
+          SELECT 1 FROM access_grants ag
+          WHERE ag.document_id = d.id AND ag.principal_type = 'ROLE' AND ag.principal_role_id = ANY(${roleIds})
+            AND ag.status = 'ACTIVE' AND ag.valid_from <= now() AND ag.valid_until > now()
+        )${clearanceSql})`,
+      );
+    }
   }
 
   const conditions: Prisma.Sql[] = [

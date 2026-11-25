@@ -47,7 +47,7 @@ const COMPLIANCE_STANDARDS = [
   },
   {
     title: 'Quy chế bảo vệ bí mật nội bộ',
-    subtitle: 'Phân loại 5 mức độ mật và kiểm soát bàn giao có truy vết',
+    subtitle: 'Phân loại 4 mức độ mật và kiểm soát bàn giao có truy vết',
   },
 ] as const;
 
@@ -76,7 +76,7 @@ export function SecurityPillarsSection() {
                 >
                   <div className="min-w-0">
                     <div className="mb-1.5">
-                      <span className="staff-badge bg-transparent border-0 p-0 inline-flex max-w-full items-center gap-1.5 text-[11px] font-bold text-[#008489] uppercase">
+                      <span className="staff-badge bg-transparent border-0 p-0 inline-flex max-w-full items-center gap-1.5 text-xs font-bold text-[#008489] uppercase">
                         <IconComp
                           size={16}
                           strokeWidth={1.75}

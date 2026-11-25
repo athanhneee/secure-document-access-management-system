@@ -213,8 +213,21 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
     );
 
     if (href && !disabled && !effectiveLoading) {
+      const linkOnClick = onClick
+        ? (event: React.MouseEvent<HTMLAnchorElement>) => {
+            (onClick as unknown as (e: React.MouseEvent<HTMLAnchorElement>) => void)(event);
+          }
+        : undefined;
       return (
-        <Link href={href} className={baseClasses}>
+        <Link
+          href={href}
+          className={baseClasses}
+          {...(linkOnClick ? { onClick: linkOnClick } : {})}
+          {...(props['aria-label'] !== undefined ? { 'aria-label': props['aria-label'] } : {})}
+          {...(props.title !== undefined ? { title: props.title } : {})}
+          {...(props.id !== undefined ? { id: props.id } : {})}
+          {...(props.tabIndex !== undefined ? { tabIndex: props.tabIndex } : {})}
+        >
           {innerContent}
         </Link>
       );

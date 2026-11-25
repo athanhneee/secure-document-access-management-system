@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ShieldCheck, ShieldAlert, Lock, AlertTriangle, Flame } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Lock, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export type ClassificationCode =
@@ -9,12 +9,12 @@ export interface ClassificationBadgeProps extends Omit<
   React.HTMLAttributes<HTMLSpanElement>,
   'style'
 > {
-  code?: ClassificationCode;
-  level?: ClassificationCode;
-  rank?: number;
-  showRank?: boolean;
-  subject?: 'document' | 'user';
-  size?: 'sm' | 'md' | 'lg';
+  code?: ClassificationCode | undefined;
+  level?: ClassificationCode | undefined;
+  rank?: number | undefined;
+  showRank?: boolean | undefined;
+  subject?: 'document' | 'user' | undefined;
+  size?: 'sm' | 'md' | 'lg' | undefined;
 }
 
 /**
@@ -71,7 +71,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>KHÔNG MẬT</span>
-          {showRank && <span className="font-bold text-[13px]">· Cấp 0</span>}
+          {showRank && <span className="font-bold text-xs">· Cấp 0</span>}
         </span>
       );
 
@@ -99,7 +99,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>NỘI BỘ</span>
-          {showRank && <span className="font-bold text-[13px]">· Cấp 1</span>}
+          {showRank && <span className="font-bold text-xs">· Cấp 1</span>}
         </span>
       );
 
@@ -126,7 +126,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>MẬT</span>
-          {showRank && <span className="font-bold text-[13px]">· Cấp 2</span>}
+          {showRank && <span className="font-bold text-xs">· Cấp 2</span>}
         </span>
       );
 
@@ -151,7 +151,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>TỐI MẬT</span>
-          {showRank && <span className="font-bold text-[13px]">· Cấp 3</span>}
+          {showRank && <span className="font-bold text-xs">· Cấp 3</span>}
         </span>
       );
 
@@ -171,14 +171,14 @@ export function ClassificationBadge({
           aria-label={`${subjectPrefix}: Tuyệt mật${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
         >
-          <Flame
+          <ShieldAlert
             size={iconPixelSize}
-            strokeWidth={1.75}
-            className="shrink-0 animate-pulse"
+            strokeWidth={2}
+            className="shrink-0"
             aria-hidden="true"
           />
           <span>TUYỆT MẬT</span>
-          {showRank && <span className="font-bold text-[13px]">· Cấp 4</span>}
+          {showRank && <span className="font-bold text-xs">· Cấp 4</span>}
         </span>
       );
 

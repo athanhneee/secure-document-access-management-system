@@ -2,7 +2,7 @@
 
 /**
  * Thuật toán: Khu Vực Giới Thiệu Đầu Trang Nhận Thức Phiên Đăng Nhập & Lưới Chỉ Số Mật Mã (`HeroSection`)
- * Mục đích: Trình bày thông điệp cốt lõi Zero-Trust và định tuyến nút kêu gọi hành động chính trực tiếp vào phân hệ được cấp quyền khi người dùng đã xác thực.
+ * Mục đích: Trình bày thông điệp cốt lõi Zero-Trust đúng thực tế 4 cấp độ mật (`V-23`), định tuyến nút chính vào phân hệ được cấp và ẩn nút "Chọn phân hệ" khi người dùng đã đăng nhập với duy nhất 1 phân hệ (`V-32`).
  */
 import { resolveDefaultPortalForRoles, useAuth } from '@/lib/auth-context';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -10,8 +10,8 @@ import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button
 const HERO_METRICS = [
   {
     label: 'Phân loại',
-    value: '5 cấp độ mật',
-    subtext: 'Từ Không mật đến Tuyệt mật',
+    value: '4 cấp độ mật',
+    subtext: 'Từ Nội bộ đến Tuyệt mật',
     delay: 'delay-100',
   },
   {
@@ -35,9 +35,10 @@ const HERO_METRICS = [
 ] as const;
 
 export function HeroSection() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, accessiblePortals } = useAuth();
   const primaryHref = isAuthenticated ? resolveDefaultPortalForRoles(user) : '/login';
   const primaryText = isAuthenticated ? 'Vào phân hệ làm việc' : 'Bắt đầu ngay';
+  const showPortalChooser = !isAuthenticated || accessiblePortals.length > 1;
 
   return (
     <section className="relative border-b border-[#ebebeb] bg-linear-to-b from-[#ffffff] to-[#f7f7f7] py-8 sm:py-12 lg:py-14">
@@ -67,12 +68,14 @@ export function HeroSection() {
                 text={primaryText}
                 className="w-full sm:w-auto px-5"
               />
-              <InteractiveHoverButton
-                href="#vai-tro"
-                variant="outline"
-                text="Chọn phân hệ"
-                className="w-full sm:w-auto px-5"
-              />
+              {showPortalChooser && (
+                <InteractiveHoverButton
+                  href="#vai-tro"
+                  variant="outline"
+                  text="Chọn phân hệ"
+                  className="w-full sm:w-auto px-5"
+                />
+              )}
             </div>
           </div>
 
@@ -82,7 +85,7 @@ export function HeroSection() {
                 key={metric.label}
                 className={`rounded-[16px] sm:rounded-[20px] border border-[#ebebeb] bg-[#ffffff] p-3.5 sm:p-4 shadow-[0_2px_10px_rgba(0,0,0,0.03)] hover-card animate-fade-in-up ${metric.delay}`}
               >
-                <div className="text-[11px] font-semibold text-[#717171] uppercase tracking-wider truncate">
+                <div className="text-xs font-semibold text-[#717171] uppercase tracking-wider truncate">
                   {metric.label}
                 </div>
                 <div className="mt-1 text-sm sm:text-base font-bold text-[#222222] truncate">

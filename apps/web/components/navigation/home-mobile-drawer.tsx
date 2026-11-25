@@ -76,8 +76,14 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
   const { isAuthenticated, user, logout, canAccessPortal } = useAuth();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const skipRestoreFocusRef = useRef(false);
   const onCloseRef = useRef(onClose);
   const titleId = useId();
+
+  function handleAnchorClose() {
+    skipRestoreFocusRef.current = true;
+    onClose();
+  }
 
   const visibleRoles =
     isAuthenticated && user
@@ -163,7 +169,12 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
         }
       }
       const prev = previousFocusRef.current;
-      if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+      if (
+        !skipRestoreFocusRef.current &&
+        prev &&
+        typeof prev.focus === 'function' &&
+        document.contains(prev)
+      ) {
         prev.focus();
       }
     };
@@ -179,7 +190,7 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
         e.preventDefault();
         onClose();
       }}
-      className="fixed inset-0 z-50 m-0 flex h-full w-full max-h-none max-w-none flex-col justify-start border-none bg-[#222222]/40 p-0 outline-none backdrop-blur-xs md:hidden"
+      className="fixed inset-0 z-50 m-0 flex h-full w-full max-h-none max-w-none flex-col justify-start border-none bg-transparent p-0 outline-none md:hidden"
     >
       <nav
         data-drawer-panel="true"
@@ -210,7 +221,7 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
           </div>
           <a
             href="#vai-tro"
-            onClick={onClose}
+            onClick={handleAnchorClose}
             className="flex min-h-11 items-center justify-between rounded-full px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
           >
             <span className="flex items-center gap-2.5">
@@ -232,7 +243,7 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
 
           <a
             href="#kien-truc"
-            onClick={onClose}
+            onClick={handleAnchorClose}
             className="flex min-h-11 items-center justify-between rounded-full px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
           >
             <span className="flex items-center gap-2.5">
@@ -249,7 +260,7 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
 
           <a
             href="#tieu-chuan"
-            onClick={onClose}
+            onClick={handleAnchorClose}
             className="flex min-h-11 items-center justify-between rounded-full px-3.5 py-2.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] active:bg-[#f7f7f7] transition-colors"
           >
             <span className="flex items-center gap-2.5">

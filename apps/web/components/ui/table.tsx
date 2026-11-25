@@ -17,7 +17,7 @@ export function Table({ className, containerClassName, containerRef, ...props }:
     <div
       ref={containerRef}
       className={cn(
-        'sda-table-scroll relative w-full min-h-[200px] max-h-[52dvh] lg:max-h-[calc(100dvh-29rem)] overflow-x-auto overflow-y-auto overscroll-contain rounded-[16px] border border-[#ebebeb] bg-[#ffffff] [[data-card-body]_&]:rounded-none [[data-card-body]_&]:border-0',
+        'sda-table-scroll relative w-full min-h-[200px] max-h-[52dvh] lg:max-h-[calc(100dvh-21rem)] overflow-x-auto overflow-y-auto overscroll-contain rounded-[16px] border border-[#ebebeb] bg-[#ffffff] [[data-card-body]_&]:rounded-none [[data-card-body]_&]:border-0',
         containerClassName,
       )}
     >
@@ -61,7 +61,7 @@ export function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTa
   return (
     <th
       className={cn(
-        'h-9 px-3.5 text-left align-middle text-[11px] font-semibold uppercase tracking-wider text-[#717171] whitespace-nowrap [&:has([role=checkbox])]:pr-0 select-none',
+        'h-9 px-3.5 text-left align-middle text-xs font-semibold uppercase tracking-wider text-[#717171] whitespace-nowrap [&:has([role=checkbox])]:pr-0 select-none',
         className,
       )}
       {...props}

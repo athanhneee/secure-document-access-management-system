@@ -1,9 +1,9 @@
 /**
- * Thuật toán: Trang Báo Lỗi 404 Chuẩn Tiếng Việt & Điều Hướng An Toàn Về Trang Chủ (`NotFoundPage`)
- * Mục đích: Thay thế trang 404 tiếng Anh mặc định của Next.js bằng thông điệp tiếng Việt rõ ràng, tuân thủ tuyệt đối bảng màu, biểu tượng Lucide và bố cục thích ứng `375px` của `rules/ui-design-system.md`.
+ * Thuật toán: Trang Báo Lỗi 404 Chuẩn Tiếng Việt & Điều Hướng An Toàn Nhận Thức Phiên (`NotFoundPage`, V-49)
+ * Mục đích: Thay thế trang 404 tiếng Anh mặc định của Next.js bằng thông điệp tiếng Việt rõ ràng và nút quay về đúng phân hệ làm việc nếu đã đăng nhập.
  */
-import Link from 'next/link';
-import { ArrowLeft, FileSearch, ShieldCheck } from 'lucide-react';
+import { FileSearch, ShieldCheck } from 'lucide-react';
+import { NotFoundActions } from './not-found-actions';
 
 export default function NotFoundPage() {
   return (
@@ -25,25 +25,11 @@ export default function NotFoundPage() {
           </h1>
           <p className="text-xs text-[#717171] leading-relaxed">
             Đường dẫn bạn truy cập không tồn tại hoặc đã được thay đổi. Vui lòng kiểm tra lại địa
-            chỉ hoặc quay về trang chủ hệ thống.
+            chỉ hoặc quay về khu vực làm việc của bạn.
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-1">
-          <Link
-            href="/"
-            className="inline-flex min-h-11 w-full sm:w-auto items-center justify-center gap-1.5 rounded-full bg-[#FF385C] px-5 py-2 text-xs font-semibold text-[#ffffff] hover:bg-[#E31C5F] transition-colors shadow-2xs"
-          >
-            <ArrowLeft size={16} strokeWidth={2} aria-hidden="true" />
-            <span>Về trang chủ</span>
-          </Link>
-          <Link
-            href="/login"
-            className="inline-flex min-h-11 w-full sm:w-auto items-center justify-center rounded-full border border-[#dddddd] bg-[#ffffff] px-5 py-2 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] transition-colors"
-          >
-            Đăng nhập hệ thống
-          </Link>
-        </div>
+        <NotFoundActions />
       </div>
     </div>
   );

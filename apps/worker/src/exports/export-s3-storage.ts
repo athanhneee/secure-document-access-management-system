@@ -124,6 +124,19 @@ export function resolveDerivativesExportObjectTarget(
 }
 
 /**
+ * Thuật toán: Nhận diện đường dẫn cục bộ sinh bởi container khác có tên tệp khớp `<safeJobId>.dat` và không chứa `..`
+ * để cho phép thu dọn đối tượng gương S3/R2 an toàn trên kiến trúc đa container mà không chạm đĩa cục bộ ngoài vùng giam cầm.
+ */
+export function isCrossContainerExportFilename(filePath: string, safeJobId: string): boolean {
+  if (!safeJobId || !filePath || filePath.includes('..') || filePath.includes('\0')) {
+    return false;
+  }
+  const normalized = filePath.replace(/\\/gu, '/');
+  const fileName = normalized.split('/').pop();
+  return fileName === `${safeJobId}.dat`;
+}
+
+/**
  * Thuật toán: Thẩm định chuỗi định danh `s3://<bucket>/.../exports/<safeJobId>.dat` chống leo thang khóa đối tượng.
  */
 export function isValidExportS3UriForJob(filePath: string, safeJobId: string): boolean {

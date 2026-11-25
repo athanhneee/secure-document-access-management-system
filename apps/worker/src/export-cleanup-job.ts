@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
   deleteExportCiphertextFromS3,
+  isCrossContainerExportFilename,
   isValidExportS3UriForJob,
   resolveWorkerExportS3Config,
 } from './exports/export-s3-storage.js';
@@ -92,41 +93,53 @@ export async function cleanExpiredExportJobs(options?: {
           !path.isAbsolute(relativePath);
 
         if (!isInsideBaseDir) {
-          console.warn(
-            `Export cleanup refused to unlink out-of-bounds file_path for job ${job.id}`,
-          );
-          continue;
-        }
-
-        try {
-          const stat = await fsp.lstat(resolvedTarget);
-          if (!stat.isFile()) {
+          if (s3Enabled && safeId && isCrossContainerExportFilename(job.file_path, safeId)) {
+            try {
+              const removedRemote = await deleteExportCiphertextFromS3(safeId);
+              deletedForCurrentJob = deletedForCurrentJob || removedRemote;
+            } catch (s3Err) {
+              console.warn(
+                `Export cleanup failed to delete cross-container S3 mirror for job ${job.id}: ${s3Err instanceof Error ? s3Err.message : String(s3Err)}`,
+              );
+              continue;
+            }
+          } else {
             console.warn(
-              `Export cleanup refused to unlink non-regular file_path for job ${job.id}`,
+              `Export cleanup refused to unlink out-of-bounds file_path for job ${job.id}`,
             );
             continue;
           }
-          await fsp.unlink(resolvedTarget);
-          deletedForCurrentJob = true;
-        } catch (fileErr: unknown) {
-          const errCode = (fileErr as NodeJS.ErrnoException | null | undefined)?.code;
-          if (errCode !== 'ENOENT') {
-            console.warn(
-              `Export cleanup failed to unlink file for job ${job.id} (${errCode ?? 'UNKNOWN'}): ${fileErr instanceof Error ? fileErr.message : String(fileErr)}`,
-            );
-            continue;
-          }
-        }
-
-        if (s3Enabled && safeId) {
+        } else {
           try {
-            const removedRemote = await deleteExportCiphertextFromS3(safeId);
-            deletedForCurrentJob = deletedForCurrentJob || removedRemote;
-          } catch (s3Err) {
-            console.warn(
-              `Export cleanup failed to delete S3 mirror for job ${job.id}: ${s3Err instanceof Error ? s3Err.message : String(s3Err)}`,
-            );
-            continue;
+            const stat = await fsp.lstat(resolvedTarget);
+            if (!stat.isFile()) {
+              console.warn(
+                `Export cleanup refused to unlink non-regular file_path for job ${job.id}`,
+              );
+              continue;
+            }
+            await fsp.unlink(resolvedTarget);
+            deletedForCurrentJob = true;
+          } catch (fileErr: unknown) {
+            const errCode = (fileErr as NodeJS.ErrnoException | null | undefined)?.code;
+            if (errCode !== 'ENOENT') {
+              console.warn(
+                `Export cleanup failed to unlink file for job ${job.id} (${errCode ?? 'UNKNOWN'}): ${fileErr instanceof Error ? fileErr.message : String(fileErr)}`,
+              );
+              continue;
+            }
+          }
+
+          if (s3Enabled && safeId) {
+            try {
+              const removedRemote = await deleteExportCiphertextFromS3(safeId);
+              deletedForCurrentJob = deletedForCurrentJob || removedRemote;
+            } catch (s3Err) {
+              console.warn(
+                `Export cleanup failed to delete S3 mirror for job ${job.id}: ${s3Err instanceof Error ? s3Err.message : String(s3Err)}`,
+              );
+              continue;
+            }
           }
         }
       }

@@ -8,12 +8,27 @@ import type { AuthorizationService } from '../rbac/authorization.service.js';
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 type SerializableTransaction = Parameters<Parameters<typeof withSerializableTransaction>[0]>[0];
 
+export interface ClearanceSummary {
+  clearanceOptionId: string | null;
+  clearanceCode: string | null;
+  clearanceName: string | null;
+  clearanceRank: number;
+}
+
+export interface ClearanceOptionItem {
+  id: string;
+  code: string;
+  name: string;
+  rank: number;
+}
+
 export interface CreateUserInput {
   username: string;
   email: string;
   fullName: string;
   employeeCode?: string | null | undefined;
   departmentId?: bigint | null | undefined;
+  clearanceOptionId?: bigint | null | undefined;
   password: string;
 }
 
@@ -23,7 +38,20 @@ export interface UpdateUserInput {
   fullName?: string | undefined;
   employeeCode?: string | null | undefined;
   departmentId?: bigint | null | undefined;
+  clearanceOptionId?: bigint | null | undefined;
 }
+
+export interface UpdateUserClearanceInput {
+  expectedVersion: number;
+  clearanceOptionId: bigint | null;
+}
+
+export const EMPTY_CLEARANCE_SUMMARY: ClearanceSummary = {
+  clearanceOptionId: null,
+  clearanceCode: null,
+  clearanceName: null,
+  clearanceRank: 0,
+};
 
 /**
  * Thuật toán: Phân giải tập phòng ban được phép nhìn thấy cấp độ thẩm tra an ninh (`CLEARANCE_LEVEL`) theo hợp bao đóng `ACCESS_GRANT:CREATE` và `USER:MANAGE` (HIGH-13).

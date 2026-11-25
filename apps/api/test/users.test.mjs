@@ -290,3 +290,348 @@ test('UsersService & UsersController — department transfer expires old roles, 
   );
   assert.equal(disabledViaController.status, 'DISABLED');
 });
+
+test('UsersService & UsersController — clearance options, create/update/PUT clearance, OCC CAS & Bell-LaPadula downgrade cascade', async () => {
+  const baseDb = createInMemoryUsersDb();
+  const clearanceDef = { id: 1n, code: 'CLEARANCE_LEVEL', is_active: true };
+  const clearanceOptions = new Map([
+    [
+      1n,
+      {
+        id: 1n,
+        attribute_definition_id: 1n,
+        value_code: 'INTERNAL',
+        display_name: 'Nội bộ',
+        numeric_rank: 1,
+        is_active: true,
+        sort_order: 1,
+      },
+    ],
+    [
+      2n,
+      {
+        id: 2n,
+        attribute_definition_id: 1n,
+        value_code: 'CONFIDENTIAL',
+        display_name: 'Mật',
+        numeric_rank: 2,
+        is_active: true,
+        sort_order: 2,
+      },
+    ],
+    [
+      3n,
+      {
+        id: 3n,
+        attribute_definition_id: 1n,
+        value_code: 'SECRET',
+        display_name: 'Tối mật',
+        numeric_rank: 3,
+        is_active: true,
+        sort_order: 3,
+      },
+    ],
+    [
+      99n,
+      {
+        id: 99n,
+        attribute_definition_id: 2n,
+        value_code: 'ACTIVE_STAFF',
+        display_name: 'Nhân sự chính thức',
+        numeric_rank: 2,
+        is_active: true,
+        sort_order: 1,
+      },
+    ],
+  ]);
+
+  let nextAttrAssignId = 100n;
+  const assignments = [];
+  const grants = [
+    {
+      id: 'grant-secret',
+      principal_type: 'USER',
+      principal_user_id: 2n,
+      status: 'ACTIVE',
+      version: 0,
+      documents: { classification_history: [{ classification_levels: { rank: 3 } }] },
+    },
+    {
+      id: 'grant-internal',
+      principal_type: 'USER',
+      principal_user_id: 2n,
+      status: 'ACTIVE',
+      version: 0,
+      documents: { classification_history: [{ classification_levels: { rank: 1 } }] },
+    },
+  ];
+  const sessions = [
+    {
+      id: 'sess-secret',
+      user_id: 2n,
+      status: 'ACTIVE',
+      document_versions: {
+        document: { classification_history: [{ classification_levels: { rank: 3 } }] },
+      },
+    },
+    {
+      id: 'sess-internal',
+      user_id: 2n,
+      status: 'ACTIVE',
+      document_versions: {
+        document: { classification_history: [{ classification_levels: { rank: 1 } }] },
+      },
+    },
+  ];
+
+  const enrichAssignment = (row) => ({
+    ...row,
+    attribute_definitions: clearanceDef,
+    attribute_options: clearanceOptions.get(row.option_id) ?? null,
+  });
+
+  const db = {
+    ...baseDb,
+    attributeDefinition: {
+      findUnique: async ({ where }) =>
+        where.code === 'CLEARANCE_LEVEL'
+          ? {
+              ...clearanceDef,
+              attribute_options: [...clearanceOptions.values()]
+                .filter((o) => o.attribute_definition_id === 1n && o.is_active)
+                .sort((a, b) => a.numeric_rank - b.numeric_rank),
+            }
+          : null,
+    },
+    attributeOption: {
+      findFirst: async ({ where }) => {
+        const opt = clearanceOptions.get(where.id);
+        if (!opt) return null;
+        if (opt.attribute_definition_id !== where.attribute_definition_id) return null;
+        if (where.is_active !== undefined && opt.is_active !== where.is_active) return null;
+        return opt;
+      },
+    },
+    userAttributeAssignment: {
+      findFirst: async ({ where }) => {
+        const now = where.valid_from?.lte ?? new Date();
+        const matches = assignments
+          .filter(
+            (a) =>
+              a.user_id === where.user_id &&
+              a.valid_from <= now &&
+              (a.valid_to === null || a.valid_to > now),
+          )
+          .map(enrichAssignment)
+          .sort(
+            (a, b) =>
+              (b.attribute_options?.numeric_rank ?? 0) - (a.attribute_options?.numeric_rank ?? 0),
+          );
+        return matches[0] ?? null;
+      },
+      findMany: async ({ where }) => {
+        const userFilter = where.user_id?.in
+          ? new Set(where.user_id.in.map(String))
+          : where.user_id !== undefined
+            ? new Set([String(where.user_id)])
+            : null;
+        const now = where.valid_from?.lte ?? where.OR?.[1]?.valid_to?.gt ?? new Date();
+        return assignments
+          .filter((a) => {
+            if (userFilter && !userFilter.has(String(a.user_id))) return false;
+            if (where.valid_from?.lte && a.valid_from > where.valid_from.lte) return false;
+            if (where.OR && !(a.valid_to === null || a.valid_to > now)) return false;
+            return true;
+          })
+          .map(enrichAssignment);
+      },
+      create: async ({ data }) => {
+        const row = { id: nextAttrAssignId++, ...data };
+        assignments.push(row);
+        return row;
+      },
+      updateMany: async ({ where, data }) => {
+        const ids = new Set((where.id?.in ?? []).map(String));
+        let count = 0;
+        for (const row of assignments) {
+          if (ids.has(String(row.id))) {
+            Object.assign(row, data);
+            count += 1;
+          }
+        }
+        return { count };
+      },
+      deleteMany: async ({ where }) => {
+        const ids = new Set((where.id?.in ?? []).map(String));
+        let count = 0;
+        for (let i = assignments.length - 1; i >= 0; i--) {
+          if (ids.has(String(assignments[i].id))) {
+            assignments.splice(i, 1);
+            count += 1;
+          }
+        }
+        return { count };
+      },
+    },
+    accessGrant: {
+      findMany: async ({ where }) =>
+        grants.filter(
+          (g) =>
+            g.principal_type === where.principal_type &&
+            g.principal_user_id === where.principal_user_id &&
+            g.status === where.status,
+        ),
+      update: async ({ where, data }) => {
+        const g = grants.find((item) => item.id === where.id);
+        Object.assign(g, data, { version: g.version + 1 });
+        return g;
+      },
+    },
+    accessSession: {
+      findMany: async ({ where }) =>
+        sessions.filter((s) => s.user_id === where.user_id && s.status === where.status),
+      updateMany: async ({ where, data }) => {
+        const ids = new Set(where.id?.in ?? []);
+        let count = 0;
+        for (const s of sessions) {
+          if (ids.has(s.id) && s.status === where.status) {
+            Object.assign(s, data);
+            count += 1;
+          }
+        }
+        return { count };
+      },
+    },
+    $transaction: async (fn) => fn(db),
+  };
+
+  const audits = [];
+  let invalidatedUsers = 0;
+  const authz = {
+    effectiveGrants: async () => [{ roleCode: 'SYSTEM_ADMIN', resource: 'USER', action: 'MANAGE' }],
+    visibleDepartmentIds: async () => null,
+    hasPermission: async () => true,
+    assertPermission: async () => {},
+    invalidateUser: () => {
+      invalidatedUsers += 1;
+    },
+  };
+  const service = new UsersService(
+    authz,
+    new PasswordService(),
+    { record: async (_tx, ev) => audits.push(ev) },
+    db,
+  );
+  const csrf = new CsrfService(new AppConfigService({ CORS_ORIGIN: 'http://localhost:3000' }));
+  const token = 'csrf-clearance-0123456789abcdef0123456789';
+  const controller = new UsersController(service, csrf);
+  const authedReq = {
+    auth: managerPrincipal,
+    ip: '127.0.0.1',
+    cookies: { sda_csrf: token },
+    headers: { origin: 'http://localhost:3000', 'x-csrf-token': token },
+  };
+
+  // 1. List clearance options sorted by rank
+  const opts = await controller.clearanceOptions();
+  assert.deepEqual(
+    opts.data.map((o) => [o.code, o.rank]),
+    [
+      ['INTERNAL', 1],
+      ['CONFIDENTIAL', 2],
+      ['SECRET', 3],
+    ],
+  );
+
+  // 2. Reject cross-attribute option injection when creating user
+  await assert.rejects(
+    () =>
+      service.create(
+        managerPrincipal,
+        {
+          username: 'bad.clearance',
+          email: 'bad.clearance@sda.local',
+          fullName: 'Bad Clearance',
+          departmentId: 1n,
+          clearanceOptionId: 99n,
+          password: 'fixture-Str0ng#Passphrase!2026$XyZ',
+        },
+        ctx,
+      ),
+    BadRequestException,
+  );
+
+  // 3. Create user with initial SECRET clearance & verify projection in get/list
+  const created = await service.create(
+    managerPrincipal,
+    {
+      username: 'owner.cleared',
+      email: 'owner.cleared@sda.local',
+      fullName: 'Chủ sở hữu có độ mật',
+      departmentId: 1n,
+      clearanceOptionId: 3n,
+      password: 'fixture-Str0ng#Passphrase!2026$XyZ',
+    },
+    ctx,
+  );
+  const createdDetail = await service.get(managerPrincipal, BigInt(created.id));
+  assert.equal(createdDetail.clearanceCode, 'SECRET');
+  assert.equal(createdDetail.clearanceRank, 3);
+  assert.equal(createdDetail.clearanceOptionId, '3');
+
+  const listed = await service.list(managerPrincipal);
+  const listedNew = listed.data.find((u) => u.id === created.id);
+  assert.equal(listedNew.clearanceCode, 'SECRET');
+  assert.equal(listedNew.clearanceRank, 3);
+
+  // 4. Upgrade user #2 to SECRET via PUT /users/:id/clearance, then verify /users/me reflects clearance
+  const upgraded = await controller.updateClearance(
+    '2',
+    { expectedVersion: 0, clearanceOptionId: '3' },
+    authedReq,
+  );
+  assert.equal(upgraded.clearanceCode, 'SECRET');
+  assert.equal(upgraded.clearanceRank, 3);
+  assert.equal(upgraded.revokedGrantsCount, 0);
+  assert.equal(upgraded.terminatedSessionsCount, 0);
+  assert.equal(audits.at(-1).action, 'USER_CLEARANCE_UPDATED');
+
+  const meUser2 = await service.currentUser({ ...managerPrincipal, userId: 2n });
+  assert.equal(meUser2.clearanceCode, 'SECRET');
+  assert.equal(meUser2.clearanceRank, 3);
+
+  // 5. Downgrade user #2 from SECRET (3) -> INTERNAL (1) must cascade-revoke rank-3 grant & session but keep rank-1
+  const downgraded = await controller.updateClearance(
+    '2',
+    { expectedVersion: 1, clearanceOptionId: '1' },
+    authedReq,
+  );
+  assert.equal(downgraded.clearanceCode, 'INTERNAL');
+  assert.equal(downgraded.clearanceRank, 1);
+  assert.equal(downgraded.revokedGrantsCount, 1);
+  assert.equal(downgraded.terminatedSessionsCount, 1);
+  assert.equal(grants.find((g) => g.id === 'grant-secret').status, 'REVOKED');
+  assert.equal(grants.find((g) => g.id === 'grant-internal').status, 'ACTIVE');
+  assert.equal(sessions.find((s) => s.id === 'sess-secret').status, 'TERMINATED');
+  assert.equal(sessions.find((s) => s.id === 'sess-internal').status, 'ACTIVE');
+
+  // 6. Revoking clearance to null via PATCH /users/:id drops to Rank 0 & cascades remaining rank-1 grant/session
+  const clearedViaPatch = await service.update(
+    managerPrincipal,
+    2n,
+    { expectedVersion: 2, clearanceOptionId: null },
+    ctx,
+  );
+  assert.equal(clearedViaPatch.clearanceCode, null);
+  assert.equal(clearedViaPatch.clearanceRank, 0);
+  assert.equal(grants.find((g) => g.id === 'grant-internal').status, 'REVOKED');
+  assert.equal(sessions.find((s) => s.id === 'sess-internal').status, 'TERMINATED');
+  assert.ok(invalidatedUsers >= 3);
+
+  // 7. Stale OCC version rejected with ConflictException
+  await assert.rejects(
+    () =>
+      controller.updateClearance('2', { expectedVersion: 1, clearanceOptionId: '2' }, authedReq),
+    ConflictException,
+  );
+});

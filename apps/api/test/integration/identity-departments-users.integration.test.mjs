@@ -243,3 +243,121 @@ test('UsersService SQL integration — Argon2id creation, password policy, depar
     ForbiddenException,
   );
 });
+
+test('UsersService SQL integration — CLEARANCE_LEVEL assignment on create/update/PUT, SCD Type 2 history & cascading downgrade revocation', async () => {
+  const actor = adminPrincipal();
+  const { sql, insertOne } = dbHarness;
+
+  const clearanceDef = await insertOne(
+    `INSERT INTO attribute_definitions(code,name,scope,value_type,is_required,is_active,created_by)
+     VALUES ('CLEARANCE_LEVEL','Cấp độ thẩm tra','USER','ENUM',true,true,$1) RETURNING id`,
+    [adminUser.id],
+  );
+  const optInternal = await insertOne(
+    `INSERT INTO attribute_options(attribute_definition_id,value_code,display_name,numeric_rank,sort_order,is_active)
+     VALUES ($1,'INTERNAL','Nội bộ',1,1,true) RETURNING id`,
+    [clearanceDef.id],
+  );
+  const optSecret = await insertOne(
+    `INSERT INTO attribute_options(attribute_definition_id,value_code,display_name,numeric_rank,sort_order,is_active)
+     VALUES ($1,'SECRET','Tối mật',3,3,true) RETURNING id`,
+    [clearanceDef.id],
+  );
+
+  const optionsRes = await usersService.clearanceOptions();
+  assert.deepEqual(
+    optionsRes.data.map((o) => [o.code, o.rank]),
+    [
+      ['INTERNAL', 1],
+      ['SECRET', 3],
+    ],
+  );
+
+  // Create user directly with SECRET clearance
+  const strongPass = ['Clearance#Pass', '2026!AbC'].join('');
+  const created = await usersService.create(
+    actor,
+    {
+      username: 'owner.clearance.sql',
+      email: 'owner.clearance.sql@corp.local',
+      password: strongPass,
+      fullName: 'Chủ tài liệu có độ mật',
+      departmentId: hqDept.id,
+      clearanceOptionId: optSecret.id,
+    },
+    ctx,
+  );
+  const targetUserId = BigInt(created.id);
+
+  const detail = await usersService.get(actor, targetUserId);
+  assert.equal(detail.clearanceCode, 'SECRET');
+  assert.equal(detail.clearanceRank, 3);
+
+  const listed = await usersService.list(actor);
+  const listedUser = listed.data.find((u) => u.id === created.id);
+  assert.equal(listedUser.clearanceCode, 'SECRET');
+  assert.equal(listedUser.clearanceRank, 3);
+
+  // Seed a SECRET document + ACTIVE USER grant so downgrading clearance must cascade-revoke it
+  const clsSecret = await insertOne(
+    `INSERT INTO classification_levels(code,name,rank,allow_download,require_watermark,is_active)
+     VALUES ('SECRET','Tối mật',3,false,true,true) RETURNING id`,
+  );
+  const cat = await insertOne(
+    `INSERT INTO business_categories(code,name,department_id,is_active)
+     VALUES ('CAT_CLR','Danh mục thẩm tra',$1,true) RETURNING id`,
+    [hqDept.id],
+  );
+  const docId = randomUUID();
+  await sql.query(
+    `INSERT INTO documents(id,document_code,title,owner_id,department_id,status,discoverable)
+     VALUES ($1,'DOC-CLR-001','Tài liệu Tối mật',$2,$3,'ACTIVE',true)`,
+    [docId, adminUser.id, hqDept.id],
+  );
+  await sql.query(
+    `INSERT INTO document_classification_history(document_id,classification_level_id,business_category_id,classified_by,effective_from,effective_to)
+     VALUES ($1,$2,$3,$4,now() - interval '1 hour',NULL)`,
+    [docId, clsSecret.id, cat.id, adminUser.id],
+  );
+  const grantId = randomUUID();
+  await sql.query(
+    `INSERT INTO access_grants(id,document_id,principal_type,principal_user_id,source,valid_from,valid_until,status,granted_by)
+     VALUES ($1,$2,'USER',$3,'DIRECT',now() - interval '5 minutes',now() + interval '1 day','ACTIVE',$4)`,
+    [grantId, docId, targetUserId, adminUser.id],
+  );
+
+  // Downgrade clearance from SECRET (3) -> INTERNAL (1) via updateClearance
+  const downgraded = await usersService.updateClearance(
+    actor,
+    targetUserId,
+    { expectedVersion: 0, clearanceOptionId: optInternal.id },
+    ctx,
+  );
+  assert.equal(downgraded.clearanceCode, 'INTERNAL');
+  assert.equal(downgraded.clearanceRank, 1);
+  assert.equal(downgraded.revokedGrantsCount, 1);
+
+  const grantAfter = await sql.query('SELECT status::text FROM access_grants WHERE id=$1', [
+    grantId,
+  ]);
+  assert.equal(grantAfter.rows[0].status, 'REVOKED');
+
+  // Verify SCD Type 2 closed previous row or kept exactly 1 open active row
+  const openClearances = await sql.query(
+    `SELECT option_id FROM user_attribute_assignments
+     WHERE user_id=$1 AND attribute_definition_id=$2 AND valid_to IS NULL`,
+    [targetUserId, clearanceDef.id],
+  );
+  assert.equal(openClearances.rows.length, 1);
+  assert.equal(BigInt(openClearances.rows[0].option_id), optInternal.id);
+
+  // Revoke clearance to null -> Rank 0
+  const revoked = await usersService.updateClearance(
+    actor,
+    targetUserId,
+    { expectedVersion: 1, clearanceOptionId: null },
+    ctx,
+  );
+  assert.equal(revoked.clearanceCode, null);
+  assert.equal(revoked.clearanceRank, 0);
+});

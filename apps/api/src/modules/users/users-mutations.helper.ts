@@ -13,12 +13,19 @@ import type { AuthorizationService } from '../rbac/authorization.service.js';
 import type { RbacAuditService } from '../rbac/rbac-audit.service.js';
 import {
   auditUserSnapshot,
+  EMPTY_CLEARANCE_SUMMARY,
   expirePreviousDepartmentRoles,
   presentUserRecord,
   revokeUserActiveSessions,
+  type ClearanceSummary,
   type CreateUserInput,
+  type UpdateUserClearanceInput,
   type UpdateUserInput,
 } from './users-clearance.helper.js';
+import {
+  fetchActiveUserClearance,
+  syncUserClearanceAssignment,
+} from './users-clearance-assignment.helper.js';
 
 /**
  * Algorithm: Anti-Enumeration Department Visibility Check
@@ -65,6 +72,7 @@ export async function executeCreateUser(params: {
         });
         if (!department) throw new NotFoundException('Active department not found.');
       }
+      const now = new Date();
       const user = await transaction.user.create({
         data: {
           username: input.username,
@@ -77,6 +85,17 @@ export async function executeCreateUser(params: {
           created_by: principal.userId,
         },
       });
+      let initialClearance: ClearanceSummary = { ...EMPTY_CLEARANCE_SUMMARY };
+      if (input.clearanceOptionId !== undefined && input.clearanceOptionId !== null) {
+        const synced = await syncUserClearanceAssignment({
+          transaction,
+          userId: user.id,
+          clearanceOptionId: input.clearanceOptionId,
+          actorUserId: principal.userId,
+          now,
+        });
+        initialClearance = synced.after;
+      }
       await audit.record(
         transaction,
         {
@@ -84,7 +103,10 @@ export async function executeCreateUser(params: {
           objectType: 'USER',
           objectId: user.id.toString(),
           before: null,
-          after: auditUserSnapshot(user),
+          after: {
+            ...auditUserSnapshot(user),
+            ...initialClearance,
+          },
         },
         principal,
         context,
@@ -99,7 +121,7 @@ export async function executeCreateUser(params: {
 }
 
 /**
- * Algorithm: Optimistic CAS User Update with Department-Transfer Role Expiration
+ * Algorithm: Optimistic CAS User Update with Department-Transfer Role Expiration & Optional Clearance Sync
  */
 export async function executeUpdateUser(params: {
   database: PrismaClient;
@@ -128,6 +150,7 @@ export async function executeUpdateUser(params: {
         });
         if (!department) throw new NotFoundException('Active department not found.');
       }
+      const now = new Date();
       const changed = await transaction.user.updateMany({
         where: { id, version: input.expectedVersion },
         data: {
@@ -135,7 +158,7 @@ export async function executeUpdateUser(params: {
           ...(input.fullName !== undefined ? { full_name: input.fullName } : {}),
           ...(input.employeeCode !== undefined ? { employee_code: input.employeeCode } : {}),
           ...(input.departmentId !== undefined ? { department_id: input.departmentId } : {}),
-          updated_at: new Date(),
+          updated_at: now,
           version: { increment: 1 },
         },
       });
@@ -145,8 +168,32 @@ export async function executeUpdateUser(params: {
         before.department_id !== input.departmentId &&
         before.department_id !== null
       ) {
-        await expirePreviousDepartmentRoles(transaction, id, before.department_id);
+        await expirePreviousDepartmentRoles(transaction, id, before.department_id, now);
       }
+
+      let beforeClearance: ClearanceSummary | undefined;
+      let afterClearance: ClearanceSummary;
+      let clearanceCascadeDetails: Record<string, number> = {};
+      if (input.clearanceOptionId !== undefined) {
+        const synced = await syncUserClearanceAssignment({
+          transaction,
+          userId: id,
+          clearanceOptionId: input.clearanceOptionId,
+          actorUserId: principal.userId,
+          now,
+        });
+        beforeClearance = synced.before;
+        afterClearance = synced.after;
+        if (synced.changed) {
+          clearanceCascadeDetails = {
+            revokedGrantsCount: synced.revokedGrantsCount,
+            terminatedSessionsCount: synced.terminatedSessionsCount,
+          };
+        }
+      } else {
+        afterClearance = await fetchActiveUserClearance(transaction, id, now);
+      }
+
       const after = await transaction.user.findUniqueOrThrow({ where: { id } });
       await audit.record(
         transaction,
@@ -154,19 +201,105 @@ export async function executeUpdateUser(params: {
           action: 'USER_UPDATED',
           objectType: 'USER',
           objectId: id.toString(),
-          before: auditUserSnapshot(before),
-          after: auditUserSnapshot(after),
+          before: {
+            ...auditUserSnapshot(before),
+            ...(beforeClearance ?? {}),
+          },
+          after: {
+            ...auditUserSnapshot(after),
+            ...(beforeClearance ? afterClearance : {}),
+            ...clearanceCascadeDetails,
+          },
         },
         principal,
         context,
       );
-      return after;
+      return { after, clearance: afterClearance };
     },
     { client: database },
   );
 
   await authorization.invalidateUser(id);
-  return presentUserRecord(result);
+  return {
+    ...presentUserRecord(result.after),
+    ...result.clearance,
+  };
+}
+
+/**
+ * Algorithm: Optimistic CAS Bell-LaPadula Clearance Assignment with Cascading Downgrade Revocation
+ */
+export async function executeUpdateUserClearance(params: {
+  database: PrismaClient;
+  authorization: AuthorizationService;
+  audit: RbacAuditService;
+  principal: AuthPrincipal;
+  id: bigint;
+  input: UpdateUserClearanceInput;
+  context: RequestContext;
+}) {
+  const { database, authorization, audit, principal, id, input, context } = params;
+  const result = await withSerializableTransaction(
+    async (transaction) => {
+      const before = await transaction.user.findUnique({ where: { id } });
+      if (!before) throw new NotFoundException('User not found.');
+      await assertUserDepartmentVisible(authorization, principal, before.department_id);
+      const now = new Date();
+      const changed = await transaction.user.updateMany({
+        where: { id, version: input.expectedVersion },
+        data: {
+          updated_at: now,
+          version: { increment: 1 },
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('User was changed by another request.');
+
+      const synced = await syncUserClearanceAssignment({
+        transaction,
+        userId: id,
+        clearanceOptionId: input.clearanceOptionId,
+        actorUserId: principal.userId,
+        now,
+      });
+
+      const after = await transaction.user.findUniqueOrThrow({ where: { id } });
+      await audit.record(
+        transaction,
+        {
+          action: 'USER_CLEARANCE_UPDATED',
+          objectType: 'USER',
+          objectId: id.toString(),
+          before: {
+            ...auditUserSnapshot(before),
+            ...synced.before,
+          },
+          after: {
+            ...auditUserSnapshot(after),
+            ...synced.after,
+            revokedGrantsCount: synced.revokedGrantsCount,
+            terminatedSessionsCount: synced.terminatedSessionsCount,
+          },
+        },
+        principal,
+        context,
+      );
+      return {
+        after,
+        clearance: synced.after,
+        revokedGrantsCount: synced.revokedGrantsCount,
+        terminatedSessionsCount: synced.terminatedSessionsCount,
+      };
+    },
+    { client: database },
+  );
+
+  await authorization.invalidateUser(id);
+  return {
+    ...presentUserRecord(result.after),
+    ...result.clearance,
+    revokedGrantsCount: result.revokedGrantsCount,
+    terminatedSessionsCount: result.terminatedSessionsCount,
+  };
 }
 
 /**

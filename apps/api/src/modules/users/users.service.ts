@@ -10,19 +10,27 @@ import { PasswordService } from '../auth/password.service.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
 import { RbacAuditService } from '../rbac/rbac-audit.service.js';
 import {
+  EMPTY_CLEARANCE_SUMMARY,
   lookupUsersWithClearance,
   presentUserRecord,
   type CreateUserInput,
+  type UpdateUserClearanceInput,
   type UpdateUserInput,
 } from './users-clearance.helper.js';
+import {
+  fetchActiveClearancesByUserIds,
+  fetchActiveUserClearance,
+  listClearanceOptions,
+} from './users-clearance-assignment.helper.js';
 import {
   assertUserDepartmentVisible,
   executeChangeUserStatus,
   executeCreateUser,
   executeUpdateUser,
+  executeUpdateUserClearance,
 } from './users-mutations.helper.js';
 
-export type { CreateUserInput, UpdateUserInput };
+export type { CreateUserInput, UpdateUserClearanceInput, UpdateUserInput };
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -61,11 +69,15 @@ export class UsersService {
       },
     });
     if (!user) throw new NotFoundException('User not found.');
-    const grants = await this.authorization.effectiveGrants(principal.userId);
+    const [grants, clearance] = await Promise.all([
+      this.authorization.effectiveGrants(principal.userId),
+      fetchActiveUserClearance(this.database, principal.userId),
+    ]);
     const { departments, ...userFields } = user;
     return {
       ...presentUserRecord(userFields),
       departmentName: departments?.name ?? null,
+      ...clearance,
       roles: [...new Set(grants.map((grant) => grant.roleCode))].sort(),
       permissions: [...new Set(grants.map((grant) => `${grant.resource}:${grant.action}`))].sort(),
     };
@@ -75,8 +87,12 @@ export class UsersService {
     return lookupUsersWithClearance(this.database, this.authorization, principal);
   }
 
+  async clearanceOptions() {
+    return listClearanceOptions(this.database);
+  }
+
   /**
-   * Thuật toán: Liệt kê người dùng theo bao đóng cây con phòng ban có chặn trần kết quả (`take: 200`).
+   * Thuật toán: Liệt kê người dùng theo bao đóng cây con phòng ban có chặn trần kết quả (`take: 200`) kèm cấp thẩm tra `CLEARANCE_LEVEL`.
    */
   async list(principal: AuthPrincipal) {
     const visible = await this.authorization.visibleDepartmentIds(principal, 'USER', 'MANAGE');
@@ -96,7 +112,16 @@ export class UsersService {
         version: true,
       },
     });
-    return { data: users.map((user) => presentUserRecord(user)) };
+    const clearancesByUser = await fetchActiveClearancesByUserIds(
+      this.database,
+      users.map((user) => user.id),
+    );
+    return {
+      data: users.map((user) => ({
+        ...presentUserRecord(user),
+        ...(clearancesByUser.get(user.id.toString()) ?? EMPTY_CLEARANCE_SUMMARY),
+      })),
+    };
   }
 
   /**
@@ -124,8 +149,10 @@ export class UsersService {
     });
     if (!user) throw new NotFoundException('User not found.');
     await assertUserDepartmentVisible(this.authorization, principal, user.department_id);
+    const clearance = await fetchActiveUserClearance(this.database, id);
     return {
       ...presentUserRecord(user),
+      ...clearance,
       roleAssignments: user.user_roles_user_roles_user_idTousers.map((assignment) => ({
         id: assignment.id.toString(),
         roleId: assignment.role_id.toString(),
@@ -151,6 +178,23 @@ export class UsersService {
 
   update(principal: AuthPrincipal, id: bigint, input: UpdateUserInput, context: RequestContext) {
     return executeUpdateUser({
+      database: this.database,
+      authorization: this.authorization,
+      audit: this.audit,
+      principal,
+      id,
+      input,
+      context,
+    });
+  }
+
+  updateClearance(
+    principal: AuthPrincipal,
+    id: bigint,
+    input: UpdateUserClearanceInput,
+    context: RequestContext,
+  ) {
+    return executeUpdateUserClearance({
       database: this.database,
       authorization: this.authorization,
       audit: this.audit,

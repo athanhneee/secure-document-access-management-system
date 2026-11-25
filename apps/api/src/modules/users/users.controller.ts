@@ -10,6 +10,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -41,6 +42,7 @@ const CreateSchema = z
     fullName: z.string().trim().min(1).max(150),
     employeeCode: z.string().trim().min(1).max(50).nullable().optional(),
     departmentId: PositiveBigIntSchema.nullable().optional(),
+    clearanceOptionId: PositiveBigIntSchema.nullable().optional(),
     password: z.string().min(15).max(128),
   })
   .strict();
@@ -51,6 +53,13 @@ const UpdateSchema = z
     fullName: z.string().trim().min(1).max(150).optional(),
     employeeCode: z.string().trim().min(1).max(50).nullable().optional(),
     departmentId: PositiveBigIntSchema.nullable().optional(),
+    clearanceOptionId: PositiveBigIntSchema.nullable().optional(),
+  })
+  .strict();
+const UpdateClearanceSchema = z
+  .object({
+    expectedVersion: z.number().int().min(0),
+    clearanceOptionId: PositiveBigIntSchema.nullable(),
   })
   .strict();
 
@@ -75,6 +84,12 @@ export class UsersController {
   ])
   lookup(@Req() request: FastifyRequest) {
     return this.users.lookup(this.principal(request));
+  }
+
+  @Get('clearance-options')
+  @RequirePermission('USER', 'MANAGE')
+  clearanceOptions() {
+    return this.users.clearanceOptions();
   }
 
   @Get()
@@ -108,6 +123,18 @@ export class UsersController {
       this.principal(request),
       IdSchema.parse(id),
       UpdateSchema.parse(body),
+      this.context(request),
+    );
+  }
+
+  @Put(':id/clearance')
+  @RequirePermission('USER', 'MANAGE')
+  updateClearance(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {
+    this.csrf.assertRequest(request);
+    return this.users.updateClearance(
+      this.principal(request),
+      IdSchema.parse(id),
+      UpdateClearanceSchema.parse(body),
       this.context(request),
     );
   }

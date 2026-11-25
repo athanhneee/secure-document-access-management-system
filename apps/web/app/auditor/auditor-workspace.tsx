@@ -8,7 +8,9 @@ import {
   FileCheck,
   Hash,
   Lock,
+  QrCode,
   RefreshCw,
+  ShieldAlert,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { AuthGuard } from '@/components/auth-guard';
@@ -19,18 +21,21 @@ import { DialogErrorProvider } from '@/components/ui/dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuditorData } from './hooks/use-auditor-data';
+import { AuditorAlertDetailModal } from './modals/auditor-alert-detail-modal';
 import { AuditorLogDetailModal } from './modals/auditor-log-detail-modal';
 import { ExportReportModal } from './modals/export-report-modal';
 import { AuditTrailTab } from './tabs/audit-trail-tab';
+import { AuditorAlertsTab } from './tabs/auditor-alerts-tab';
+import { AuditorWatermarkTraceTab } from './tabs/auditor-watermark-trace-tab';
 import { ChainIntegrityTab } from './tabs/chain-integrity-tab';
 import { ExportQueueTab } from './tabs/export-queue-tab';
-import type { AuditLogItem } from './types';
+import type { AuditorAlertItem, AuditLogItem } from './types';
 
 /**
- * Thuật toán: Không Gian Kiểm Toán Chỉ Đọc Cô Lập Sau `AuthGuard` & Lọc Quyền Xuất Báo Cáo (`AuditorWorkspace`)
+ * Thuật toán: Không Gian Kiểm Toán Độc Lập Chỉ Đọc Toàn Diện Theo Ma Trận 5 Quyền RBAC (`AuditorWorkspace`)
  * Mục đích:
- *   - Đảm bảo `useAuditorData()` chỉ khởi chạy sau khi `AuthGuard` xác nhận vai trò `AUDITOR`.
- *   - Thực thi nguyên tắc Phân tách Trách nhiệm (SoD) và ẩn nút/thẻ xuất báo cáo nếu tài khoản thiếu quyền `AUDIT_LOG:EXPORT` hoặc `SYSTEM_REPORT:EXPORT`.
+ *   - Đảm bảo `useAuditorData()` chỉ khởi chạy sau khi `AuthGuard` xác nhận quyền truy cập cổng `AUDITOR`.
+ *   - Kết nối đầy đủ 5 quyền chuẩn (`AUDIT_LOG:VIEW`, `AUDIT_LOG:EXPORT`, `SYSTEM_REPORT:EXPORT`, `SECURITY_ALERT:VIEW`, `WATERMARK_INSTANCE:TRACE`) ở chế độ chỉ đọc nghiêm ngặt, ẩn banner lỗi nền khi modal đang mở và định tuyến nút Thử lại đúng theo ngữ cảnh lỗi.
  */
 export function AuditorWorkspace() {
   return (
@@ -45,13 +50,19 @@ export function AuditorWorkspace() {
 function AuditorWorkspaceContent() {
   const { hasPermission } = useAuth();
   const canViewAuditLogs = hasPermission('AUDIT_LOG:VIEW');
-  const canExportReports =
-    hasPermission('AUDIT_LOG:EXPORT') || hasPermission('SYSTEM_REPORT:EXPORT');
+  const canExportAuditLogs = hasPermission('AUDIT_LOG:EXPORT');
+  const canExportSystemReport = hasPermission('SYSTEM_REPORT:EXPORT');
+  const canViewAlerts = hasPermission('SECURITY_ALERT:VIEW');
+  const canTraceWatermark = hasPermission('WATERMARK_INSTANCE:TRACE');
+  const canExportReports = canExportAuditLogs || canExportSystemReport;
+  const canExportSecurityAlerts = canViewAlerts && canExportSystemReport;
 
   const permittedTabs = [
     canViewAuditLogs ? 'logs' : null,
     canViewAuditLogs ? 'chain-verify' : null,
     canExportReports ? 'export-queue' : null,
+    canViewAlerts ? 'security-alerts' : null,
+    canTraceWatermark ? 'watermark-trace' : null,
   ].filter((t): t is string => t !== null);
 
   const [selectedTab, setSelectedTab] = useState('logs');
@@ -62,6 +73,8 @@ function AuditorWorkspaceContent() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLogItem | null>(null);
   const [auditDetailOpen, setAuditDetailOpen] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState<AuditorAlertItem | null>(null);
+  const [alertDetailOpen, setAlertDetailOpen] = useState(false);
 
   const {
     logs,
@@ -71,26 +84,43 @@ function AuditorWorkspaceContent() {
     setPageSize,
     totalPages,
     totalLogs,
+    anchors,
     exportJobs,
     verificationReport,
+    verifyPartition,
+    setVerifyPartition,
     isLoading,
+    downloadingJobId,
     message,
+    setMessage,
     errorMessage,
     setErrorMessage,
+    dateRangeError,
+    activeFilters,
     outcomeFilter,
     setOutcomeFilter,
     actionFilter,
     setActionFilter,
+    partitionFilter,
+    setPartitionFilter,
+    actorFilter,
+    setActorFilter,
     fromDate,
     setFromDate,
     toDate,
     setToDate,
+    sortOrder,
+    setSortOrder,
+    resetFilters,
     isVerifyingChain,
     refreshData,
     verifyHashChain,
     downloadExport,
+    retryLastFailedOperation,
     prependExportJob,
   } = useAuditorData();
+
+  const hasOpenDialog = exportModalOpen || auditDetailOpen || alertDetailOpen;
 
   function handleOpenExportModal() {
     setErrorMessage(null);
@@ -101,6 +131,12 @@ function AuditorWorkspaceContent() {
     setErrorMessage(null);
     setSelectedAuditLog(log);
     setAuditDetailOpen(true);
+  }
+
+  function handleSelectAlert(alert: AuditorAlertItem) {
+    setErrorMessage(null);
+    setSelectedAlert(alert);
+    setAlertDetailOpen(true);
   }
 
   return (
@@ -127,14 +163,14 @@ function AuditorWorkspaceContent() {
                   aria-hidden="true"
                 />
               }
-              onClick={() => void refreshData()}
+              onClick={() => refreshData()}
               disabled={isLoading}
             />
             {canExportReports && (
               <InteractiveHoverButton
                 variant="primary"
                 size="sm"
-                text="Xuất báo cáo kiểm toán"
+                text="Xuất báo cáo tuân thủ"
                 icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
                 onClick={handleOpenExportModal}
               />
@@ -142,7 +178,10 @@ function AuditorWorkspaceContent() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 rounded-[16px] border border-[#008489]/20 bg-[#008489]/5 px-3.5 py-2 text-xs text-[#008489]">
+        <div
+          role="note"
+          className="flex items-center gap-2 rounded-[20px] border border-[#008489]/20 bg-[#008489]/5 px-3.5 py-2.5 text-xs text-[#008489]"
+        >
           <Lock
             size={16}
             strokeWidth={1.75}
@@ -151,25 +190,27 @@ function AuditorWorkspaceContent() {
           />
           <span className="text-[#222222]">
             <strong className="text-[#008489]">Chế độ chỉ đọc:</strong> Bạn có thể tra cứu nhật ký
-            kiểm toán, kiểm tra tính toàn vẹn và xuất báo cáo tuân thủ, không thể chỉnh sửa dữ liệu
-            nghiệp vụ.
+            kiểm toán, kiểm chứng chuỗi băm, đối soát cảnh báo/watermark và xuất báo cáo tuân thủ,
+            không thể chỉnh sửa dữ liệu nghiệp vụ.
           </span>
         </div>
 
-        {message && (
-          <Alert variant="success" className="text-xs">
-            <CheckCircle2
-              size={16}
-              strokeWidth={1.75}
-              className="shrink-0 text-[#008A05]"
-              aria-hidden="true"
-            />
-            <AlertDescription className="ml-2">{message}</AlertDescription>
-          </Alert>
+        {message && !hasOpenDialog && (
+          <output className="block">
+            <Alert variant="success" aria-live="polite" className="text-xs">
+              <CheckCircle2
+                size={16}
+                strokeWidth={1.75}
+                className="shrink-0 text-[#008A05]"
+                aria-hidden="true"
+              />
+              <AlertDescription className="ml-2">{message}</AlertDescription>
+            </Alert>
+          </output>
         )}
 
-        {errorMessage && (
-          <Alert variant="destructive" className="text-xs">
+        {errorMessage && !hasOpenDialog && (
+          <Alert variant="destructive" role="alert" className="text-xs">
             <AlertTriangle
               size={16}
               strokeWidth={1.75}
@@ -184,8 +225,8 @@ function AuditorWorkspaceContent() {
                 size="sm"
                 text="Thử lại"
                 icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
-                onClick={() => void refreshData()}
-                disabled={isLoading}
+                onClick={() => retryLastFailedOperation()}
+                disabled={isLoading || isVerifyingChain}
               />
             </div>
           </Alert>
@@ -193,7 +234,7 @@ function AuditorWorkspaceContent() {
 
         {permittedTabs.length > 0 && (
           <Tabs value={activeTab} onValueChange={setSelectedTab} className="space-y-4">
-            <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3 lg:inline-flex lg:w-auto h-auto min-h-10 rounded-[18px] lg:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
+            <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2 lg:inline-flex lg:w-auto h-auto min-h-10 rounded-[20px] lg:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]">
               {canViewAuditLogs && (
                 <TabsTrigger value="logs" className="flex items-center gap-1.5 text-xs">
                   <FileCheck size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -209,7 +250,19 @@ function AuditorWorkspaceContent() {
               {canExportReports && (
                 <TabsTrigger value="export-queue" className="flex items-center gap-1.5 text-xs">
                   <Download size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Lịch sử xuất báo cáo ({exportJobs.length})</span>
+                  <span>Lịch sử xuất ({exportJobs.length})</span>
+                </TabsTrigger>
+              )}
+              {canViewAlerts && (
+                <TabsTrigger value="security-alerts" className="flex items-center gap-1.5 text-xs">
+                  <ShieldAlert size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <span>Cảnh báo an ninh</span>
+                </TabsTrigger>
+              )}
+              {canTraceWatermark && (
+                <TabsTrigger value="watermark-trace" className="flex items-center gap-1.5 text-xs">
+                  <QrCode size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <span>Truy vết watermark</span>
                 </TabsTrigger>
               )}
             </TabsList>
@@ -225,14 +278,22 @@ function AuditorWorkspaceContent() {
                   isLoading={isLoading}
                   outcomeFilter={outcomeFilter}
                   actionFilter={actionFilter}
+                  partitionFilter={partitionFilter}
+                  actorFilter={actorFilter}
                   fromDate={fromDate}
                   toDate={toDate}
+                  sortOrder={sortOrder}
+                  dateRangeError={dateRangeError}
                   onPageChange={setPage}
                   onPageSizeChange={setPageSize}
                   onOutcomeFilterChange={setOutcomeFilter}
                   onActionFilterChange={setActionFilter}
+                  onPartitionFilterChange={setPartitionFilter}
+                  onActorFilterChange={setActorFilter}
                   onFromDateChange={setFromDate}
                   onToDateChange={setToDate}
+                  onSortOrderChange={setSortOrder}
+                  onResetFilters={resetFilters}
                   onSelectLog={handleSelectAuditLog}
                 />
               </TabsContent>
@@ -242,8 +303,11 @@ function AuditorWorkspaceContent() {
               <TabsContent value="chain-verify" className="space-y-4">
                 <ChainIntegrityTab
                   verificationReport={verificationReport}
+                  anchors={anchors}
+                  verifyPartition={verifyPartition}
                   isVerifyingChain={isVerifyingChain}
-                  onVerifyHashChain={() => void verifyHashChain()}
+                  onVerifyPartitionChange={setVerifyPartition}
+                  onVerifyHashChain={() => verifyHashChain()}
                 />
               </TabsContent>
             )}
@@ -253,8 +317,28 @@ function AuditorWorkspaceContent() {
                 <ExportQueueTab
                   exportJobs={exportJobs}
                   canExport={canExportReports}
+                  downloadingJobId={downloadingJobId}
                   onOpenExportModal={handleOpenExportModal}
-                  onDownloadExport={(job) => void downloadExport(job)}
+                  onDownloadExport={downloadExport}
+                />
+              </TabsContent>
+            )}
+
+            {canViewAlerts && (
+              <TabsContent value="security-alerts" className="space-y-4">
+                <AuditorAlertsTab onSelectAlert={handleSelectAlert} />
+              </TabsContent>
+            )}
+
+            {canTraceWatermark && (
+              <TabsContent value="watermark-trace" className="space-y-4">
+                <AuditorWatermarkTraceTab
+                  onClearError={() => setErrorMessage(null)}
+                  onMessage={(msg) => {
+                    setErrorMessage(null);
+                    setMessage(msg);
+                  }}
+                  onError={(msg) => setErrorMessage(msg, 'general')}
                 />
               </TabsContent>
             )}
@@ -273,10 +357,28 @@ function AuditorWorkspaceContent() {
         <ExportReportModal
           open={exportModalOpen}
           onOpenChange={setExportModalOpen}
+          canExportAuditLogs={canExportAuditLogs}
+          canExportSystemReport={canExportSystemReport}
+          canExportSecurityAlerts={canExportSecurityAlerts}
+          activeAuditFilters={activeFilters}
           onClearError={() => setErrorMessage(null)}
-          onJobCreated={prependExportJob}
-          onError={setErrorMessage}
+          onJobCreated={(job, msg) => {
+            prependExportJob(job, msg);
+            setSelectedTab('export-queue');
+          }}
+          onError={(msg) => setErrorMessage(msg, 'exports')}
         />
+
+        {canViewAlerts && (
+          <AuditorAlertDetailModal
+            open={alertDetailOpen}
+            onOpenChange={(open) => {
+              setAlertDetailOpen(open);
+              if (!open) setSelectedAlert(null);
+            }}
+            alert={selectedAlert}
+          />
+        )}
       </div>
     </DialogErrorProvider>
   );

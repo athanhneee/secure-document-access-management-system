@@ -15,8 +15,10 @@ import type {
   UpdateDocumentMetadataInput,
 } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
 import { AuthorizationCache } from '../rbac/authorization-cache.js';
+import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { DocumentAuditService } from './document-audit.service.js';
 import {
   queryDocumentDetailById,
@@ -53,6 +55,8 @@ export class DocumentsService {
     private readonly authorization: AuthorizationService,
     private readonly cache: AuthorizationCache,
     @Optional() databaseClient?: ReturnType<typeof getDatabaseClient>,
+    @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -202,6 +206,7 @@ export class DocumentsService {
       authorization: this.authorization,
       cache: this.cache,
       audit: this.audit,
+      notifications: this.notifications,
       documentId,
       input,
       principal,
@@ -222,6 +227,7 @@ export class DocumentsService {
       database: this.database,
       authorization: this.authorization,
       audit: this.audit,
+      realtime: this.realtime,
       daysThreshold,
       principal,
       context,

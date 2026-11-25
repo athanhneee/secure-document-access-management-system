@@ -6,6 +6,7 @@ import { BadRequestException, ForbiddenException, NotFoundException } from '@nes
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode, type TransferDocumentOwnerInput } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import type { NotificationsService } from '../notifications/notifications.service.js';
 import type { AuthorizationCache } from '../rbac/authorization-cache.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
@@ -23,12 +24,23 @@ export async function executeTransferDocumentOwner(params: {
   authorization: AuthorizationService;
   cache: AuthorizationCache;
   audit: DocumentAuditService;
+  notifications?: NotificationsService | undefined;
   documentId: string;
   input: TransferDocumentOwnerInput;
   principal: AuthPrincipal;
   context: RequestContext;
 }): Promise<void> {
-  const { database, authorization, cache, audit, documentId, input, principal, context } = params;
+  const {
+    database,
+    authorization,
+    cache,
+    audit,
+    notifications,
+    documentId,
+    input,
+    principal,
+    context,
+  } = params;
 
   const doc = await database.document.findUnique({ where: { id: documentId } });
   if (!doc || doc.status === 'DELETED') {
@@ -172,4 +184,56 @@ export async function executeTransferDocumentOwner(params: {
 
   cache.invalidateUser(previousOwnerId);
   cache.invalidateUser(input.newOwnerId);
+
+  if (notifications && previousOwnerId !== input.newOwnerId) {
+    const docLabel = doc.title
+      ? `"${doc.title}"${doc.document_code ? ` (${doc.document_code})` : ''}`
+      : documentId;
+    const reasonSuffix = input.reason?.trim() ? ` Lý do: ${input.reason.trim()}` : '';
+    const nextVersion = (doc.version ?? 0) + 1;
+
+    if (input.newOwnerId !== principal.userId) {
+      try {
+        await notifications.sendNotification({
+          recipientId: input.newOwnerId,
+          notificationType: 'DOCUMENT_OWNERSHIP_TRANSFERRED',
+          title: 'Bạn vừa được chuyển giao quyền sở hữu tài liệu',
+          body: `Tài liệu ${docLabel} đã được chuyển quyền sở hữu sang tài khoản của bạn.${reasonSuffix}`,
+          relatedObjectType: 'DOCUMENT',
+          relatedObjectId: documentId,
+          deduplicationKey: `DOCUMENT_OWNERSHIP_TRANSFERRED:${input.newOwnerId.toString()}:${documentId}:v${nextVersion}`,
+          payload: {
+            documentId,
+            documentCode: doc.document_code ?? null,
+            previousOwnerId: previousOwnerId.toString(),
+            newOwnerId: input.newOwnerId.toString(),
+          },
+        });
+      } catch {
+        // Non-fatal post-commit notification dispatch
+      }
+    }
+
+    if (previousOwnerId !== principal.userId) {
+      try {
+        await notifications.sendNotification({
+          recipientId: previousOwnerId,
+          notificationType: 'DOCUMENT_OWNERSHIP_TRANSFERRED',
+          title: 'Quyền sở hữu tài liệu của bạn đã được chuyển giao',
+          body: `Quyền sở hữu đối với tài liệu ${docLabel} đã được chuyển sang chủ sở hữu mới.${reasonSuffix}`,
+          relatedObjectType: 'DOCUMENT',
+          relatedObjectId: documentId,
+          deduplicationKey: `DOCUMENT_OWNERSHIP_TRANSFERRED:${previousOwnerId.toString()}:${documentId}:v${nextVersion}`,
+          payload: {
+            documentId,
+            documentCode: doc.document_code ?? null,
+            previousOwnerId: previousOwnerId.toString(),
+            newOwnerId: input.newOwnerId.toString(),
+          },
+        });
+      } catch {
+        // Non-fatal post-commit notification dispatch
+      }
+    }
+  }
 }

@@ -12,6 +12,7 @@ import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
+import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import type { DocumentAuditService } from './document-audit.service.js';
 import { isPureTechnicalOrAuditRole } from './document-access-guard.helper.js';
 import type { RetentionCheckResult } from './documents.types.js';
@@ -25,12 +26,22 @@ export async function executeCheckRetentionWarnings(params: {
   database: PrismaClient;
   authorization: AuthorizationService;
   audit: DocumentAuditService;
+  realtime?: RealtimeEventsService | undefined;
   daysThreshold: number;
   principal?: AuthPrincipal | undefined;
   context?: RequestContext | undefined;
   systemScan?: boolean | undefined;
 }): Promise<RetentionCheckResult> {
-  const { database, authorization, audit, daysThreshold, principal, context, systemScan } = params;
+  const {
+    database,
+    authorization,
+    audit,
+    realtime,
+    daysThreshold,
+    principal,
+    context,
+    systemScan,
+  } = params;
   if (!principal && !systemScan) {
     throw new ForbiddenException({
       errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
@@ -206,6 +217,24 @@ export async function executeCheckRetentionWarnings(params: {
       for (const data of deduplicatedNotificationBatch) {
         await database.notification.create({ data });
       }
+    }
+    const createdAtIso = now.toISOString();
+    for (const item of deduplicatedNotificationBatch) {
+      realtime?.publish({
+        type: 'NOTIFICATION_CREATED',
+        targetUserIds: [item.recipient_id.toString()],
+        payload: {
+          id: item.id,
+          notificationType: item.notification_type,
+          title: item.title,
+          body: item.body,
+          relatedObjectType: item.related_object_type,
+          relatedObjectId: item.related_object_id,
+          status: item.status,
+          createdAt: createdAtIso,
+          readAt: null,
+        },
+      });
     }
   }
 

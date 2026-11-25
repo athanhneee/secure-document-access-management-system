@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module.js';
 import { RbacModule } from '../rbac/rbac.module.js';
 import { AbacModule } from '../abac/abac.module.js';
 import { AccessGrantsModule } from '../access-grants/access-grants.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 import { WatermarksModule } from '../watermarks/watermarks.module.js';
 import { DocumentIngestionController } from './document-ingestion.controller.js';
 import { DocumentDeliveryController } from './document-delivery.controller.js';
@@ -38,6 +39,7 @@ import { DocumentDeliveryAuditService } from './document-delivery-audit.service.
     RbacModule,
     AbacModule,
     AccessGrantsModule,
+    NotificationsModule,
     WatermarksModule,
   ],
   controllers: [DocumentIngestionController, DocumentDeliveryController, DocumentsController],

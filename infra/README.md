@@ -1,13 +1,15 @@
 # Hạ tầng Local & Production Observability
 
-`compose.yaml` cung cấp PostgreSQL, Redis, MinIO, ClamAV, Gotenberg, Mailpit, Prometheus và
-Grafana cho phát triển local. Credential được sinh tự động vào `.local/dev.env` đã gitignore
-(bao gồm `SMTP_HOST=127.0.0.1`, `SMTP_PORT=1025`, `SMTP_SECURE=false`, `SMTP_FROM=noreply@sda.local`
-cho Mailpit cục bộ); Compose không chứa mật khẩu cố định.
+`compose.yaml` cung cấp PostgreSQL, Redis, S3-Compatible Object Storage (`pgsty/silo`, tên service
+`minio` để giữ tương thích), ClamAV, Gotenberg, Mailpit, Prometheus và Grafana cho phát triển local.
+Credential được sinh tự động vào `.local/dev.env` đã gitignore (bao gồm `SMTP_HOST=127.0.0.1`,
+`SMTP_PORT=1025`, `SMTP_SECURE=false`, `SMTP_FROM=noreply@sda.local` cho Mailpit cục bộ); Compose
+không chứa mật khẩu cố định.
 
-Ba bucket MinIO được bootstrap idempotent, private và bật versioning. Các named volume
-được giữ lại khi chạy `pnpm infra:down`; chỉ `pnpm infra:reset-safe` có thể xóa chúng
-sau xác nhận chính xác. Trong CI, đặt `ENABLE_CLAMAV_CI=true` nếu cần khởi chạy daemon `clamav` thật.
+Ba bucket S3 cục bộ (`secure-documents`, `secure-derivatives`, `secure-quarantine`) được bootstrap
+idempotent, private và bật versioning. Các named volume được giữ lại khi chạy `pnpm infra:down`;
+chỉ `pnpm infra:reset-safe` có thể xóa chúng sau xác nhận chính xác. Trong CI, đặt
+`ENABLE_CLAMAV_CI=true` nếu cần khởi chạy daemon `clamav` thật.
 
 ## Quy ước xác thực Prometheus (`METRICS_SCRAPE_TOKEN` & `bearer_token_file`)
 

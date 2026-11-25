@@ -24,9 +24,9 @@ Nền tảng quản trị, lưu trữ mã hóa và kiểm soát truy cập tài 
 | Phân tầng               | Công nghệ & Phiên bản                                                                                      | Vai trò Kỹ thuật                                                                                            |
 | :---------------------- | :--------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------- |
 | **Runtime & Build**     | Node.js `>=24.14.0 <25` (ESM), TypeScript `7.0`, `pnpm@12.4.1`, Turborepo `2.10`                           | Quản lý workspace monorepo, kiểm tra kiểu dữ liệu nghiêm ngặt, điều phối build theo đồ thị phụ thuộc        |
-| **Backend API**         | NestJS `12.3`, Fastify `5.12`, Zod `4.6`, Swagger / OpenAPI                                                | Modular Monolith REST API (`/api/v1`), validation đầu vào nghiêm ngặt, Policy Decision/Enforcement          |
-| **Frontend Web**        | Next.js `16.4` (App Router), React `19.3`, Tailwind CSS `4.3`, `lucide-react`                              | 5 không gian làm việc biệt lập theo vai trò, trình dựng chính sách ABAC (DNF AST), xem tài liệu             |
-| **Background & DLP**    | Node.js Worker (`@sda/worker`), Native TCP Server (`RFC 3507`)                                             | 7 tiến trình nền định kỳ + máy chủ ICAP Network DLP lắng nghe cổng TCP `1344` + HTTP Health/Metrics `:9102` |
+| **Backend API**         | NestJS `12.3`, Fastify `5.12`, Zod `4.6`, `@nestjs/swagger` (metadata)                                     | Modular Monolith REST API (`/api/v1`, 18 module), luồng SSE Realtime (`/api/v1/events/stream`), PDP/PEP     |
+| **Frontend Web**        | Next.js `16.4` (App Router), React `19.3`, Tailwind CSS `4.3`, `lucide-react`, `pdfjs-dist` `6.5`          | 5 không gian làm việc biệt lập theo vai trò, trình dựng chính sách ABAC, trình xem PDF `<canvas>` bảo mật   |
+| **Background & DLP**    | Node.js Worker (`@sda/worker`), Native TCP Server (`RFC 3507`)                                             | 8 tiến trình nền định kỳ + máy chủ ICAP Network DLP lắng nghe cổng TCP `1344` + HTTP Health/Metrics `:9102` |
 | **Cơ sở dữ liệu**       | PostgreSQL `18.6`, Prisma ORM `7.10` (`@prisma/adapter-pg`), PGlite `0.5` (WASM)                           | Lưu trữ dữ liệu quan hệ, giao dịch cô lập `SERIALIZABLE`, ràng buộc toàn vẹn cấp CSDL, kiểm thử cô lập      |
 | **Bộ nhớ đệm & Khóa**   | Redis `8.2`, `ioredis` `6.0`, Custom Redlock + Lua Scripts                                                 | Lưu trữ phiên, bộ đệm quyền/chính sách, giới hạn tần suất (Rate Limit), khóa phân tán Quorum                |
 | **Lưu trữ & Xử lý Tệp** | S3-Compatible Object Storage (`pgsty/silo` local, `@aws-sdk/client-s3`), ClamAV `1.5`, Gotenberg `8.17`    | Lưu trữ đối tượng mã hóa, quét mã độc luồng TCP `INSTREAM`, chuyển đổi Office sang PDF, đóng dấu            |
@@ -46,23 +46,23 @@ flowchart TB
         ProxyGW["Enterprise Proxy / DLP Gateway (ICAP Client)"]
     end
 
-    subgraph ApiLayer["apps/api — Modular Monolith (NestJS 12 + Fastify 5)"]
+    subgraph ApiLayer["apps/api — Modular Monolith (NestJS 12 + Fastify 5, 18 Modules)"]
         direction TB
-        Ingress["HTTP Pipeline: Correlation ID | AuthGuard | AuthorizationGuard (Default-Deny) | Zod Pipe"]
-        IAM["IAM & Policy: Auth (Ed25519/FIDO2) | Users | Departments | RBAC | Deterministic ABAC"]
+        Ingress["HTTP Pipeline: Fastify Hooks (W3C Trace/OWASP Headers) | AuthGuard | AuthorizationGuard (Default-Deny) | Zod"]
+        IAM["IAM & Policy: Auth (Ed25519/FIDO2) | Users | Departments | RBAC (4-Pillar SoD) | Deterministic ABAC"]
         DocEngine["Document Core: Ingestion | ClamAV Client | Envelope KMS | Gotenberg Client | Watermark"]
-        Gov["Access Governance: AccessRequests | AccessGrants | AccessSessions | Redlock Concurrency"]
-        SecOps["Audit & SOC: RFC 8785 Canonicalizer | HMAC-SHA256 Chain | SecurityAlerts | Incidents | Reports"]
+        Gov["Access & Realtime: AccessRequests | AccessGrants | AccessSessions | Redlock | Realtime SSE"]
+        SecOps["Audit & SOC: RFC 8785 Canonicalizer | HMAC-SHA256 Chain | SecurityAlerts | DLP Status | Incidents | Reports"]
     end
 
-    subgraph WorkerLayer["apps/worker — Background Jobs & DLP Server (No Redis/S3/ClamAV Deps)"]
-        Jobs["Scheduled Jobs: GrantExpiry | DerivativeCleanup | ExportProcessor | ExportCleanup | AuditVerify | SOC Detection | Outbox"]
-        IcapSrv["ICAP Server (RFC 3507 - TCP 1344) + 5-Layer DLP Engine + Health/Metrics (:9102)"]
+    subgraph WorkerLayer["apps/worker — 8 Background Jobs & DLP Server (No KMS Master Key / ClamAV Deps)"]
+        Jobs["8 Scheduled Jobs: GrantExpiry | DerivativeCleanup | AuthSessionCleanup | ExportProcessor | ExportCleanup | AuditVerify | SOC Detection | Outbox"]
+        IcapSrv["ICAP Server (RFC 3507 - TCP 1344) + Multi-Surface DLP Engine + Health/Metrics (:9102)"]
     end
 
     subgraph InfraLayer["Tầng Lưu trữ & Hạ tầng Phụ trợ"]
         PG[("PostgreSQL 18.6 (39 Tables, 18 ENUMs, 21 Triggers)")]
-        Redis[("Redis 8.2 (Sessions, Cache, Redlock)")]
+        Redis[("Redis 8.2 (Sessions, Cache, Redlock, Pub/Sub)")]
         S3[("S3-Compatible Object Storage (pgsty/silo :9000)")]
         LocalFS[("Worker Local Temp & Export FS")]
         ClamAV["ClamAV 1.5 (TCP 3310 INSTREAM)"]
@@ -70,7 +70,7 @@ flowchart TB
         Obs["Prometheus 3.13 + Grafana 13.2"]
     end
 
-    WebUI -->|"HTTPS REST (/api/v1)"| Ingress
+    WebUI -->|"HTTPS REST (/api/v1) & SSE (/events/stream)"| Ingress
     ProxyGW -->|"ICAP REQMOD/RESPMOD (TCP 1344)"| IcapSrv
 
     Ingress --> IAM
@@ -83,6 +83,7 @@ flowchart TB
     Gov --> PG
     Gov --> Redis
     SecOps --> PG
+    SecOps -.->|"Internal Health Probe (:9102)"| WorkerLayer
 
     DocEngine --> PG
     DocEngine --> S3
@@ -91,21 +92,23 @@ flowchart TB
 
     Jobs --> PG
     Jobs --> LocalFS
+    Jobs -.->|"Optional S3/R2 Exports (.dat)"| S3
+    WorkerLayer -.->|"Optional RESP2 Pub/Sub"| Redis
     IcapSrv --> PG
     Obs -.->|"Metrics Scrape"| ApiLayer
     Obs -.->|"Metrics Scrape (:9102)"| WorkerLayer
 ```
 
-> **Phân tách Phụ thuộc của `@sda/worker`**: Tiến trình `apps/worker` chỉ phụ thuộc vào `@sda/contracts`, `@sda/database` và `@aws-sdk/client-s3` (tùy chọn cho báo cáo xuất đa container) — kết nối tới **PostgreSQL**, cổng SMTP nội bộ (cho `NotificationOutboxJob`), vùng lưu trữ tệp báo cáo dùng chung (`EXPORT_STORAGE_DIR` / `.local/exports` hoặc `STORAGE_BUCKET_DERIVATIVES` khóa `exports/<jobId>.dat` trên S3/Cloudflare R2 sau khi mã hóa `AES-256-GCM`), mở cổng TCP `1344` cho máy chủ ICAP DLP và cổng HTTP `:9102` cho `/health` & `/metrics`. Theo nguyên tắc Least Privilege, Worker **không** nhận khóa chủ tài liệu `APP_ENCRYPTION_MASTER_KEY`, Redis hay ClamAV.
+> **Phân tách Phụ thuộc của `@sda/worker`**: Tiến trình `apps/worker` chỉ phụ thuộc vào `@sda/contracts`, `@sda/database`, `nodemailer` và `@aws-sdk/client-s3` — kết nối tới **PostgreSQL**, cổng SMTP nội bộ (cho `NotificationOutboxJob`), vùng lưu trữ tệp báo cáo dùng chung (`EXPORT_STORAGE_DIR` / `.local/exports` hoặc tùy chọn `STORAGE_BUCKET_DERIVATIVES` khóa `exports/<jobId>.dat` trên S3/Cloudflare R2 sau khi mã hóa `AES-256-GCM`), kết nối **tùy chọn** tới **Redis Pub/Sub (`REDIS_URL`)** qua giao thức RESP2 thuần (`node:net`/`node:tls` trong `realtime-redis-publisher.ts`, không cài `ioredis`) để đẩy sự kiện SSE thời gian thực sang `@sda/api`, mở cổng TCP `1344` cho máy chủ ICAP DLP và cổng HTTP `:9102` cho `/health` & `/metrics`. Theo nguyên tắc Least Privilege, Worker **không** nhận khóa chủ tài liệu `APP_ENCRYPTION_MASTER_KEY`, KMS hay ClamAV.
 
 ### Cấu trúc Không gian Làm việc (Workspace Topology)
 
 ```text
 secure-document-access-system/
 ├── apps/
-│   ├── api/                 # @sda/api — Backend REST API (17 domain modules, Fastify adapter)
-│   ├── web/                 # @sda/web — Giao diện người dùng Next.js 16 (5 role workspaces)
-│   └── worker/              # @sda/worker — 7 background jobs định kỳ, máy chủ ICAP DLP (:1344) & Health/Metrics (:9102)
+│   ├── api/                 # @sda/api — Backend REST API & SSE (18 domain modules, Fastify adapter)
+│   ├── web/                 # @sda/web — Giao diện người dùng Next.js 16 (5 role workspaces, pdfjs-dist canvas viewer)
+│   └── worker/              # @sda/worker — 8 background jobs định kỳ, máy chủ ICAP DLP (:1344) & Health/Metrics (:9102)
 ├── packages/
 │   ├── config/              # @sda/config — Cấu hình tsconfig nền tảng dùng chung
 │   ├── contracts/           # @sda/contracts — DTOs, Zod schemas, mã lỗi chuẩn hóa, hằng số phân quyền
@@ -118,13 +121,13 @@ secure-document-access-system/
 └── scripts/                 # CLI quản lý hạ tầng/bí mật/kiểm định + 4 bộ mô phỏng PGlite độc lập trên RAM
 ```
 
-### Danh mục 17 Module Nghiệp vụ trong `@sda/api`
+### Danh mục 18 Module Nghiệp vụ trong `@sda/api`
 
-Backend được phân tách thành **17 module nghiệp vụ** độc lập tại `apps/api/src/modules/`:
+Backend được phân tách thành **18 module nghiệp vụ** độc lập tại `apps/api/src/modules/`:
 
 - **Định danh & Truy cập (5)**: `auth`, `users`, `departments`, `rbac`, `abac`
 - **Quản trị Vòng đời Tài liệu (3)**: `documents`, `classifications`, `watermarks`
-- **Điều phối Quyền & Tương tranh (4)**: `access-requests`, `access-grants`, `access-sessions`, `concurrency`
+- **Điều phối Quyền, Tương tranh & Thời gian thực (5)**: `access-requests`, `access-grants`, `access-sessions`, `concurrency`, `realtime`
 - **Kiểm toán, SOC & Vận hành (5)**: `audit`, `security-operations`, `reports`, `notifications`, `system-health`
 
 ---
@@ -143,7 +146,7 @@ sequenceDiagram
     participant S3 as Object Storage
     participant DB as Relational DB
 
-    Client->>API: POST /api/v1/documents (Multipart Stream)
+    Client->>API: POST /api/v1/documents/upload (Multipart Stream; metadata draft tạo trước qua POST /api/v1/documents)
     API->>API: Kiểm tra kích thước, Magic Bytes & Zip-Bomb Guard (tỷ lệ nén, độ sâu, path traversal)
     API->>AV: Quét luồng nhị phân qua giao thức INSTREAM
     alt Phát hiện mã độc
@@ -166,13 +169,13 @@ sequenceDiagram
 2. **Đánh giá Quyền Đa tầng**:
    - Kiểm tra quyền RBAC nền tảng (`DOCUMENT_VIEW` hoặc `DOCUMENT_DOWNLOAD`) và đối chiếu hiệu lực quyền cấp phát (`AccessGrant`).
    - Kiểm tra bất biến **Bell-LaPadula**: `subject.clearance_rank >= document.classification_rank`.
-   - Thực thi **Deterministic ABAC Engine**: Biên dịch cây điều kiện DNF trên tập thuộc tính (Subject, Resource, Environment) theo thuật toán kết hợp **Deny-Overrides** và trích xuất tập **Obligations** (`require_mfa`, `require_watermark`, `forbid_download`, `no_cache`, `max_session_minutes`).
+   - Thực thi **Deterministic ABAC Engine** kết hợp chấm điểm rủi ro phiên thời gian thực (`evaluatePepSessionRisk`, `0..100`): biên dịch cây điều kiện DNF trên tập thuộc tính (Subject, Resource, Environment) theo thuật toán **Deny-Overrides** và trích xuất tập **Obligations** (`REQUIRE_MFA` / `STEP_UP_MFA_REQUIRED`, `REQUIRE_WATERMARK`, `FORBID_DOWNLOAD`, `NO_CACHE`, `MAX_SESSION_MINUTES`).
 3. **Giải mã & Biến đổi Phái sinh**:
    - Giải bọc DEK qua `KmsService`, xác thực thẻ `GCM Auth Tag` (128-bit) và kiểm tra đối chiếu `SHA-256` bản rõ.
    - Nếu là tệp Office (`.docx`, `.xlsx`, `.pptx`), chuyển tiếp qua dịch vụ **Gotenberg** (LibreOffice headless cô lập, chặn macro VBA và liên kết ngoài SSRF/XXE) để kết xuất sang PDF chuẩn hóa.
-4. **Đóng dấu Pháp chứng & Bộ đệm Phiên (`WatermarkEngineService` & `DerivativePdfCache`)**:
+4. **Đóng dấu Pháp chứng, Bộ đệm Phiên & Trình xem Canvas (`WatermarkEngineService`, `derivative-pdf-cache.helper.ts`, `SecurePdfCanvasViewer`)**:
    - Lưu bộ đệm PDF phiên bản đã giải mã/chuyển đổi dưới dạng mã hóa phong bì (`AES-256-GCM`) ngắn hạn trên bucket `STORAGE_BUCKET_DERIVATIVES` theo khóa phiên để tránh tải S3 và gọi Gotenberg lặp lại khi chuyển trang.
-   - Nhúng trực tiếp lớp văn bản chéo (khử dấu chuẩn hóa + `shortToken` truy vết được) và mã QR bắt buộc (fail-closed) chứa danh tính người đọc, địa chỉ IP, dấu thời gian UTC và mã định danh thủy ấn vào trang PDF mục tiêu, phẳng hóa biểu mẫu PDF và cấp vé tải ngắn hạn dùng một lần (`DOWNLOAD_TICKET_TTL_SECONDS`) có tái xác minh trạng thái phiên/tài khoản thời gian thực.
+   - Nhúng trực tiếp lớp văn bản chéo (khử dấu chuẩn hóa WinAnsi + `shortToken` truy vết được), metadata token cho ICAP DLP và mã QR bắt buộc (fail-closed) chứa danh tính người đọc, địa chỉ IP, dấu thời gian UTC và mã định danh thủy ấn vào trang PDF mục tiêu (`POST /api/v1/documents/:id/sessions`, `GET /api/v1/documents/:id/preview/page/:pageNumber`), kết xuất lên `<canvas>` bằng `pdfjs-dist` (không dùng `iframe blob:`) để chặn `Ctrl+S`/`Ctrl+P` khi cấm tải, đồng thời cấp vé tải ngắn hạn dùng một lần (`POST /api/v1/documents/:id/download-ticket`, `DOWNLOAD_TICKET_TTL_SECONDS`) có tái xác minh trạng thái phiên/tài khoản thời gian thực.
 
 ---
 
@@ -182,8 +185,8 @@ sequenceDiagram
 
 - **Mật khẩu (`PasswordService`)**: Chuẩn hóa chuỗi `NFKC`, bắt buộc độ dài `15..128` ký tự, chặn danh sách mật khẩu phổ biến và chặn chứa định danh tài khoản. Băm bằng **Argon2id** (`memoryCost = 65536 KiB`, `timeCost = 3`, `parallelism = 1`, `hashLength = 32`).
 - **Ký Token Bất đối xứng (`TokenService`)**: Sử dụng thuật toán **EdDSA (`Ed25519`)** qua thư viện `jose` với thời gian sống ngắn (`AUTH_ACCESS_TTL_SECONDS = 300s`), hỗ trợ đa khóa công khai theo `kid` để xoay vòng khóa không gián đoạn. Refresh Token dạng opaque được băm một chiều và xoay vòng theo họ khóa (token family) để phát hiện tái sử dụng trái phép.
-- **Bảo vệ Bề mặt Web**: Bảo vệ chống giả mạo yêu cầu liên trang (`CsrfService` double-submit + kiểm tra Origin), giới hạn tốc độ đăng nhập theo IP/tài khoản (`LoginRateLimitService`) và cân bằng thời gian phản hồi chống dò quét tài khoản (timing-safe dummy work).
-- **MFA Chống Lừa đảo (`MfaService` & `WebauthnService`)**:
+- **Bảo vệ Bề mặt Web & Realtime SSE**: Bảo vệ chống giả mạo yêu cầu liên trang (`CsrfService` double-submit + kiểm tra Origin), giới hạn tốc độ đăng nhập theo IP/tài khoản (`LoginRateLimitService`), cân bằng thời gian phản hồi chống dò quét tài khoản, và luồng **SSE (`GET /api/v1/events/stream`)** phát sự kiện thu hồi phiên tức thì (`USER_SESSION_REVOKED`) theo đúng `sessionId` qua Redis Pub/Sub.
+- **MFA Chống Lừa đảo (`MfaService` & `WebAuthnService`)**:
   - Hỗ trợ `TOTP` (`RFC 6238`), mã khôi phục dùng một lần (`Recovery Codes`), và khóa phần cứng / Passkeys chuẩn **FIDO2 / WebAuthn** (`@simplewebauthn/server`).
   - Đối chiếu bộ đếm chữ ký (`Authenticator Counter`) để phát hiện nhân bản khóa vật lý (Clone Detection) và tự động kích hoạt cảnh báo SOC mức `CRITICAL`.
   - Bắt buộc kích hoạt MFA đối với các vai trò đặc quyền (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`).
@@ -230,7 +233,7 @@ Khóa `DEK` sau khi mã hóa tệp được bọc bởi `KmsService` và xóa tr
 4. Số thẻ thanh toán quốc tế hợp lệ theo kiểm tra tổng **Luhn Checksum**.
 5. Số định danh cá nhân 12 chữ số và danh sách từ khóa tùy chỉnh (`ICAP_DLP_CUSTOM_KEYWORDS`).
 
-Khi phát hiện vi phạm ở chế độ `BLOCK` (mặc định), máy chủ trả về gói tin `ICAP/1.0 200 OK` đóng gói phản hồi `HTTP/1.1 403 Forbidden` và tự động ghi nhận cảnh báo an ninh (`NETWORK_DLP_VIOLATION`) cho SOC. Khi cấu hình `ICAP_DLP_ACTION=AUDIT_ONLY` (hoặc bí danh tương thích ngược `MONITOR`, kèm cảnh báo deprecated), máy chủ vẫn ghi nhận cảnh báo SOC nhưng trả về `ICAP/1.0 204 No modifications` để không chặn luồng mạng; mọi giá trị cấu hình không hợp lệ đều tự động Fail-Closed về `BLOCK`.
+Khi phát hiện vi phạm ở chế độ `BLOCK` (mặc định), máy chủ trả về gói tin `ICAP/1.0 200 OK` đóng gói phản hồi `HTTP/1.1 403 Forbidden` và tự động ghi nhận cảnh báo an ninh (`NETWORK_DLP_VIOLATION`) cho SOC. `DlpEngine` đồng thời hỗ trợ giải nén `gzip`/`deflate`/`br`/`zstd`, trích xuất nội dung XML bên trong kho lưu trữ `.docx`/`.xlsx` và chặn **Fail-Closed** đối với bom nén hoặc kho lưu trữ ZIP mã hóa; API cung cấp điểm kiểm tra trạng thái thực tế của cổng ICAP tại `GET /api/v1/security-operations/dlp-status` (`DlpStatusService`, thăm dò nội bộ `WORKER_HEALTH_URL`). Khi cấu hình `ICAP_DLP_ACTION=AUDIT_ONLY` (hoặc bí danh tương thích ngược `MONITOR`, kèm cảnh báo deprecated), máy chủ vẫn ghi nhận cảnh báo SOC nhưng trả về `ICAP/1.0 204 No modifications` để không chặn luồng mạng; mọi giá trị cấu hình không hợp lệ đều tự động Fail-Closed về `BLOCK`.
 
 ---
 
@@ -238,7 +241,7 @@ Khi phát hiện vi phạm ở chế độ `BLOCK` (mặc định), máy chủ t
 
 ### 5.1. Ma trận 5 Vai trò Hệ thống & Phân tách Trách nhiệm (SoD)
 
-Hệ thống phân tách quyền hạn theo **5 vai trò nghiệp vụ độc lập**, tuân thủ nghiêm ngặt nguyên tắc **Default-Deny** và **Separation of Duties (SoD)**:
+Hệ thống phân tách quyền hạn theo **5 vai trò nghiệp vụ độc lập** và áp dụng lưới Phân tách Trách nhiệm **4 trụ cột** (`ADMIN_GOVERNANCE`, `SECURITY_SOC`, `AUDITOR_COMPLIANCE`, `BUSINESS_DOCUMENT` trong `permission-matrix.ts`) cho cả vai trò hệ thống lẫn vai trò tùy chỉnh, tuân thủ nghiêm ngặt nguyên tắc **Default-Deny** và **Separation of Duties (SoD)**:
 
 | Mã Vai trò         | MFA Bắt buộc | Quyền hạn Nghiệp vụ Chính                                                                                    | Ràng buộc Phân tách Trách nhiệm (SoD)                                                      |
 | :----------------- | :----------: | :----------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------- |
@@ -305,40 +308,41 @@ pnpm dev
 
 Toàn bộ cổng hạ tầng phát triển trong `infra/compose.yaml` chỉ gắn vào giao diện loopback `127.0.0.1`:
 
-| Dịch vụ                       | Địa chỉ / Endpoint Cục bộ                  | Mô tả Kỹ thuật                                                     |
-| :---------------------------- | :----------------------------------------- | :----------------------------------------------------------------- |
-| **Web Application**           | `http://127.0.0.1:3000`                    | Giao diện người dùng Next.js 16                                    |
-| **Backend REST API**          | `http://127.0.0.1:3001/api/v1`             | Cổng giao tiếp chính của NestJS + Fastify                          |
-| **OpenAPI / Swagger UI**      | `http://127.0.0.1:3001/api/docs`           | Tài liệu đặc tả giao diện lập trình tự động                        |
-| **Health & Readiness Probes** | `http://127.0.0.1:3001/api/v1/health/live` | Điểm kiểm tra trạng thái sống/sẵn sàng của API                     |
-| **Worker ICAP DLP Server**    | `icap://127.0.0.1:1344`                    | Máy chủ phân tích lưu lượng mạng DLP chuẩn RFC 3507                |
-| **PostgreSQL 18.6 (Local)**   | `127.0.0.1:5432`                           | Cơ sở dữ liệu phát triển cục bộ (xác thực `scram-sha-256`)         |
-| **Redis 8.2 (Local)**         | `127.0.0.1:6379`                           | Lưu trữ phiên, bộ đệm và khóa phân tán Redlock (AOF `everysec`)    |
-| **Local S3 API / Console**    | `http://127.0.0.1:9000` / `:9001`          | Lưu trữ đối tượng S3 cục bộ (bucket riêng tư bật sẵn versioning)   |
-| **ClamAV Daemon**             | `127.0.0.1:3310`                           | Máy chủ quét mã độc luồng TCP `clamd`                              |
-| **Gotenberg 8.17**            | `http://127.0.0.1:3003`                    | Dịch vụ chuyển đổi tài liệu văn phòng sang PDF cô lập              |
-| **Mailpit SMTP / Web UI**     | `127.0.0.1:1025` / `http://127.0.0.1:8025` | Hộp thư bắt giữ email đặt lại mật khẩu và thông báo khi phát triển |
-| **Prometheus / Grafana**      | `http://127.0.0.1:9090` / `:3002`          | Thu thập chỉ số hệ thống và bảng điều khiển giám sát cục bộ        |
+| Dịch vụ                       | Địa chỉ / Endpoint Cục bộ                    | Mô tả Kỹ thuật                                                     |
+| :---------------------------- | :------------------------------------------- | :----------------------------------------------------------------- |
+| **Web Application**           | `http://127.0.0.1:3000`                      | Giao diện người dùng Next.js 16                                    |
+| **Backend REST API**          | `http://127.0.0.1:3001/api/v1`               | Cổng giao tiếp chính của NestJS + Fastify (18 module)              |
+| **Realtime Event Stream**     | `http://127.0.0.1:3001/api/v1/events/stream` | Luồng SSE đã xác thực đồng bộ thông báo, SOC và thu hồi phiên      |
+| **Health & Readiness Probes** | `http://127.0.0.1:3001/api/v1/health/live`   | Điểm kiểm tra trạng thái sống/sẵn sàng của API                     |
+| **Worker Health & Metrics**   | `http://127.0.0.1:9102/health` / `/metrics`  | Trạng thái vòng lặp nền, trạng thái ICAP DLP và chỉ số Prometheus  |
+| **Worker ICAP DLP Server**    | `icap://127.0.0.1:1344`                      | Máy chủ phân tích lưu lượng mạng DLP chuẩn RFC 3507                |
+| **PostgreSQL 18.6 (Local)**   | `127.0.0.1:5432`                             | Cơ sở dữ liệu phát triển cục bộ (xác thực `scram-sha-256`)         |
+| **Redis 8.2 (Local)**         | `127.0.0.1:6379`                             | Lưu trữ phiên, bộ đệm và khóa phân tán Redlock (AOF `everysec`)    |
+| **Local S3 API / Console**    | `http://127.0.0.1:9000` / `:9001`            | Lưu trữ đối tượng S3 cục bộ (bucket riêng tư bật sẵn versioning)   |
+| **ClamAV Daemon**             | `127.0.0.1:3310`                             | Máy chủ quét mã độc luồng TCP `clamd`                              |
+| **Gotenberg 8.17**            | `http://127.0.0.1:3003`                      | Dịch vụ chuyển đổi tài liệu văn phòng sang PDF cô lập              |
+| **Mailpit SMTP / Web UI**     | `127.0.0.1:1025` / `http://127.0.0.1:8025`   | Hộp thư bắt giữ email đặt lại mật khẩu và thông báo khi phát triển |
+| **Prometheus / Grafana**      | `http://127.0.0.1:9090` / `:3002`            | Thu thập chỉ số hệ thống và bảng điều khiển giám sát cục bộ        |
 
 ---
 
 ## 7. Tham chiếu Biến Môi trường
 
-Cấu hình ứng dụng được kiểm tra hợp lệ nghiêm ngặt lúc khởi động thông qua `apps/api/src/config/env.schema.ts` (Zod). Khi `NODE_ENV=production` hoặc `NODE_ENV=staging`, hệ thống áp dụng cơ chế **Fail-Fast**: từ chối khởi chạy nếu phát hiện bất kỳ giá trị mặc định/placeholder nào, adapter KMS mô phỏng, cấu hình `TRUST_PROXY` số nguyên hop không an toàn, hoặc thiếu cặp khóa ký `Ed25519` được cấp từ bên ngoài.
+Cấu hình ứng dụng được kiểm tra hợp lệ nghiêm ngặt lúc khởi động thông qua `apps/api/src/config/env.schema.ts` (Zod); ở chế độ phát triển cục bộ, API và Worker nạp biến ưu tiên từ `.env` trước rồi mới bổ sung khóa còn thiếu từ `.local/dev.env`. Khi `NODE_ENV=production` hoặc `NODE_ENV=staging`, hệ thống áp dụng cơ chế **Fail-Fast**: từ chối khởi chạy nếu phát hiện bất kỳ giá trị mặc định/placeholder nào, adapter KMS mô phỏng, cấu hình `TRUST_PROXY` số nguyên hop không an toàn, dải loopback trong `ABAC_TRUSTED_NETWORK_CIDRS`, hoặc thiếu cặp khóa ký `Ed25519` được cấp từ bên ngoài.
 
-| Nhóm Cấu hình      | Biến Môi trường Tiêu biểu                                                                                                                     | Mô tả & Quy tắc Ràng buộc                                                                                          |
-| :----------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------- |
-| **Mạng & Web**     | `NODE_ENV`, `HOST`, `PORT`, `TRUST_PROXY`, `CORS_ALLOWED_ORIGINS`, `INTERNAL_API_ORIGIN`, `NEXT_PUBLIC_ENABLE_DEMO_ACCOUNTS`                  | Chế độ vận hành, địa chỉ bind, danh sách origin CORS/CSP hợp lệ, định tuyến SSR nội bộ và ẩn/hiện tài khoản demo   |
-| **Cơ sở dữ liệu**  | `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`, `DATABASE_SSL`, `DATABASE_SSL_REJECT_UNAUTHORIZED`, `DATABASE_CA_CERT`                     | Kết nối PostgreSQL, giới hạn pool và xác thực chứng chỉ TLS nghiêm ngặt (chặn CWE-295 fail-fast trên Production)   |
-| **Redis & Khóa**   | `REDIS_URL`, `REDLOCK_CLUSTER_NODES`, `REDLOCK_RETRY_COUNT`, `REDLOCK_DEFAULT_TTL_MS`, `REDLOCK_FAIL_CLOSED`                                  | Cấu hình Redis đơn lẻ hoặc cụm nút Redlock độc lập và chính sách đóng/mở khi mất quorum                            |
-| **Lưu trữ & Tệp**  | `STORAGE_ENDPOINT`, `STORAGE_PORT`, `STORAGE_REGION`, `STORAGE_USE_SSL`, `STORAGE_BUCKET_*`, `CLAMAV_*`, `GOTENBERG_URL`                      | Kết nối S3 / Cloudflare R2 (`auto` region), máy chủ quét virus luồng TCP và dịch vụ kết xuất PDF cô lập            |
-| **Giới hạn Tải**   | `UPLOAD_MAX_FILE_SIZE_BYTES`, `ZIP_MAX_TOTAL_UNCOMPRESSED_SIZE`, `ZIP_MAX_ENTRIES`, `ZIP_MAX_DEPTH`, `DOWNLOAD_TICKET_TTL_SECONDS`            | Ngưỡng bảo vệ chống tấn công cạn kiệt tài nguyên (DoS / Zip Bomb) và hạn sống vé tải một lần                       |
-| **Mật mã & KMS**   | `KMS_PROVIDER`, `APP_ENCRYPTION_MASTER_KEY`, `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_KEY_NAME`, `AWS_KMS_KEY_ID`                                  | Chọn nhà cung cấp KMS và khóa gốc độ entropy cao được nạp từ trình quản lý bí mật                                  |
-| **Xác thực & MFA** | `AUTH_SIGNING_PRIVATE_KEY_PEM`, `AUTH_SIGNING_PUBLIC_KEYS_JSON`, `AUTH_ACTIVE_KID`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`                      | Cặp khóa ký JWT `Ed25519` (bắt buộc cấu hình ngoài trên Production) và định danh miền WebAuthn                     |
-| **SMTP & Email**   | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `PASSWORD_RESET_BASE_URL`                                     | Kết nối máy chủ gửi thư cảnh báo/khôi phục mật khẩu cho API và `NotificationOutboxJob`                             |
-| **Xuất & Worker**  | `EXPORT_STORAGE_DIR`, `EXPORT_ENCRYPTION_KEY`, `EXPORT_EXECUTION_MODE`, `WORKER_HEALTH_HOST`, `WORKER_HEALTH_PORT`, `METRICS_SCRAPE_TOKEN`    | Lưu trữ/mã hóa tệp báo cáo `.dat` (`.local/exports` + S3/R2), cổng health `:9102` và Bearer token thu thập metrics |
-| **Kiểm toán**      | `AUDIT_INTEGRITY_KEY`, `DOCUMENT_AUDIT_HMAC_KEY`, `AUTH_AUDIT_HMAC_KEY`, `AUDIT_VERIFY_INTERVAL_MS`                                           | Khóa bí mật HMAC-SHA256 bảo vệ tính toàn vẹn chuỗi nhật ký và chu kỳ đối soát nền                                  |
-| **ICAP DLP**       | `ICAP_SERVER_ENABLED`, `ICAP_BIND_HOST` (`ICAP_SERVER_HOST`), `ICAP_PORT` (`ICAP_SERVER_PORT`), `ICAP_DLP_ACTION`, `ICAP_DLP_CUSTOM_KEYWORDS` | Bật/tắt máy chủ ICAP trên Worker, địa chỉ/cổng lắng nghe, chế độ xử lý (`BLOCK` / `AUDIT_ONLY`) và từ khóa bổ sung |
+| Nhóm Cấu hình      | Biến Môi trường Tiêu biểu                                                                                                                                                                           | Mô tả & Quy tắc Ràng buộc                                                                                                     |
+| :----------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------- |
+| **Mạng & Web**     | `NODE_ENV`, `HOST`, `PORT`, `TRUST_PROXY`, `CORS_ALLOWED_ORIGINS`, `INTERNAL_API_ORIGIN`, `TRUSTED_EDGE_PROXY`, `NEXT_PUBLIC_ENABLE_DEMO_ACCOUNTS`                                                  | Chế độ vận hành, địa chỉ bind, danh sách origin CORS/CSP hợp lệ, định tuyến SSR nội bộ và ẩn/hiện tài khoản demo              |
+| **Cơ sở dữ liệu**  | `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`, `DATABASE_SSL`, `DATABASE_SSL_REJECT_UNAUTHORIZED`, `DATABASE_CA_CERT`                                                                           | Kết nối PostgreSQL, giới hạn pool và xác thực chứng chỉ TLS nghiêm ngặt (chặn CWE-295 fail-fast trên Production)              |
+| **Redis & Khóa**   | `REDIS_URL`, `REDLOCK_CLUSTER_NODES`, `REDLOCK_RETRY_COUNT`, `REDLOCK_DEFAULT_TTL_MS`, `REDLOCK_FAIL_CLOSED`                                                                                        | Cấu hình Redis đơn lẻ hoặc cụm nút Redlock độc lập, kênh Pub/Sub SSE và chính sách đóng/mở khi mất quorum                     |
+| **Lưu trữ & Tệp**  | `STORAGE_ENDPOINT`, `STORAGE_PORT`, `STORAGE_REGION`, `STORAGE_USE_SSL`, `STORAGE_BUCKET_*`, `CLAMAV_*`, `GOTENBERG_URL`                                                                            | Kết nối S3 / Cloudflare R2 (`auto` region), máy chủ quét virus luồng TCP và dịch vụ kết xuất PDF cô lập                       |
+| **Giới hạn Tải**   | `UPLOAD_MAX_FILE_SIZE_BYTES`, `ZIP_MAX_TOTAL_UNCOMPRESSED_SIZE`, `ZIP_MAX_ENTRIES`, `ZIP_MAX_DEPTH`, `DOWNLOAD_TICKET_TTL_SECONDS`                                                                  | Ngưỡng bảo vệ chống tấn công cạn kiệt tài nguyên (DoS / Zip Bomb) và hạn sống vé tải một lần                                  |
+| **Mật mã & KMS**   | `KMS_PROVIDER`, `APP_ENCRYPTION_MASTER_KEY`, `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_KEY_NAME`, `AWS_KMS_KEY_ID`                                                                                        | Chọn nhà cung cấp KMS và khóa gốc độ entropy cao được nạp từ trình quản lý bí mật                                             |
+| **Xác thực & MFA** | `AUTH_SIGNING_PRIVATE_KEY_PEM`, `AUTH_SIGNING_PUBLIC_KEYS_JSON`, `AUTH_ACTIVE_KID`, `AUTH_SESSION_IDLE_TTL_SECONDS`, `AUTH_MAX_CONCURRENT_SESSIONS`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`           | Cặp khóa ký JWT `Ed25519`, chính sách phiên đăng nhập (timeout nhàn rỗi, giới hạn phiên đồng thời) và định danh miền WebAuthn |
+| **SMTP & Email**   | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `PASSWORD_RESET_BASE_URL`                                                                                           | Kết nối máy chủ gửi thư cảnh báo/khôi phục mật khẩu cho API và `NotificationOutboxJob`                                        |
+| **Xuất & Worker**  | `EXPORT_STORAGE_DIR`, `EXPORT_ENCRYPTION_KEY`, `EXPORT_EXECUTION_MODE`, `AUTH_SESSION_CLEANUP_INTERVAL_MS`, `WORKER_HEALTH_HOST`, `WORKER_HEALTH_PORT`, `WORKER_HEALTH_URL`, `METRICS_SCRAPE_TOKEN` | Lưu trữ/mã hóa tệp báo cáo `.dat`, dọn dẹp phiên, cổng/URL thăm dò health `:9102` và Bearer token thu thập metrics            |
+| **Kiểm toán**      | `AUDIT_INTEGRITY_KEY`, `DOCUMENT_AUDIT_HMAC_KEY`, `AUTH_AUDIT_HMAC_KEY`, `AUDIT_VERIFY_INTERVAL_MS`                                                                                                 | Khóa bí mật HMAC-SHA256 bảo vệ tính toàn vẹn chuỗi nhật ký và chu kỳ đối soát nền                                             |
+| **ICAP DLP**       | `ICAP_SERVER_ENABLED`, `ICAP_BIND_HOST` (`ICAP_SERVER_HOST`), `ICAP_PORT` (`ICAP_SERVER_PORT`), `ICAP_DLP_ACTION`, `ICAP_DLP_CUSTOM_KEYWORDS`                                                       | Bật/tắt máy chủ ICAP trên Worker, địa chỉ/cổng lắng nghe, chế độ xử lý (`BLOCK` / `AUDIT_ONLY`) và từ khóa bổ sung            |
 
 Xem danh sách đầy đủ các tham số mẫu tại [`.env.example`](./.env.example) và [`apps/api/src/config/env.schema.ts`](./apps/api/src/config/env.schema.ts).
 
@@ -377,7 +381,7 @@ Toàn bộ thay đổi mã nguồn phải vượt qua lệnh tổng hợp `pnpm 
 
 - **`ci.yml`**: Kiểm tra Dependency Review trên Pull Request, dựng cụm container dịch vụ cô lập, chạy migration/seed và thực thi trọn bộ `pnpm check`.
 - **`security.yml`**: Chạy định kỳ hàng tuần và trên mỗi lần đẩy mã với 5 lớp kiểm tra DevSecOps: **CodeQL** (SAST cho JS/TS), **Semgrep** (OWASP Top 10), **Gitleaks** (quét lịch sử Git theo `.github/gitleaks.toml`), **Trivy** (quét lỗ hổng hệ thống tệp & cấu hình sai), và **Syft** (xuất danh mục thành phần phần mềm chuẩn `SPDX JSON SBOM`).
-- **`cd.yml`**: Đóng gói đa image cứng hóa (`api`, `worker`, `web`), phát hành lên GitHub Container Registry (`ghcr.io`) và ký chứng thực nguồn gốc bản dựng **SLSA Build Provenance Attestation**.
+- **`cd.yml`**: Đóng gói đa image cứng hóa (`api`, `worker`, `web`), quét Trivy trước khi đẩy lên GitHub Container Registry (`ghcr.io`), ký chứng thực nguồn gốc bản dựng **SLSA Build Provenance Attestation** và tự động chạy job `migrate-database` khi cấu hình secret `DIRECT_URL`.
 
 ---
 

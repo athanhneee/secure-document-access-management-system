@@ -23,6 +23,7 @@ import { AccessGrantAuditService } from '../access-grants/access-grant-audit.ser
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { RedlockService } from '../concurrency/redlock.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { executeAccessRequestDecision } from './access-request-decision.helper.js';
 import {
@@ -61,6 +62,7 @@ export class AccessRequestsService {
     @Optional() databaseClient?: PrismaClient,
     @Optional() private readonly redlock?: RedlockService,
     @Optional() private readonly realtime?: RealtimeEventsService,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -296,6 +298,7 @@ export class AccessRequestsService {
         audit: this.audit,
         grantsService: this.grantsService,
         realtime: this.realtime,
+        notifications: this.notifications,
       });
 
     return this.redlock

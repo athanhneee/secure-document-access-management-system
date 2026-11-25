@@ -36,10 +36,38 @@ export async function validateCreateAccessRequestPreconditions(
     ? new Date(input.requestedUntil)
     : new Date(now.getTime() + 7 * 86400000);
 
+  if (Number.isNaN(requestedFrom.getTime()) || Number.isNaN(requestedUntil.getTime())) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.GRANT_TIME_RANGE_INVALID,
+      message: 'requestedFrom and requestedUntil must be valid ISO timestamps.',
+    });
+  }
+
+  // Thuật toán: Chặn khoảng thời gian quá khứ (> 5 phút dung sai đồng hồ) và giới hạn trần 365 ngày cho yêu cầu cấp quyền (V-39).
+  const PAST_TOLERANCE_MS = 5 * 60_000;
+  const MAX_REQUEST_SPAN_MS = 365 * 86_400_000;
+  if (input.requestedFrom && requestedFrom.getTime() < now.getTime() - PAST_TOLERANCE_MS) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.GRANT_TIME_RANGE_INVALID,
+      message: 'requestedFrom cannot be in the past.',
+    });
+  }
+  if (requestedUntil.getTime() <= now.getTime()) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.GRANT_TIME_RANGE_INVALID,
+      message: 'requestedUntil must be in the future.',
+    });
+  }
   if (requestedUntil <= requestedFrom) {
     throw new BadRequestException({
       errorCode: AppErrorCode.GRANT_TIME_RANGE_INVALID,
       message: 'requestedUntil must be after requestedFrom.',
+    });
+  }
+  if (requestedUntil.getTime() - requestedFrom.getTime() > MAX_REQUEST_SPAN_MS) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.GRANT_DURATION_EXCEEDED,
+      message: 'Requested access duration cannot exceed 365 days.',
     });
   }
 

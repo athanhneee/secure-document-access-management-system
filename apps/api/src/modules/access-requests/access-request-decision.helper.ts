@@ -9,6 +9,7 @@ import { AppErrorCode, type DecideAccessRequestInput } from '@sda/contracts';
 import type { AccessGrantAuditService } from '../access-grants/access-grant-audit.service.js';
 import type { AccessGrantsService } from '../access-grants/access-grants.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import type { NotificationsService } from '../notifications/notifications.service.js';
 import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -22,6 +23,7 @@ export interface ExecuteDecisionParams {
   audit: AccessGrantAuditService;
   grantsService: AccessGrantsService;
   realtime?: RealtimeEventsService | undefined;
+  notifications?: NotificationsService | undefined;
 }
 
 /**
@@ -35,7 +37,8 @@ export interface ExecuteDecisionParams {
 export async function executeAccessRequestDecision(
   params: ExecuteDecisionParams,
 ): Promise<{ id: string; status: string; grantId?: string }> {
-  const { id, input, principal, context, database, audit, grantsService, realtime } = params;
+  const { id, input, principal, context, database, audit, grantsService, realtime, notifications } =
+    params;
   const now = new Date();
 
   const request = await database.accessRequest.findUnique({
@@ -122,6 +125,32 @@ export async function executeAccessRequestDecision(
       );
     });
 
+    const trimmedNote = input.decisionNote?.trim() ?? null;
+    if (notifications) {
+      const docTitle = request.documents?.title;
+      const docCode = request.documents?.document_code;
+      const docLabel = docTitle ? `"${docTitle}"${docCode ? ` (${docCode})` : ''}` : 'đã yêu cầu';
+      const noteSuffix = trimmedNote ? ` Lý do: ${trimmedNote}` : '';
+      try {
+        await notifications.sendNotification({
+          recipientId: request.requester_id,
+          notificationType: 'ACCESS_REQUEST_REJECTED',
+          title: 'Yêu cầu quyền truy cập tài liệu bị từ chối',
+          body: `Yêu cầu truy cập đối với tài liệu ${docLabel} không được phê duyệt.${noteSuffix}`,
+          relatedObjectType: 'ACCESS_REQUEST',
+          relatedObjectId: id,
+          deduplicationKey: `ACCESS_REQUEST_REJECTED:${request.requester_id.toString()}:${id}`,
+          payload: {
+            requestId: id,
+            documentId: request.document_id,
+            decisionNote: trimmedNote,
+          },
+        });
+      } catch {
+        // Non-fatal post-commit notification dispatch
+      }
+    }
+
     realtime?.publish({
       type: 'ACCESS_REQUEST_UPDATED',
       targetUserIds: [principal.userId.toString(), request.requester_id.toString()],
@@ -129,13 +158,47 @@ export async function executeAccessRequestDecision(
         id,
         status: 'REJECTED',
         documentId: request.document_id,
-        decisionNote: input.decisionNote?.trim() ?? null,
+        decisionNote: trimmedNote,
       },
     });
     return { id, status: 'REJECTED' };
   }
 
-  const validUntil = new Date(now.getTime() + input.validDays * 86400000);
+  // Thuật toán: Tôn trọng khoảng thời gian người xem đề xuất (`requested_from`/`requested_until`) khi chủ sở hữu không ghi đè `validDays` (V-39).
+  let validFrom = now;
+  let validUntil: Date;
+  if (
+    typeof input.validDays === 'number' &&
+    Number.isFinite(input.validDays) &&
+    input.validDays > 0
+  ) {
+    validUntil = new Date(now.getTime() + input.validDays * 86400000);
+  } else {
+    const reqFrom =
+      request.requested_from instanceof Date
+        ? request.requested_from
+        : request.requested_from
+          ? new Date(request.requested_from)
+          : null;
+    const reqUntil =
+      request.requested_until instanceof Date
+        ? request.requested_until
+        : request.requested_until
+          ? new Date(request.requested_until)
+          : null;
+    if (reqFrom && !Number.isNaN(reqFrom.getTime()) && reqFrom > now) {
+      validFrom = reqFrom;
+    }
+    if (reqUntil && !Number.isNaN(reqUntil.getTime()) && reqUntil > validFrom) {
+      validUntil = reqUntil;
+    } else {
+      validUntil = new Date(validFrom.getTime() + 7 * 86400000);
+    }
+  }
+  const effectiveValidDays =
+    typeof input.validDays === 'number'
+      ? input.validDays
+      : Math.max(1, Math.round((validUntil.getTime() - validFrom.getTime()) / 86400000));
   const rawPermissions =
     input.permissions && input.permissions.length > 0
       ? input.permissions
@@ -154,7 +217,7 @@ export async function executeAccessRequestDecision(
       principalType: 'USER',
       principalUserId: request.requester_id,
       permissions: permissions as ('VIEW' | 'DOWNLOAD')[],
-      validFrom: now.toISOString(),
+      validFrom: validFrom.toISOString(),
       validUntil: validUntil.toISOString(),
       accessRequestId: id,
     },
@@ -171,7 +234,7 @@ export async function executeAccessRequestDecision(
       details: {
         decidedBy: principal.userId.toString(),
         grantId: grant.id,
-        validDays: input.validDays,
+        validDays: effectiveValidDays,
         permissions: permissions.join(','),
       },
     },

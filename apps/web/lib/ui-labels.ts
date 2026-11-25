@@ -32,6 +32,7 @@ const REQUEST_STATUS_LABELS: Readonly<Record<string, string>> = {
   APPROVED: 'Đã duyệt',
   REJECTED: 'Từ chối',
   CANCELLED: 'Đã hủy',
+  EXPIRED: 'Đã hết hạn',
 };
 
 const PERMISSION_ACTION_LABELS: Readonly<Record<string, string>> = {
@@ -86,6 +87,7 @@ const INCIDENT_ACTION_TYPE_LABELS: Readonly<Record<string, string>> = {
 
 const SESSION_STATUS_LABELS: Readonly<Record<string, string>> = {
   ACTIVE: 'Đang hoạt động',
+  ENDED: 'Đã kết thúc',
   TERMINATED: 'Đã ngắt',
   EXPIRED: 'Đã hết hạn',
   REVOKED: 'Đã thu hồi',
@@ -137,9 +139,14 @@ const ABAC_REASON_LABELS: Readonly<Record<string, string>> = {
   DEFAULT_DENY_NO_GROUP_MATCH: 'Mặc định từ chối do không có nhóm điều kiện nào khớp',
   RULE_PERMIT_MATCHED: 'Thỏa mãn điều kiện cho phép của chính sách',
   EXPLICIT_DENY_RULE_MATCHED: 'Khớp quy tắc từ chối tường minh',
+  EXPLICIT_DENY: 'Khớp quy tắc từ chối tường minh (DENY_OVERRIDES)',
+  STEP_UP_MFA_REQUIRED: 'Yêu cầu xác thực đa yếu tố (MFA) bổ sung',
+  INSUFFICIENT_CLEARANCE: 'Cấp thẩm quyền không đủ cho độ mật tài liệu (Bell-LaPadula)',
+  MISSING_REQUIRED_ATTRIBUTE: 'Thiếu thuộc tính ngữ cảnh bắt buộc',
+  INVALID_POLICY: 'Chính sách không hợp lệ (từ chối mặc định)',
   POLICY_PERMIT: 'Chính sách cho phép truy cập',
   POLICY_DENY: 'Chính sách từ chối truy cập',
-  DEFAULT_DENY: 'Mặc định từ chối truy cập',
+  DEFAULT_DENY: 'Mặc định từ chối truy cập (không có luật cho phép khớp)',
 };
 
 const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {

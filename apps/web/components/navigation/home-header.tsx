@@ -31,7 +31,7 @@ export function HomeHeader() {
             <Link
               href="/"
               className="flex items-center gap-2 transition-opacity hover:opacity-90"
-              aria-label="Trang chủ Hệ thống Quản lý Tài liệu Mật"
+              aria-label="Trang chủ SecureDocument"
               onClick={closeMenu}
             >
               <ShieldCheck
@@ -59,11 +59,6 @@ export function HomeHeader() {
           </nav>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="staff-badge bg-transparent border-0 p-0 hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-[#008A05]">
-              <span className="dot dot-success animate-pulse" aria-hidden="true" />
-              <span>Zero-Trust Active</span>
-            </div>
-
             <div className="hidden md:block">
               <InteractiveHoverButton
                 href={ctaHref}

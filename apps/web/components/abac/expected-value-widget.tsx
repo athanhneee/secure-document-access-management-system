@@ -52,15 +52,25 @@ export function ExpectedValueWidget({
   }
 
   if (resolvedType === 'BOOLEAN') {
+    const booleanOptions =
+      attributeMeta?.options && attributeMeta.options.length > 0
+        ? attributeMeta.options
+        : [
+            { label: 'Đúng (Có)', value: true },
+            { label: 'Sai (Không)', value: false },
+          ];
     return (
       <select
-        aria-label="Giá trị logic mong đợi"
+        aria-label="Giá trị đúng hoặc sai kỳ vọng"
         value={String(value)}
         onChange={(e) => onChange(e.target.value === 'true')}
         className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
       >
-        <option value="true">ĐÚNG (true / Tin cậy / Kích hoạt)</option>
-        <option value="false">SAI (false / Ngoài mạng / Chưa bật)</option>
+        {booleanOptions.map((opt) => (
+          <option key={String(opt.value)} value={String(opt.value)}>
+            {opt.label}
+          </option>
+        ))}
       </select>
     );
   }
@@ -99,7 +109,7 @@ export function ExpectedValueWidget({
                 handleAddTag();
               }
             }}
-            placeholder={isNumeric ? 'Nhập số + Enter...' : 'Thêm giá trị + Enter...'}
+            placeholder={isNumeric ? 'Nhập số rồi nhấn Enter…' : 'Thêm giá trị rồi nhấn Enter…'}
             className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
           />
           <Button
@@ -165,7 +175,7 @@ export function ExpectedValueWidget({
       type={isNumeric ? 'number' : 'text'}
       value={value !== undefined && value !== null ? String(value) : ''}
       onChange={(e) => onChange(isNumeric ? Number(e.target.value) : e.target.value)}
-      placeholder="Nhập giá trị mong đợi..."
+      placeholder="Nhập giá trị kỳ vọng…"
       className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] text-[#222222]"
     />
   );

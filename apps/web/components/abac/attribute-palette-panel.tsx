@@ -17,6 +17,14 @@ interface AttributePalettePanelProps {
   onAddAttributeToFirstGroup: (groupId: number, attributeKey: string) => void;
 }
 
+const PALETTE_TYPE_LABELS: Readonly<Record<string, string>> = {
+  NUMBER: 'Số',
+  STRING: 'Chuỗi',
+  BOOLEAN: 'Đúng/Sai',
+  DATE: 'Thời gian',
+  IP: 'Địa chỉ IP',
+};
+
 export function AttributePalettePanel({
   filteredAttributes,
   selectedCategory,
@@ -36,7 +44,7 @@ export function AttributePalettePanel({
             className="text-[#FF385C]"
             aria-hidden="true"
           />
-          <span>Bảng Khối Thuộc Tính (Palette)</span>
+          <span>Danh mục thuộc tính</span>
         </div>
         <span className="text-xs text-[#717171]">{filteredAttributes.length} thuộc tính</span>
       </div>
@@ -56,10 +64,10 @@ export function AttributePalettePanel({
             {cat === 'ALL'
               ? 'Tất cả'
               : cat === 'SUBJECT'
-                ? 'Chủ thể'
+                ? 'Người dùng'
                 : cat === 'RESOURCE'
-                  ? 'Tài nguyên'
-                  : 'Môi trường'}
+                  ? 'Tài liệu'
+                  : 'Bối cảnh'}
           </button>
         ))}
       </div>
@@ -72,10 +80,10 @@ export function AttributePalettePanel({
           aria-hidden="true"
         />
         <Input
-          aria-label="Tìm kiếm thuộc tính ABAC"
+          aria-label="Tìm kiếm thuộc tính chính sách"
           value={searchPalette}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Tìm thuộc tính..."
+          placeholder="Tìm thuộc tính…"
           className="pl-9 min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff]"
         />
       </div>
@@ -138,7 +146,9 @@ export function AttributePalettePanel({
 
               <div className="mt-1 flex items-center justify-between text-xs text-[#717171]">
                 <span className="font-mono text-[13px] text-[#717171]">{attr.key}</span>
-                <span className="text-[13px] uppercase font-bold text-[#717171]">{attr.type}</span>
+                <span className="text-[13px] font-semibold text-[#717171]">
+                  {PALETTE_TYPE_LABELS[attr.type] ?? attr.type}
+                </span>
               </div>
 
               <p className="mt-1 text-xs text-[#717171] line-clamp-2">{attr.description}</p>

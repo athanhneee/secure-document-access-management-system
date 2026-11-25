@@ -112,7 +112,7 @@ export function VisualPolicyBuilder({
   const handleRemoveGroup = (groupId: number) => {
     if (rule.groups.length <= 1) {
       // CONFLICT-RESOLVED: Thay thế hộp thoại cảnh báo trình duyệt mặc định bằng cảnh báo nội dòng Alert chuẩn WCAG.
-      setBuilderWarning('Chính sách ABAC bắt buộc phải duy trì ít nhất một nhóm điều kiện (AND).');
+      setBuilderWarning('Chính sách truy cập phải có ít nhất một nhóm điều kiện.');
       return;
     }
     updateRule({ ...rule, groups: rule.groups.filter((g) => g.id !== groupId) });
@@ -232,7 +232,7 @@ export function VisualPolicyBuilder({
                 className="rounded-full border-dashed border-[#dddddd] hover:border-[#FF385C] bg-[#ffffff] text-[#222222] text-xs min-h-11 sm:h-10 px-6 flex items-center gap-2 shadow-xs"
               >
                 <Plus size={16} strokeWidth={2} className="text-[#E31C5F]" aria-hidden="true" />
-                <span className="font-semibold">Thêm Nhóm Điều Kiện Mới (OR Clause)</span>
+                <span className="font-semibold">Thêm nhóm điều kiện thay thế (HOẶC)</span>
               </Button>
             </div>
 

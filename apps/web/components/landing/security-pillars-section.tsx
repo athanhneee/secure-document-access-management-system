@@ -7,46 +7,47 @@ import { Lock, Hash, Fingerprint, CheckCircle2, Layers } from 'lucide-react';
 const securityPillars = [
   {
     icon: Lock,
-    title: 'Mã hóa Envelope',
-    mobileTitle: 'Mã hóa Envelope',
-    description: 'Mã hóa từng tệp bằng khóa DEK độc lập bọc dưới KEK chuẩn AES-256-GCM.',
-    badge: 'AES-256-GCM',
+    title: 'Mã hóa bảo vệ tệp',
+    mobileTitle: 'Mã hóa tệp độc lập',
+    description: 'Mã hóa riêng từng tệp tài liệu bằng khóa độc lập để bảo vệ dữ liệu lưu trữ.',
+    badge: 'Mã hóa',
   },
   {
     icon: Layers,
-    title: 'Zero Trust & ABAC',
-    mobileTitle: 'Zero-Trust & ABAC',
-    description: 'Đánh giá đồng thời vai trò, cấp mật, phòng ban và khung giờ tại PEP máy chủ.',
-    badge: 'PEP / Engine',
+    title: 'Kiểm soát truy cập đa tầng',
+    mobileTitle: 'Phân quyền đa tầng',
+    description: 'Đánh giá đồng thời vai trò, cấp thẩm quyền, phòng ban và ngữ cảnh truy cập.',
+    badge: 'Phân quyền',
   },
   {
     icon: Hash,
-    title: 'Chuỗi băm bất biến',
-    mobileTitle: 'Chuỗi băm HMAC',
-    description: 'Liên kết mọi sự kiện nhạy cảm vào chuỗi HMAC-SHA256 chống chỉnh sửa trái phép.',
-    badge: 'HMAC-SHA256',
+    title: 'Nhật ký kiểm toán toàn vẹn',
+    mobileTitle: 'Nhật ký toàn vẹn',
+    description: 'Liên kết mọi sự kiện nhạy cảm vào chuỗi nhật ký chống chỉnh sửa trái phép.',
+    badge: 'Kiểm toán',
   },
   {
     icon: Fingerprint,
-    title: 'Watermark pháp chứng',
-    mobileTitle: 'Watermark pháp chứng',
-    description: 'Nhúng động định danh người xem, phiên, IP và dấu thời gian trên từng trang PDF.',
-    badge: 'Watermark',
+    title: 'Watermark bảo mật',
+    mobileTitle: 'Watermark bảo mật',
+    description:
+      'Gắn động thông tin định danh người xem và thời điểm truy cập trên từng trang tài liệu.',
+    badge: 'Truy vết',
   },
 ] as const;
 
 const COMPLIANCE_STANDARDS = [
   {
     title: 'ISO/IEC 27001:2022',
-    subtitle: 'Kiểm soát truy cập & mật mã dữ liệu',
+    subtitle: 'Tham chiếu kiểm soát truy cập và bảo vệ dữ liệu',
   },
   {
     title: 'NIST SP 800-53 Rev. 5',
-    subtitle: 'Phân quyền ABAC & nhật ký chuỗi băm',
+    subtitle: 'Tham chiếu phân quyền theo thuộc tính và nhật ký toàn vẹn',
   },
   {
-    title: 'Quy chế Bảo vệ Bí mật',
-    subtitle: '5 cấp độ mật & bàn giao có truy vết',
+    title: 'Quy chế bảo vệ bí mật nội bộ',
+    subtitle: 'Phân loại 5 mức độ mật và kiểm soát bàn giao có truy vết',
   },
 ] as const;
 
@@ -134,10 +135,10 @@ export function SecurityPillarsSection() {
               <div>
                 <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-[#222222]">
                   <span className="dot dot-info" aria-hidden="true" />
-                  <span>TIÊU CHUẨN TUÂN THỦ</span>
+                  <span>ĐỊNH HƯỚNG TUÂN THỦ</span>
                 </p>
                 <h2 className="text-base sm:text-xl font-bold text-[#222222] mt-0.5">
-                  Sẵn sàng kiểm định an toàn thông tin
+                  Thiết kế tham chiếu các chuẩn an toàn thông tin
                 </h2>
               </div>
             </div>

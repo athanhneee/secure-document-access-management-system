@@ -40,11 +40,11 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
     setErrorMsg(null);
 
     if (!/^\d+$/u.test(subjectUserId.trim())) {
-      setErrorMsg('Mã người dùng (subjectUserId) phải là chuỗi số nguyên dương.');
+      setErrorMsg('Mã tài khoản người dùng phải là số nguyên dương.');
       return;
     }
     if (!resourceDocumentId.trim()) {
-      setErrorMsg('Vui lòng nhập UUID tài liệu (resourceDocumentId) cần mô phỏng.');
+      setErrorMsg('Vui lòng nhập mã tài liệu cần mô phỏng.');
       return;
     }
 
@@ -74,8 +74,8 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
     } catch (err) {
       setErrorMsg(
         err instanceof ApiError
-          ? err.message || 'Mô phỏng PDP máy chủ thất bại.'
-          : 'Không thể kết nối điểm cuối mô phỏng /abac/simulate.',
+          ? err.message || 'Mô phỏng chính sách trên máy chủ thất bại.'
+          : 'Không thể kết nối máy chủ để thực hiện mô phỏng chính sách.',
       );
     } finally {
       setIsSubmitting(false);
@@ -95,13 +95,15 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
             className="text-[#008489] shrink-0"
             aria-hidden="true"
           />
-          <span>Tham số đánh giá PDP Máy chủ (Có ghi nhận nhật ký kiểm toán POLICY_SIMULATED)</span>
+          <span>
+            Tham số mô phỏng trên máy chủ (mọi lượt kiểm thử được ghi nhận trong nhật ký kiểm toán)
+          </span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="space-y-1">
             <label htmlFor="sim-server-user-id" className="font-semibold text-[#222222] block">
-              ID Người dùng (subjectUserId)
+              Mã tài khoản người dùng
             </label>
             <Input
               id="sim-server-user-id"
@@ -114,7 +116,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
 
           <div className="space-y-1">
             <label htmlFor="sim-server-doc-id" className="font-semibold text-[#222222] block">
-              UUID Tài liệu (resourceDocumentId)
+              Mã tài liệu
             </label>
             <Input
               id="sim-server-doc-id"
@@ -127,7 +129,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
 
           <div className="space-y-1">
             <label htmlFor="sim-server-action" className="font-semibold text-[#222222] block">
-              Hành động kiểm tra
+              Thao tác kiểm tra
             </label>
             <select
               id="sim-server-action"
@@ -137,11 +139,11 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
               }
               className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
             >
-              <option value="DISCOVER">DISCOVER</option>
-              <option value="VIEW">VIEW</option>
-              <option value="DOWNLOAD">DOWNLOAD</option>
-              <option value="SHARE">SHARE</option>
-              <option value="MANAGE">MANAGE</option>
+              <option value="DISCOVER">Tra cứu</option>
+              <option value="VIEW">Chỉ xem</option>
+              <option value="DOWNLOAD">Xem &amp; Tải về</option>
+              <option value="SHARE">Chia sẻ</option>
+              <option value="MANAGE">Quản trị</option>
             </select>
           </div>
         </div>
@@ -161,7 +163,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
 
           <div className="space-y-1">
             <label htmlFor="sim-server-risk" className="font-semibold text-[#222222] block">
-              Điểm rủi ro (0-100)
+              Điểm rủi ro (0–100)
             </label>
             <Input
               id="sim-server-risk"
@@ -186,7 +188,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
                 onChange={(e) => setDeviceTrust(e.target.checked)}
                 className="h-4 w-4 accent-[#FF385C]"
               />
-              <span>Thiết bị tin cậy (MDM)</span>
+              <span>Thiết bị tin cậy</span>
             </label>
           </div>
 
@@ -215,7 +217,7 @@ export function ServerSimulatorPanel({ defaultEnvironment }: ServerSimulatorPane
             className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white px-6 min-h-11 sm:h-9 text-xs font-semibold flex items-center gap-2"
           >
             <Play size={16} strokeWidth={1.75} className="fill-current" aria-hidden="true" />
-            <span>Thực Thi Mô Phỏng Máy Chủ (/abac/simulate)</span>
+            <span>Chạy mô phỏng trên máy chủ</span>
           </Button>
         </div>
       </form>

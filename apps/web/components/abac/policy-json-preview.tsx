@@ -26,10 +26,10 @@ export function PolicyJsonPreview({
         <div>
           <CardTitle className="text-base text-[#222222] flex items-center gap-2">
             <Code2 size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
-            <span>Trình Soạn Thảo JSON AST Trực Tiếp</span>
+            <span>Cấu hình JSON nâng cao</span>
           </CardTitle>
           <CardDescription className="text-xs text-[#717171]">
-            Xem hoặc chỉnh sửa trực tiếp biểu diễn trừu tượng (Abstract Syntax Tree) của quy tắc.
+            Xem hoặc chỉnh sửa trực tiếp định dạng JSON của quy tắc truy cập.
           </CardDescription>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -49,7 +49,7 @@ export function PolicyJsonPreview({
             ) : (
               <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
             )}
-            <span>{copied ? 'Đã sao chép!' : 'Sao chép JSON'}</span>
+            <span>{copied ? 'Đã sao chép' : 'Sao chép JSON'}</span>
           </Button>
           <Button
             type="button"
@@ -57,7 +57,7 @@ export function PolicyJsonPreview({
             onClick={onApplyJson}
             className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs min-h-11 sm:h-9 font-semibold"
           >
-            Cập nhật vào Trình Kéo Thả
+            Áp dụng sang trình kéo thả
           </Button>
         </div>
       </CardHeader>
@@ -69,7 +69,7 @@ export function PolicyJsonPreview({
           </div>
         )}
         <textarea
-          aria-label="Biểu diễn JSON AST của chính sách ABAC"
+          aria-label="Nội dung JSON của chính sách truy cập"
           value={jsonText}
           onChange={(e) => onChangeJsonText(e.target.value)}
           rows={20}

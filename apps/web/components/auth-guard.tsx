@@ -8,6 +8,7 @@ import {
   ROLE_LABELS,
   resolveDefaultPortalForRoles,
 } from '@/lib/auth-context';
+import { resolvePermissionLabel } from '@/lib/permission-labels';
 import { ArrowLeft, RefreshCw, Lock } from 'lucide-react';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -75,7 +76,7 @@ export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGu
                 <Lock size={24} strokeWidth={1.75} aria-hidden="true" />
               </div>
               <CardTitle className="text-xl font-bold tracking-tight text-[#C13515]">
-                403 · Truy cập bị từ chối
+                Không có quyền truy cập
               </CardTitle>
               <CardDescription className="text-[#717171] text-xs mt-0.5">
                 Tài khoản hiện tại không có thẩm quyền truy cập phân hệ này. Phiên làm việc của bạn
@@ -99,7 +100,9 @@ export function AuthGuard({ children, requiredRole, requiredPermission }: AuthGu
                 {requiredPermission && (
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[#717171]">Quyền yêu cầu</span>
-                    <span className="font-semibold text-[#C13515]">{requiredPermission}</span>
+                    <span className="font-semibold text-[#C13515]">
+                      {resolvePermissionLabel({ code: requiredPermission })}
+                    </span>
                   </div>
                 )}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#ebebeb]">

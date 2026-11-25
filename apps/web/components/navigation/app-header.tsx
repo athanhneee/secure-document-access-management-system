@@ -32,11 +32,11 @@ const ROLE_NAV_ITEMS: ReadonlyArray<{
   href: string;
   icon: React.ElementType;
 }> = [
-  { role: 'SYSTEM_ADMIN', label: 'Quản trị viên', href: '/admin', icon: Sliders },
-  { role: 'DOCUMENT_OWNER', label: 'Chủ sở hữu', href: '/owner', icon: FolderLock },
-  { role: 'DOCUMENT_READER', label: 'Người đọc', href: '/reader', icon: BookOpen },
+  { role: 'SYSTEM_ADMIN', label: 'Quản trị hệ thống', href: '/admin', icon: Sliders },
+  { role: 'DOCUMENT_OWNER', label: 'Chủ sở hữu tài liệu', href: '/owner', icon: FolderLock },
+  { role: 'DOCUMENT_READER', label: 'Người đọc tài liệu', href: '/reader', icon: BookOpen },
   { role: 'SECURITY_OFFICER', label: 'An ninh thông tin', href: '/security', icon: AlertOctagon },
-  { role: 'AUDITOR', label: 'Kiểm toán viên', href: '/auditor', icon: FileCheck },
+  { role: 'AUDITOR', label: 'Kiểm toán độc lập', href: '/auditor', icon: FileCheck },
 ];
 
 /**
@@ -106,7 +106,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
         <Link
           href="/"
           className="flex items-center gap-2 shrink-0 transition-opacity hover:opacity-90"
-          aria-label="Về trang chủ Secure Document"
+          aria-label="Về trang chủ SecureDocument"
         >
           <ShieldCheck size={20} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
           <span className="hidden text-sm font-semibold tracking-tight text-[#222222] sm:inline-block">
@@ -195,11 +195,11 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
               className={`flex h-11 w-11 md:h-auto md:w-auto md:min-h-9 items-center justify-center gap-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] md:px-3 md:py-1 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors shadow-2xs ${
                 pathname === '/sessions' ? 'border-[#E31C5F]/40 bg-[#FF385C]/10 text-[#E31C5F]' : ''
               }`}
-              title="Quản lý phiên đăng nhập thiết bị"
-              aria-label="Quản lý phiên đăng nhập"
+              title="Quản lý phiên và thiết bị"
+              aria-label="Quản lý phiên và thiết bị"
             >
               <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span className="hidden md:inline text-xs font-medium">Phiên làm việc</span>
+              <span className="hidden md:inline text-xs font-medium">Phiên &amp; thiết bị</span>
             </Link>
 
             <span className="staff-badge bg-transparent border-0 p-0 hidden lg:inline-flex items-center gap-1.5 text-xs font-semibold text-[#008489] select-none">

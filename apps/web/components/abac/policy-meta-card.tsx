@@ -21,7 +21,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             htmlFor="abac-rule-code"
             className="block text-xs font-semibold text-[#717171] mb-1"
           >
-            Mã Chính sách (Rule Code):
+            Mã chính sách
           </label>
           <Input
             id="abac-rule-code"
@@ -37,20 +37,20 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             htmlFor="abac-rule-name"
             className="block text-xs font-semibold text-[#717171] mb-1"
           >
-            Tên Chính sách:
+            Tên chính sách
           </label>
           <Input
             id="abac-rule-name"
             value={rule.name}
             onChange={(e) => onUpdateRule({ ...rule, name: e.target.value })}
-            placeholder="Tên gợi nhớ quy tắc..."
+            placeholder="Tên gợi nhớ của chính sách…"
             className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] text-[#222222]"
           />
         </div>
 
         <fieldset className="border-0 p-0 m-0 min-w-0">
           <legend className="block text-xs font-semibold text-[#717171] mb-1">
-            Hiệu lực Thực thi (Effect):
+            Hiệu lực áp dụng
           </legend>
           <div className="flex flex-wrap sm:flex-nowrap gap-2">
             <button
@@ -63,7 +63,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
                   : 'bg-[#ffffff] border-[#dddddd] text-[#717171] hover:bg-[#f7f7f7]'
               }`}
             >
-              CHO PHÉP (PERMIT)
+              Cho phép
             </button>
             <button
               type="button"
@@ -75,7 +75,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
                   : 'bg-[#ffffff] border-[#dddddd] text-[#717171] hover:bg-[#f7f7f7]'
               }`}
             >
-              TỪ CHỐI (DENY)
+              Từ chối
             </button>
           </div>
         </fieldset>
@@ -87,7 +87,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             htmlFor="abac-target-action"
             className="block text-xs font-semibold text-[#717171] mb-1"
           >
-            Hành động áp dụng (Target Action):
+            Thao tác áp dụng
           </label>
           <select
             id="abac-target-action"
@@ -97,12 +97,12 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             }
             className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] font-semibold text-[#222222]"
           >
-            <option value="ALL">TẤT CẢ HÀNH ĐỘNG (ALL ACTIONS)</option>
-            <option value="VIEW">XEM TRỰC TUYẾN (VIEW)</option>
-            <option value="DOWNLOAD">TẢI BẢN SAO (DOWNLOAD)</option>
-            <option value="SHARE">CHIA SẺ (SHARE)</option>
-            <option value="MANAGE">QUẢN TRỊ (MANAGE)</option>
-            <option value="DISCOVER">TÌM KIẾM (DISCOVER)</option>
+            <option value="ALL">Tất cả thao tác</option>
+            <option value="VIEW">Chỉ xem trực tuyến</option>
+            <option value="DOWNLOAD">Tải về bản sao</option>
+            <option value="SHARE">Chia sẻ</option>
+            <option value="MANAGE">Quản trị</option>
+            <option value="DISCOVER">Tra cứu danh mục</option>
           </select>
         </div>
 
@@ -111,7 +111,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             htmlFor="abac-rule-priority"
             className="block text-xs font-semibold text-[#717171] mb-1"
           >
-            Mức độ Ưu tiên (Priority: 1 - 100):
+            Độ ưu tiên (1 là cao nhất)
           </label>
           <Input
             id="abac-rule-priority"
@@ -129,13 +129,13 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             htmlFor="abac-rule-description"
             className="block text-xs font-semibold text-[#717171] mb-1"
           >
-            Mô tả mục đích an ninh:
+            Mô tả mục đích bảo mật
           </label>
           <Input
             id="abac-rule-description"
             value={rule.description}
             onChange={(e) => onUpdateRule({ ...rule, description: e.target.value })}
-            placeholder="Giải thích ngắn gọn nghiệp vụ của chính sách..."
+            placeholder="Giải thích ngắn gọn mục đích áp dụng của chính sách…"
             className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] text-[#222222]"
           />
         </div>

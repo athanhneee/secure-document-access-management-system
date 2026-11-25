@@ -18,16 +18,16 @@ export interface PolicyTemplate {
 export const PRESET_POLICY_TEMPLATES: PolicyTemplate[] = [
   {
     id: 'tpl-office-hours',
-    name: 'Mạng nội bộ trong giờ làm việc (Office Hours & Intranet)',
+    name: 'Mạng nội bộ trong giờ làm việc',
     badge: 'Phổ biến',
     summary:
-      'Chỉ cho phép truy cập tài liệu từ mạng nội bộ cơ quan trong khung giờ 08:00 - 17:30 và có mức rủi ro phiên thấp.',
+      'Chỉ cho phép truy cập tài liệu từ mạng nội bộ tổ chức trong khung giờ 08:00 – 17:30 và có mức rủi ro phiên thấp.',
     rule: {
       id: 'rule-tpl-office-hours',
       code: 'POL_OFFICE_HOURS_INTRANET',
-      name: 'Chính sách Giờ Hành chính & Mạng Nội bộ',
+      name: 'Chính sách giờ làm việc và mạng nội bộ',
       description:
-        'Chỉ nhân viên kết nối từ mạng tin cậy trong giờ làm việc mới được truy cập tài liệu.',
+        'Chỉ nhân sự kết nối từ mạng tin cậy trong giờ làm việc mới được truy cập tài liệu.',
       effect: 'PERMIT',
       priority: 10,
       targetResource: 'DOCUMENT',
@@ -67,16 +67,16 @@ export const PRESET_POLICY_TEMPLATES: PolicyTemplate[] = [
   },
   {
     id: 'tpl-top-secret-mfa',
-    name: 'Bảo vệ tài liệu Tuyệt mật (Top Secret + FIDO2 MFA)',
-    badge: 'An ninh tối mật',
+    name: 'Bảo vệ tài liệu Tuyệt mật (kèm MFA)',
+    badge: 'Bảo mật cao',
     summary:
-      'Yêu cầu Clearance Cấp 4 (Tuyệt mật), xác thực FIDO2/YubiKey, thiết bị đạt chuẩn MDM và cấm tải về (chỉ xem trực tuyến kèm Watermark).',
+      'Yêu cầu cấp thẩm quyền Tuyệt mật (Cấp 4), đã xác thực MFA trên thiết bị tin cậy và cấm tải về (chỉ xem trực tuyến kèm watermark bảo mật).',
     rule: {
       id: 'rule-tpl-top-secret',
       code: 'POL_TOP_SECRET_HARDENED',
-      name: 'Kiểm soát Truy cập Tài liệu Tuyệt mật Cấp 4',
+      name: 'Kiểm soát truy cập tài liệu Tuyệt mật (Cấp 4)',
       description:
-        'Ràng buộc tối nghiêm ngặt với tài liệu Tuyệt mật: bắt buộc Clearance Cấp 4, FIDO2 MFA và cấm tuyệt đối tải file ngoại tuyến.',
+        'Ràng buộc nghiêm ngặt với tài liệu Tuyệt mật: yêu cầu thẩm quyền Cấp 4, xác thực MFA và cấm tải về tệp gốc.',
       effect: 'PERMIT',
       priority: 5,
       targetResource: 'DOCUMENT',
@@ -123,16 +123,15 @@ export const PRESET_POLICY_TEMPLATES: PolicyTemplate[] = [
   },
   {
     id: 'tpl-dept-isolation',
-    name: 'Cách ly phòng ban nghiêm ngặt (Strict Department Boundary)',
+    name: 'Cách ly phòng ban nghiêm ngặt',
     badge: 'Chặn rò rỉ chéo',
     summary:
-      'Từ chối (DENY) mọi yêu cầu truy cập tài liệu Tài chính - Kế toán nếu người dùng không thuộc phòng ban này.',
+      'Từ chối mọi yêu cầu truy cập tài liệu Tài chính – Kế toán nếu người dùng không thuộc phòng ban này.',
     rule: {
       id: 'rule-tpl-dept-iso',
       code: 'POL_FINANCE_DEPT_ISOLATION',
-      name: 'Cách ly Ngăn chặn Truy cập Chéo Phòng ban Tài chính',
-      description:
-        'Nghiêm cấm người dùng ngoài phòng ban can thiệp hoặc xem các sổ sách tài chính nội bộ.',
+      name: 'Cách ly truy cập chéo Phòng Tài chính',
+      description: 'Ngăn người dùng ngoài phòng ban xem hoặc thao tác tài liệu tài chính nội bộ.',
       effect: 'DENY',
       priority: 1,
       targetResource: 'DOCUMENT',
@@ -162,16 +161,16 @@ export const PRESET_POLICY_TEMPLATES: PolicyTemplate[] = [
   },
   {
     id: 'tpl-untrusted-download-block',
-    name: 'Chặn tải về trên mạng ngoài (Untrusted Network Download Block)',
+    name: 'Chặn tải về từ mạng bên ngoài',
     badge: 'Chống thất thoát dữ liệu',
     summary:
-      'Chặn quyền DOWNLOAD tài liệu khi người dùng truy cập từ mạng công cộng không tin cậy.',
+      'Chặn thao tác tải về tài liệu khi người dùng truy cập từ mạng công cộng không tin cậy.',
     rule: {
       id: 'rule-tpl-untrusted-dl',
       code: 'POL_BLOCK_UNTRUSTED_DOWNLOAD',
-      name: 'Chặn Tải về từ Mạng Bên ngoài',
+      name: 'Chặn tải về từ mạng bên ngoài',
       description:
-        'Người dùng từ xa chỉ có thể xem trực tuyến với Watermark, không được phép lưu trữ bản sao về máy trạm cá nhân.',
+        'Người dùng từ xa chỉ được xem trực tuyến kèm watermark bảo mật, không được lưu bản sao về thiết bị cá nhân.',
       effect: 'DENY',
       priority: 2,
       targetResource: 'DOCUMENT',
@@ -195,16 +194,16 @@ export const PRESET_POLICY_TEMPLATES: PolicyTemplate[] = [
   },
   {
     id: 'tpl-auditor-read-only',
-    name: 'Đặc quyền Kiểm toán viên Độc lập (Auditor Read-only Exemption)',
+    name: 'Quyền chỉ đọc cho Kiểm toán viên độc lập',
     badge: 'Kiểm toán & Tuân thủ',
     summary:
-      'Ban Kiểm toán có thể xem toàn bộ tài liệu đã ban hành nếu có MFA kích hoạt, nhưng bị cấm tải xuống.',
+      'Kiểm toán viên độc lập được xem tài liệu đã ban hành khi đã xác thực MFA, nhưng không được tải về.',
     rule: {
       id: 'rule-tpl-auditor',
       code: 'POL_AUDITOR_READ_ONLY_ACCESS',
-      name: 'Quyền Tra cứu Dành cho Ban Kiểm toán Độc lập',
+      name: 'Quyền tra cứu cho Kiểm toán viên độc lập',
       description:
-        'Cho phép kiểm toán viên tra cứu đối soát tài liệu với cam kết nghĩa vụ đóng dấu thủy ấn và cấm tải file.',
+        'Cho phép kiểm toán viên tra cứu đối soát tài liệu kèm watermark bảo mật và cấm tải về.',
       effect: 'PERMIT',
       priority: 8,
       targetResource: 'DOCUMENT',

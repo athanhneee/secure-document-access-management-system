@@ -15,26 +15,26 @@ const BOOLEAN_OBLIGATION_CARDS = [
   {
     id: 'ob-require-watermark',
     type: 'REQUIRE_WATERMARK',
-    title: 'Đóng Thủy Ấn (Watermark)',
-    description: 'Nhúng tên, IP, thời gian & mã token lên bản xem tài liệu.',
+    title: 'Gắn watermark bảo mật',
+    description: 'Nhúng thông tin người dùng, thời gian và mã truy vết lên trang tài liệu.',
   },
   {
     id: 'ob-require-mfa',
     type: 'REQUIRE_MFA',
-    title: 'Yêu Cầu MFA (FIDO2 / TOTP)',
-    description: 'Bắt buộc xác thực đa yếu tố cấp cao trước khi mở.',
+    title: 'Yêu cầu xác thực đa yếu tố (MFA)',
+    description: 'Bắt buộc xác thực đa yếu tố trước khi mở tài liệu.',
   },
   {
     id: 'ob-forbid-download',
     type: 'FORBID_DOWNLOAD',
-    title: 'Cấm Tải File (No Download)',
-    description: 'Chỉ cho phép xem trực tuyến, vô hiệu hóa nút tải xuống.',
+    title: 'Cấm tải về tệp gốc',
+    description: 'Chỉ cho phép xem trực tuyến, vô hiệu hóa thao tác tải về.',
   },
   {
     id: 'ob-no-cache',
     type: 'NO_CACHE',
-    title: 'Không Lưu Bộ Đệm (No-Cache)',
-    description: 'Gửi header cấm proxy và browser lưu trữ bộ đệm file.',
+    title: 'Không lưu bộ đệm trên thiết bị',
+    description: 'Ngăn trình duyệt và thiết bị trung gian lưu bản sao tài liệu.',
   },
 ] as const;
 
@@ -50,16 +50,13 @@ export function ObligationsPanel({
       <div className="flex items-center justify-between border-b border-[#ebebeb] pb-2">
         <div className="flex items-center gap-2">
           <FileCheck2 size={16} strokeWidth={1.75} className="text-[#008A05]" aria-hidden="true" />
-          <h3 className="font-bold text-xs text-[#222222]">
-            Nghĩa Vụ &amp; Ràng Buộc Bắt Buộc Đi Kèm (Policy Obligations)
-          </h3>
+          <h3 className="font-bold text-xs text-[#222222]">Nghĩa vụ và ràng buộc đi kèm</h3>
         </div>
-        <Badge variant="success">PDP Enforcement</Badge>
+        <Badge variant="success">Tự động thực thi</Badge>
       </div>
 
       <p className="text-xs text-[#717171]">
-        Các hành động bảo mật mà hệ thống và giao diện bắt buộc phải thực thi ngay khi quy tắc cho
-        phép (PERMIT) hoặc từ chối (DENY).
+        Các biện pháp bảo mật hệ thống tự động áp dụng khi quy tắc có hiệu lực.
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
@@ -97,10 +94,10 @@ export function ObligationsPanel({
               htmlFor="ob-max-session-minutes"
               className="font-bold text-[#222222] block cursor-pointer"
             >
-              Giới Hạn Thời Gian Phiên (Max Session Time)
+              Giới hạn thời gian phiên
             </label>
             <span className="text-xs text-[#717171] block">
-              Tự động thu hồi quyền xem sau số phút chỉ định:
+              Tự động thu hồi quyền xem sau số phút chỉ định.
             </span>
             {hasObligation('MAX_SESSION_MINUTES') && (
               <div className="flex items-center gap-2 pt-1">

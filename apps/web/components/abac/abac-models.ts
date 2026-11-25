@@ -89,14 +89,14 @@ export interface AttributeMetadata {
 export const OPERATOR_LABELS: Record<PolicyOperator, string> = {
   EQ: 'Bằng (=)',
   NEQ: 'Không bằng (≠)',
-  IN: 'Thuộc danh sách (IN)',
-  NOT_IN: 'Không thuộc (NOT IN)',
+  IN: 'Thuộc danh sách',
+  NOT_IN: 'Không thuộc danh sách',
   GTE: 'Lớn hơn hoặc bằng (≥)',
   LTE: 'Nhỏ hơn hoặc bằng (≤)',
-  BETWEEN: 'Nằm trong khoảng (BETWEEN)',
-  CIDR_MATCH: 'Khớp dải IP (CIDR)',
-  TIME_BETWEEN: 'Trong khung giờ (TIME)',
-  EXISTS: 'Tồn tại giá trị (EXISTS)',
+  BETWEEN: 'Nằm trong khoảng',
+  CIDR_MATCH: 'Thuộc dải IP (CIDR)',
+  TIME_BETWEEN: 'Trong khung giờ',
+  EXISTS: 'Có giá trị',
 };
 
 export { CLEARANCE_OPTIONS, DEPARTMENT_OPTIONS, ATTRIBUTE_REGISTRY } from './abac-presets';

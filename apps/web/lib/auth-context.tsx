@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { apiClient, ApiError, getCsrfToken, sanitizeRedirectPath } from './api-client';
+import { disconnectRealtimeStream } from './realtime-events';
 import { checkEffectivePermission, type SystemRoleType } from './role-permissions';
 
 export interface AuthUser {
@@ -28,7 +29,7 @@ export const ROLE_LABELS: Record<RoleType, string> = {
   DOCUMENT_OWNER: 'Chủ sở hữu tài liệu',
   DOCUMENT_READER: 'Người đọc tài liệu',
   SECURITY_OFFICER: 'Cán bộ an ninh thông tin',
-  AUDITOR: 'Kiểm toán viên',
+  AUDITOR: 'Kiểm toán viên độc lập',
 };
 
 export const ROLE_PATHS: Record<RoleType, string> = {
@@ -98,6 +99,7 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   setActiveRole: (role: RoleType) => void;
+  hydrateUser: (nextUser: AuthUser | null) => void;
   refreshUser: () => Promise<AuthUser | null>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
@@ -121,6 +123,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
+
+  const hydrateUser = useCallback((nextUser: AuthUser | null) => {
+    setUser(nextUser);
+    if (!nextUser) {
+      setRoleOverride(null);
+    }
+    setIsLoading(false);
+  }, []);
 
   const refreshUser = useCallback(async (): Promise<AuthUser | null> => {
     try {
@@ -179,6 +189,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    disconnectRealtimeStream();
     const logoutPromise = apiClient('/auth/logout', { method: 'POST' });
     setUser(null);
     setRoleOverride(null);
@@ -210,12 +221,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       isAuthenticated: Boolean(user),
       setActiveRole,
+      hydrateUser,
       refreshUser,
       logout,
       hasPermission,
       hasRole,
     }),
-    [user, activeRole, isLoading, setActiveRole, refreshUser, logout, hasPermission, hasRole],
+    [
+      user,
+      activeRole,
+      isLoading,
+      setActiveRole,
+      hydrateUser,
+      refreshUser,
+      logout,
+      hasPermission,
+      hasRole,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

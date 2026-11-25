@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, Bell, Check, RefreshCw } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { subscribeRealtimeEvent } from '@/lib/realtime-events';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Dialog,
@@ -112,6 +113,39 @@ function NotificationBellDialogInner({
     };
   }, [userId, canViewNotifications]);
 
+  useEffect(() => {
+    if (!canViewNotifications) return;
+    return subscribeRealtimeEvent<Partial<InAppNotificationItem> & { id?: string }>(
+      'NOTIFICATION_CREATED',
+      (event) => {
+        const p = event.payload;
+        if (p?.id && p.title && p.body) {
+          const incoming: InAppNotificationItem = {
+            id: String(p.id),
+            notificationType: p.notificationType ?? 'SYSTEM',
+            title: p.title,
+            body: p.body,
+            relatedObjectType: p.relatedObjectType ?? null,
+            relatedObjectId: p.relatedObjectId ?? null,
+            status: p.status ?? 'UNREAD',
+            createdAt: p.createdAt ?? event.timestamp,
+            readAt: p.readAt ?? null,
+          };
+          setItems((prev) => {
+            const next = [incoming, ...prev.filter((entry) => entry.id !== incoming.id)].slice(
+              0,
+              15,
+            );
+            notificationMemoryCache.set(userId, next);
+            return next;
+          });
+          return;
+        }
+        void fetchNotifications(true);
+      },
+    );
+  }, [userId, canViewNotifications, fetchNotifications]);
+
   async function handleMarkAsRead(target: InAppNotificationItem) {
     if (target.status !== 'UNREAD' || markingId) return;
     const snapshot = items;
@@ -178,7 +212,7 @@ function NotificationBellDialogInner({
               </span>
             </div>
             <DialogDescription className="text-xs text-[#717171]">
-              Cập nhật trạng thái cấp quyền, thu hồi giấy phép và thông báo vận hành nội bộ
+              Cập nhật trạng thái cấp quyền, thu hồi quyền truy cập và thông báo vận hành nội bộ.
             </DialogDescription>
           </DialogHeader>
 
@@ -208,16 +242,15 @@ function NotificationBellDialogInner({
           <div className="mt-3 max-h-[56dvh] space-y-2.5 overflow-y-auto pr-1">
             {!canViewNotifications ? (
               <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4 text-xs text-[#717171] leading-relaxed">
-                Vai trò hiện tại tách biệt khỏi hộp thư tài liệu nghiệp vụ theo Phân tách nhiệm vụ
-                (SoD).
+                Vai trò hiện tại không thuộc phạm vi hộp thư thông báo tài liệu nghiệp vụ.
               </div>
             ) : isLoading && items.length === 0 ? (
               <div className="py-8 text-center text-xs text-[#717171]">
-                Đang đồng bộ hộp thư thông báo…
+                Đang tải hộp thư thông báo…
               </div>
             ) : items.length === 0 ? (
               <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-5 text-center text-xs text-[#717171]">
-                Hiện chưa có thông báo nội bộ nào trong hộp thư của bạn.
+                Hiện chưa có thông báo nào trong hộp thư của bạn.
               </div>
             ) : (
               items.map((item) => {
@@ -259,7 +292,7 @@ function NotificationBellDialogInner({
                             className="text-[#008A05]"
                             aria-hidden="true"
                           />
-                          <span>Đã xem</span>
+                          <span>Đã đọc</span>
                         </span>
                       )}
                     </div>

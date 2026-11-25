@@ -13,13 +13,14 @@ export interface ClassificationBadgeProps extends Omit<
   level?: ClassificationCode;
   rank?: number;
   showRank?: boolean;
+  subject?: 'document' | 'user';
   size?: 'sm' | 'md' | 'lg';
 }
 
 /**
- * Thuật toán: Ánh Xạ Phân Tầng Nhãn Mật Độ Bảo Mật Tài Liệu 5 Cấp Đạt Chuẩn Tương Phản WCAG 2.1 AA (`ClassificationBadge`)
+ * Thuật toán: Ánh Xạ Phân Tầng Nhãn Mật Độ Bảo Mật Tài Liệu & Cấp Thẩm Quyền 5 Cấp Đạt Chuẩn Tương Phản WCAG 2.1 AA (`ClassificationBadge`)
  * Mục đích:
- *   - Chuẩn hóa mã phân loại mật (`UNCLASSIFIED` -> `TOP_SECRET`) sang biểu diễn phẳng `staff-001` hoàn toàn không viền, không nền (`background: transparent`, `border: none`, `padding: 0`) kèm chỉ số thứ bậc `R0..R4`.
+ *   - Chuẩn hóa mã phân loại mật (`UNCLASSIFIED` -> `TOP_SECRET`) sang biểu diễn phẳng `staff-001` hoàn toàn không viền, không nền (`background: transparent`, `border: none`, `padding: 0`) kèm nhãn ngữ cảnh phù hợp cho tài liệu hoặc thẩm quyền người dùng.
  *   - Đảm bảo mọi màu chữ trên nền sáng `#FFFFFF` đạt tỷ lệ tương phản `>= 4.5:1` theo chuẩn WCAG 2.1 AA: `#717171` (`4.88:1`) cho `UNCLASSIFIED`, `#008489` (`4.50:1`) cho `INTERNAL`, `#222222` (`15.91:1` kèm biểu tượng khóa `#E07912`) cho `CONFIDENTIAL`, và `#C13515` (`5.54:1`) cho `SECRET` / `TOP_SECRET`.
  */
 export function ClassificationBadge({
@@ -27,11 +28,14 @@ export function ClassificationBadge({
   level,
   rank,
   showRank = false,
+  subject = 'document',
   size = 'md',
   className,
   ...props
 }: ClassificationBadgeProps) {
   const normalized = (level ?? code ?? '').toUpperCase();
+  const isUserSubject = subject === 'user';
+  const subjectPrefix = isUserSubject ? 'Cấp thẩm quyền bảo mật' : 'Mức độ mật tài liệu';
 
   const sizeClasses = {
     sm: 'text-xs gap-1',
@@ -42,7 +46,7 @@ export function ClassificationBadge({
   // CONFLICT-RESOLVED: Chuẩn hóa kích thước icon về thang {16, 20} và loại bỏ thuộc tính style nội tuyến để tuân thủ CSP nghiêm ngặt.
   const iconPixelSize: 16 | 20 = size === 'lg' ? 20 : 16;
 
-  // CONFLICT-RESOLVED: Đồng bộ nhãn cấp bậc hiển thị (UNCLASSIFIED: R0, INTERNAL/RESTRICTED: R1, CONFIDENTIAL: R2, SECRET: R3, TOP_SECRET: R4) và nâng cấp màu chữ đạt tương phản WCAG 2.1 AA >= 4.5:1.
+  // CONFLICT-RESOLVED: Đồng bộ nhãn cấp bậc hiển thị (UNCLASSIFIED: Cấp 0, INTERNAL/RESTRICTED: Cấp 1, CONFIDENTIAL: Cấp 2, SECRET: Cấp 3, TOP_SECRET: Cấp 4) và nâng cấp màu chữ đạt tương phản WCAG 2.1 AA >= 4.5:1.
   switch (normalized) {
     case 'UNCLASSIFIED':
       return (
@@ -52,8 +56,12 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          title="Tài liệu không phân loại mật (Cấp 0)"
-          aria-label={`Mức mật: Không mật (Unclassified)${rank !== undefined ? `, cấp ${rank}` : ''}`}
+          title={
+            isUserSubject
+              ? 'Cấp thẩm quyền bảo mật: Không mật (Cấp 0)'
+              : 'Tài liệu không phân loại mật (Cấp 0)'
+          }
+          aria-label={`${subjectPrefix}: Không mật${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
         >
           <ShieldCheck
@@ -63,7 +71,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>KHÔNG MẬT</span>
-          {showRank && <span className="font-bold text-[13px]">· R0</span>}
+          {showRank && <span className="font-bold text-[13px]">· Cấp 0</span>}
         </span>
       );
 
@@ -76,8 +84,12 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          title="Tài liệu lưu hành nội bộ (Cấp 1)"
-          aria-label={`Mức mật: Nội bộ (Internal)${rank !== undefined ? `, cấp ${rank}` : ''}`}
+          title={
+            isUserSubject
+              ? 'Cấp thẩm quyền bảo mật: Nội bộ (Cấp 1)'
+              : 'Tài liệu lưu hành nội bộ (Cấp 1)'
+          }
+          aria-label={`${subjectPrefix}: Nội bộ${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
         >
           <ShieldAlert
@@ -87,7 +99,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>NỘI BỘ</span>
-          {showRank && <span className="font-bold text-[13px]">· R1</span>}
+          {showRank && <span className="font-bold text-[13px]">· Cấp 1</span>}
         </span>
       );
 
@@ -99,8 +111,12 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          title="Tài liệu mật theo quy định tổ chức (Cấp 2)"
-          aria-label={`Mức mật: Mật (Confidential)${rank !== undefined ? `, cấp ${rank}` : ''}`}
+          title={
+            isUserSubject
+              ? 'Cấp thẩm quyền bảo mật: Mật (Cấp 2)'
+              : 'Tài liệu mật theo quy định tổ chức (Cấp 2)'
+          }
+          aria-label={`${subjectPrefix}: Mật${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
         >
           <Lock
@@ -110,7 +126,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>MẬT</span>
-          {showRank && <span className="font-bold text-[13px]">· R2</span>}
+          {showRank && <span className="font-bold text-[13px]">· Cấp 2</span>}
         </span>
       );
 
@@ -122,8 +138,10 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          title="Tài liệu tối mật (Cấp 3)"
-          aria-label={`Mức mật: Tối mật (Secret)${rank !== undefined ? `, cấp ${rank}` : ''}`}
+          title={
+            isUserSubject ? 'Cấp thẩm quyền bảo mật: Tối mật (Cấp 3)' : 'Tài liệu tối mật (Cấp 3)'
+          }
+          aria-label={`${subjectPrefix}: Tối mật${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
         >
           <AlertTriangle
@@ -133,7 +151,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>TỐI MẬT</span>
-          {showRank && <span className="font-bold text-[13px]">· R3</span>}
+          {showRank && <span className="font-bold text-[13px]">· Cấp 3</span>}
         </span>
       );
 
@@ -145,8 +163,12 @@ export function ClassificationBadge({
             sizeClasses[size],
             className,
           )}
-          title="Tài liệu tuyệt mật mức cao nhất (Cấp 4)"
-          aria-label={`Mức mật: Tuyệt mật (Top Secret)${rank !== undefined ? `, cấp ${rank}` : ''}`}
+          title={
+            isUserSubject
+              ? 'Cấp thẩm quyền bảo mật: Tuyệt mật (Cấp 4)'
+              : 'Tài liệu tuyệt mật mức cao nhất (Cấp 4)'
+          }
+          aria-label={`${subjectPrefix}: Tuyệt mật${rank !== undefined ? `, cấp ${rank}` : ''}`}
           {...props}
         >
           <Flame
@@ -156,7 +178,7 @@ export function ClassificationBadge({
             aria-hidden="true"
           />
           <span>TUYỆT MẬT</span>
-          {showRank && <span className="font-bold text-[13px]">· R4</span>}
+          {showRank && <span className="font-bold text-[13px]">· Cấp 4</span>}
         </span>
       );
 

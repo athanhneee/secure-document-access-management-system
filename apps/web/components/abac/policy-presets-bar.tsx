@@ -10,6 +10,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import { formatPolicyEffectLabel } from '@/lib/ui-labels';
 import type { VisualPolicyRule } from './abac-models';
 import { PRESET_POLICY_TEMPLATES, type PolicyTemplate } from './policy-templates';
 import { PolicyMetaCard } from './policy-meta-card';
@@ -53,9 +54,9 @@ export function PolicyPresetsBar({
           />
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <h2 className="text-sm sm:text-base font-bold text-[#222222]">
-              Trình biên tập chính sách ABAC
+              Trình biên tập chính sách truy cập
             </h2>
-            <Badge variant="info">DNF Engine</Badge>
+            <Badge variant="info">Biên tập trực quan</Badge>
           </div>
         </div>
 
@@ -68,7 +69,7 @@ export function PolicyPresetsBar({
             className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd] hover:border-[#FF385C] flex items-center gap-1.5"
           >
             <Sparkles size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
-            <span>Mẫu dựng sẵn (Presets)</span>
+            <span>Mẫu dựng sẵn</span>
           </Button>
 
           <Button
@@ -84,7 +85,7 @@ export function PolicyPresetsBar({
               className="text-[#008A05] fill-current"
               aria-hidden="true"
             />
-            <span>Kiểm thử PDP (Simulator)</span>
+            <span>Mô phỏng chính sách</span>
           </Button>
 
           <div className="flex items-center bg-[#f7f7f7] border border-[#ebebeb] p-0.5 rounded-full">
@@ -98,7 +99,7 @@ export function PolicyPresetsBar({
               }`}
             >
               <Layers size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span>Khối Kéo Thả</span>
+              <span>Kéo thả</span>
             </button>
             <button
               type="button"
@@ -110,7 +111,7 @@ export function PolicyPresetsBar({
               }`}
             >
               <Code2 size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span>JSON AST</span>
+              <span>JSON nâng cao</span>
             </button>
           </div>
 
@@ -122,7 +123,7 @@ export function PolicyPresetsBar({
               onClick={() => void onSaveRule(rule)}
               className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white text-xs min-h-11 sm:h-9 px-4 font-semibold"
             >
-              {isSaving ? 'Đang lưu...' : 'Lưu Chính Sách'}
+              {isSaving ? 'Đang lưu…' : 'Lưu chính sách'}
             </Button>
           )}
 
@@ -153,11 +154,11 @@ export function PolicyPresetsBar({
                 aria-hidden="true"
               />
               <DialogTitle className="text-base font-bold text-[#222222]">
-                Thư Viện Mẫu Chính Sách Dựng Sẵn (Policy Presets)
+                Thư viện mẫu chính sách dựng sẵn
               </DialogTitle>
             </div>
             <DialogDescription className="text-xs text-[#717171]">
-              Chọn nhanh cấu hình chính sách mẫu tiêu chuẩn để bắt đầu chỉnh sửa kéo thả.
+              Chọn nhanh một mẫu chính sách tiêu chuẩn để bắt đầu điều chỉnh.
             </DialogDescription>
           </DialogHeader>
 
@@ -190,7 +191,7 @@ export function PolicyPresetsBar({
                     <strong
                       className={tpl.rule.effect === 'PERMIT' ? 'text-[#008A05]' : 'text-[#C13515]'}
                     >
-                      {tpl.rule.effect}
+                      {formatPolicyEffectLabel(tpl.rule.effect)}
                     </strong>
                   </span>
                   <span>•</span>

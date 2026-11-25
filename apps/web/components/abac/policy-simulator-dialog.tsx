@@ -90,7 +90,7 @@ export function PolicySimulatorDialog({
                 aria-hidden="true"
               />
               <DialogTitle className="text-lg font-bold text-[#222222]">
-                Trình Giả Lập &amp; Kiểm Thử PDP Thời Gian Thực (Live Policy Simulator)
+                Mô phỏng và kiểm thử chính sách truy cập
               </DialogTitle>
             </div>
 
@@ -104,7 +104,7 @@ export function PolicySimulatorDialog({
                     : 'text-[#717171] hover:text-[#222222]'
                 }`}
               >
-                Nháp AST Cục bộ
+                Kiểm thử nháp cục bộ
               </button>
               <button
                 type="button"
@@ -116,14 +116,14 @@ export function PolicySimulatorDialog({
                 }`}
               >
                 <Server size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>PDP Máy chủ</span>
+                <span>Kiểm thử trên máy chủ</span>
               </button>
             </div>
           </div>
           <DialogDescription className="text-xs text-[#717171]">
-            Kiểm thử tức thời quy tắc chính sách{' '}
-            <strong className="text-[#222222] font-mono">{activeRule.code}</strong> trên trình duyệt
-            hoặc đối chiếu trực tiếp với PDP máy chủ.
+            Kiểm thử tức thời chính sách{' '}
+            <strong className="text-[#222222] font-mono">{activeRule.code}</strong> ngay trên trình
+            duyệt hoặc đối chiếu trực tiếp với hệ thống.
           </DialogDescription>
         </DialogHeader>
 
@@ -139,7 +139,7 @@ export function PolicySimulatorDialog({
                   onClick={() => applyPreset('trusted_employee')}
                   className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
                 >
-                  Nhân sự An toàn (Mạng cơ quan, MFA)
+                  Nhân sự tin cậy (mạng nội bộ, có MFA)
                 </Button>
                 <Button
                   type="button"
@@ -148,7 +148,7 @@ export function PolicySimulatorDialog({
                   onClick={() => applyPreset('remote_suspicious')}
                   className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
                 >
-                  Truy cập Rủi ro cao từ xa
+                  Truy cập rủi ro cao từ xa
                 </Button>
                 <Button
                   type="button"
@@ -180,7 +180,7 @@ export function PolicySimulatorDialog({
                 className="rounded-full bg-[#FF385C] hover:bg-[#E31C5F] text-white px-8 min-h-11 sm:h-9 text-xs font-semibold shadow-sm flex items-center gap-2"
               >
                 <Play size={16} strokeWidth={1.75} className="fill-current" aria-hidden="true" />
-                <span>Thực Thi Đánh Giá PDP (Evaluate Rule)</span>
+                <span>Chạy mô phỏng đánh giá</span>
               </Button>
             </div>
 
@@ -197,7 +197,7 @@ export function PolicySimulatorDialog({
             onClick={() => onOpenChange(false)}
             className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd]"
           >
-            Đóng Trình Giả Lập
+            Đóng
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -89,11 +89,11 @@ export function BetweenBoundsInput({
     return (
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
         <label htmlFor={minId} className="sr-only">
-          Giá trị cận dưới
+          Giá trị tối thiểu
         </label>
         <select
           id={minId}
-          aria-label="Giá trị cận dưới"
+          aria-label="Giá trị tối thiểu"
           value={String(minVal)}
           onChange={(e) => onChange([coerceBound(e.target.value), maxVal])}
           className="flex-1 min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
@@ -106,11 +106,11 @@ export function BetweenBoundsInput({
         </select>
         <span className="text-[#717171] text-xs shrink-0 text-center">đến</span>
         <label htmlFor={maxId} className="sr-only">
-          Giá trị cận trên
+          Giá trị tối đa
         </label>
         <select
           id={maxId}
-          aria-label="Giá trị cận trên"
+          aria-label="Giá trị tối đa"
           value={String(maxVal)}
           onChange={(e) => onChange([minVal, coerceBound(e.target.value)])}
           className="flex-1 min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
@@ -128,28 +128,28 @@ export function BetweenBoundsInput({
   return (
     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
       <label htmlFor={minId} className="sr-only">
-        Giá trị cận dưới
+        Giá trị tối thiểu
       </label>
       <Input
         id={minId}
-        aria-label="Giá trị cận dưới"
+        aria-label="Giá trị tối thiểu"
         type={isNumeric ? 'number' : 'text'}
         value={String(minVal)}
         onChange={(e) => onChange([coerceBound(e.target.value), maxVal])}
-        placeholder="Cận dưới"
+        placeholder="Từ"
         className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] text-[#222222]"
       />
       <span className="text-[#717171] text-xs shrink-0 text-center">đến</span>
       <label htmlFor={maxId} className="sr-only">
-        Giá trị cận trên
+        Giá trị tối đa
       </label>
       <Input
         id={maxId}
-        aria-label="Giá trị cận trên"
+        aria-label="Giá trị tối đa"
         type={isNumeric ? 'number' : 'text'}
         value={String(maxVal)}
         onChange={(e) => onChange([minVal, coerceBound(e.target.value)])}
-        placeholder="Cận trên"
+        placeholder="Đến"
         className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] text-[#222222]"
       />
     </div>

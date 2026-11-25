@@ -1,10 +1,10 @@
 'use client';
 
 /**
- * Thuật toán: Chân Trang Trạng Thái Bảo Mật Không Gian Làm Việc (`AppFooter`)
- * Mục đích: Hiển thị tóm tắt chính sách quyền tối thiểu, kiểm toán chuỗi băm HMAC-SHA256 và watermark định danh phiên theo bố cục linh hoạt trên màn hình `375px`.
+ * Thuật toán: Chân Trang Nhận Diện Thương Hiệu Chuẩn Production (`AppFooter`)
+ * Mục đích: Hiển thị đồng bộ tên hệ thống `SecureDocument` và thông tin bản quyền gọn gàng trên mọi kích thước màn hình (bao gồm `375px`), không để lộ thông số kiến trúc hay thuật toán bảo mật nội bộ.
  */
-import { ShieldCheck, Lock, EyeOff, Hash } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
 
 export function AppFooter() {
   return (
@@ -18,25 +18,18 @@ export function AppFooter() {
               className="text-[#008A05]"
               aria-hidden="true"
             />
-            <span>Secure Document</span>
+            <span>
+              Secure<span className="font-light text-[#E31C5F]">Document</span>
+            </span>
           </div>
           <span className="hidden sm:inline text-[#ebebeb]">·</span>
-          <span className="flex items-center gap-1 text-xs text-[#717171]">
-            <Lock size={16} strokeWidth={1.75} className="text-[#E07912]" aria-hidden="true" />
-            <span>Zero-Trust RBAC/ABAC</span>
+          <span className="text-xs text-[#717171]">
+            Hệ thống quản lý truy cập tài liệu mật nội bộ
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 text-xs text-[#717171]">
-          <span className="flex items-center gap-1">
-            <Hash size={16} strokeWidth={1.75} className="text-[#008489]" aria-hidden="true" />
-            <span>HMAC-SHA256</span>
-          </span>
-          <span className="text-[#ebebeb]">·</span>
-          <span className="flex items-center gap-1">
-            <EyeOff size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
-            <span>Watermark định danh</span>
-          </span>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-[#717171]">
+          <span>© 2026 SecureDocument</span>
         </div>
       </div>
     </footer>

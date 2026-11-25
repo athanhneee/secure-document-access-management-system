@@ -2,6 +2,11 @@
 
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import {
+  formatAbacReasonLabel,
+  formatObligationLabel,
+  formatPolicyEffectLabel,
+} from '@/lib/ui-labels';
 
 export interface ServerSimulationResponse {
   decision: 'PERMIT' | 'DENY';
@@ -39,10 +44,13 @@ export function ServerSimulatorResultCard({ serverResult }: ServerSimulatorResul
             <XCircle size={16} strokeWidth={1.75} className="text-[#C13515]" aria-hidden="true" />
           )}
           <Badge variant={serverResult.decision === 'PERMIT' ? 'success' : 'danger'}>
-            {serverResult.decision}
+            {formatPolicyEffectLabel(serverResult.decision)}
           </Badge>
-          <span className="font-mono text-[#717171]">
-            Reason: <strong className="text-[#222222]">{serverResult.reasonCode}</strong>
+          <span className="text-[#717171]">
+            Lý do:{' '}
+            <strong className="text-[#222222]">
+              {formatAbacReasonLabel(serverResult.reasonCode)}
+            </strong>
           </span>
         </div>
         <span className="font-mono text-[#717171]">
@@ -61,9 +69,11 @@ export function ServerSimulatorResultCard({ serverResult }: ServerSimulatorResul
         <span>·</span>
         <span>
           Nghĩa vụ:{' '}
-          <strong className="font-mono text-[#008489]">
+          <strong className="text-[#008489]">
             {serverResult.obligations && serverResult.obligations.length > 0
-              ? serverResult.obligations.map((o) => o.type).join(', ')
+              ? serverResult.obligations
+                  .map((o) => formatObligationLabel(o.type, o.minutes))
+                  .join(', ')
               : 'Không có'}
           </strong>
         </span>

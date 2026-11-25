@@ -42,7 +42,7 @@ export function ConditionGroupCard({
     <div className="space-y-2">
       {groupIdx > 0 && (
         <div className="flex items-center justify-center my-2">
-          <Badge variant="warning">HOẶC (OR) - Chỉ cần 1 nhóm điều kiện thỏa mãn</Badge>
+          <Badge variant="warning">HOẶC — Chỉ cần 1 nhóm điều kiện thỏa mãn</Badge>
         </div>
       )}
 
@@ -67,10 +67,10 @@ export function ConditionGroupCard({
             </span>
             <div>
               <h3 className="font-bold text-xs text-[#222222]">
-                Nhóm Điều Kiện #{group.id} (Mệnh đề liên hội AND)
+                Nhóm điều kiện #{group.id} (Thỏa mãn đồng thời)
               </h3>
               <p className="text-xs text-[#717171]">
-                Tất cả {group.conditions.length} điều kiện dưới đây phải ĐỒNG THỜI đúng.
+                Tất cả {group.conditions.length} điều kiện dưới đây phải đồng thời đúng.
               </p>
             </div>
           </div>
@@ -84,7 +84,7 @@ export function ConditionGroupCard({
               className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C] flex items-center gap-1"
             >
               <Plus size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
-              <span>Thêm AND</span>
+              <span>Thêm điều kiện</span>
             </Button>
 
             <Button
@@ -116,8 +116,8 @@ export function ConditionGroupCard({
         <div className="space-y-2">
           {group.conditions.length === 0 ? (
             <div className="p-6 text-center text-xs text-[#717171] border border-dashed border-[#dddddd] rounded-[12px]">
-              Chưa có điều kiện nào trong nhóm này. Hãy kéo thuộc tính từ cột trái hoặc bấm
-              &quot;Thêm AND&quot;.
+              Chưa có điều kiện nào trong nhóm này. Hãy kéo thuộc tính từ danh mục hoặc bấm
+              &quot;Thêm điều kiện&quot;.
             </div>
           ) : (
             group.conditions.map((cond, condIdx) => (

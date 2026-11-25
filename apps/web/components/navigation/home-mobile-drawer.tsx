@@ -27,35 +27,35 @@ const QUICK_ROLES: ReadonlyArray<{
 }> = [
   {
     role: 'DOCUMENT_OWNER',
-    name: 'Chủ sở hữu',
+    name: 'Chủ sở hữu tài liệu',
     href: '/owner',
     icon: FileText,
     color: 'text-[#008489]',
   },
   {
     role: 'DOCUMENT_READER',
-    name: 'Người đọc',
+    name: 'Người đọc tài liệu',
     href: '/reader',
     icon: Eye,
     color: 'text-[#008A05]',
   },
   {
     role: 'SECURITY_OFFICER',
-    name: 'Sĩ quan SOC',
+    name: 'An ninh thông tin',
     href: '/security',
     icon: ShieldAlert,
     color: 'text-[#C13515]',
   },
   {
     role: 'AUDITOR',
-    name: 'Kiểm toán viên',
+    name: 'Kiểm toán độc lập',
     href: '/auditor',
     icon: ClipboardCheck,
     color: 'text-[#008489]',
   },
   {
     role: 'SYSTEM_ADMIN',
-    name: 'Quản trị viên',
+    name: 'Quản trị hệ thống',
     href: '/admin',
     icon: Settings,
     color: 'text-[#E31C5F]',
@@ -295,14 +295,6 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
         )}
 
         <div className="mt-5 pt-4 border-t border-[#ebebeb] space-y-2.5">
-          <div className="flex items-center justify-between px-1 text-xs text-[#717171]">
-            <span>Trạng thái kiến trúc:</span>
-            <span className="staff-badge bg-transparent border-0 p-0 inline-flex items-center gap-1.5 font-semibold text-[#008A05]">
-              <span className="dot dot-success animate-pulse" aria-hidden="true" />
-              <span>Zero-Trust Active</span>
-            </span>
-          </div>
-
           {isAuthenticated && user ? (
             <div className="space-y-2">
               <InteractiveHoverButton

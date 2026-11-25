@@ -163,7 +163,7 @@ const InteractiveHoverButton = React.forwardRef<HTMLButtonElement, InteractiveHo
     );
 
     const buttonText =
-      text || (typeof children === 'string' && children.trim() ? children : 'Button');
+      text || (typeof children === 'string' && children.trim() ? children : 'Thực hiện');
     const variantStyle: VariantStyle = variantStyles[variant] ?? variantStyles.primary;
     const sizeClass = sizeStyles[size] || sizeStyles.md;
     const hasLeadingIcon = Boolean(icon);

@@ -39,12 +39,12 @@ export function SimulatorContextForm({
       <div className="p-3.5 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-3 shadow-xs">
         <div className="flex items-center gap-1.5 font-bold text-[#222222] border-b border-[#ebebeb] pb-2">
           <KeyRound size={16} strokeWidth={1.75} className="text-[#008489]" aria-hidden="true" />
-          <span>1. Ngữ cảnh Chủ thể (Subject)</span>
+          <span>1. Thông tin người dùng</span>
         </div>
 
         <div>
           <label htmlFor="sim-subject-clearance" className={labelCls}>
-            Cấp bậc An ninh (Clearance):
+            Cấp thẩm quyền bảo mật
           </label>
           <select
             id="sim-subject-clearance"
@@ -62,7 +62,7 @@ export function SimulatorContextForm({
 
         <div>
           <label htmlFor="sim-subject-department" className={labelCls}>
-            Phòng ban công tác:
+            Phòng ban công tác
           </label>
           <select
             id="sim-subject-department"
@@ -80,7 +80,7 @@ export function SimulatorContextForm({
 
         <div>
           <label htmlFor="sim-subject-employment" className={labelCls}>
-            Trạng thái nhân sự:
+            Trạng thái công tác
           </label>
           <select
             id="sim-subject-employment"
@@ -88,9 +88,9 @@ export function SimulatorContextForm({
             onChange={(e) => setSubject((s) => ({ ...s, employmentStatus: e.target.value }))}
             className={selectCls}
           >
-            <option value="ACTIVE">Đang công tác (ACTIVE)</option>
-            <option value="PROBATION">Thử việc (PROBATION)</option>
-            <option value="SUSPENDED">Tạm đình chỉ (SUSPENDED)</option>
+            <option value="ACTIVE">Đang làm việc</option>
+            <option value="PROBATION">Đang thử việc</option>
+            <option value="SUSPENDED">Tạm đình chỉ</option>
           </select>
         </div>
       </div>
@@ -98,12 +98,12 @@ export function SimulatorContextForm({
       <div className="p-3.5 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-3 shadow-xs">
         <div className="flex items-center gap-1.5 font-bold text-[#222222] border-b border-[#ebebeb] pb-2">
           <FileCheck2 size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
-          <span>2. Ngữ cảnh Tài nguyên (Resource)</span>
+          <span>2. Thông tin tài liệu</span>
         </div>
 
         <div>
           <label htmlFor="sim-resource-classification" className={labelCls}>
-            Cấp độ mật tài liệu:
+            Mức độ mật tài liệu
           </label>
           <select
             id="sim-resource-classification"
@@ -123,7 +123,7 @@ export function SimulatorContextForm({
 
         <div>
           <label htmlFor="sim-resource-department" className={labelCls}>
-            Phòng ban sở hữu:
+            Phòng ban sở hữu
           </label>
           <select
             id="sim-resource-department"
@@ -141,7 +141,7 @@ export function SimulatorContextForm({
 
         <div>
           <label htmlFor="sim-resource-action" className={labelCls}>
-            Hành động yêu cầu:
+            Thao tác yêu cầu
           </label>
           <select
             id="sim-resource-action"
@@ -149,11 +149,11 @@ export function SimulatorContextForm({
             onChange={(e) => setAction(e.target.value as TargetAction)}
             className="w-full text-xs min-h-11 sm:h-9 rounded-full border border-[#dddddd] px-3 bg-[#ffffff] font-semibold text-[#E31C5F]"
           >
-            <option value="VIEW">XEM TRỰC TUYẾN (VIEW)</option>
-            <option value="DOWNLOAD">TẢI BẢN SAO (DOWNLOAD)</option>
-            <option value="SHARE">CHIA SẺ (SHARE)</option>
-            <option value="MANAGE">QUẢN TRỊ (MANAGE)</option>
-            <option value="DISCOVER">TÌM KIẾM (DISCOVER)</option>
+            <option value="VIEW">Chỉ xem trực tuyến</option>
+            <option value="DOWNLOAD">Tải về bản sao</option>
+            <option value="SHARE">Chia sẻ</option>
+            <option value="MANAGE">Quản trị</option>
+            <option value="DISCOVER">Tra cứu danh mục</option>
           </select>
         </div>
       </div>
@@ -161,13 +161,13 @@ export function SimulatorContextForm({
       <div className="p-3.5 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-3 shadow-xs">
         <div className="flex items-center gap-1.5 font-bold text-[#222222] border-b border-[#ebebeb] pb-2">
           <Network size={16} strokeWidth={1.75} className="text-[#008A05]" aria-hidden="true" />
-          <span>3. Môi trường &amp; Thiết bị</span>
+          <span>3. Môi trường và thiết bị</span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label htmlFor="sim-env-network" className={labelCls}>
-              Mạng nội bộ:
+              Mạng nội bộ
             </label>
             <select
               id="sim-env-network"
@@ -177,14 +177,14 @@ export function SimulatorContextForm({
               }
               className={selectCls}
             >
-              <option value="true">Tin cậy (Yes)</option>
-              <option value="false">Mạng ngoài (No)</option>
+              <option value="true">Tin cậy</option>
+              <option value="false">Ngoài mạng nội bộ</option>
             </select>
           </div>
 
           <div>
             <label htmlFor="sim-env-mfa" className={labelCls}>
-              Xác thực MFA:
+              Xác thực MFA
             </label>
             <select
               id="sim-env-mfa"
@@ -194,8 +194,8 @@ export function SimulatorContextForm({
               }
               className={selectCls}
             >
-              <option value="true">Đã bật (Yes)</option>
-              <option value="false">Chưa bật (No)</option>
+              <option value="true">Đã bật</option>
+              <option value="false">Chưa bật</option>
             </select>
           </div>
         </div>
@@ -203,7 +203,7 @@ export function SimulatorContextForm({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label htmlFor="sim-env-time" className={labelCls}>
-              Giờ truy cập:
+              Giờ truy cập
             </label>
             <input
               id="sim-env-time"
@@ -216,7 +216,7 @@ export function SimulatorContextForm({
 
           <div>
             <label htmlFor="sim-env-risk" className={labelCls}>
-              Điểm rủi ro (0-100):
+              Điểm rủi ro (0–100)
             </label>
             <input
               id="sim-env-risk"
@@ -234,7 +234,7 @@ export function SimulatorContextForm({
 
         <div>
           <label htmlFor="sim-env-ip" className={labelCls}>
-            Địa chỉ IP nguồn:
+            Địa chỉ IP nguồn
           </label>
           <input
             id="sim-env-ip"

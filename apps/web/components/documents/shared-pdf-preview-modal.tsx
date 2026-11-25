@@ -68,7 +68,9 @@ export function SharedPdfPreviewModal({
               </DialogTitle>
             </div>
             <DialogDescription className="text-xs text-[#717171] mt-0.5 flex flex-wrap items-center gap-2">
-              <span>{sessionId ? `Phiên: ${sessionId}` : 'Đang khởi tạo phiên truy cập…'}</span>
+              <span>
+                {sessionId ? 'Phiên xem bảo mật đang hoạt động' : 'Đang khởi tạo phiên truy cập…'}
+              </span>
               <span className="text-[#ebebeb]" aria-hidden="true">
                 |
               </span>

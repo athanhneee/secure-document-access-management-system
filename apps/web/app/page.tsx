@@ -28,17 +28,11 @@ export default function HomePage() {
             <span className="font-semibold text-[#222222]">
               Secure<span className="text-[#E31C5F]">Document</span>
             </span>
-            <span className="staff-badge inline-flex items-center gap-1 font-semibold text-[#008A05]">
-              <span className="dot dot-success" aria-hidden="true" />
-              <span>ONLINE</span>
-            </span>
+            <span className="text-[#ebebeb]">·</span>
+            <span>Hệ thống quản lý tài liệu mật nội bộ</span>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1">
-            <span>AES-256-GCM</span>
-            <span className="text-[#ebebeb]">·</span>
-            <span>HMAC-SHA256</span>
-            <span className="text-[#ebebeb]">·</span>
-            <span>© 2026</span>
+            <span>© 2026 SecureDocument</span>
           </div>
         </div>
       </footer>

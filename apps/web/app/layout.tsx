@@ -26,9 +26,9 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'Secure Document | Hệ thống quản lý truy cập tài liệu mật',
+  title: 'SecureDocument | Hệ thống quản lý truy cập tài liệu mật',
   description:
-    'Hệ thống quản lý truy cập tài liệu mật trong tổ chức. Quyền tối thiểu, phân tách trách nhiệm và kiểm toán toàn vẹn.',
+    'Hệ thống quản lý truy cập tài liệu mật trong tổ chức với phân quyền tối thiểu, phân tách trách nhiệm và nhật ký kiểm toán toàn vẹn.',
   robots: { index: false, follow: false },
 };
 

@@ -79,7 +79,7 @@ export const PERMISSION_ACTION_LABELS: Readonly<Record<string, string>> = {
   DECIDE: 'Phê duyệt / từ chối',
   REVOKE: 'Thu hồi',
   EXPORT: 'Kết xuất dữ liệu',
-  TRACE: 'Truy vết pháp y',
+  TRACE: 'Truy vết đối soát',
   TERMINATE: 'Ngắt khẩn cấp',
 };
 

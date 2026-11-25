@@ -57,9 +57,9 @@ function defaultExpectedValue(
 export const DEFAULT_INITIAL_RULE: VisualPolicyRule = {
   id: 'rule-new-001',
   code: 'POL_DOCUMENT_ACCESS_RESTRICTED',
-  name: 'Chính sách Truy cập Tài liệu Mật Tiêu chuẩn',
+  name: 'Chính sách truy cập tài liệu mật tiêu chuẩn',
   description:
-    'Yêu cầu nhân viên kết nối từ mạng nội bộ cơ quan và có cấp bậc an ninh phù hợp với cấp độ mật của tài liệu.',
+    'Yêu cầu người dùng kết nối từ mạng nội bộ tổ chức và có cấp thẩm quyền bảo mật phù hợp với mức độ mật của tài liệu.',
   effect: 'PERMIT',
   priority: 10,
   targetResource: 'DOCUMENT',
@@ -84,7 +84,9 @@ export function serializePolicyAst(rule: VisualPolicyRule): string {
 export function deserializePolicyAst(jsonText: string): VisualPolicyRule {
   const parsed = JSON.parse(jsonText) as VisualPolicyRule;
   if (!parsed.code || !parsed.effect || !Array.isArray(parsed.groups)) {
-    throw new Error('Cấu trúc JSON không hợp lệ: Thiếu các trường code, effect hoặc groups.');
+    throw new Error(
+      'Cấu trúc JSON không hợp lệ: thiếu thông tin mã chính sách, hiệu lực hoặc danh sách nhóm điều kiện.',
+    );
   }
   return parsed;
 }

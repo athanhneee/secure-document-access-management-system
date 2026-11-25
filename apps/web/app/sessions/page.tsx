@@ -1,8 +1,10 @@
 'use client';
 
 /**
- * Thuật toán: Không Gian Quản Lý Phiên Thiết Bị, Hiển Thị Trạng Thái MFA & Thu Hồi Lạc Quan Dưới 16ms (`SessionsPage`)
- * Mục đích: Bọc toàn trang trong `DialogErrorProvider` để chuyển lỗi tầng Top-Layer vào `<dialog>`, hiển thị trạng thái `mfaVerified` phẳng `staff-001` cho từng thiết bị và thu hồi phiên từ xa tức thì có hoàn trả ảnh chụp khi lỗi mạng.
+ * Thuật toán: Không Gian Quản Lý Phiên Thiết Bị, Xử Lý Lỗi Tải Tường Minh & Thu Hồi Có Xác Nhận WCAG (`SessionsPage`)
+ * Mục đích: Bọc toàn trang trong `DialogErrorProvider` để chuyển lỗi tầng Top-Layer vào `<dialog>`, hiển thị trạng thái
+ * `mfaVerified` phẳng `staff-001` cho từng thiết bị, khóa nút đăng xuất thiết bị khác khi không có phiên từ xa và yêu cầu
+ * xác nhận qua `ConfirmDialog` (`.showModal()`) trước khi thu hồi phiên đơn lẻ hoặc toàn bộ phiên khác.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
@@ -18,6 +20,7 @@ import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button
 import {
   ActiveSessionsList,
   SessionSecurityOverview,
+  summarizeUserAgent,
   type ActiveAuthSessionItem,
 } from './active-sessions-list';
 import { PasskeyEnrollmentCard } from './passkey-enrollment-card';
@@ -36,19 +39,25 @@ function SessionsPageContent() {
   const { user, logout, refreshUser } = useAuth();
   const [sessions, setSessions] = useState<ActiveAuthSessionItem[]>([]);
   const [isFetching, setIsFetching] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [isRevokingOthers, setIsRevokingOthers] = useState(false);
   const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
+  const [confirmRevokeTarget, setConfirmRevokeTarget] = useState<ActiveAuthSessionItem | null>(
+    null,
+  );
   const [confirmLogoutOthersOpen, setConfirmLogoutOthersOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   /**
-   * Thuật toán: Đồng Bộ Danh Sách Phiên Thiết Bị & Thu Hồi Chọn Lọc Lạc Quan Dưới 16ms (`loadActiveSessions`, `handleRevokeSingleSession`, `handleLogoutOthers`)
-   * Mục đích: Loại bỏ tức thì phiên thiết bị từ xa trên giao diện ngay khi người dùng xác nhận (`< 0,1s`) mà vẫn bảo toàn cookie phiên hiện tại, tự động hoàn trả ảnh chụp `previousSessions` nếu yêu cầu mạng thất bại.
+   * Thuật toán: Đồng Bộ Danh Sách Phiên Thiết Bị Không Nuốt Lỗi & Thu Hồi Chọn Lọc Lạc Quan Dưới 16ms
+   * Mục đích: Phân tách rõ trạng thái lỗi mạng/500 (`fetchError`) khỏi trạng thái không có phiên từ xa,
+   * giữ nguyên dữ liệu cũ khi làm mới thất bại và hoàn trả ảnh chụp `previousSessions` nếu thu hồi lỗi.
    */
   const loadActiveSessions = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
       setIsFetching(true);
+      setFetchError(null);
     }
     try {
       const res = await apiClient<{ data?: ActiveAuthSessionItem[] } | ActiveAuthSessionItem[]>(
@@ -56,9 +65,15 @@ function SessionsPageContent() {
       );
       const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
       setSessions(list);
-    } catch {
+      setFetchError(null);
+    } catch (err) {
+      const message =
+        err instanceof ApiError && err.message
+          ? err.message
+          : 'Không thể tải danh sách phiên thiết bị. Vui lòng kiểm tra kết nối mạng và thử lại.';
+      setFetchError(message);
       if (!options?.silent) {
-        setSessions([]);
+        setErrorMessage(message);
       }
     } finally {
       if (!options?.silent) {
@@ -86,6 +101,7 @@ function SessionsPageContent() {
       return;
     }
     const previousSessions = sessions;
+    setConfirmRevokeTarget(null);
     setRevokingSessionId(target.id);
     setErrorMessage(null);
     setSessions((prev) => removeOptimisticById(prev, target.id));
@@ -149,6 +165,9 @@ function SessionsPageContent() {
 
   const otherSessionsCount = sessions.filter((s) => !s.isCurrent).length;
   const currentSession = sessions.find((s) => s.isCurrent);
+  const revokeTargetSummary = confirmRevokeTarget
+    ? summarizeUserAgent(confirmRevokeTarget.userAgent).label
+    : '';
 
   return (
     <DialogErrorProvider errorMessage={errorMessage} onDismiss={() => setErrorMessage(null)}>
@@ -164,14 +183,14 @@ function SessionsPageContent() {
             variant="destructive"
             size="sm"
             onClick={() => setConfirmLogoutOthersOpen(true)}
-            disabled={isRevokingOthers}
+            disabled={isRevokingOthers || isFetching || otherSessionsCount === 0}
             isLoading={isRevokingOthers}
             text={
               otherSessionsCount > 0
                 ? `Đăng xuất tất cả thiết bị khác (${otherSessionsCount})`
                 : 'Đăng xuất tất cả thiết bị khác'
             }
-            className="w-full sm:w-auto shrink-0"
+            className="w-full sm:w-auto min-h-11 sm:min-h-0 shrink-0"
           />
         </div>
 
@@ -187,7 +206,7 @@ function SessionsPageContent() {
           </Alert>
         )}
 
-        {errorMessage && (
+        {errorMessage && !(fetchError && sessions.length === 0) && (
           <Alert
             variant="destructive"
             className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
@@ -205,15 +224,18 @@ function SessionsPageContent() {
         <ActiveSessionsList
           sessions={sessions}
           isFetching={isFetching}
+          fetchError={fetchError}
           revokingId={revokingSessionId}
           onRefresh={() => void loadActiveSessions()}
-          onRevokeSession={(session) => void handleRevokeSingleSession(session)}
+          onRequestRevokeSession={(session) => setConfirmRevokeTarget(session)}
         />
 
         <SessionSecurityOverview
           fullName={user?.fullName}
           username={user?.username}
           mfaVerified={currentSession?.mfaVerified}
+          ipAddress={currentSession?.ipAddress}
+          createdAt={currentSession?.createdAt}
           onLogoutCurrent={() => void logout()}
         />
 
@@ -228,6 +250,28 @@ function SessionsPageContent() {
           onError={(msg) => {
             setSuccessMessage(null);
             setErrorMessage(msg);
+          }}
+        />
+
+        <ConfirmDialog
+          open={Boolean(confirmRevokeTarget)}
+          onOpenChange={(open) => {
+            if (!open) setConfirmRevokeTarget(null);
+          }}
+          title="Thu hồi phiên thiết bị từ xa"
+          description={
+            confirmRevokeTarget
+              ? `Bạn có chắc chắn muốn ngắt ngay lập tức phiên trên "${revokeTargetSummary}" (IP: ${confirmRevokeTarget.ipAddress || 'không xác định'})? Thiết bị đó sẽ phải đăng nhập và xác thực lại.`
+              : ''
+          }
+          confirmText="Thu hồi phiên này"
+          cancelText="Giữ nguyên"
+          variant="danger"
+          isLoading={Boolean(confirmRevokeTarget && revokingSessionId === confirmRevokeTarget.id)}
+          onConfirm={() => {
+            if (confirmRevokeTarget) {
+              void handleRevokeSingleSession(confirmRevokeTarget);
+            }
           }}
         />
 

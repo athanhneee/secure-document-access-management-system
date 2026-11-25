@@ -4,7 +4,15 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient } from '@sda/database';
+import {
+  enforceConcurrentSessionLimit,
+  expireAuthSessionFamily,
+  normalizeValidInetAddress,
+  revokeTokenFamily,
+} from './auth-sessions-management.helper.js';
 import type { AuthUser, RequestContext } from './auth.types.js';
+
+export { revokeTokenFamily };
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -17,7 +25,14 @@ export interface SessionTokensInput {
   refreshExpiresAt?: Date | undefined;
   sessionExpiresAt: Date;
   mfaVerified: boolean;
+  maxConcurrentSessions?: number | undefined;
   context: RequestContext;
+}
+
+export interface RotateRefreshOptions {
+  idleTtlSeconds?: number | undefined;
+  ipAddress?: string | undefined;
+  userAgent?: string | undefined;
 }
 
 export type RotationResult =
@@ -26,41 +41,32 @@ export type RotationResult =
   | { kind: 'invalid' | 'disabled' | 'locked' };
 
 /**
- * Algorithm / Thuật toán: Thu hồi lan truyền toàn bộ cây họ Refresh Token và phiên xác thực cha (Cascade Token-Family Revocation).
- */
-export async function revokeTokenFamily(
-  transaction: Pick<PrismaClient, 'refreshToken' | 'authSession'>,
-  familyId: string,
-  sessionId: string,
-  reason: string,
-): Promise<void> {
-  const now = new Date();
-  await transaction.refreshToken.updateMany({
-    where: { token_family_id: familyId, revoked_at: null },
-    data: { revoked_at: now, revocation_reason: reason },
-  });
-  await transaction.authSession.updateMany({
-    where: { id: sessionId, status: 'ACTIVE' },
-    data: { status: 'REVOKED', revoked_at: now, revocation_reason: reason },
-  });
-}
-
-/**
- * Algorithm / Thuật toán: Khởi tạo nguyên tử phiên xác thực và Refresh Token gốc của họ token.
+ * Algorithm / Thuật toán: Khởi tạo nguyên tử phiên xác thực, cưỡng chế trần phiên đồng thời và lưu Refresh Token gốc của họ token.
  */
 export async function createAuthSession(
   database: PrismaClient,
   input: SessionTokensInput,
-): Promise<void> {
-  await database.$transaction(async (transaction) => {
+): Promise<string[]> {
+  return database.$transaction(async (transaction) => {
+    const now = new Date();
+    const evictedIds =
+      typeof input.maxConcurrentSessions === 'number' && input.maxConcurrentSessions > 0
+        ? await enforceConcurrentSessionLimit(
+            transaction,
+            input.userId,
+            input.maxConcurrentSessions,
+            now,
+          )
+        : [];
+    const validIp = normalizeValidInetAddress(input.context.ip);
     await transaction.authSession.create({
       data: {
         id: input.sessionId,
         user_id: input.userId,
         token_family_id: input.familyId,
-        ip_address: input.context.ip,
+        ip_address: validIp ?? null,
         user_agent: input.context.userAgent ?? null,
-        mfa_verified_at: input.mfaVerified ? new Date() : null,
+        mfa_verified_at: input.mfaVerified ? now : null,
         expires_at: input.sessionExpiresAt,
       },
     });
@@ -75,6 +81,7 @@ export async function createAuthSession(
         },
       });
     }
+    return evictedIds;
   });
 }
 
@@ -144,13 +151,14 @@ export async function activateMfaAuthSession(
 }
 
 /**
- * Algorithm / Thuật toán: Xoay vòng họ Refresh Token và phát hiện đánh cắp/phát lại chuẩn OAuth 2.0 Security BCP (RFC 9700).
+ * Algorithm / Thuật toán: Xoay vòng họ Refresh Token, cưỡng chế hết hạn nhàn rỗi (`idleTtlSeconds`), cập nhật IP/UA mới nhất và phát hiện đánh cắp/phát lại chuẩn RFC 9700.
  */
 export async function rotateSessionRefreshToken(
   database: PrismaClient,
   oldHash: string,
   replacement: { id: string; hash: string; expiresAt: Date },
   findUserById: (userId: bigint) => Promise<AuthUser | null>,
+  options?: RotateRefreshOptions,
 ): Promise<RotationResult> {
   return database.$transaction(async (transaction) => {
     const current = await transaction.refreshToken.findUnique({
@@ -191,6 +199,21 @@ export async function rotateSessionRefreshToken(
     if (current.expires_at <= now || session.expires_at <= now || session.status !== 'ACTIVE') {
       return { kind: 'invalid' };
     }
+    if (
+      typeof options?.idleTtlSeconds === 'number' &&
+      options.idleTtlSeconds > 0 &&
+      session.last_seen_at instanceof Date &&
+      now.getTime() - session.last_seen_at.getTime() >= options.idleTtlSeconds * 1_000
+    ) {
+      await expireAuthSessionFamily(
+        transaction,
+        current.token_family_id,
+        session.id,
+        'IDLE_SESSION_EXPIRED',
+        now,
+      );
+      return { kind: 'invalid' };
+    }
     const claimed = await transaction.refreshToken.updateMany({
       where: { id: current.id, used_at: null, revoked_at: null },
       data: { used_at: now, revoked_at: now, revocation_reason: 'ROTATED' },
@@ -219,9 +242,15 @@ export async function rotateSessionRefreshToken(
         expires_at: replacement.expiresAt,
       },
     });
+    const validIp = normalizeValidInetAddress(options?.ipAddress);
+    const trimmedUserAgent = options?.userAgent?.trim();
     await transaction.authSession.update({
       where: { id: session.id },
-      data: { last_seen_at: now },
+      data: {
+        last_seen_at: now,
+        ...(validIp ? { ip_address: validIp } : {}),
+        ...(trimmedUserAgent ? { user_agent: trimmedUserAgent } : {}),
+      },
     });
     const user = await findUserById(session.user_id);
     if (!user || user.status !== 'ACTIVE' || (user.lockedUntil && user.lockedUntil > now)) {

@@ -30,7 +30,12 @@ services:
       NODE_ENV: production
       PORT: '3001'
       HOST: '0.0.0.0'
-      TRUST_PROXY: ${TRUST_PROXY:-loopback}
+      # Trust loopback + Docker internal bridge CIDR by default so Next.js proxy forwards real client IP;
+      # narrow TRUST_PROXY to explicit reverse-proxy CIDRs in multi-tenant VPC deployments.
+      TRUST_PROXY: ${TRUST_PROXY:-loopback,uniquelocal}
+      AUTH_SESSION_IDLE_TTL_SECONDS: ${AUTH_SESSION_IDLE_TTL_SECONDS:-28800}
+      AUTH_SESSION_TOUCH_INTERVAL_SECONDS: ${AUTH_SESSION_TOUCH_INTERVAL_SECONDS:-60}
+      AUTH_MAX_CONCURRENT_SESSIONS: ${AUTH_MAX_CONCURRENT_SESSIONS:-10}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Allowed CORS origins required}
       DATABASE_URL: ${DATABASE_URL:?Database connection required}
       REDIS_URL: ${REDIS_URL:?Redis connection required}
@@ -116,6 +121,9 @@ services:
       ICAP_DLP_ACTION: ${ICAP_DLP_ACTION:-BLOCK}
       WORKER_HEALTH_HOST: '0.0.0.0'
       WORKER_HEALTH_PORT: '9102'
+      AUTH_SESSION_IDLE_TTL_SECONDS: ${AUTH_SESSION_IDLE_TTL_SECONDS:-28800}
+      AUTH_SESSION_RETENTION_DAYS: ${AUTH_SESSION_RETENTION_DAYS:-30}
+      AUTH_SESSION_CLEANUP_INTERVAL_MS: ${AUTH_SESSION_CLEANUP_INTERVAL_MS:-300000}
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-}
     cpus: 1.0
     mem_limit: 512m
@@ -155,6 +163,7 @@ services:
       NODE_ENV: production
       PORT: '3000'
       HOSTNAME: '0.0.0.0'
+      INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:3001}
     cpus: 1.0
     mem_limit: 512m
     mem_reservation: 128m

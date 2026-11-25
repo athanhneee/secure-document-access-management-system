@@ -6,7 +6,12 @@ import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
 import { DistributedStateService } from '../concurrency/distributed-state.service.js';
-import { MFA_REQUIRED_ROLES, type AuthPrincipal, type AuthUser } from './auth.types.js';
+import {
+  MFA_REQUIRED_ROLES,
+  type AuthPrincipal,
+  type AuthUser,
+  type RequestContext,
+} from './auth.types.js';
 import {
   activateMfaAuthSession,
   createAuthSession,
@@ -17,8 +22,13 @@ import {
   type SessionTokensInput,
 } from './auth-session.repository.js';
 import {
+  DEFAULT_AUTH_SESSION_IDLE_TTL_SECONDS,
+  DEFAULT_MAX_CONCURRENT_SESSIONS,
+  MAX_LISTED_ACTIVE_SESSIONS,
+  expireAuthSessionFamily,
   queryActiveUserSessions,
   revokeOtherActiveUserSessions,
+  touchAuthSessionActivity,
   type ActiveAuthSessionItem,
 } from './auth-sessions-management.helper.js';
 import {
@@ -49,12 +59,24 @@ export type { RotationResult, SessionTokensInput } from './auth-session.reposito
 export class AuthRepository {
   private readonly database = getDatabaseClient();
   private readonly stateStore: DistributedStateService;
+  private readonly idleTtlSeconds: number;
+  private readonly maxConcurrentSessions: number;
 
   constructor(
     @Optional() config?: AppConfigService,
     @Optional() stateStore?: DistributedStateService,
   ) {
     this.stateStore = stateStore ?? new DistributedStateService(config);
+    const configuredIdle = config?.get('AUTH_SESSION_IDLE_TTL_SECONDS');
+    this.idleTtlSeconds =
+      typeof configuredIdle === 'number' && configuredIdle > 0
+        ? configuredIdle
+        : DEFAULT_AUTH_SESSION_IDLE_TTL_SECONDS;
+    const configuredMaxSessions = config?.get('AUTH_MAX_CONCURRENT_SESSIONS');
+    this.maxConcurrentSessions =
+      typeof configuredMaxSessions === 'number' && configuredMaxSessions > 0
+        ? configuredMaxSessions
+        : DEFAULT_MAX_CONCURRENT_SESSIONS;
   }
 
   /**
@@ -99,8 +121,14 @@ export class AuthRepository {
     });
   }
 
-  createSession(input: SessionTokensInput): Promise<void> {
-    return createAuthSession(this.database, input);
+  async createSession(input: SessionTokensInput): Promise<void> {
+    const evictedIds = await createAuthSession(this.database, {
+      ...input,
+      maxConcurrentSessions: input.maxConcurrentSessions ?? this.maxConcurrentSessions,
+    });
+    for (const evictedId of evictedIds) {
+      await this.stateStore.deleteKey('auth-session', evictedId);
+    }
   }
 
   async activateMfaSession(
@@ -116,9 +144,18 @@ export class AuthRepository {
   async rotateRefreshToken(
     oldHash: string,
     replacement: { id: string; hash: string; expiresAt: Date },
+    context?: Pick<RequestContext, 'ip' | 'userAgent'>,
   ): Promise<RotationResult> {
-    const result = await rotateSessionRefreshToken(this.database, oldHash, replacement, (id) =>
-      this.findUserById(id),
+    const result = await rotateSessionRefreshToken(
+      this.database,
+      oldHash,
+      replacement,
+      (id) => this.findUserById(id),
+      {
+        idleTtlSeconds: this.idleTtlSeconds,
+        ipAddress: context?.ip,
+        userAgent: context?.userAgent,
+      },
     );
     if (result.kind === 'reuse') {
       await this.invalidateSessionCache(result.userId, result.sessionId);
@@ -127,7 +164,7 @@ export class AuthRepository {
   }
 
   /**
-   * Thuật toán: Phân giải danh tính phiên hoạt động kèm kiểm tra tài khoản khóa/vô hiệu hóa và xác định trạng thái `mfaPending`.
+   * Thuật toán: Phân giải danh tính phiên hoạt động kèm cưỡng chế hết hạn nhàn rỗi (`idleTtlSeconds`), kiểm tra tài khoản khóa/vô hiệu hóa và xác định trạng thái `mfaPending`.
    */
   async principalForSession(userId: bigint, sessionId: string): Promise<AuthPrincipal | null> {
     const now = new Date();
@@ -145,6 +182,29 @@ export class AuthRepository {
     ) {
       return null;
     }
+    if (
+      this.idleTtlSeconds > 0 &&
+      session.last_seen_at instanceof Date &&
+      now.getTime() - session.last_seen_at.getTime() >= this.idleTtlSeconds * 1_000
+    ) {
+      const expireOp = async (
+        tx: Partial<Pick<typeof this.database, 'authSession' | 'refreshToken'>>,
+      ) =>
+        expireAuthSessionFamily(
+          tx,
+          session.token_family_id,
+          session.id,
+          'IDLE_SESSION_EXPIRED',
+          now,
+        );
+      if (typeof this.database.$transaction === 'function') {
+        await this.database.$transaction((tx) => expireOp(tx));
+      } else {
+        await expireOp(this.database);
+      }
+      await this.stateStore.deleteKey('auth-session', session.id);
+      return null;
+    }
     const mfa = session.mfa_verified_at !== null;
     const mfaRequiredForUser =
       Boolean(user.requiresMfa) ||
@@ -160,6 +220,10 @@ export class AuthRepository {
     };
   }
 
+  touchSessionActivity(userId: bigint, sessionId: string, ipAddress?: string): Promise<void> {
+    return touchAuthSessionActivity(this.database, sessionId, userId, new Date(), ipAddress);
+  }
+
   async revokeSession(sessionId: string, userId: bigint, reason: string): Promise<boolean> {
     const revoked = await revokeSingleSession(this.database, sessionId, userId, reason);
     await this.invalidateSessionCache(userId, sessionId);
@@ -173,7 +237,10 @@ export class AuthRepository {
   }
 
   listActiveSessions(userId: bigint, currentSessionId: string): Promise<ActiveAuthSessionItem[]> {
-    return queryActiveUserSessions(this.database, userId, currentSessionId);
+    return queryActiveUserSessions(this.database, userId, currentSessionId, {
+      limit: MAX_LISTED_ACTIVE_SESSIONS,
+      idleTtlSeconds: this.idleTtlSeconds,
+    });
   }
 
   async revokeOtherSessions(

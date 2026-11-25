@@ -9,6 +9,12 @@ import { z } from 'zod';
 
 const STRICT_TRUST_PROXY_PRESETS = new Set(['false', 'loopback', 'linklocal', 'uniquelocal']);
 
+const TRUST_PROXY_PRESET_CIDRS: Readonly<Record<string, readonly string[]>> = {
+  loopback: ['127.0.0.0/8', '::1/128'],
+  linklocal: ['169.254.0.0/16', 'fe80::/10'],
+  uniquelocal: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7'],
+};
+
 function isValidIpOrCidr(entry: string): boolean {
   const slashIndex = entry.indexOf('/');
   if (slashIndex < 0) return isIP(entry) !== 0;
@@ -150,11 +156,15 @@ export function enforceStrictEnvironmentInvariants(
     const entries = value.TRUST_PROXY.split(',')
       .map((item) => item.trim())
       .filter(Boolean);
-    if (entries.length === 0 || !entries.every(isValidIpOrCidr)) {
+    const isAllowedEntry = (entry: string): boolean => {
+      const lowered = entry.toLowerCase();
+      return lowered in TRUST_PROXY_PRESET_CIDRS || isValidIpOrCidr(entry);
+    };
+    if (entries.length === 0 || !entries.every(isAllowedEntry)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['TRUST_PROXY'],
-        message: `TRUST_PROXY in ${value.NODE_ENV} must be "false", "loopback", "linklocal", "uniquelocal", or a comma-separated list of valid IP/CIDR entries.`,
+        message: `TRUST_PROXY in ${value.NODE_ENV} must be "false", "loopback", "linklocal", "uniquelocal", or a comma-separated list of valid IP/CIDR/preset entries.`,
       });
     }
   }
@@ -176,7 +186,7 @@ export function enforceStrictEnvironmentInvariants(
 }
 
 /**
- * Thuật toán: Phân giải cấu hình `trustProxy` cho Fastify từ chuỗi môi trường (`false`, `loopback`, `linklocal`, `uniquelocal`, số bước nhảy ở dev hoặc danh sách CIDR).
+ * Thuật toán: Phân giải cấu hình `trustProxy` cho Fastify từ chuỗi môi trường (`false`, `loopback`, `linklocal`, `uniquelocal`, số bước nhảy ở dev hoặc danh sách kết hợp preset/CIDR).
  */
 export function resolveTrustProxyConfig(
   raw?: string,
@@ -185,14 +195,9 @@ export function resolveTrustProxyConfig(
   if (!normalized || normalized === 'false' || normalized === '0' || normalized === 'off') {
     return false;
   }
-  if (normalized === 'loopback') {
-    return ['127.0.0.0/8', '::1/128'];
-  }
-  if (normalized === 'linklocal') {
-    return ['169.254.0.0/16', 'fe80::/10'];
-  }
-  if (normalized === 'uniquelocal') {
-    return ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7'];
+  const singlePreset = TRUST_PROXY_PRESET_CIDRS[normalized];
+  if (singlePreset) {
+    return [...singlePreset];
   }
   if (normalized === 'true') {
     return true;
@@ -201,10 +206,19 @@ export function resolveTrustProxyConfig(
     const maxHops = Number.parseInt(normalized, 10);
     return (_address: string, hop: number) => hop <= maxHops;
   }
-  return (raw ?? '')
+  const resolved: string[] = [];
+  for (const entry of (raw ?? '')
     .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+    .map((item) => item.trim())
+    .filter(Boolean)) {
+    const presetCidrs = TRUST_PROXY_PRESET_CIDRS[entry.toLowerCase()];
+    if (presetCidrs) {
+      resolved.push(...presetCidrs);
+    } else {
+      resolved.push(entry);
+    }
+  }
+  return [...new Set(resolved)];
 }
 
 /**

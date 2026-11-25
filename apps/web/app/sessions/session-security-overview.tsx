@@ -1,18 +1,21 @@
 'use client';
 
 /**
- * Thuật toán: Tổng Quan Bảo Mật Phiên Hiện Tại & Chính Sách Zero-Trust (`SessionSecurityOverview`)
- * Mục đích: Trình bày thông số bảo vệ Cookie `HttpOnly · SameSite=Strict`, cơ chế CSRF Double-Submit và trạng thái nâng cấp MFA `staff-001` của thiết bị hiện hành.
+ * Thuật toán: Tổng Quan Phiên Hiện Tại & Chính Sách An Toàn Phiên Chuẩn Production (`SessionSecurityOverview`)
+ * Mục đích: Trình bày thông tin phiên hiện hành (người dùng, trạng thái MFA, thời điểm đăng nhập, kết nối bảo vệ) và chính sách an toàn phiên bằng ngôn ngữ nghiệp vụ dễ hiểu, không lộ tên cookie hay cờ bảo mật nội bộ.
  */
 import { Laptop, ShieldCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { formatSessionTimestamp } from './session-device.helper';
 
 export interface SessionSecurityOverviewProps {
   fullName?: string | undefined;
   username?: string | undefined;
   mfaVerified?: boolean | undefined;
+  ipAddress?: string | null | undefined;
+  createdAt?: string | null | undefined;
   onLogoutCurrent: () => void;
 }
 
@@ -20,6 +23,8 @@ export function SessionSecurityOverview({
   fullName,
   username,
   mfaVerified,
+  ipAddress,
+  createdAt,
   onLogoutCurrent,
 }: SessionSecurityOverviewProps) {
   return (
@@ -38,7 +43,7 @@ export function SessionSecurityOverview({
                 Phiên hiện tại (Thiết bị này)
               </CardTitle>
             </div>
-            <Badge variant="success">Active</Badge>
+            <Badge variant="success">Đang hoạt động</Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-3 text-xs text-[#222222]">
@@ -56,12 +61,16 @@ export function SessionSecurityOverview({
               </Badge>
             </div>
             <div className="flex flex-wrap justify-between items-center gap-2">
-              <span className="text-[#717171]">Bảo mật Cookie</span>
-              <span className="font-mono text-[#008A05]">HttpOnly · SameSite=Strict</span>
+              <span className="text-[#717171]">Thời điểm đăng nhập</span>
+              <span className="font-medium text-[#222222]">
+                {formatSessionTimestamp(createdAt)}
+              </span>
             </div>
             <div className="flex flex-wrap justify-between items-center gap-2">
-              <span className="text-[#717171]">Phòng chống CSRF</span>
-              <span className="font-mono text-[#008A05]">Double-Submit (sda_csrf)</span>
+              <span className="text-[#717171]">Bảo vệ kết nối</span>
+              <span className="font-medium text-[#008A05]">
+                {ipAddress ? `Đã mã hóa · IP ${ipAddress}` : 'Đã mã hóa và bảo vệ phiên'}
+              </span>
             </div>
           </div>
         </CardContent>
@@ -94,22 +103,23 @@ export function SessionSecurityOverview({
           <div className="flex items-start gap-2">
             <span className="dot dot-success mt-1.5 shrink-0" aria-hidden="true" />
             <p>
-              <strong className="text-[#222222]">Hết hạn tự động:</strong> Khóa phiên khi không hoạt
-              động vượt ngưỡng cho phép.
+              <strong className="text-[#222222]">Hết hạn tự động:</strong> Khóa cả phiên đăng nhập
+              lẫn phiên đọc tài liệu khi không hoạt động vượt ngưỡng cho phép, đồng thời giới hạn số
+              thiết bị đăng nhập đồng thời.
             </p>
           </div>
           <div className="flex items-start gap-2">
             <span className="dot dot-success mt-1.5 shrink-0" aria-hidden="true" />
             <p>
               <strong className="text-[#222222]">Thu hồi tức thì:</strong> Ngắt mọi phiên đọc tài
-              liệu ngay khi giấy phép truy cập bị thu hồi.
+              liệu ngay khi quyền truy cập bị thu hồi.
             </p>
           </div>
           <div className="flex items-start gap-2">
             <span className="dot dot-success mt-1.5 shrink-0" aria-hidden="true" />
             <p>
-              <strong className="text-[#222222]">Chống phát lại:</strong> Xoay vòng Refresh Token tự
-              động để phát hiện chiếm quyền phiên.
+              <strong className="text-[#222222]">Chống chiếm đoạt phiên:</strong> Tự động làm mới mã
+              xác thực định kỳ để phát hiện và ngăn chặn truy cập trái phép.
             </p>
           </div>
         </CardContent>

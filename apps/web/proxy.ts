@@ -17,6 +17,39 @@ function generateRequestNonce(): string {
 }
 
 /**
+ * Thuật toán: Bảo Toàn Chuỗi Chuyển Tiếp Địa Chỉ IP Thực & Siêu Dữ Liệu Giao Thức Khi Rewrite `/api/v1` (`buildApiProxyHeaders`)
+ * Mục đích: Đảm bảo Fastify phía sau reverse proxy (Cloudflare/Nginx/ALB) và container Next.js luôn nhận đủ
+ * `x-forwarded-for`, `x-forwarded-proto`, `x-forwarded-host` và `user-agent` để ghi nhận chính xác IP thiết bị.
+ */
+function buildApiProxyHeaders(request: NextRequest): Headers {
+  const upstreamHeaders = new Headers(request.headers);
+  const existingForwardedFor = upstreamHeaders.get('x-forwarded-for')?.trim();
+  if (!existingForwardedFor) {
+    const edgeClientIp = (
+      upstreamHeaders.get('cf-connecting-ip') ??
+      upstreamHeaders.get('x-real-ip') ??
+      ''
+    ).trim();
+    if (edgeClientIp) {
+      upstreamHeaders.set('x-forwarded-for', edgeClientIp);
+    }
+  }
+  if (!upstreamHeaders.get('x-forwarded-proto')) {
+    const proto = request.nextUrl.protocol.replace(/:$/u, '');
+    if (proto === 'http' || proto === 'https') {
+      upstreamHeaders.set('x-forwarded-proto', proto);
+    }
+  }
+  if (!upstreamHeaders.get('x-forwarded-host')) {
+    const host = upstreamHeaders.get('host');
+    if (host) {
+      upstreamHeaders.set('x-forwarded-host', host);
+    }
+  }
+  return upstreamHeaders;
+}
+
+/**
  * Thuật toán: Gắn Chính Sách Bảo Mật Nội Dung Động Theo Từng Yêu Cầu Trang (Per-Request Nonce CSP Proxy)
  * Mục đích: Loại bỏ hoàn toàn chỉ thị cho phép mã nội tuyến không an toàn khỏi `Content-Security-Policy` và đồng bộ `x-nonce` giữa Server Components với trình duyệt.
  * Cơ chế hoạt động:
@@ -27,7 +60,11 @@ export function proxy(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
   if (pathname === '/api/v1' || pathname.startsWith('/api/v1/')) {
     const upstreamOrigin = resolveInternalApiOrigin();
-    return NextResponse.rewrite(new URL(`${pathname}${search}`, `${upstreamOrigin}/`));
+    return NextResponse.rewrite(new URL(`${pathname}${search}`, `${upstreamOrigin}/`), {
+      request: {
+        headers: buildApiProxyHeaders(request),
+      },
+    });
   }
 
   // CONFLICT-RESOLVED: Chỉ cho phép cờ biên dịch động khi NODE_ENV === 'development', khóa chặt trên production và test.

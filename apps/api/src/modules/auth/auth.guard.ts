@@ -21,6 +21,7 @@ import { MFA_REQUIRED_ROLES, type AuthPrincipal } from './auth.types.js';
 import { TokenService } from './token.service.js';
 
 const AUTH_SESSION_CACHE_TTL_MS = 5_000;
+const DEFAULT_SESSION_TOUCH_INTERVAL_MS = 60_000;
 
 interface CachedAuthPrincipal {
   userId: string;
@@ -37,6 +38,7 @@ interface CachedAuthPrincipal {
 export class AuthGuard implements CanActivate {
   private readonly defaultDenyGuard: DefaultDenyGuard;
   private readonly stateStore: DistributedStateService;
+  private readonly touchIntervalMs: number;
 
   constructor(
     private readonly reflector: Reflector,
@@ -48,6 +50,11 @@ export class AuthGuard implements CanActivate {
   ) {
     this.defaultDenyGuard = defaultDenyGuard ?? new DefaultDenyGuard(reflector);
     this.stateStore = stateStore ?? new DistributedStateService(config);
+    const configuredTouchSec = config?.get('AUTH_SESSION_TOUCH_INTERVAL_SECONDS');
+    this.touchIntervalMs =
+      typeof configuredTouchSec === 'number' && configuredTouchSec > 0
+        ? configuredTouchSec * 1_000
+        : DEFAULT_SESSION_TOUCH_INTERVAL_MS;
   }
 
   /**
@@ -80,7 +87,40 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('MFA verification is required.');
     }
     request.auth = principal;
+    await this.touchSessionActivityThrottled(principal.userId, principal.sessionId, request.ip);
     return true;
+  }
+
+  /**
+   * Thuật toán: Điều tiết cập nhật `last_seen_at` & `ip_address` phiên đăng nhập bằng khóa phân tán (`claimOnce`).
+   * - Khóa mang cặp `${sessionId}:${ip}` có TTL `touchIntervalMs` (mặc định 60 giây):
+   *   + Cùng IP: chỉ ghi CSDL tối đa 1 lần mỗi cửa sổ `touchIntervalMs` tránh nghẽn PostgreSQL.
+   *   + Đổi IP (VD: Wi-Fi sang 4G): khóa đổi ngay lập tức -> cập nhật tức thì cả `ip_address` lẫn `last_seen_at`.
+   * - Lỗi không chặn luồng (fail-open cho thao tác ghi dấu vết hoạt động).
+   */
+  private async touchSessionActivityThrottled(
+    userId: bigint,
+    sessionId: string,
+    ipAddress?: string,
+  ): Promise<void> {
+    if (typeof this.repository.touchSessionActivity !== 'function') {
+      return;
+    }
+    try {
+      const claimKey = `${sessionId}:${ipAddress ?? ''}`;
+      const claimed = await this.stateStore.claimOnce(
+        'auth-session-touch',
+        claimKey,
+        this.touchIntervalMs,
+        { failClosedInProd: false },
+      );
+      if (!claimed) {
+        return;
+      }
+      await this.repository.touchSessionActivity(userId, sessionId, ipAddress);
+    } catch {
+      // Never block an authenticated request due to non-critical last_seen_at telemetry writes.
+    }
   }
 
   /**

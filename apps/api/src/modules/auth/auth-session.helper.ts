@@ -97,6 +97,7 @@ export async function executeRefresh(
       hash: deps.tokens.hashOpaqueToken(nextToken),
       expiresAt: new Date(Date.now() + deps.refreshTtl * 1_000),
     },
+    context,
   );
   if (result.kind === 'reuse') {
     await deps.audit.record(

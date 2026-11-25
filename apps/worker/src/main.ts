@@ -4,6 +4,7 @@ import { parseEnv } from 'node:util';
 import { waitForShutdown } from './lifecycle.js';
 import { startGrantExpiryJob } from './grant-expiry-job.js';
 import { startDerivativeCleanupJob } from './derivative-cleanup-job.js';
+import { startAuthSessionCleanupJob } from './auth-session-cleanup-job.js';
 import { startAuditVerificationJob } from './audit-verification-job.js';
 import { startSecurityDetectionJob } from './security-detection-job.js';
 import { startNotificationOutboxJob } from './notification-outbox-job.js';
@@ -108,6 +109,10 @@ const DERIVATIVE_CLEANUP_INTERVAL_MS = resolvePositiveNumberEnv(
   300_000,
 );
 const DERIVATIVE_TTL_MINUTES = resolvePositiveNumberEnv('DERIVATIVE_TTL_MINUTES', 60);
+const AUTH_SESSION_CLEANUP_INTERVAL_MS = resolvePositiveNumberEnv(
+  'AUTH_SESSION_CLEANUP_INTERVAL_MS',
+  300_000,
+);
 const AUDIT_VERIFY_INTERVAL_MS = resolvePositiveNumberEnv('AUDIT_VERIFY_INTERVAL_MS', 300_000);
 const SECURITY_DETECTION_INTERVAL_MS = resolvePositiveNumberEnv(
   'SECURITY_DETECTION_INTERVAL_MS',
@@ -123,7 +128,7 @@ const EXPORT_PROCESSOR_INTERVAL_MS = resolvePositiveNumberEnv(
 );
 const EXPORT_CLEANUP_INTERVAL_MS = resolvePositiveNumberEnv('EXPORT_CLEANUP_INTERVAL_MS', 300_000);
 
-// Thuật toán: Khởi chạy điều phối song song máy chủ Health/Metrics và 8 tác vụ nền gắn kết chung tín hiệu hủy tập trung
+// Thuật toán: Khởi chạy điều phối song song máy chủ Health/Metrics và 9 tác vụ nền gắn kết chung tín hiệu hủy tập trung
 startWorkerHealthServer(undefined, shutdown.signal);
 startGrantExpiryJob(
   GRANT_EXPIRY_INTERVAL_MS,
@@ -132,6 +137,7 @@ startGrantExpiryJob(
   AUDIT_KEY_ROTATION_JSON,
 );
 startDerivativeCleanupJob(DERIVATIVE_CLEANUP_INTERVAL_MS, DERIVATIVE_TTL_MINUTES, shutdown.signal);
+startAuthSessionCleanupJob(AUTH_SESSION_CLEANUP_INTERVAL_MS, shutdown.signal);
 startAuditVerificationJob(
   AUDIT_VERIFY_INTERVAL_MS,
   GRANT_AUDIT_HMAC_KEY,

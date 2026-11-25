@@ -1,18 +1,44 @@
 /**
  * @module AuthSessionsManagementHelper
- * Thuật toán: Liệt kê phiên thiết bị đang hoạt động kèm trạng thái xác thực MFA (`mfaVerified`),
+ * Thuật toán: Liệt kê phiên thiết bị đang hoạt động có chặn trần (`take`) kèm lọc hết hạn nhàn rỗi (`idleTtlSeconds`),
+ * giới hạn số phiên đồng thời tối đa theo tài khoản, làm mới `last_seen_at`/`ip_address` có kiểm định `INET`,
  * thu hồi chọn lọc các phiên song song khác và chấm dứt phiên chỉ định có kiểm định UUID.
  */
+import { isIP } from 'node:net';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AuthAuditService } from './auth-audit.service.js';
-import { revokeTokenFamily } from './auth-session.repository.js';
 import type { AuthPrincipal, RequestContext } from './auth.types.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
+type SessionTx = Pick<PrismaClient, 'refreshToken' | 'authSession'>;
+
+/**
+ * Algorithm / Thuật toán: Thu hồi lan truyền toàn bộ cây họ Refresh Token và phiên xác thực cha (Cascade Token-Family Revocation).
+ */
+export async function revokeTokenFamily(
+  transaction: SessionTx,
+  familyId: string,
+  sessionId: string,
+  reason: string,
+): Promise<void> {
+  const now = new Date();
+  await transaction.refreshToken.updateMany({
+    where: { token_family_id: familyId, revoked_at: null },
+    data: { revoked_at: now, revocation_reason: reason },
+  });
+  await transaction.authSession.updateMany({
+    where: { id: sessionId, status: 'ACTIVE' },
+    data: { status: 'REVOKED', revoked_at: now, revocation_reason: reason },
+  });
+}
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const MAX_LISTED_ACTIVE_SESSIONS = 50;
+export const DEFAULT_AUTH_SESSION_IDLE_TTL_SECONDS = 28_800;
+export const DEFAULT_MAX_CONCURRENT_SESSIONS = 10;
 
 export interface ActiveAuthSessionItem {
   id: string;
@@ -25,22 +51,50 @@ export interface ActiveAuthSessionItem {
   mfaVerified: boolean;
 }
 
+export interface QueryActiveSessionsOptions {
+  limit?: number | undefined;
+  idleTtlSeconds?: number | undefined;
+  now?: Date | undefined;
+}
+
 /**
- * Thuật toán: Liệt kê các phiên đăng nhập đang hoạt động chưa hết hạn của người dùng kèm cờ `isCurrent` và `mfaVerified`.
+ * Thuật toán: Chuẩn hóa chuỗi IP hợp lệ (IPv4 / IPv6) trước khi ghi vào cột PostgreSQL `INET`.
+ */
+export function normalizeValidInetAddress(rawIp?: string | null): string | undefined {
+  if (!rawIp) return undefined;
+  const trimmed = rawIp.trim();
+  return trimmed.length > 0 && isIP(trimmed) !== 0 ? trimmed : undefined;
+}
+
+/**
+ * Thuật toán: Liệt kê các phiên đăng nhập đang hoạt động chưa hết hạn (tuyệt đối & nhàn rỗi) của người dùng có chặn trần `take`.
  */
 export async function queryActiveUserSessions(
   database: PrismaClient,
   userId: bigint,
   currentSessionId: string,
+  options?: QueryActiveSessionsOptions,
 ): Promise<ActiveAuthSessionItem[]> {
-  const now = new Date();
+  const now = options?.now ?? new Date();
+  const limit = Math.min(
+    Math.max(Math.floor(options?.limit ?? MAX_LISTED_ACTIVE_SESSIONS), 1),
+    100,
+  );
+  const idleTtlSeconds = options?.idleTtlSeconds;
+  const idleCutoff =
+    typeof idleTtlSeconds === 'number' && idleTtlSeconds > 0
+      ? new Date(now.getTime() - idleTtlSeconds * 1_000)
+      : undefined;
+
   const rows = await database.authSession.findMany({
     where: {
       user_id: userId,
       status: 'ACTIVE',
       expires_at: { gt: now },
+      ...(idleCutoff ? { last_seen_at: { gt: idleCutoff } } : {}),
     },
     orderBy: [{ last_seen_at: 'desc' }, { created_at: 'desc' }],
+    take: limit,
   });
   return rows.map((row) => ({
     id: row.id,
@@ -52,6 +106,102 @@ export async function queryActiveUserSessions(
     isCurrent: row.id === currentSessionId,
     mfaVerified: Boolean((row as { mfa_verified_at?: Date | null }).mfa_verified_at),
   }));
+}
+
+/**
+ * Thuật toán: Cưỡng chế giới hạn số phiên đăng nhập đồng thời tối đa trên mỗi tài khoản (`LRU Session Eviction`).
+ * Mục đích: Trước khi tạo 1 phiên mới, giữ lại tối đa `maxConcurrentSessions - 1` phiên hoạt động gần nhất
+ * và thu hồi nguyên tử mọi phiên dư cũ nhất kèm cây họ Refresh Token tương ứng.
+ */
+export async function enforceConcurrentSessionLimit(
+  transaction: SessionTx,
+  userId: bigint,
+  maxConcurrentSessions: number,
+  now: Date = new Date(),
+): Promise<string[]> {
+  if (
+    !Number.isFinite(maxConcurrentSessions) ||
+    maxConcurrentSessions < 1 ||
+    typeof transaction.authSession?.findMany !== 'function'
+  ) {
+    return [];
+  }
+  const keepCount = Math.max(0, Math.floor(maxConcurrentSessions) - 1);
+  const activeSessions = await transaction.authSession.findMany({
+    where: {
+      user_id: userId,
+      status: 'ACTIVE',
+      expires_at: { gt: now },
+    },
+    orderBy: [{ last_seen_at: 'desc' }, { created_at: 'desc' }],
+  });
+  if (activeSessions.length <= keepCount) {
+    return [];
+  }
+  const toEvict = activeSessions.slice(keepCount);
+  const evictedIds: string[] = [];
+  for (const session of toEvict) {
+    await revokeTokenFamily(
+      transaction,
+      session.token_family_id,
+      session.id,
+      'MAX_CONCURRENT_SESSIONS_EXCEEDED',
+    );
+    evictedIds.push(session.id);
+  }
+  return evictedIds;
+}
+
+/**
+ * Thuật toán: Chuyển trạng thái phiên xác thực sang `EXPIRED` và thu hồi toàn bộ họ Refresh Token liên kết khi vượt ngưỡng nhàn rỗi (`IDLE_SESSION_EXPIRED`).
+ */
+export async function expireAuthSessionFamily(
+  transaction: Partial<SessionTx>,
+  familyId: string,
+  sessionId: string,
+  reason: string,
+  now: Date = new Date(),
+): Promise<void> {
+  if (typeof transaction.refreshToken?.updateMany === 'function') {
+    await transaction.refreshToken.updateMany({
+      where: { token_family_id: familyId, revoked_at: null },
+      data: { revoked_at: now, revocation_reason: reason },
+    });
+  }
+  if (typeof transaction.authSession?.updateMany === 'function') {
+    await transaction.authSession.updateMany({
+      where: { id: sessionId, status: 'ACTIVE' },
+      data: { status: 'EXPIRED', revoked_at: now, revocation_reason: reason },
+    });
+  }
+}
+
+/**
+ * Thuật toán: Cập nhật dấu vết hoạt động (`last_seen_at`) và địa chỉ IP hợp lệ mới nhất của phiên đang hoạt động.
+ */
+export async function touchAuthSessionActivity(
+  database: Partial<Pick<PrismaClient, 'authSession'>>,
+  sessionId: string,
+  userId: bigint,
+  now: Date = new Date(),
+  ipAddress?: string | null,
+): Promise<void> {
+  if (typeof database.authSession?.updateMany !== 'function') {
+    return;
+  }
+  const validIp = normalizeValidInetAddress(ipAddress);
+  await database.authSession.updateMany({
+    where: {
+      id: sessionId,
+      user_id: userId,
+      status: 'ACTIVE',
+      expires_at: { gt: now },
+    },
+    data: {
+      last_seen_at: now,
+      ...(validIp ? { ip_address: validIp } : {}),
+    },
+  });
 }
 
 /**

@@ -1,6 +1,7 @@
 'use client';
 
 import { AlertTriangle, Network, Search, ShieldCheck } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
@@ -18,20 +19,29 @@ import {
   formatSafeDateVi,
   formatServiceHealthLabel,
 } from '@/lib/ui-labels';
-import type { GatewayHealthStatus, SecurityAlertItem } from '../types';
+import type { NetworkDlpStatus, SecurityAlertItem } from '../types';
 import { NetworkDlpBlueprint, NetworkDlpOverview } from './network-dlp-overview';
 
 interface NetworkDlpTabProps {
   dlpAlerts: SecurityAlertItem[];
-  gatewayHealth?: GatewayHealthStatus | undefined;
+  totalDlpAlerts: number;
+  dlpStatus: NetworkDlpStatus;
+  tabError?: string | null | undefined;
   onSelectAlert: (alert: SecurityAlertItem) => void;
 }
 
+/**
+ * Thuật toán: Giám Sát Chống Thất Thoát Dữ Liệu Mạng (DLP) Theo Trạng Thái Worker Thực & Danh Sách Vi Phạm Độc Lập (`NetworkDlpTab`)
+ * Mục đích: Không báo xanh giả qua `/health/ready`, không hardcode chế độ chặn và đọc danh sách cảnh báo DLP trực tiếp từ máy chủ (#06, #13).
+ */
 export function NetworkDlpTab({
   dlpAlerts,
-  gatewayHealth = 'ONLINE',
+  totalDlpAlerts,
+  dlpStatus,
+  tabError,
   onSelectAlert,
 }: NetworkDlpTabProps) {
+  const gatewayHealth = dlpStatus.gatewayHealth;
   const healthBadgeVariant =
     gatewayHealth === 'ONLINE'
       ? 'success'
@@ -40,9 +50,24 @@ export function NetworkDlpTab({
         : 'destructive';
   const healthLabel = formatServiceHealthLabel(gatewayHealth);
 
+  const modeBadgeVariant =
+    dlpStatus.enforcementMode === 'BLOCK'
+      ? 'danger'
+      : dlpStatus.enforcementMode === 'AUDIT_ONLY'
+        ? 'warning'
+        : 'neutral';
+  const modeBadgeLabel =
+    dlpStatus.enforcementMode === 'BLOCK'
+      ? 'Chế độ chặn vi phạm (BLOCK)'
+      : dlpStatus.enforcementMode === 'AUDIT_ONLY'
+        ? 'Chế độ chỉ giám sát (AUDIT_ONLY)'
+        : dlpStatus.enforcementMode === 'DISABLED'
+          ? 'DLP đang tắt theo cấu hình'
+          : 'Mất kết nối dịch vụ DLP';
+
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-3 space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <CardTitle className="text-sm sm:text-base text-[#222222] flex items-center gap-2">
             <Network size={16} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
@@ -50,22 +75,35 @@ export function NetworkDlpTab({
           </CardTitle>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <Badge variant={healthBadgeVariant}>{healthLabel}</Badge>
-            <Badge variant={gatewayHealth === 'ONLINE' ? 'danger' : 'warning'}>
-              {gatewayHealth === 'ONLINE' ? 'Chính sách chặn vi phạm' : 'Cần kiểm tra kết nối'}
-            </Badge>
+            <Badge variant={modeBadgeVariant}>{modeBadgeLabel}</Badge>
           </div>
         </div>
+
+        {tabError && (
+          <Alert variant="destructive" className="text-xs">
+            <AlertTriangle
+              size={16}
+              strokeWidth={1.75}
+              className="shrink-0 text-[#C13515]"
+              aria-hidden="true"
+            />
+            <AlertDescription className="ml-2">{tabError}</AlertDescription>
+          </Alert>
+        )}
       </CardHeader>
+
       <CardContent className="space-y-4">
-        <NetworkDlpOverview />
+        <NetworkDlpOverview dlpStatus={dlpStatus} />
 
         <div className="space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-bold text-[#222222] uppercase tracking-wider">
-              Cảnh báo chống thất thoát dữ liệu ({dlpAlerts.length})
+              Cảnh báo chống thất thoát dữ liệu ({totalDlpAlerts})
             </h3>
             <span className="text-xs text-[#717171]">
-              Ghi nhận từ hệ thống giám sát luồng dữ liệu
+              {dlpStatus.checkedAt
+                ? `Kiểm tra lúc ${formatSafeDateVi(dlpStatus.checkedAt, { includeTime: true })}`
+                : 'Ghi nhận từ hệ thống giám sát luồng dữ liệu'}
             </span>
           </div>
 
@@ -94,8 +132,8 @@ export function NetworkDlpTab({
                             aria-hidden="true"
                           />
                           <span className="font-medium text-[#222222]">
-                            Hệ thống giám sát đang hoạt động bình thường · Chưa ghi nhận vi phạm rò
-                            rỉ dữ liệu.
+                            Cổng giám sát DLP đang hoạt động ({modeBadgeLabel}) · Chưa ghi nhận vi
+                            phạm rò rỉ dữ liệu.
                           </span>
                         </div>
                       ) : (
@@ -107,7 +145,8 @@ export function NetworkDlpTab({
                             aria-hidden="true"
                           />
                           <span className="font-medium text-[#222222]">
-                            Kết nối dịch vụ giám sát đang gián đoạn ({healthLabel}).
+                            Dịch vụ giám sát DLP mạng hiện chưa sẵn sàng ({healthLabel} ·{' '}
+                            {modeBadgeLabel}). Hãy kiểm tra tiến trình Worker DLP.
                           </span>
                         </div>
                       )}
@@ -144,7 +183,7 @@ export function NetworkDlpTab({
                       <TableCell className="font-mono text-xs text-[#717171]">
                         {alert.ipAddress}
                       </TableCell>
-                      <TableCell className="text-xs text-[#717171]">
+                      <TableCell className="text-xs text-[#717171] whitespace-nowrap">
                         {formatSafeDateVi(alert.detectedAt, { includeTime: true })}
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">

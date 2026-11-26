@@ -1,4 +1,5 @@
 import { getDatabaseClient } from '@sda/database';
+import { publishWorkerRealtimeEvent } from './realtime-redis-publisher.js';
 import { recordWorkerJobRun } from './worker-metrics.js';
 
 /**
@@ -72,6 +73,22 @@ export async function expireIdleAndElapsedAuthSessions(options?: {
   );
   const idleCutoff = new Date(now.getTime() - idleTtlSeconds * 1_000);
 
+  let expiringCandidates: Array<{ id: string; user_id: bigint }> = [];
+  if (typeof database.authSession.findMany === 'function') {
+    try {
+      expiringCandidates = await database.authSession.findMany({
+        where: {
+          status: 'ACTIVE',
+          OR: [{ expires_at: { lte: now } }, { last_seen_at: { lte: idleCutoff } }],
+        },
+        select: { id: true, user_id: true },
+        take: 1_000,
+      });
+    } catch {
+      expiringCandidates = [];
+    }
+  }
+
   const absoluteExpired = await database.authSession.updateMany({
     where: {
       status: 'ACTIVE',
@@ -96,6 +113,28 @@ export async function expireIdleAndElapsedAuthSessions(options?: {
       revocation_reason: 'IDLE_SESSION_EXPIRED',
     },
   });
+
+  // BUG-063: Phát sự kiện `USER_SESSION_REVOKED` cô lập theo `targetSessionIds` để ngắt tức thì các luồng SSE của phiên đã hết hạn.
+  if (expiringCandidates.length > 0 && absoluteExpired.count + idleExpired.count > 0) {
+    const sessionsByUser = new Map<string, string[]>();
+    for (const candidate of expiringCandidates) {
+      if (!candidate?.id || candidate.user_id === undefined || candidate.user_id === null) continue;
+      const uid = String(candidate.user_id);
+      const list = sessionsByUser.get(uid) ?? [];
+      list.push(candidate.id);
+      sessionsByUser.set(uid, list);
+    }
+    await Promise.all(
+      [...sessionsByUser.entries()].map(([uid, sessionIds]) =>
+        publishWorkerRealtimeEvent({
+          type: 'USER_SESSION_REVOKED',
+          targetUserIds: [uid],
+          targetSessionIds: sessionIds,
+          payload: { reason: 'SESSION_EXPIRED' },
+        }),
+      ),
+    );
+  }
 
   let revokedOrphanTokens = 0;
   if (typeof database.refreshToken?.updateMany === 'function') {

@@ -12,10 +12,13 @@ import {
   type VerifiableAuditLogRow,
 } from './audit-chain-verifier.js';
 import { incrementAuditIntegrityCompromised, recordWorkerJobRun } from './worker-metrics.js';
+import { publishWorkerRealtimeEvent } from './realtime-redis-publisher.js';
 
 export interface VerificationSweepSummary {
   partitionsChecked: number;
   totalLogsChecked: number;
+  totalLogsSkippedByAnchor: number;
+  fullScan: boolean;
   totalViolations: number;
   alertsCreated: number;
 }
@@ -25,10 +28,29 @@ type PrismaClient = ReturnType<typeof getDatabaseClient>;
 export interface AuditSweepOptions {
   keyRotationJson?: string | undefined;
   databaseClient?: PrismaClient | undefined;
+  fullScan?: boolean | undefined;
 }
 
 /**
- * Thuật toán: Ghi nhận cảnh báo `CRITICAL` khử trùng lặp vào `security_alerts` khi phát hiện chuỗi băm bị can thiệp.
+ * Thuật toán: Khử trùng lặp danh sách vi phạm chuỗi kiểm toán theo khóa `(code, sequence)` khi lùi từ điểm neo checkpoint về quét toàn phần (`fullScan` fallback),
+ * ưu tiên giữ bản ghi có `logId` để liên kết chính xác `alert_audit_links` (BUG-111).
+ */
+export function deduplicateAuditViolations(
+  violations: readonly AuditChainViolation[],
+): AuditChainViolation[] {
+  const byKey = new Map<string, AuditChainViolation>();
+  for (const violation of violations) {
+    const key = `${violation.code}:${violation.sequence.toString()}`;
+    const existing = byKey.get(key);
+    if (!existing || (existing.logId === undefined && violation.logId !== undefined)) {
+      byKey.set(key, violation);
+    }
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Thuật toán: Ghi nhận cảnh báo `CRITICAL` khử trùng lặp vào `security_alerts` khi phát hiện chuỗi băm bị can thiệp và đẩy sự kiện SSE thời gian thực qua Redis.
  */
 async function persistPartitionIntegrityAlert(
   database: PrismaClient,
@@ -38,6 +60,7 @@ async function persistPartitionIntegrityAlert(
   const alertId = randomUUID();
   const primary = violations[0]!;
   let createdNewAlert = false;
+  let persistedSeverity = 'CRITICAL';
 
   await database.$transaction(async (tx) => {
     // CONFLICT-RESOLVED: Đọc severity và cooldown_minutes của Quy tắc #6 AUDIT_INTEGRITY_COMPROMISED từ detection_rule_configs (N04).
@@ -48,6 +71,7 @@ async function persistPartitionIntegrityAlert(
             .catch(() => null)
         : null;
     const effectiveSeverity = ruleCfg?.severity ?? 'CRITICAL';
+    persistedSeverity = effectiveSeverity;
     const cooldownMinutes = ruleCfg?.cooldown_minutes ?? 15;
     const cooldownStart = new Date(Date.now() - cooldownMinutes * 60_000);
 
@@ -87,6 +111,24 @@ async function persistPartitionIntegrityAlert(
       await tx.alertAuditLink.create({ data: { alert_id: alertId, audit_log_id: primary.logId } });
     }
   });
+
+  if (createdNewAlert) {
+    await publishWorkerRealtimeEvent({
+      type: 'SECURITY_ALERT_UPDATED',
+      targetRoles: ['SECURITY_OFFICER', 'AUDITOR'],
+      payload: {
+        id: alertId,
+        alertId,
+        alertType: 'AUDIT_INTEGRITY_COMPROMISED',
+        severity: persistedSeverity,
+        partition,
+        violationCount: violations.length,
+        status: 'OPEN',
+        action: 'CREATED',
+      },
+    });
+  }
+
   return createdNewAlert;
 }
 
@@ -105,9 +147,12 @@ export async function runAuditVerificationSweep(
   const keyRing = buildAuditKeyRing(integrityKey, options.keyRotationJson, (err) => {
     console.warn(`[AUDIT_VERIFICATION_JOB] Invalid AUDIT_KEY_ROTATION_JSON: ${String(err)}`);
   });
+  const fullScan = options.fullScan === true;
   const summary: VerificationSweepSummary = {
     partitionsChecked: 0,
     totalLogsChecked: 0,
+    totalLogsSkippedByAnchor: 0,
+    fullScan,
     totalViolations: 0,
     alertsCreated: 0,
   };
@@ -137,18 +182,20 @@ export async function runAuditVerificationSweep(
     })) as VerifiableAuditAnchorRow[];
 
     let resumeAnchor: VerifiableAuditAnchorRow | undefined;
-    for (let idx = anchors.length - 1; idx >= 0; idx--) {
-      const candidate = anchors[idx]!;
-      if (candidate.status === 'VALID') {
-        if (isAnchorCryptographicallyAuthentic(candidate, keyRing)) resumeAnchor = candidate;
-        else {
-          violations.push({
-            code: 'AUDIT_ANCHOR_MISMATCH',
-            sequence: candidate.anchor_sequence,
-            message: `VALID anchor signature mismatch for partition ${partition} at sequence ${candidate.anchor_sequence}`,
-          });
+    if (!fullScan) {
+      for (let idx = anchors.length - 1; idx >= 0; idx--) {
+        const candidate = anchors[idx]!;
+        if (candidate.status === 'VALID') {
+          if (isAnchorCryptographicallyAuthentic(candidate, keyRing)) resumeAnchor = candidate;
+          else {
+            violations.push({
+              code: 'AUDIT_ANCHOR_MISMATCH',
+              sequence: candidate.anchor_sequence,
+              message: `VALID anchor signature mismatch for partition ${partition} at sequence ${candidate.anchor_sequence}`,
+            });
+          }
+          break;
         }
-        break;
       }
     }
 
@@ -207,7 +254,16 @@ export async function runAuditVerificationSweep(
             : `Anchored log HMAC verification failed at sequence ${resumeAnchor.anchor_sequence} in partition ${partition}`,
         });
         resumeAnchor = undefined;
+      } else if (hasFullRowFields) {
+        // Chỉ đếm đúng 1 bản ghi điểm neo K đã được tái tính HMAC thực tế; ghi nhận riêng số bản ghi [1..K-1] bỏ qua.
+        summary.totalLogsChecked++;
+        summary.totalLogsSkippedByAnchor += Number(resumeAnchor.anchor_sequence - 1n);
+      } else {
+        summary.totalLogsSkippedByAnchor += Number(resumeAnchor.anchor_sequence);
       }
+    } else if (resumeAnchor) {
+      // Nếu client DB không hỗ trợ findFirst để kiểm chứng bản ghi neo, bắt buộc lùi về quét toàn phần từ sequence = 1.
+      resumeAnchor = undefined;
     }
 
     const unverifiedAnchors = resumeAnchor
@@ -252,13 +308,14 @@ export async function runAuditVerificationSweep(
     }
 
     verifyPartitionAnchors(unverifiedAnchors, partition, logHashBySequence, keyRing, violations);
-    summary.totalViolations += violations.length;
-    if (violations.length > 0) {
-      incrementAuditIntegrityCompromised(partition, violations.length);
+    const uniqueViolations = deduplicateAuditViolations(violations);
+    summary.totalViolations += uniqueViolations.length;
+    if (uniqueViolations.length > 0) {
+      incrementAuditIntegrityCompromised(partition, uniqueViolations.length);
       console.error(
-        `[AUDIT_VERIFICATION_JOB] CRITICAL: ${violations.length} violations in partition ${partition}!`,
+        `[AUDIT_VERIFICATION_JOB] CRITICAL: ${uniqueViolations.length} violations in partition ${partition}!`,
       );
-      if (await persistPartitionIntegrityAlert(database, partition, violations))
+      if (await persistPartitionIntegrityAlert(database, partition, uniqueViolations))
         summary.alertsCreated++;
     }
   }
@@ -268,25 +325,34 @@ export async function runAuditVerificationSweep(
 
 /**
  * Thuật toán: Bộ lập lịch định kỳ chống chồng lấn chu kỳ (Non-Overlapping Interval Scheduler) cho `AuditVerificationJob`.
+ * Tự động chạy chế độ kiểm chứng toàn chuỗi từ `sequence = 1` (`fullScan: true`) theo chu kỳ định kỳ (`fullScanEveryNSweeps`, mặc định 12 chu kỳ và ngay chu kỳ đầu tiên).
  */
 export function startAuditVerificationJob(
   intervalMs: number,
   integrityKey: string,
   signal: AbortSignal,
   keyRotationJson?: string,
+  options?: { fullScanEveryNSweeps?: number | undefined },
 ): void {
   if (signal.aborted) return;
 
+  const fullScanEvery = Math.max(1, Math.floor(options?.fullScanEveryNSweeps ?? 12));
+  let sweepCount = 0;
   let isRunning = false;
   const run = async (): Promise<void> => {
     if (isRunning || signal.aborted) return;
     isRunning = true;
     try {
-      const summary = await runAuditVerificationSweep(integrityKey, { keyRotationJson });
+      sweepCount += 1;
+      const fullScan = fullScanEvery <= 1 || (sweepCount - 1) % fullScanEvery === 0;
+      const summary = await runAuditVerificationSweep(integrityKey, {
+        keyRotationJson,
+        fullScan,
+      });
       recordWorkerJobRun('audit_verification', 'success');
       if (summary.totalViolations > 0) {
         console.warn(
-          `[AUDIT_VERIFICATION_JOB] Completed sweep with ${summary.totalViolations} violations across ${summary.partitionsChecked} partitions. Created ${summary.alertsCreated} critical alerts.`,
+          `[AUDIT_VERIFICATION_JOB] Completed ${fullScan ? 'FULL' : 'INCREMENTAL'} sweep with ${summary.totalViolations} violations across ${summary.partitionsChecked} partitions. Created ${summary.alertsCreated} critical alerts.`,
         );
       }
     } catch (err: unknown) {
@@ -306,5 +372,7 @@ export function startAuditVerificationJob(
   }, intervalMs);
 
   signal.addEventListener('abort', () => clearInterval(timer), { once: true });
-  console.info(`Audit verification worker started (interval: ${intervalMs}ms).`);
+  console.info(
+    `Audit verification worker started (interval: ${intervalMs}ms, fullScanEvery: ${fullScanEvery} sweeps).`,
+  );
 }

@@ -1,7 +1,8 @@
-import { getDatabaseClient, type session_status } from '@sda/database';
+import { getDatabaseClient } from '@sda/database';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { publishWorkerRealtimeEvent } from './realtime-redis-publisher.js';
 import { recordWorkerJobRun } from './worker-metrics.js';
 
 /**
@@ -107,42 +108,67 @@ export async function expireIdleAccessSessions(options?: {
   const now = options?.now ?? new Date();
   const idleCutoff = new Date(now.getTime() - idleMinutes * 60_000);
 
-  try {
-    const updated = await database.accessSession.updateMany({
+  // Thuật toán: Thu thập phiên đọc nhàn rỗi quá ngưỡng (nếu findMany khả dụng) để phát SSE đóng tức thì, sau đó chuyển trực tiếp sang trạng thái hợp lệ `ENDED` mà không kích hoạt ngoại lệ enum `EXPIRED`.
+  let staleSessions: Array<{
+    id: string;
+    user_id: bigint;
+    document_versions?: {
+      document_id?: string;
+      document?: { department_id?: bigint | null } | null;
+    } | null;
+  }> = [];
+  if (typeof database.accessSession?.findMany === 'function') {
+    staleSessions = (await database.accessSession.findMany({
       where: {
         status: 'ACTIVE',
         last_activity_at: { lt: idleCutoff },
       },
-      data: {
-        status: 'EXPIRED' as unknown as session_status,
-        ended_at: now,
-        terminated_reason: 'IDLE_SESSION_EXPIRED',
-      },
-    });
-    return updated.count;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // CONFLICT-RESOLVED: Bắt thêm lỗi kiểm chứng kiểu phía client của Prisma 7 ('Expected session_status') bên cạnh mã lỗi PostgreSQL 22P02 để chuyển tiếp sang trạng thái 'ENDED' hợp lệ.
-    if (
-      msg.includes('invalid input value for enum') ||
-      msg.includes('22P02') ||
-      msg.includes('Expected session_status')
-    ) {
-      const fallback = await database.accessSession.updateMany({
-        where: {
-          status: 'ACTIVE',
-          last_activity_at: { lt: idleCutoff },
+      select: {
+        id: true,
+        user_id: true,
+        document_versions: {
+          select: {
+            document_id: true,
+            document: { select: { department_id: true } },
+          },
         },
-        data: {
+      },
+      take: 500,
+    })) as typeof staleSessions;
+  }
+
+  const updated = await database.accessSession.updateMany({
+    where: {
+      status: 'ACTIVE',
+      last_activity_at: { lt: idleCutoff },
+    },
+    data: {
+      status: 'ENDED',
+      ended_at: now,
+      terminated_reason: 'IDLE_SESSION_EXPIRED',
+    },
+  });
+
+  if (updated.count > 0 && staleSessions.length > 0) {
+    for (const s of staleSessions) {
+      void publishWorkerRealtimeEvent({
+        type: 'ACCESS_SESSION_UPDATED',
+        targetUserIds: [s.user_id.toString()],
+        targetRoles: ['SECURITY_OFFICER'],
+        targetDepartmentId: s.document_versions?.document?.department_id?.toString() ?? null,
+        payload: {
+          sessionId: s.id,
+          id: s.id,
+          documentId: s.document_versions?.document_id ?? null,
           status: 'ENDED',
-          ended_at: now,
-          terminated_reason: 'IDLE_SESSION_EXPIRED',
+          action: 'IDLE_EXPIRED',
+          reason: 'IDLE_SESSION_EXPIRED',
         },
       });
-      return fallback.count;
     }
-    throw err;
   }
+
+  return updated.count;
 }
 
 /**

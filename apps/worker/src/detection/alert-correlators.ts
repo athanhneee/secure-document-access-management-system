@@ -11,20 +11,99 @@ export interface MinimalAuditLog {
 }
 
 async function linkNewEvidenceToExistingAlert(
-  database: PrismaClient,
+  tx: Prisma.TransactionClient | PrismaClient,
   alertId: string,
   logs: readonly MinimalAuditLog[],
 ): Promise<void> {
-  if (logs.length === 0 || typeof database.alertAuditLink?.createMany !== 'function') return;
-  await database.alertAuditLink.createMany({
+  if (logs.length === 0 || typeof tx.alertAuditLink?.createMany !== 'function') return;
+  await tx.alertAuditLink.createMany({
     data: logs.map((l) => ({ alert_id: alertId, audit_log_id: l.id })),
     skipDuplicates: true,
   });
 }
 
 /**
- * Algorithm / Thuật toán: Gom Nhóm Tần Suất Theo Chủ Thể & Luồng Ẩn Danh Kèm Giảm Chấn Cooldown Độc Lập Đồng Bộ API
- * (Per-User & Unattributed Sliding-Window Correlation with Active-Status Cooldown & Incremental Evidence Linking — N09)
+ * Thuật toán: Tạo cảnh báo hoặc giảm chấn Cooldown nguyên tử trong giao dịch có khóa tư vấn `pg_advisory_xact_lock` (`BUG-069`).
+ * Ngăn hai tiến trình (API và Worker hoặc đa pod Worker) cùng đọc `findFirst === null` rồi chèn đúp hai cảnh báo `OPEN` trùng nhau.
+ */
+async function createOrLinkAlertAtomically(
+  database: PrismaClient,
+  params: {
+    rule: DetectionRuleConfig;
+    actorUserId: bigint | null;
+    primaryDocumentId: string | null;
+    logs: readonly MinimalAuditLog[];
+    now: Date;
+    cooldownStart: Date;
+    title: string;
+    description: string;
+  },
+): Promise<boolean> {
+  const { rule, actorUserId, primaryDocumentId, logs, now, cooldownStart, title, description } =
+    params;
+  const lockSubjectKey = actorUserId !== null ? actorUserId.toString() : 'GLOBAL_SYSTEM';
+
+  const runInScope = async (tx: Prisma.TransactionClient | PrismaClient): Promise<boolean> => {
+    if (typeof tx.$executeRawUnsafe === 'function') {
+      await tx.$executeRawUnsafe(
+        'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+        `soc-alert:${rule.ruleCode}`,
+        lockSubjectKey,
+      );
+    }
+
+    const findAlertClient =
+      typeof tx.securityAlert?.findFirst === 'function' ? tx.securityAlert : database.securityAlert;
+    const createAlertClient =
+      typeof tx.securityAlert?.create === 'function' ? tx.securityAlert : database.securityAlert;
+    const linkClient = typeof tx.alertAuditLink?.createMany === 'function' ? tx : database;
+
+    const existingAlert = await findAlertClient.findFirst({
+      where: {
+        alert_type: rule.ruleCode,
+        detected_user_id: actorUserId,
+        status: { in: ['OPEN', 'INVESTIGATING'] },
+        detected_at: { gte: cooldownStart },
+      },
+      orderBy: { detected_at: 'desc' },
+    });
+    if (existingAlert) {
+      await linkNewEvidenceToExistingAlert(linkClient, existingAlert.id, logs);
+      return false;
+    }
+
+    const alertId = randomUUID();
+    await createAlertClient.create({
+      data: {
+        id: alertId,
+        alert_type: rule.ruleCode,
+        severity: rule.severity,
+        status: 'OPEN' as alert_status,
+        title,
+        description,
+        detected_user_id: actorUserId,
+        ...(primaryDocumentId !== null ? { document_id: primaryDocumentId } : {}),
+        detected_at: now,
+      },
+    });
+    if (logs.length > 0 && typeof linkClient.alertAuditLink?.createMany === 'function') {
+      await linkClient.alertAuditLink.createMany({
+        data: logs.map((l) => ({ alert_id: alertId, audit_log_id: l.id })),
+        skipDuplicates: true,
+      });
+    }
+    return true;
+  };
+
+  if (typeof database.$transaction === 'function') {
+    return database.$transaction((tx: Prisma.TransactionClient) => runInScope(tx));
+  }
+  return runInScope(database);
+}
+
+/**
+ * Algorithm / Thuật toán: Gom Nhóm Tần Suất Theo Chủ Thể & Luồng Ẩn Danh Kèm Giảm Chấn Cooldown Nguyên Tử Đồng Bộ API
+ * (Per-User & Unattributed Sliding-Window Correlation with Advisory-Locked Cooldown & Incremental Evidence Linking — BUG-069 / N09)
  */
 export async function emitPerUserThresholdAlerts(
   database: PrismaClient,
@@ -35,87 +114,45 @@ export async function emitPerUserThresholdAlerts(
   formatAlert: (count: number, actorUserId: bigint) => { title: string; description: string },
   formatAnonymousAlert?: (count: number) => { title: string; description: string },
 ): Promise<number> {
-  // CONFLICT-RESOLVED: Đồng bộ chặt với API — chỉ suppress cooldown trên cảnh báo còn OPEN/INVESTIGATING, luôn gắn thêm alert_audit_links và lưu document_id (N09).
+  // CONFLICT-RESOLVED: Bọc kiểm tra cooldown findFirst + create + link vào cùng $transaction dưới pg_advisory_xact_lock chống tạo đúp cảnh báo giữa API và Worker (BUG-069 / N09).
   const userGroups = groupAuditLogsByActor(logs);
   let created = 0;
 
   for (const [userIdStr, userLogs] of userGroups.entries()) {
     if (userLogs.length < rule.threshold) continue;
     const actorUserId = BigInt(userIdStr);
-    const existingAlert = await database.securityAlert.findFirst({
-      where: {
-        alert_type: rule.ruleCode,
-        detected_user_id: actorUserId,
-        status: { in: ['OPEN', 'INVESTIGATING'] },
-        detected_at: { gte: cooldownStart },
-      },
-      orderBy: { detected_at: 'desc' },
-    });
-    if (existingAlert) {
-      await linkNewEvidenceToExistingAlert(database, existingAlert.id, userLogs);
-      continue;
-    }
-
-    const alertId = randomUUID();
     const { title, description } = formatAlert(userLogs.length, actorUserId);
     const primaryDocumentId = userLogs.find((l) => Boolean(l.document_id))?.document_id ?? null;
-    await database.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.securityAlert.create({
-        data: {
-          id: alertId,
-          alert_type: rule.ruleCode,
-          severity: rule.severity,
-          status: 'OPEN' as alert_status,
-          title,
-          description,
-          detected_user_id: actorUserId,
-          document_id: primaryDocumentId,
-          detected_at: now,
-        },
-      });
-      await tx.alertAuditLink.createMany({
-        data: userLogs.map((l) => ({ alert_id: alertId, audit_log_id: l.id })),
-        skipDuplicates: true,
-      });
+    const wasCreated = await createOrLinkAlertAtomically(database, {
+      rule,
+      actorUserId,
+      primaryDocumentId,
+      logs: userLogs,
+      now,
+      cooldownStart,
+      title,
+      description,
     });
-    created++;
+    if (wasCreated) {
+      created++;
+    }
   }
 
   if (formatAnonymousAlert) {
     const unattributedLogs = logs.filter((l) => l.actor_user_id == null);
     if (unattributedLogs.length >= rule.threshold) {
-      const existingAnonymousAlert = await database.securityAlert.findFirst({
-        where: {
-          alert_type: rule.ruleCode,
-          detected_user_id: null,
-          status: { in: ['OPEN', 'INVESTIGATING'] },
-          detected_at: { gte: cooldownStart },
-        },
-        orderBy: { detected_at: 'desc' },
+      const { title, description } = formatAnonymousAlert(unattributedLogs.length);
+      const wasCreated = await createOrLinkAlertAtomically(database, {
+        rule,
+        actorUserId: null,
+        primaryDocumentId: null,
+        logs: unattributedLogs,
+        now,
+        cooldownStart,
+        title,
+        description,
       });
-      if (existingAnonymousAlert) {
-        await linkNewEvidenceToExistingAlert(database, existingAnonymousAlert.id, unattributedLogs);
-      } else {
-        const alertId = randomUUID();
-        const { title, description } = formatAnonymousAlert(unattributedLogs.length);
-        await database.$transaction(async (tx: Prisma.TransactionClient) => {
-          await tx.securityAlert.create({
-            data: {
-              id: alertId,
-              alert_type: rule.ruleCode,
-              severity: rule.severity,
-              status: 'OPEN' as alert_status,
-              title,
-              description,
-              detected_user_id: null,
-              detected_at: now,
-            },
-          });
-          await tx.alertAuditLink.createMany({
-            data: unattributedLogs.map((l) => ({ alert_id: alertId, audit_log_id: l.id })),
-            skipDuplicates: true,
-          });
-        });
+      if (wasCreated) {
         created++;
       }
     }
@@ -125,7 +162,7 @@ export async function emitPerUserThresholdAlerts(
 }
 
 /**
- * Algorithm / Thuật toán: Tương Quan Sự Kiện Cấp Hệ Thống Có Giảm Chấn Cooldown (`detected_user_id: null`)
+ * Algorithm / Thuật toán: Tương Quan Sự Kiện Cấp Hệ Thống Có Giảm Chấn Cooldown Nguyên Tử (`detected_user_id: null` — `BUG-069`)
  * Mục đích: Phát cảnh báo nghiêm trọng phạm vi toàn hệ thống (như `AUDIT_INTEGRITY_COMPROMISED`) khi đạt ngưỡng mà chưa có cảnh báo `OPEN`/`INVESTIGATING` trong khoảng `cooldownStart`.
  */
 export async function emitAggregateThresholdAlert(
@@ -139,38 +176,15 @@ export async function emitAggregateThresholdAlert(
 ): Promise<number> {
   if (logs.length < rule.threshold) return 0;
 
-  const existingAlert = await database.securityAlert.findFirst({
-    where: {
-      alert_type: rule.ruleCode,
-      detected_user_id: null,
-      status: { in: ['OPEN', 'INVESTIGATING'] },
-      detected_at: { gte: cooldownStart },
-    },
-    orderBy: { detected_at: 'desc' },
+  const wasCreated = await createOrLinkAlertAtomically(database, {
+    rule,
+    actorUserId: null,
+    primaryDocumentId: null,
+    logs,
+    now,
+    cooldownStart,
+    title,
+    description,
   });
-  if (existingAlert) {
-    await linkNewEvidenceToExistingAlert(database, existingAlert.id, logs);
-    return 0;
-  }
-
-  const alertId = randomUUID();
-  await database.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.securityAlert.create({
-      data: {
-        id: alertId,
-        alert_type: rule.ruleCode,
-        severity: rule.severity,
-        status: 'OPEN' as alert_status,
-        title,
-        description,
-        detected_user_id: null,
-        detected_at: now,
-      },
-    });
-    await tx.alertAuditLink.createMany({
-      data: logs.map((l) => ({ alert_id: alertId, audit_log_id: l.id })),
-      skipDuplicates: true,
-    });
-  });
-  return 1;
+  return wasCreated ? 1 : 0;
 }

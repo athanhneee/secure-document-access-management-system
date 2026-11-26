@@ -1,7 +1,7 @@
 import { getDatabaseClient, type Prisma } from '@sda/database';
 import {
   claimOutboxCandidates,
-  deliverIdempotentInAppNotification,
+  deliverIdempotentInAppNotificationDetailed,
 } from './outbox-claim-and-inapp.helper.js';
 import { deliverOutboxEmailViaSmtp } from './outbox-mailer.helper.js';
 import { publishWorkerRealtimeEvent } from './realtime-redis-publisher.js';
@@ -83,17 +83,27 @@ export async function processOutboxBatch(options?: {
       }
 
       if (wantsInApp) {
-        inAppDelivered = await deliverIdempotentInAppNotification(database, item, now);
-        if (inAppDelivered) {
+        const deliveryOutcome = await deliverIdempotentInAppNotificationDetailed(
+          database,
+          item,
+          now,
+        );
+        inAppDelivered = deliveryOutcome.inAppEnsured;
+        // CONFLICT-RESOLVED: Chỉ phát SSE NOTIFICATION_CREATED khi thực sự chèn mới dòng notifications (newlyCreated === true) kèm đầy đủ 9 trường chuẩn UI tránh nhảy khống badge unread và mất id khi đánh dấu đã đọc (BUG-070).
+        if (deliveryOutcome.newlyCreated) {
           void publishWorkerRealtimeEvent({
             type: 'NOTIFICATION_CREATED',
             targetUserIds: [item.recipient_id.toString()],
             payload: {
+              id: deliveryOutcome.notificationId,
               notificationType: item.notification_type,
               title: item.title,
               body: item.body,
+              relatedObjectType: deliveryOutcome.relatedObjectType,
+              relatedObjectId: deliveryOutcome.relatedObjectId,
               status: 'UNREAD',
               createdAt: now.toISOString(),
+              readAt: null,
             },
           });
         }

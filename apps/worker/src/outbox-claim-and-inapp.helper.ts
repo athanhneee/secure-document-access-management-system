@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import { type getDatabaseClient, type notification_status } from '@sda/database';
+import {
+  UniqueConstraintError,
+  type getDatabaseClient,
+  mapDatabaseError,
+  type notification_status,
+} from '@sda/database';
 
 /**
  * Thuật toán / Tổng quan module:
@@ -95,30 +100,29 @@ export async function claimOutboxCandidates(
   });
 }
 
+export interface DetailedInAppDeliveryResult {
+  inAppEnsured: boolean;
+  newlyCreated: boolean;
+  notificationId: string;
+  relatedObjectType: string | null;
+  relatedObjectId: string | null;
+}
+
 /**
- * Thuật toán: Phân phát thông báo `IN_APP` lũy đẳng đa tầng (Multi-Guard Idempotent In-App Delivery):
- * - Tầng 1: Kiểm tra cờ `payload.__inAppDelivered === true` từ lần thử trước của kênh `BOTH`.
- * - Tầng 2: Kiểm tra sự tồn tại bản ghi theo khóa tất định `id = notificationId` hoặc bộ khóa nghiệp vụ
- *   `(recipient_id, notification_type, related_object_id)` tạo từ thời điểm `outboxItem.created_at` trở đi.
- * - Tầng 3: Bắt mã xung đột khóa duy nhất `P2002` nếu hai luồng chèn đồng thời.
+ * Thuật toán: Phân phát thông báo `IN_APP` lũy đẳng đa tầng kèm cờ phân biệt bản ghi mới tạo (`newlyCreated`) với bản ghi đã tồn tại (`BUG-070`):
+ * - Tầng 1: Kiểm tra cờ `payload.__inAppDelivered === true` từ lần thử trước của kênh `BOTH` -> `{ inAppEnsured: true, newlyCreated: false }`.
+ * - Tầng 2: Kiểm tra sự tồn tại bản ghi theo khóa tất định `id = notificationId` hoặc bộ khóa nghiệp vụ -> `{ inAppEnsured: true, newlyCreated: false }`.
+ * - Tầng 3: Chèn mới vào `notifications`; nếu gặp xung đột khóa duy nhất `P2002` thì coi như đã tồn tại (`newlyCreated: false`), tránh bắn lặp SSE `NOTIFICATION_CREATED`.
  */
-export async function deliverIdempotentInAppNotification(
+export async function deliverIdempotentInAppNotificationDetailed(
   database: PrismaClient,
   item: OutboxCandidateRow,
   now: Date,
-): Promise<boolean> {
-  if (typeof database.notification?.create !== 'function') {
-    return false;
-  }
-
+): Promise<DetailedInAppDeliveryResult> {
   const payloadObj =
     item.payload !== null && typeof item.payload === 'object' && !Array.isArray(item.payload)
       ? (item.payload as Record<string, unknown>)
       : {};
-
-  if (payloadObj['__inAppDelivered'] === true) {
-    return true;
-  }
 
   const notificationId = deriveDeterministicNotificationId(item.id);
   const relatedObjectType = payloadObj['relatedObjectType']
@@ -128,11 +132,39 @@ export async function deliverIdempotentInAppNotification(
     ? String(payloadObj['relatedObjectId'])
     : null;
 
+  if (typeof database.notification?.create !== 'function') {
+    return {
+      inAppEnsured: false,
+      newlyCreated: false,
+      notificationId,
+      relatedObjectType,
+      relatedObjectId,
+    };
+  }
+
+  if (payloadObj['__inAppDelivered'] === true) {
+    return {
+      inAppEnsured: true,
+      newlyCreated: false,
+      notificationId,
+      relatedObjectType,
+      relatedObjectId,
+    };
+  }
+
   if (typeof database.notification.findFirst === 'function') {
     const existingById = await database.notification.findFirst({
       where: { id: notificationId },
     });
-    if (existingById) return true;
+    if (existingById) {
+      return {
+        inAppEnsured: true,
+        newlyCreated: false,
+        notificationId: existingById.id ?? notificationId,
+        relatedObjectType,
+        relatedObjectId,
+      };
+    }
 
     const existingByBusinessKey = await database.notification.findFirst({
       where: {
@@ -144,7 +176,15 @@ export async function deliverIdempotentInAppNotification(
         created_at: { gte: item.created_at },
       },
     });
-    if (existingByBusinessKey) return true;
+    if (existingByBusinessKey) {
+      return {
+        inAppEnsured: true,
+        newlyCreated: false,
+        notificationId: existingByBusinessKey.id ?? notificationId,
+        relatedObjectType,
+        relatedObjectId,
+      };
+    }
   }
 
   try {
@@ -163,9 +203,35 @@ export async function deliverIdempotentInAppNotification(
     });
   } catch (err) {
     const code = (err as { code?: string } | null | undefined)?.code;
-    if (code === 'P2002') return true;
+    if (code === 'P2002' || mapDatabaseError(err) instanceof UniqueConstraintError) {
+      return {
+        inAppEnsured: true,
+        newlyCreated: false,
+        notificationId,
+        relatedObjectType,
+        relatedObjectId,
+      };
+    }
     throw err;
   }
 
-  return true;
+  return {
+    inAppEnsured: true,
+    newlyCreated: true,
+    notificationId,
+    relatedObjectType,
+    relatedObjectId,
+  };
+}
+
+/**
+ * Thuật toán: Bao bọc tương thích ngược trả kết quả boolean `inAppEnsured` cho các trình gọi/kiểm thử hiện hữu (`BUG-070`).
+ */
+export async function deliverIdempotentInAppNotification(
+  database: PrismaClient,
+  item: OutboxCandidateRow,
+  now: Date,
+): Promise<boolean> {
+  const outcome = await deliverIdempotentInAppNotificationDetailed(database, item, now);
+  return outcome.inAppEnsured;
 }

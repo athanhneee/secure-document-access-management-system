@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getDatabaseClient } from '@sda/database';
+import { publishWorkerRealtimeEvent } from '../realtime-redis-publisher.js';
 import type { DlpScanResult, IcapRequest } from './icap.types.js';
 
 export interface IcapServerMetrics {
@@ -56,6 +57,20 @@ export async function persistNetworkDlpSecurityAlert(
         description: `Giao thức ICAP (${modeTag}) phát hiện vi phạm chính sách DLP (${request.method} ${safeUri}): ${violationSummary}. Chi tiết: ${scanResult.violations.map((v) => `${v.rule} (${v.matchedSnippet})`).join(', ')}`,
         severity: highestSeverity,
         status: 'OPEN',
+      },
+    });
+
+    await publishWorkerRealtimeEvent({
+      type: 'SECURITY_ALERT_UPDATED',
+      targetRoles: ['SECURITY_OFFICER'],
+      payload: {
+        id: alertId,
+        alertId,
+        alertType: 'NETWORK_DLP_VIOLATION',
+        severity: highestSeverity,
+        mode: modeTag,
+        status: 'OPEN',
+        action: 'CREATED',
       },
     });
   } catch (err) {

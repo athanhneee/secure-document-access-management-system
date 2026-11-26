@@ -36,11 +36,19 @@ test('runDetectionCycle — evaluates rules and creates alerts with links', asyn
       ],
     },
     auditLog: {
-      findMany: async () => [
-        { id: 1n, actor_user_id: userId, document_id: randomUUID(), occurred_at: now },
-        { id: 2n, actor_user_id: userId, document_id: randomUUID(), occurred_at: now },
-        { id: 3n, actor_user_id: userId, document_id: randomUUID(), occurred_at: now },
-      ],
+      findMany: async ({ where } = {}) => {
+        if (
+          where?.outcome === 'DENIED' ||
+          (Array.isArray(where?.action?.in) && !where.action.in.includes('DOCUMENT_DOWNLOADED'))
+        ) {
+          return [];
+        }
+        return [
+          { id: 1n, actor_user_id: userId, document_id: randomUUID(), occurred_at: now },
+          { id: 2n, actor_user_id: userId, document_id: randomUUID(), occurred_at: now },
+          { id: 3n, actor_user_id: userId, document_id: randomUUID(), occurred_at: now },
+        ];
+      },
     },
     securityAlert: {
       findFirst: async () => null, // No existing alert

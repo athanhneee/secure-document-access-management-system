@@ -1,3 +1,4 @@
+import { EXPORT_REPORT_SPECS, formatUnifiedExportJson, type ExportType } from '@sda/contracts';
 import { buildMultiPagePdfReport, escapePdfTextLine } from './pdf-builder.js';
 import { buildOoxmlXlsxBuffer } from './xlsx-builder.js';
 
@@ -54,43 +55,8 @@ function escapeCsvCell(value: unknown): string {
 }
 
 function resolveColumns(exportType: string, rows: Record<string, unknown>[]): string[] {
-  const defaultsByType: Record<string, string[]> = {
-    AUDIT_LOGS: [
-      'id',
-      'occurred_at',
-      'actor_user_id',
-      'actor_username',
-      'action',
-      'object_type',
-      'object_id',
-      'document_id',
-      'outcome',
-      'chain_partition',
-      'chain_sequence',
-    ],
-    SECURITY_ALERTS: [
-      'id',
-      'detected_at',
-      'alert_type',
-      'severity',
-      'status',
-      'title',
-      'detected_user_id',
-      'document_id',
-    ],
-    INCIDENT_REPORTS: [
-      'id',
-      'incident_code',
-      'status',
-      'title',
-      'summary',
-      'prepared_by',
-      'alert_id',
-      'created_at',
-    ],
-    SYSTEM_REPORT: ['metric', 'value', 'captured_at'],
-  };
-  const colSet = new Set<string>(defaultsByType[exportType] ?? []);
+  const spec = EXPORT_REPORT_SPECS[exportType as ExportType];
+  const colSet = new Set<string>(spec ? spec.columns.map((c) => c.key) : []);
   for (const row of rows.slice(0, 50)) {
     for (const key of Object.keys(row)) colSet.add(key);
   }
@@ -99,6 +65,7 @@ function resolveColumns(exportType: string, rows: Record<string, unknown>[]): st
 
 /**
  * Thuật toán: Điều phối kết xuất bộ đệm nhị phân theo định dạng yêu cầu (`CSV`, `JSON`, `EXCEL` `.xlsx`, `PDF` đa trang).
+ * Dùng chung lược đồ cột và phong bì JSON từ `@sda/contracts` để đồng nhất 100% với `@sda/api`.
  */
 export function formatExportPayload(
   exportType: string,
@@ -110,16 +77,7 @@ export function formatExportPayload(
   const columns = resolveColumns(exportType, rows);
 
   if (format === 'JSON') {
-    const body = JSON.stringify(
-      {
-        exportType,
-        generatedAt: generatedAt.toISOString(),
-        rowCount: rows.length,
-        items: rows,
-      },
-      (_k, v) => (typeof v === 'bigint' ? v.toString() : v),
-      2,
-    );
+    const body = formatUnifiedExportJson(exportType, rows, generatedAt);
     return {
       buffer: Buffer.from(body, 'utf8'),
       mimeType: 'application/json; charset=utf-8',

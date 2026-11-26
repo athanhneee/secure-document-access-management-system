@@ -176,7 +176,7 @@ test('ExportProcessorJob — claims PENDING job, pushes AES-256-GCM .dat to S3/R
 
     assert.equal(result.completed, 1);
     assert.equal(result.failed, 0);
-    assert.ok(Array.isArray(capturedSecurityWhere?.AND?.[1]?.OR));
+    assert.ok(Array.isArray(capturedSecurityWhere?.OR));
     assert.equal(completedUpdate.status, 'COMPLETED');
     assert.equal(
       completedUpdate.mime_type,

@@ -7,8 +7,15 @@ import {
 import type { DetectionRuleConfig, PrismaClient } from './rule-defaults.js';
 import { emitPerUserThresholdAlerts, emitAggregateThresholdAlert } from './alert-correlators.js';
 
+const MAX_EVALUATION_WINDOW_ROWS = 5000;
+
+function matchesRuleAction(log: { action?: unknown }, allowedActions: readonly string[]): boolean {
+  if (typeof log.action !== 'string') return true;
+  return allowedActions.includes(log.action);
+}
+
 /**
- * Algorithm / Thuật toán: Bộ Điều Phối Đánh Giá 6 Mẫu Bất Thường An Ninh Cửa Sổ Trượt (Sliding-Window Rule Evaluator Dispatch)
+ * Algorithm / Thuật toán: Bộ Điều Phối Đánh Giá 6 Mẫu Bất Thường An Ninh Cửa Sổ Trượt Có Giới Hạn Bộ Nhớ (`take: 5000`, `BUG-069`)
  * Mục đích: Truy vấn tập sự kiện kiểm toán trong khoảng `[windowStart, now]` theo danh mục hành động chuẩn `@sda/contracts`
  *   cho từng quy tắc (`MASS_DOWNLOAD`, `REPEATED_DENIED`, `OFF_HOURS_ACCESS`, `UNTRUSTED_CONTEXT`, `REFRESH_TOKEN_REUSE`,
  *   `AUDIT_INTEGRITY_COMPROMISED`), phân tách theo từng người dùng (`actor_user_id`) và nhánh ẩn danh (`detected_user_id: null`).
@@ -21,15 +28,20 @@ export async function evaluateDetectionRule(
   cooldownStart: Date,
 ): Promise<number> {
   if (rule.ruleCode === 'MASS_DOWNLOAD') {
-    const logs = await database.auditLog.findMany({
+    const rawLogs = await database.auditLog.findMany({
       where: {
         action: { in: [...SECURITY_DETECTION_ACTIONS.MASS_DOWNLOAD] },
         outcome: 'SUCCESS',
         occurred_at: { gte: windowStart, lte: now },
         actor_user_id: { not: null },
       },
-      select: { id: true, actor_user_id: true, document_id: true, occurred_at: true },
+      select: { id: true, actor_user_id: true, action: true, document_id: true, occurred_at: true },
+      orderBy: { occurred_at: 'desc' },
+      take: MAX_EVALUATION_WINDOW_ROWS,
     });
+    const logs = rawLogs.filter((l) =>
+      matchesRuleAction(l, SECURITY_DETECTION_ACTIONS.MASS_DOWNLOAD),
+    );
     return emitPerUserThresholdAlerts(database, rule, logs, now, cooldownStart, (count) => ({
       title: `Cảnh báo: Tải hàng loạt (${count} tài liệu)`,
       description: `Người dùng đã tải ${count} tài liệu trong ${rule.windowMinutes} phút (ngưỡng: ${rule.threshold}).`,
@@ -37,14 +49,19 @@ export async function evaluateDetectionRule(
   }
 
   if (rule.ruleCode === 'REPEATED_DENIED') {
-    const logs = await database.auditLog.findMany({
+    const rawLogs = await database.auditLog.findMany({
       where: {
         outcome: 'DENIED',
         occurred_at: { gte: windowStart, lte: now },
         actor_user_id: { not: null },
       },
-      select: { id: true, actor_user_id: true, occurred_at: true },
+      select: { id: true, actor_user_id: true, outcome: true, occurred_at: true },
+      orderBy: { occurred_at: 'desc' },
+      take: MAX_EVALUATION_WINDOW_ROWS,
     });
+    const logs = rawLogs.filter(
+      (l) => typeof (l as { outcome?: unknown }).outcome !== 'string' || l.outcome === 'DENIED',
+    );
     return emitPerUserThresholdAlerts(database, rule, logs, now, cooldownStart, (count) => ({
       title: `Cảnh báo: Từ chối truy cập liên tiếp (${count} lần)`,
       description: `Người dùng nhận ${count} lần từ chối truy cập trong ${rule.windowMinutes} phút (ngưỡng: ${rule.threshold}).`,
@@ -56,12 +73,16 @@ export async function evaluateDetectionRule(
     const logs = await database.auditLog.findMany({
       where: {
         action: { in: [...SECURITY_DETECTION_ACTIONS.OFF_HOURS_ACCESS] },
+        outcome: 'SUCCESS',
+        document_id: { not: null },
         occurred_at: { gte: windowStart, lte: now },
         actor_user_id: { not: null },
       },
       select: {
         id: true,
         actor_user_id: true,
+        action: true,
+        outcome: true,
         document_id: true,
         occurred_at: true,
         documents: {
@@ -74,8 +95,15 @@ export async function evaluateDetectionRule(
           },
         },
       },
+      orderBy: { occurred_at: 'desc' },
+      take: MAX_EVALUATION_WINDOW_ROWS,
     });
     const offHoursLogs = logs.filter((l) => {
+      if (!matchesRuleAction(l, SECURITY_DETECTION_ACTIONS.OFF_HOURS_ACCESS)) return false;
+      if (typeof (l as { outcome?: unknown }).outcome === 'string' && l.outcome !== 'SUCCESS') {
+        return false;
+      }
+      if (!l.document_id) return false;
       if (!isOffHoursTimestampUtc(l.occurred_at, rule.parameters)) return false;
       const docRank = (
         l as {
@@ -86,7 +114,8 @@ export async function evaluateDetectionRule(
           } | null;
         }
       ).documents?.classification_history?.[0]?.classification_levels?.rank;
-      if (typeof docRank === 'number' && docRank < minRank) return false;
+      // CONFLICT-RESOLVED: Bắt buộc kết quả truy cập thành công vào tài liệu có cấp mật thực sự >= minRank (tránh báo động giả khi docRank undefined — BUG-069).
+      if (typeof docRank !== 'number' || docRank < minRank) return false;
       return true;
     });
     return emitPerUserThresholdAlerts(
@@ -115,6 +144,8 @@ export async function evaluateDetectionRule(
         ],
       },
       select: { id: true, actor_user_id: true, action: true, details: true, occurred_at: true },
+      orderBy: { occurred_at: 'desc' },
+      take: MAX_EVALUATION_WINDOW_ROWS,
     });
     const untrustedLogs = candidateLogs.filter((l) => isUntrustedAuditEvent(l.action, l.details));
     return emitPerUserThresholdAlerts(
@@ -135,13 +166,18 @@ export async function evaluateDetectionRule(
   }
 
   if (rule.ruleCode === 'REFRESH_TOKEN_REUSE') {
-    const logs = await database.auditLog.findMany({
+    const rawLogs = await database.auditLog.findMany({
       where: {
         action: { in: [...SECURITY_DETECTION_ACTIONS.REFRESH_TOKEN_REUSE] },
         occurred_at: { gte: windowStart, lte: now },
       },
-      select: { id: true, actor_user_id: true, occurred_at: true },
+      select: { id: true, actor_user_id: true, action: true, occurred_at: true },
+      orderBy: { occurred_at: 'desc' },
+      take: MAX_EVALUATION_WINDOW_ROWS,
     });
+    const logs = rawLogs.filter((l) =>
+      matchesRuleAction(l, SECURITY_DETECTION_ACTIONS.REFRESH_TOKEN_REUSE),
+    );
     return emitPerUserThresholdAlerts(
       database,
       rule,
@@ -160,13 +196,18 @@ export async function evaluateDetectionRule(
   }
 
   if (rule.ruleCode === 'AUDIT_INTEGRITY_COMPROMISED') {
-    const logs = await database.auditLog.findMany({
+    const rawLogs = await database.auditLog.findMany({
       where: {
         action: { in: [...SECURITY_DETECTION_ACTIONS.AUDIT_INTEGRITY_COMPROMISED] },
         occurred_at: { gte: windowStart, lte: now },
       },
-      select: { id: true, actor_user_id: true, occurred_at: true },
+      select: { id: true, actor_user_id: true, action: true, occurred_at: true },
+      orderBy: { occurred_at: 'desc' },
+      take: MAX_EVALUATION_WINDOW_ROWS,
     });
+    const logs = rawLogs.filter((l) =>
+      matchesRuleAction(l, SECURITY_DETECTION_ACTIONS.AUDIT_INTEGRITY_COMPROMISED),
+    );
     return emitAggregateThresholdAlert(
       database,
       rule,

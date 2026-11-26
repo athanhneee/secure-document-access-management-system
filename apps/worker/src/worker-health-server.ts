@@ -132,64 +132,105 @@ export function startWorkerHealthServer(
 
   const server = http.createServer(async (req, res) => {
     const method = req.method ?? 'GET';
-    const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
-
-    if (method !== 'GET' && method !== 'HEAD') {
-      res.writeHead(405, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
-      return;
-    }
-
-    if (pathname === '/health' || pathname === '/healthz') {
-      const loopAgeMs = Date.now() - getLastWorkerLoopHeartbeatMs();
-      const workerLoopAlive = loopAgeMs <= maxLoopStaleMs;
-      const dbHealthy = await probeDb();
-      const healthy = workerLoopAlive && dbHealthy;
-      const icapStatus = options?.getIcapStatus?.() ?? null;
-      const payload = JSON.stringify({
-        status: healthy ? 'ok' : 'degraded',
-        service: 'sda-worker',
-        workerLoopAlive,
-        dbHealthy,
-        loopHeartbeatAgeMs: loopAgeMs,
-        uptimeSeconds: getWorkerUptimeSeconds(),
-        ...(icapStatus ? { icap: icapStatus } : {}),
-        timestamp: new Date().toISOString(),
-      });
-      res.writeHead(healthy ? 200 : 503, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'no-store',
-      });
-      res.end(method === 'HEAD' ? undefined : payload);
-      return;
-    }
-
-    if (pathname === '/metrics') {
-      const expectedToken =
-        options?.metricsScrapeToken ?? process.env['METRICS_SCRAPE_TOKEN']?.trim() ?? '';
-      if (expectedToken.length > 0) {
-        const authHeader =
-          typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined;
-        if (!verifyBearerToken(authHeader, expectedToken)) {
-          res.writeHead(401, {
+    try {
+      let pathname: string;
+      try {
+        pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+      } catch {
+        if (!res.headersSent) {
+          res.writeHead(400, {
             'Content-Type': 'application/json; charset=utf-8',
-            'WWW-Authenticate': 'Bearer realm="sda-worker-metrics"',
+            'Cache-Control': 'no-store',
           });
-          res.end(JSON.stringify({ error: 'Unauthorized metrics scrape request' }));
-          return;
         }
+        if (!res.writableEnded) {
+          res.end(
+            method === 'HEAD'
+              ? undefined
+              : JSON.stringify({ error: 'Bad Request: Malformed request URL' }),
+          );
+        }
+        return;
       }
-      const body = renderWorkerPrometheusMetrics();
-      res.writeHead(200, {
-        'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
-        'Cache-Control': 'no-store',
-      });
-      res.end(method === 'HEAD' ? undefined : body);
-      return;
-    }
 
-    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ error: 'Not Found' }));
+      if (method !== 'GET' && method !== 'HEAD') {
+        res.writeHead(405, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+        return;
+      }
+
+      if (pathname === '/health' || pathname === '/healthz') {
+        const loopAgeMs = Date.now() - getLastWorkerLoopHeartbeatMs();
+        const workerLoopAlive = loopAgeMs <= maxLoopStaleMs;
+        const dbHealthy = await probeDb();
+        const healthy = workerLoopAlive && dbHealthy;
+        const icapStatus = options?.getIcapStatus?.() ?? null;
+        const payload = JSON.stringify({
+          status: healthy ? 'ok' : 'degraded',
+          service: 'sda-worker',
+          workerLoopAlive,
+          dbHealthy,
+          loopHeartbeatAgeMs: loopAgeMs,
+          uptimeSeconds: getWorkerUptimeSeconds(),
+          ...(icapStatus ? { icap: icapStatus } : {}),
+          timestamp: new Date().toISOString(),
+        });
+        res.writeHead(healthy ? 200 : 503, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end(method === 'HEAD' ? undefined : payload);
+        return;
+      }
+
+      if (pathname === '/metrics') {
+        const expectedToken =
+          options?.metricsScrapeToken ?? process.env['METRICS_SCRAPE_TOKEN']?.trim() ?? '';
+        if (expectedToken.length > 0) {
+          const authHeader =
+            typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined;
+          if (!verifyBearerToken(authHeader, expectedToken)) {
+            res.writeHead(401, {
+              'Content-Type': 'application/json; charset=utf-8',
+              'WWW-Authenticate': 'Bearer realm="sda-worker-metrics"',
+            });
+            res.end(JSON.stringify({ error: 'Unauthorized metrics scrape request' }));
+            return;
+          }
+        }
+        const body = renderWorkerPrometheusMetrics();
+        res.writeHead(200, {
+          'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end(method === 'HEAD' ? undefined : body);
+        return;
+      }
+
+      res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'Not Found' }));
+    } catch (err) {
+      console.error('[Worker Health] Internal error handling request:', err);
+      if (!res.headersSent) {
+        res.writeHead(500, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+      }
+      if (!res.writableEnded) {
+        res.end(method === 'HEAD' ? undefined : JSON.stringify({ error: 'Internal Server Error' }));
+      }
+    }
+  });
+
+  server.on('clientError', (_err, socket) => {
+    if (socket.writable && !socket.destroyed) {
+      socket.end(
+        'HTTP/1.1 400 Bad Request\r\nContent-Type: application/json; charset=utf-8\r\nConnection: close\r\n\r\n{"error":"Bad Request"}',
+      );
+    } else if (!socket.destroyed) {
+      socket.destroy();
+    }
   });
 
   let stopped = false;

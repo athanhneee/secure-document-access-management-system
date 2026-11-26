@@ -1,6 +1,10 @@
 import { getDatabaseClient, withSerializableTransaction, type Prisma } from '@sda/database';
 import { buildAuditKeyRing, canonicalizeJson } from '@sda/contracts';
 import { createHmac, randomUUID } from 'node:crypto';
+import {
+  publishWorkerRealtimeEvent,
+  type WorkerRealtimePublishInput,
+} from './realtime-redis-publisher.js';
 import { recordWorkerJobRun } from './worker-metrics.js';
 
 /**
@@ -43,7 +47,7 @@ export async function runGrantExpiryBatch(
   const keyRing = buildAuditKeyRing(hmacKey, keyRotationJson);
   const now = new Date();
 
-  return withSerializableTransaction(
+  const txOutcome = await withSerializableTransaction(
     async (tx: Prisma.TransactionClient) => {
       const expiring = await tx.$queryRawUnsafe<ExpiredGrantRow[]>(
         `SELECT id, document_id, principal_user_id, principal_role_id, principal_type
@@ -55,13 +59,31 @@ export async function runGrantExpiryBatch(
         BATCH_SIZE,
       );
 
-      if (expiring.length === 0) return 0;
+      if (expiring.length === 0) {
+        return { expiredCount: 0, realtimeEvents: [] as WorkerRealtimePublishInput[] };
+      }
 
       const ids = expiring.map((r: ExpiredGrantRow) => r.id);
       await tx.accessGrant.updateMany({
         where: { id: { in: ids } },
         data: { status: 'EXPIRED' },
       });
+
+      const docIds = [...new Set(expiring.map((r) => r.document_id))];
+      const ownerByDocId = new Map<string, string>();
+      if (typeof tx.document?.findMany === 'function') {
+        const docs = await tx.document
+          .findMany({
+            where: { id: { in: docIds } },
+            select: { id: true, owner_id: true },
+          })
+          .catch(() => []);
+        for (const doc of docs) {
+          if (doc.owner_id !== null && doc.owner_id !== undefined) {
+            ownerByDocId.set(doc.id, doc.owner_id.toString());
+          }
+        }
+      }
 
       const activeSessions = await tx.accessSession.findMany({
         where: { access_grant_id: { in: ids }, status: 'ACTIVE' },
@@ -165,7 +187,47 @@ export async function runGrantExpiryBatch(
         currentPreviousHash = entryHash;
       }
 
-      return expiring.length;
+      const realtimeEvents: WorkerRealtimePublishInput[] = [];
+      for (const grant of expiring) {
+        const ownerId = ownerByDocId.get(grant.document_id);
+        const targetUserIds = [
+          ...(ownerId ? [ownerId] : []),
+          ...(grant.principal_user_id !== null ? [grant.principal_user_id.toString()] : []),
+        ];
+        realtimeEvents.push({
+          type: 'ACCESS_GRANT_UPDATED',
+          ...(targetUserIds.length > 0 ? { targetUserIds } : {}),
+          ...(grant.principal_type === 'ROLE' ? { targetRoles: ['DOCUMENT_READER'] } : {}),
+          payload: {
+            id: grant.id,
+            grantId: grant.id,
+            documentId: grant.document_id,
+            status: 'EXPIRED',
+            action: 'REVOKED',
+            reason: 'GRANT_VALIDITY_EXPIRED',
+          },
+        });
+      }
+
+      for (const session of activeSessions) {
+        const parentGrant = expiring.find((g) => g.id === session.access_grant_id);
+        realtimeEvents.push({
+          type: 'ACCESS_SESSION_UPDATED',
+          targetRoles: ['SECURITY_OFFICER'],
+          targetUserIds: [session.user_id.toString()],
+          payload: {
+            id: session.id,
+            sessionId: session.id,
+            accessGrantId: session.access_grant_id,
+            documentId: parentGrant?.document_id ?? null,
+            status: 'TERMINATED',
+            action: 'TERMINATED',
+            reason: 'Grant expired',
+          },
+        });
+      }
+
+      return { expiredCount: expiring.length, realtimeEvents };
     },
     {
       client: database,
@@ -174,6 +236,14 @@ export async function runGrantExpiryBatch(
         : {}),
     },
   );
+
+  if (txOutcome.realtimeEvents.length > 0) {
+    await Promise.allSettled(
+      txOutcome.realtimeEvents.map((event) => publishWorkerRealtimeEvent(event)),
+    );
+  }
+
+  return txOutcome.expiredCount;
 }
 
 /**

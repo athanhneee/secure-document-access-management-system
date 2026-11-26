@@ -12,7 +12,7 @@ export const ZERO_WIDTH_AND_FORMAT_CHARS_RE =
   /\u034F|[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/gu;
 
 const BASE64_CANDIDATE_RE = /[A-Za-z0-9+/_-]{24,}={0,2}/gu;
-const PDF_UTF16BE_HEX_STRING_RE = /<FEFF([0-9A-Fa-f]{4}){4,512}>/gu;
+const PDF_UTF16BE_HEX_STRING_RE = /<FEFF([0-9A-Fa-f]{4}){4,512}>/giu;
 const MAX_BASE64_CANDIDATES = 64;
 const MAX_BASE64_DECODED_BYTES = 1024 * 1024;
 
@@ -20,7 +20,7 @@ const MAX_BASE64_DECODED_BYTES = 1024 * 1024;
  * Thuật toán: Giải mã chuỗi hex UTF-16BE trong từ điển metadata PDF (`<FEFF0057004D...>`) sang chuỗi Unicode thuần.
  */
 export function extractPdfUtf16BeHexSurfaces(rawText: string): string[] {
-  if (!rawText.includes('<FEFF') && !rawText.includes('<feff')) return [];
+  if (!/<feff/iu.test(rawText)) return [];
   const results: string[] = [];
   PDF_UTF16BE_HEX_STRING_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -141,38 +141,65 @@ export function buildNormalizedDlpSurfaces(
   options?: DlpScanOptions,
   extraArchiveTexts: readonly string[] = [],
 ): string[] {
-  const rawTexts: string[] = [];
+  const metadataTexts: string[] = [];
+  const bodyAndArchiveTexts: string[] = [];
 
-  if (options?.requestUri) rawTexts.push(options.requestUri);
-  if (options?.httpUri) rawTexts.push(options.httpUri);
-  if (options?.httpHeaders) {
-    for (const [k, v] of Object.entries(options.httpHeaders)) {
-      rawTexts.push(`${k}: ${v}`);
+  if (options?.requestUri) metadataTexts.push(options.requestUri);
+  if (options?.httpUri) metadataTexts.push(options.httpUri);
+  const seenHeaderLines = new Set<string>();
+  for (const headerMap of [
+    options?.httpRequestHeaders,
+    options?.httpResponseHeaders,
+    options?.httpHeaders,
+  ]) {
+    if (!headerMap) continue;
+    for (const [k, v] of Object.entries(headerMap)) {
+      const line = `${k}: ${v}`;
+      if (!seenHeaderLines.has(line)) {
+        seenHeaderLines.add(line);
+        metadataTexts.push(line);
+      }
     }
   }
   if (options?.icapHeaders) {
     for (const [k, v] of Object.entries(options.icapHeaders)) {
       if (k !== 'encapsulated' && k !== 'preview' && k !== 'host') {
-        rawTexts.push(`${k}: ${v}`);
+        metadataTexts.push(`${k}: ${v}`);
       }
     }
   }
 
   if (bodyBuffer.length > 0) {
     const utf8Body = bodyBuffer.toString('utf8');
-    rawTexts.push(utf8Body);
-    rawTexts.push(...extractPdfUtf16BeHexSurfaces(utf8Body));
-    rawTexts.push(...extractUtf16Surfaces(bodyBuffer));
+    bodyAndArchiveTexts.push(utf8Body);
+    bodyAndArchiveTexts.push(...extractPdfUtf16BeHexSurfaces(utf8Body));
+    bodyAndArchiveTexts.push(...extractUtf16Surfaces(bodyBuffer));
   }
-  rawTexts.push(...extraArchiveTexts);
+  bodyAndArchiveTexts.push(...extraArchiveTexts);
 
-  const urlDecoded = rawTexts
+  const bodyUrlDecoded = bodyAndArchiveTexts
+    .filter((t) => t.includes('%') || t.includes('+'))
+    .map((t) => decodeUrlPercentEscapes(t));
+  const metadataUrlDecoded = metadataTexts
     .filter((t) => t.includes('%') || t.includes('+'))
     .map((t) => decodeUrlPercentEscapes(t));
 
-  const base64Decoded = extractBase64CandidateTexts([...rawTexts, ...urlDecoded]);
+  // Prioritize HTTP body & archive surfaces ahead of headers/URIs so attacker-padded headers
+  // cannot exhaust MAX_BASE64_CANDIDATES (64) and mask a Base64-encoded leak in the payload body.
+  const base64Decoded = extractBase64CandidateTexts([
+    ...bodyAndArchiveTexts,
+    ...bodyUrlDecoded,
+    ...metadataTexts,
+    ...metadataUrlDecoded,
+  ]);
 
-  return [...rawTexts, ...urlDecoded, ...base64Decoded]
+  return [
+    ...metadataTexts,
+    ...bodyAndArchiveTexts,
+    ...metadataUrlDecoded,
+    ...bodyUrlDecoded,
+    ...base64Decoded,
+  ]
     .map((s) => normalizeDlpText(s))
     .filter((s) => s.length > 0);
 }

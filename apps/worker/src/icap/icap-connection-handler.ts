@@ -1,6 +1,7 @@
 import type * as net from 'node:net';
 import { IcapParser } from './icap-parser.js';
 import { IcapChunkStreamTracker } from './icap-content-decoder.js';
+import { hasEncapsulatedHttpBody } from './icap-http-body.js';
 import { buildOptionsResponse, buildProtocolErrorResponse } from './icap-wire-responses.js';
 import type { IcapServerMetrics, ResolvedIcapConfig } from './icap-alert-sink.js';
 import {
@@ -125,9 +126,10 @@ export function attachIcapConnectionHandler(ctx: IcapConnectionContext): void {
           }
 
           headersValidated = true;
-          isPreviewRequest = Boolean(request.isPreview);
+          const hasEncapsulatedBody = hasEncapsulatedHttpBody(request.encapsulated);
+          isPreviewRequest = Boolean(request.isPreview && hasEncapsulatedBody);
           newChunksForTracker = [];
-          if (request.encapsulated.nullBody === undefined && bodyOffset !== undefined) {
+          if (hasEncapsulatedBody && bodyOffset !== undefined) {
             bodyStartOffset = icapHeaderEnd + 4 + bodyOffset;
             chunkTracker = new IcapChunkStreamTracker();
             if (bodyStartOffset < accumulated.length) {
@@ -155,10 +157,12 @@ export function attachIcapConnectionHandler(ctx: IcapConnectionContext): void {
 
         const consumed = request.consumedBytes ?? totalReceivedBytes;
         const wantsKeepAlive = request.headers['connection']?.toLowerCase() === 'keep-alive';
+        const hadPipelinedBytesBeforeEval = totalReceivedBytes > consumed;
+        const keepAlive = wantsKeepAlive || hadPipelinedBytesBeforeEval;
         const outcome = await executeIcapDlpEvaluation({
           request,
           state,
-          keepAlive: wantsKeepAlive || totalReceivedBytes > consumed,
+          keepAlive,
           config,
           metrics,
           semaphore,
@@ -179,7 +183,7 @@ export function attachIcapConnectionHandler(ctx: IcapConnectionContext): void {
 
         const remaining = consolidateBuffer().subarray(consumed);
         resetForRemainingBytes(remaining);
-        if (!wantsKeepAlive && remaining.length === 0) {
+        if (!keepAlive) {
           closedForProtocol = true;
           replyAndClose(outcome.payload);
           return;

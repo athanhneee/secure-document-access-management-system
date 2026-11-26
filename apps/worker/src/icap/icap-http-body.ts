@@ -3,6 +3,8 @@ import type { IcapMethod, EncapsulatedSection } from './icap.types.js';
 export interface ExtractedEncapsulatedPayload {
   incompleteHeaders: boolean;
   httpHeaders?: Record<string, string>;
+  httpRequestHeaders?: Record<string, string>;
+  httpResponseHeaders?: Record<string, string>;
   httpMethod?: string;
   httpUri?: string;
   httpStatusCode?: number;
@@ -11,6 +13,17 @@ export interface ExtractedEncapsulatedPayload {
   isComplete: boolean;
   consumedBytes: number;
   isPreviewIof: boolean;
+}
+
+/**
+ * Thuật toán: Kiểm tra gói tin ICAP có thực sự mang phân đoạn thân dữ liệu HTTP (`req-body` hoặc `res-body`)
+ * và không bị đánh dấu `null-body` theo RFC 3507 §4.4.1 & §4.5 hay không.
+ */
+export function hasEncapsulatedHttpBody(encapsulated: EncapsulatedSection): boolean {
+  return (
+    encapsulated.nullBody === undefined &&
+    (encapsulated.reqBody !== undefined || encapsulated.resBody !== undefined)
+  );
 }
 
 /**
@@ -139,10 +152,53 @@ export function decodeIcapChunks(
   };
 }
 
+interface ParsedHttpHeaderSection {
+  httpMethod?: string;
+  httpUri?: string;
+  httpStatusCode?: number;
+  httpStatusMessage?: string;
+  headers: Record<string, string>;
+}
+
 /**
- * Thuật toán: Trích Xuất Phân Đoạn HTTP Header Đóng Gói & Giải Mã Thân Dữ Liệu (Encapsulated HTTP Payload Extractor)
- * Cơ chế: Kiểm tra tính đơn điệu của byte-offset `Encapsulated`, tách dòng trạng thái/yêu cầu HTTP, gọi `decodeIcapChunks`
- * và trả về chính xác `consumedBytes` phục vụ cắt phần dư pipelining trên cùng kết nối TCP.
+ * Thuật toán: Phân tích một phân đoạn HTTP Header đơn lẻ (`req-hdr` hoặc `res-hdr`),
+ * giữ nguyên dòng yêu cầu / dòng trạng thái và gộp các header trùng tên bằng `, ` để không mất dữ liệu DLP.
+ */
+function parseHttpHeaderBlock(httpHeaderText: string): ParsedHttpHeaderSection {
+  const httpLines = httpHeaderText.split('\r\n');
+  const firstHttpLine = httpLines[0]?.trim();
+  const parsed: ParsedHttpHeaderSection = { headers: {} };
+
+  if (firstHttpLine) {
+    const parts = firstHttpLine.split(/\s+/u);
+    if (firstHttpLine.startsWith('HTTP/')) {
+      parsed.httpStatusCode = parseInt(parts[1] ?? '200', 10);
+      parsed.httpStatusMessage = parts.slice(2).join(' ');
+    } else {
+      if (parts[0]) parsed.httpMethod = parts[0];
+      if (parts[1]) parsed.httpUri = parts[1];
+    }
+  }
+
+  for (let j = 1; j < httpLines.length; j++) {
+    const hLine = httpLines[j]?.trim();
+    if (!hLine) continue;
+    const cIdx = hLine.indexOf(':');
+    if (cIdx !== -1) {
+      const key = hLine.slice(0, cIdx).trim().toLowerCase();
+      const val = hLine.slice(cIdx + 1).trim();
+      const existing = parsed.headers[key];
+      parsed.headers[key] = existing !== undefined ? `${existing}, ${val}` : val;
+    }
+  }
+
+  return parsed;
+}
+
+/**
+ * Thuật toán: Trích Xuất Phân Đoạn HTTP Header Đóng Gói (`req-hdr` + `res-hdr` độc lập chuẩn RFC 3507 §4.9) & Giải Mã Thân Dữ Liệu.
+ * Cơ chế: Kiểm tra tính đơn điệu của byte-offset `Encapsulated`, phân tích độc lập cả `req-hdr` lẫn `res-hdr` khi cả hai cùng tồn tại,
+ * bảo toàn `httpMethod`/`httpUri` từ `req-hdr`, mã trạng thái từ `res-hdr` và gộp headers của cả hai không ghi đè mất bí mật cho DLP.
  */
 export function extractEncapsulatedHttpPayload(
   method: IcapMethod,
@@ -151,24 +207,37 @@ export function extractEncapsulatedHttpPayload(
   options?: { expectPostPreviewTerminator?: boolean | undefined },
 ): ExtractedEncapsulatedPayload {
   let httpHeaders: Record<string, string> | undefined;
+  let httpRequestHeaders: Record<string, string> | undefined;
+  let httpResponseHeaders: Record<string, string> | undefined;
   let httpMethod: string | undefined;
   let httpUri: string | undefined;
   let httpStatusCode: number | undefined;
   let httpStatusMessage: string | undefined;
 
   const bodyOffset = encapsulated.resBody ?? encapsulated.reqBody;
+  const tailOffset = bodyOffset ?? encapsulated.nullBody;
+
+  if (method !== 'OPTIONS' && tailOffset === undefined) {
+    throw new Error('ICAP_400: Missing Encapsulated body or null-body offset');
+  }
 
   if (encapsulated.resHdr !== undefined || encapsulated.reqHdr !== undefined) {
-    const httpHeaderStart = encapsulated.resHdr ?? encapsulated.reqHdr!;
-    const httpHeaderEnd = bodyOffset ?? encapsulated.nullBody ?? remainingBuffer.length;
+    const hasReqHdr = encapsulated.reqHdr !== undefined;
+    const hasResHdr = encapsulated.resHdr !== undefined;
 
-    if (httpHeaderEnd < httpHeaderStart) {
+    if (hasReqHdr && hasResHdr && encapsulated.resHdr! < encapsulated.reqHdr!) {
+      throw new Error('ICAP_400: Invalid Encapsulated section ordering');
+    }
+
+    const lastHeaderStart = hasResHdr ? encapsulated.resHdr! : encapsulated.reqHdr!;
+    const headerRegionEnd = tailOffset ?? remainingBuffer.length;
+    if (headerRegionEnd < lastHeaderStart) {
       throw new Error('ICAP_400: Invalid Encapsulated section ordering');
     }
 
     if (
-      (bodyOffset !== undefined || encapsulated.nullBody !== undefined) &&
-      remainingBuffer.length < httpHeaderEnd
+      (tailOffset !== undefined && remainingBuffer.length < tailOffset) ||
+      (hasReqHdr && hasResHdr && remainingBuffer.length < encapsulated.resHdr!)
     ) {
       return {
         incompleteHeaders: true,
@@ -179,33 +248,53 @@ export function extractEncapsulatedHttpPayload(
       };
     }
 
-    if (httpHeaderStart < remainingBuffer.length) {
-      const httpHeaderText = remainingBuffer
-        .subarray(httpHeaderStart, Math.min(httpHeaderEnd, remainingBuffer.length))
+    const mergedHeaders: Record<string, string> = {};
+    let parsedAnyHeaderBlock = false;
+
+    if (hasReqHdr && encapsulated.reqHdr! < remainingBuffer.length) {
+      const reqEnd = hasResHdr ? encapsulated.resHdr! : headerRegionEnd;
+      const reqText = remainingBuffer
+        .subarray(encapsulated.reqHdr!, Math.min(reqEnd, remainingBuffer.length))
         .toString('utf-8');
-      const httpLines = httpHeaderText.split('\r\n');
-      const firstHttpLine = httpLines[0]?.trim();
+      const reqParsed = parseHttpHeaderBlock(reqText);
+      parsedAnyHeaderBlock = true;
+      httpMethod = reqParsed.httpMethod;
+      httpUri = reqParsed.httpUri;
+      httpRequestHeaders = reqParsed.headers;
+      for (const [k, v] of Object.entries(reqParsed.headers)) {
+        mergedHeaders[k] = v;
+      }
+    }
 
-      if (firstHttpLine) {
-        const parts = firstHttpLine.split(/\s+/u);
-        if (firstHttpLine.startsWith('HTTP/')) {
-          httpStatusCode = parseInt(parts[1] ?? '200', 10);
-          httpStatusMessage = parts.slice(2).join(' ');
+    if (hasResHdr && encapsulated.resHdr! < remainingBuffer.length) {
+      const resText = remainingBuffer
+        .subarray(encapsulated.resHdr!, Math.min(headerRegionEnd, remainingBuffer.length))
+        .toString('utf-8');
+      const resParsed = parseHttpHeaderBlock(resText);
+      parsedAnyHeaderBlock = true;
+      if (resParsed.httpStatusCode !== undefined) httpStatusCode = resParsed.httpStatusCode;
+      if (resParsed.httpStatusMessage !== undefined) {
+        httpStatusMessage = resParsed.httpStatusMessage;
+      }
+      if (httpMethod === undefined && resParsed.httpMethod !== undefined) {
+        httpMethod = resParsed.httpMethod;
+      }
+      if (httpUri === undefined && resParsed.httpUri !== undefined) {
+        httpUri = resParsed.httpUri;
+      }
+      httpResponseHeaders = resParsed.headers;
+      for (const [k, v] of Object.entries(resParsed.headers)) {
+        const existing = mergedHeaders[k];
+        if (k === 'content-encoding' || existing === undefined || existing === v) {
+          mergedHeaders[k] = v;
         } else {
-          httpMethod = parts[0];
-          httpUri = parts[1];
+          mergedHeaders[k] = `${existing}, ${v}`;
         }
       }
+    }
 
-      httpHeaders = {};
-      for (let j = 1; j < httpLines.length; j++) {
-        const hLine = httpLines[j]?.trim();
-        if (!hLine) continue;
-        const cIdx = hLine.indexOf(':');
-        if (cIdx !== -1) {
-          httpHeaders[hLine.slice(0, cIdx).trim().toLowerCase()] = hLine.slice(cIdx + 1).trim();
-        }
-      }
+    if (parsedAnyHeaderBlock) {
+      httpHeaders = mergedHeaders;
     }
   }
 
@@ -228,6 +317,8 @@ export function extractEncapsulatedHttpPayload(
   return {
     incompleteHeaders: false,
     ...(httpHeaders !== undefined ? { httpHeaders } : {}),
+    ...(httpRequestHeaders !== undefined ? { httpRequestHeaders } : {}),
+    ...(httpResponseHeaders !== undefined ? { httpResponseHeaders } : {}),
     ...(httpMethod !== undefined ? { httpMethod } : {}),
     ...(httpUri !== undefined ? { httpUri } : {}),
     ...(httpStatusCode !== undefined ? { httpStatusCode } : {}),

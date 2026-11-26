@@ -142,6 +142,29 @@ export async function cleanExpiredExportJobs(options?: {
             }
           }
         }
+      } else if (safeId) {
+        // CONFLICT-RESOLVED: Xóa cả đối tượng `exports/<safeId>.dat` trên S3/R2 lẫn bản gương cục bộ khi `file_path === null` (ví dụ Worker sập ngay sau khi upload S3 nhưng trước khi cập nhật CSDL — BUG-067).
+        if (s3Enabled) {
+          try {
+            const removedRemote = await deleteExportCiphertextFromS3(safeId);
+            deletedForCurrentJob = deletedForCurrentJob || removedRemote;
+          } catch (s3Err) {
+            console.warn(
+              `Export cleanup failed to delete orphaned S3 object for null-path job ${job.id}: ${s3Err instanceof Error ? s3Err.message : String(s3Err)}`,
+            );
+            continue;
+          }
+        }
+        const mirrorLocal = path.resolve(resolvedBaseDir, `${safeId}.dat`);
+        try {
+          const stat = await fsp.lstat(mirrorLocal);
+          if (stat.isFile()) {
+            await fsp.unlink(mirrorLocal);
+            deletedForCurrentJob = true;
+          }
+        } catch {
+          // Ignore ENOENT when no orphaned local artifact exists
+        }
       }
 
       if (deletedForCurrentJob) {

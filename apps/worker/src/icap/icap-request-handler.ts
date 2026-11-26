@@ -1,4 +1,5 @@
 import { DlpEngine } from './dlp-engine.js';
+import { hasEncapsulatedHttpBody } from './icap-http-body.js';
 import {
   build204Response,
   buildBlockResponse,
@@ -93,22 +94,38 @@ export async function executeIcapDlpEvaluation(
 ): Promise<IcapEvaluationOutcome> {
   const { request, state, keepAlive, config, metrics, semaphore, onViolationCallback } = ctx;
 
+  const hasEncapsulatedBody = hasEncapsulatedHttpBody(request.encapsulated);
   const isIncompletePreviewPhase = Boolean(
-    request.isPreview && !request.isPreviewIof && !state.continuedAfterPreview,
+    hasEncapsulatedBody &&
+    request.isPreview &&
+    !request.isPreviewIof &&
+    !state.continuedAfterPreview,
   );
 
   const release = await semaphore.acquire();
   let scanResult: DlpScanResult;
   try {
+    const bodyContentEncoding =
+      request.encapsulated.resBody !== undefined
+        ? request.httpResponseHeaders !== undefined
+          ? request.httpResponseHeaders['content-encoding']
+          : request.httpHeaders?.['content-encoding']
+        : request.encapsulated.reqBody !== undefined
+          ? (request.httpRequestHeaders?.['content-encoding'] ??
+            request.httpHeaders?.['content-encoding'])
+          : undefined;
+
     scanResult = await DlpEngine.scanPayloadAsync(request.body, {
       customKeywords: config.customKeywords,
       action: config.action,
-      contentEncoding: request.httpHeaders?.['content-encoding'],
+      contentEncoding: bodyContentEncoding,
       allowTruncatedPreview: isIncompletePreviewPhase,
       maxBodyBytes: config.maxBodyBytes,
       requestUri: request.uri,
       httpUri: request.httpUri,
       httpHeaders: request.httpHeaders,
+      httpRequestHeaders: request.httpRequestHeaders,
+      httpResponseHeaders: request.httpResponseHeaders,
       icapHeaders: request.headers,
     });
   } finally {
@@ -116,6 +133,7 @@ export async function executeIcapDlpEvaluation(
   }
 
   if (
+    hasEncapsulatedBody &&
     request.isPreview &&
     !request.isPreviewIof &&
     !state.continuedAfterPreview &&

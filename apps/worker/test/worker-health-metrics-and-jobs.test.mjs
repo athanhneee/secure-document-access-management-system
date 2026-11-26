@@ -173,7 +173,7 @@ test('DerivativeCleanupJob & AuditVerificationJob — expires idle sessions and 
   });
   assert.equal(expiredCount, 4);
   assert.equal(capturedWhere.status, 'ACTIVE');
-  assert.equal(capturedStatus, 'EXPIRED');
+  assert.equal(capturedStatus, 'ENDED');
 
   const key = 'audit-anchor-resume-secret-key-at-least-32-chars!';
   const anchorHash = 'a'.repeat(64);

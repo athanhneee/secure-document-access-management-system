@@ -43,6 +43,8 @@ export interface DlpScanOptions {
   requestUri?: string | undefined;
   httpUri?: string | undefined;
   httpHeaders?: Record<string, string> | undefined;
+  httpRequestHeaders?: Record<string, string> | undefined;
+  httpResponseHeaders?: Record<string, string> | undefined;
   icapHeaders?: Record<string, string> | undefined;
 }
 
@@ -62,6 +64,8 @@ export interface IcapRequest {
   encapsulated: EncapsulatedSection;
   previewBytes?: number | undefined;
   httpHeaders?: Record<string, string> | undefined;
+  httpRequestHeaders?: Record<string, string> | undefined;
+  httpResponseHeaders?: Record<string, string> | undefined;
   httpMethod?: string | undefined;
   httpUri?: string | undefined;
   httpStatusCode?: number | undefined;

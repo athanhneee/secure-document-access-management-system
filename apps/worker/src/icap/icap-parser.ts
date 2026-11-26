@@ -120,6 +120,12 @@ export class IcapParser {
       ...(previewBytes !== undefined ? { previewBytes, isPreview: true } : {}),
       ...(payload.isPreviewIof ? { isPreviewIof: true } : {}),
       ...(payload.httpHeaders !== undefined ? { httpHeaders: payload.httpHeaders } : {}),
+      ...(payload.httpRequestHeaders !== undefined
+        ? { httpRequestHeaders: payload.httpRequestHeaders }
+        : {}),
+      ...(payload.httpResponseHeaders !== undefined
+        ? { httpResponseHeaders: payload.httpResponseHeaders }
+        : {}),
       ...(payload.httpMethod !== undefined ? { httpMethod: payload.httpMethod } : {}),
       ...(payload.httpUri !== undefined ? { httpUri: payload.httpUri } : {}),
       ...(payload.httpStatusCode !== undefined ? { httpStatusCode: payload.httpStatusCode } : {}),

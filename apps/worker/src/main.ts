@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseEnv } from 'node:util';
+import { resolvePrimaryAuditHmacKeyFromEnv } from '@sda/contracts';
+import { disconnectDatabase } from '@sda/database';
 import { waitForShutdown } from './lifecycle.js';
 import { startGrantExpiryJob } from './grant-expiry-job.js';
 import { startDerivativeCleanupJob } from './derivative-cleanup-job.js';
@@ -81,28 +83,14 @@ process.once('SIGINT', requestShutdown);
 process.once('SIGTERM', requestShutdown);
 
 const GRANT_EXPIRY_INTERVAL_MS = resolvePositiveNumberEnv('GRANT_EXPIRY_INTERVAL_MS', 60_000);
-const configuredAuditHmacKey =
-  process.env['AUDIT_INTEGRITY_KEY'] ??
-  process.env['DOCUMENT_AUDIT_HMAC_KEY'] ??
-  process.env['AUDIT_HMAC_KEY'];
-
-// Thuật toán: Kiểm tra điều kiện tiên quyết mật mã Fail-Fast trên môi trường Production/Staging chống chạy với khóa yếu/mặc định
-if (process.env['NODE_ENV'] === 'production' || process.env['NODE_ENV'] === 'staging') {
-  if (
-    !configuredAuditHmacKey ||
-    configuredAuditHmacKey.length < 32 ||
-    configuredAuditHmacKey.includes('local-only-') ||
-    configuredAuditHmacKey.toLowerCase().includes('change-me')
-  ) {
-    throw new Error(
-      'AUDIT_INTEGRITY_KEY (>= 32 random chars, non-placeholder) is mandatory when running worker in production or staging.',
-    );
-  }
+// CONFLICT-RESOLVED: Dùng chung `resolvePrimaryAuditHmacKeyFromEnv` từ `@sda/contracts` theo đúng thứ tự ưu tiên `AUDIT_INTEGRITY_KEY` -> `DOCUMENT_AUDIT_HMAC_KEY` -> `AUTH_AUDIT_HMAC_KEY` -> `AUDIT_HMAC_KEY` kèm `.trim()` và kiểm định Fail-Fast trên `production`/`staging` đồng nhất 100% với `@sda/api` (BUG-065).
+const IS_STRICT_ENV =
+  process.env['NODE_ENV'] === 'production' || process.env['NODE_ENV'] === 'staging';
+const GRANT_AUDIT_HMAC_KEY = resolvePrimaryAuditHmacKeyFromEnv(process.env);
+if (IS_STRICT_ENV && GRANT_AUDIT_HMAC_KEY.length < 32) {
+  throw new Error('Audit HMAC key must be at least 32 characters in production or staging.');
 }
-
-const GRANT_AUDIT_HMAC_KEY =
-  configuredAuditHmacKey ?? 'local-only-audit-integrity-hmac-key-0000000000000000';
-const AUDIT_KEY_ROTATION_JSON = process.env['AUDIT_KEY_ROTATION_JSON'];
+const AUDIT_KEY_ROTATION_JSON = process.env['AUDIT_KEY_ROTATION_JSON']?.trim() || undefined;
 
 const DERIVATIVE_CLEANUP_INTERVAL_MS = resolvePositiveNumberEnv(
   'DERIVATIVE_CLEANUP_INTERVAL_MS',
@@ -114,6 +102,10 @@ const AUTH_SESSION_CLEANUP_INTERVAL_MS = resolvePositiveNumberEnv(
   300_000,
 );
 const AUDIT_VERIFY_INTERVAL_MS = resolvePositiveNumberEnv('AUDIT_VERIFY_INTERVAL_MS', 300_000);
+const AUDIT_FULL_VERIFY_EVERY_N_SWEEPS = resolvePositiveNumberEnv(
+  'AUDIT_FULL_VERIFY_EVERY_N_SWEEPS',
+  12,
+);
 const SECURITY_DETECTION_INTERVAL_MS = resolvePositiveNumberEnv(
   'SECURITY_DETECTION_INTERVAL_MS',
   60_000,
@@ -130,7 +122,14 @@ const EXPORT_CLEANUP_INTERVAL_MS = resolvePositiveNumberEnv('EXPORT_CLEANUP_INTE
 
 // Thuật toán: Khởi chạy điều phối song song máy chủ Health/Metrics và 9 tác vụ nền gắn kết chung tín hiệu hủy tập trung
 const icapServer = startIcapServerJob(undefined, shutdown.signal);
-startWorkerHealthServer({ getIcapStatus: () => icapServer.getStatusSnapshot() }, shutdown.signal);
+const healthServer = startWorkerHealthServer(
+  { getIcapStatus: () => icapServer.getStatusSnapshot() },
+  shutdown.signal,
+);
+healthServer.ready.catch((err: unknown) => {
+  console.error('[Worker Health] Failed to bind health/metrics server:', err);
+  shutdown.abort();
+});
 startGrantExpiryJob(
   GRANT_EXPIRY_INTERVAL_MS,
   GRANT_AUDIT_HMAC_KEY,
@@ -144,6 +143,7 @@ startAuditVerificationJob(
   GRANT_AUDIT_HMAC_KEY,
   shutdown.signal,
   AUDIT_KEY_ROTATION_JSON,
+  { fullScanEveryNSweeps: AUDIT_FULL_VERIFY_EVERY_N_SWEEPS },
 );
 startSecurityDetectionJob(SECURITY_DETECTION_INTERVAL_MS, shutdown.signal);
 startNotificationOutboxJob(NOTIFICATION_OUTBOX_INTERVAL_MS, shutdown.signal);
@@ -155,6 +155,7 @@ console.info(
 );
 try {
   await waitForShutdown(shutdown.signal);
+  await Promise.allSettled([healthServer.stop(), icapServer.stop(), disconnectDatabase()]);
   console.info('Worker stopped cleanly.');
 } finally {
   process.removeListener('SIGINT', requestShutdown);

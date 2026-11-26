@@ -133,14 +133,21 @@ export function renderWorkerPrometheusMetrics(): string {
     '# TYPE sda_audit_integrity_compromised_total counter',
   );
 
-  if (auditCompromisedByPartition.size === 0) {
-    lines.push('sda_audit_integrity_compromised_total{partition="ALL",source="worker"} 0');
-  } else {
-    for (const [partition, count] of auditCompromisedByPartition.entries()) {
-      lines.push(
-        `sda_audit_integrity_compromised_total{partition="${partition}",source="worker"} ${count}`,
-      );
-    }
+  const canonicalPartitions = ['GLOBAL', 'AUTH', 'DOCUMENT', 'SECURITY', 'AUDIT'] as const;
+  const emittedPartitions = new Set<string>();
+  lines.push('sda_audit_integrity_compromised_total{partition="ALL",source="worker"} 0');
+  for (const partition of canonicalPartitions) {
+    const count = auditCompromisedByPartition.get(partition) ?? 0;
+    emittedPartitions.add(partition);
+    lines.push(
+      `sda_audit_integrity_compromised_total{partition="${partition}",source="worker"} ${count}`,
+    );
+  }
+  for (const [partition, count] of auditCompromisedByPartition.entries()) {
+    if (emittedPartitions.has(partition)) continue;
+    lines.push(
+      `sda_audit_integrity_compromised_total{partition="${partition}",source="worker"} ${count}`,
+    );
   }
 
   let totalAuditViolations = 0;

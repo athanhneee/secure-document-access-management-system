@@ -11,13 +11,30 @@ import tls from 'node:tls';
 export const WORKER_REALTIME_CHANNEL = 'sda:realtime:events';
 
 export type WorkerRealtimeEventType =
-  'NOTIFICATION_CREATED' | 'EXPORT_JOB_UPDATED' | 'SECURITY_ALERT_UPDATED';
+  | 'NOTIFICATION_CREATED'
+  | 'EXPORT_JOB_UPDATED'
+  | 'SECURITY_ALERT_UPDATED'
+  | 'ACCESS_GRANT_UPDATED'
+  | 'ACCESS_SESSION_UPDATED'
+  | 'USER_SESSION_REVOKED';
 
 export interface WorkerRealtimePublishInput {
   type: WorkerRealtimeEventType;
   targetUserIds?: readonly string[] | undefined;
+  targetSessionIds?: readonly string[] | undefined;
   targetRoles?: readonly string[] | undefined;
+  targetDepartmentId?: string | null | undefined;
   payload: Record<string, unknown>;
+}
+
+type WorkerRealtimeObserver = (event: WorkerRealtimePublishInput) => void;
+let testObserver: WorkerRealtimeObserver | null = null;
+
+/**
+ * Thuật toán: Đăng ký hàm quan sát sự kiện thời gian thực phục vụ kiểm thử đơn vị của tiến trình Worker mà không cần socket Redis thật.
+ */
+export function setWorkerRealtimeTestObserver(observer: WorkerRealtimeObserver | null): void {
+  testObserver = observer;
 }
 
 /** Thuật toán: Mã hóa mảng tham số lệnh Redis sang khung giao thức RESP2 (`*N\r\n$len\r\narg\r\n`). */
@@ -34,6 +51,13 @@ function encodeRespCommand(args: readonly string[]): string {
  * để `@sda/api` đẩy tức thì xuống trình duyệt qua SSE.
  */
 export async function publishWorkerRealtimeEvent(input: WorkerRealtimePublishInput): Promise<void> {
+  if (testObserver) {
+    try {
+      testObserver(input);
+    } catch {
+      // Ignore observer callback errors
+    }
+  }
   const isTest = process.env['NODE_ENV'] === 'test' || Boolean(process.env['NODE_TEST_CONTEXT']);
   const redisUrl = process.env['REDIS_URL']?.trim();
   if (isTest || !redisUrl) return;
@@ -58,8 +82,14 @@ export async function publishWorkerRealtimeEvent(input: WorkerRealtimePublishInp
     ...(input.targetUserIds && input.targetUserIds.length > 0
       ? { targetUserIds: [...new Set(input.targetUserIds)] }
       : {}),
+    ...(input.targetSessionIds && input.targetSessionIds.length > 0
+      ? { targetSessionIds: [...new Set(input.targetSessionIds)] }
+      : {}),
     ...(input.targetRoles && input.targetRoles.length > 0
       ? { targetRoles: [...new Set(input.targetRoles)] }
+      : {}),
+    ...(input.targetDepartmentId !== undefined
+      ? { targetDepartmentId: input.targetDepartmentId }
       : {}),
     payload: input.payload,
   };

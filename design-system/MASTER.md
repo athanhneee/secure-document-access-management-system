@@ -153,6 +153,7 @@
 - ❌ Đóng hộp nền màu nhạt + viền bo tròn cho badge/tag trạng thái (vi phạm chuẩn phẳng `staff-001`).
 - ❌ Dùng Emoji hoặc thư viện icon khác ngoài `lucide-react`, hoặc tô nền/gradient trên icon.
 - ❌ Bỏ sót `cursor: pointer` hoặc trạng thái `:focus-visible` cho điều hướng bàn phím.
+- ❌ Bo vòng đỏ/hồng (`border`, `outline`, `ring` màu `#FF385C` / `#E31C5F`) quanh ô nhập liệu, `<select>`, nút bấm, thẻ hay mục điều hướng; mọi `:focus-visible` / viền focus phải dùng màu trung tính `#222222` và đặt `:focus-visible` toàn cục trong `@layer base` để không ghi đè `focus-visible:outline-none`.
 - ❌ Bỏ qua `@media (prefers-reduced-motion: reduce)` đối với chuyển động giao diện.
 - ❌ Render `<dialog open>` phi phương thức thay vì gọi `.showModal()` kèm bẫy tiêu điểm bàn phím và phím `Escape`.
 - ❌ Dùng hộp thoại trình duyệt thô `window.confirm` / `window.alert`, bỏ sót `htmlFor`/`id` trên `<label>` hoặc thiếu `aria-label` trên nút chỉ có icon.

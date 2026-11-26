@@ -124,6 +124,7 @@ Hiển thị dạng **Chấm tròn 6px (`.dot`) + Chữ in đậm cùng màu**:
   - Trang chính: `#ffffff`
   - Bề mặt phụ / Card hover: `#f7f7f7`
 - **Đường kẻ phân cách (Borders)**: Mảnh tinh tế `1px solid #ebebeb` hoặc `#dddddd`.
+- **CẤM TUYỆT ĐỐI VÒNG ĐỎ / VIỀN ĐỎ-HỒNG**: Nghiêm cấm đặt `border`, `outline`, `ring` màu `#FF385C` hoặc `#E31C5F` (kể cả ở trạng thái `:focus`, `:focus-visible`, `:hover`, active hay tĩnh) bao quanh ô nhập liệu, `<select>`, nút bấm, thẻ hay mục điều hướng. Mọi viền focus và vòng tiêu điểm bàn phím `:focus-visible` phải dùng màu trung tính `#222222` (khai báo `:focus-visible` trong `@layer base` của `globals.css` để không đè `focus-visible:outline-none`).
 
 ---
 

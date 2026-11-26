@@ -2,6 +2,10 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { apiClient, apiDownload, ApiError, verifyPdfMagicBytes } from '@/lib/api-client';
+import { shouldOfferMfaActionForError } from '@/lib/api-error-messages';
+import { useAuth } from '@/lib/auth-context';
+import { getOrCreateDeviceFingerprint } from '@/lib/device-fingerprint';
+import { subscribeRealtimeEvent } from '@/lib/realtime-events';
 import { resolveSafeDownloadFilename } from '@/app/reader/helpers';
 import { triggerBlobDownload } from '../helpers';
 import type { DocumentItem } from '../types';
@@ -22,29 +26,52 @@ function endAccessSessionFireAndForget(sessionId: string | null): void {
 }
 
 /**
- * Thuật toán: Mở Hộp Thoại Xem Trước Canvas Tức Thì Dưới 16ms & Tải Xuống Kèm `X-Access-Session-Id` (`useOwnerDelivery`)
- * Mục đích: Mở khung xem trước ngay lập tức (`< 0,1s`) trước khi khởi tạo phiên `VIEW`, tải từng trang qua Canvas `Uint8Array` (không tạo `blob:` URL), xác thực chữ ký đầu `%PDF-` và chống tranh chấp phản hồi mạng qua `previewReqIdRef` trên cả lần mở đầu lẫn chuyển trang.
+ * Thuật toán: Mở Hộp Thoại Xem Trước Canvas Sau Xác Thực Phiên Không Nháy Modal, Đính Kèm `deviceFingerprint`, Đồng Bộ Đóng Phiên SSE & Phản Hồi MFA (`useOwnerDelivery`)
+ * Mục đích:
+ *   - Phản hồi ngay `< 16ms` trên nút bấm qua `openingDocId`, đính kèm `deviceFingerprint`, chỉ mở khung xem trước sau khi PEP phê duyệt phiên `VIEW` (tránh nháy đóng sập modal khi nhận `403`).
+ *   - Tính giao quyền tải thực tế theo phiên (`sessionResult.allowDownload && hasPermission('DOCUMENT:DOWNLOAD') && !obligations.includes('FORBID_DOWNLOAD')`) không mutate đối tượng bảng nền, lắng nghe SSE `ACCESS_SESSION_UPDATED` gọi `closePreviewLocally(false)` không bắn lặp `/end`, lưu `failedPage` khi thử lại trang và quản lý tải song song qua `downloadingDocIds: ReadonlySet<string>`.
  */
 export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDeliveryParams) {
+  const { hasPermission } = useAuth();
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [openingDocId, setOpeningDocId] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentItem | null>(null);
   const [previewSessionId, setPreviewSessionId] = useState<string | null>(null);
   const [previewVersionNo, setPreviewVersionNo] = useState<number | null>(null);
+  const [previewAllowDownload, setPreviewAllowDownload] = useState(false);
+  const [previewObligations, setPreviewObligations] = useState<readonly string[]>([]);
   const [previewPdfBytes, setPreviewPdfBytes] = useState<Uint8Array | null>(null);
   const [previewPage, setPreviewPage] = useState(1);
+  const [failedPage, setFailedPage] = useState<number | null>(null);
   const [previewTotalPages, setPreviewTotalPages] = useState(1);
   const [previewPageError, setPreviewPageError] = useState<string | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
-  const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
+  const [mfaActionRequired, setMfaActionRequired] = useState(false);
+  const [downloadingDocIds, setDownloadingDocIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   const previewReqIdRef = useRef(0);
+  const previewAbortRef = useRef<AbortController | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
+  const previewDocRef = useRef<DocumentItem | null>(null);
+  const previewOpenRef = useRef(false);
 
   useEffect(() => {
     activeSessionIdRef.current = previewSessionId;
   }, [previewSessionId]);
 
   useEffect(() => {
+    previewDocRef.current = previewDoc;
+  }, [previewDoc]);
+
+  useEffect(() => {
+    previewOpenRef.current = previewOpen;
+  }, [previewOpen]);
+
+  useEffect(() => {
     return () => {
+      previewAbortRef.current?.abort();
+      previewAbortRef.current = null;
       if (activeSessionIdRef.current) {
         endAccessSessionFireAndForget(activeSessionIdRef.current);
         activeSessionIdRef.current = null;
@@ -52,31 +79,93 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
     };
   }, []);
 
-  const handleClosePreview = useCallback((open: boolean) => {
-    if (!open) {
-      previewReqIdRef.current += 1;
-      setIsLoadingPreview(false);
-      setPreviewPdfBytes(null);
-      setPreviewPageError(null);
-      const sid = activeSessionIdRef.current;
-      activeSessionIdRef.current = null;
-      setPreviewSessionId(null);
-      setPreviewVersionNo(null);
-      if (sid) {
-        endAccessSessionFireAndForget(sid);
-      }
+  const closePreviewLocally = useCallback((notifyServer: boolean) => {
+    previewReqIdRef.current += 1;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
+    setOpeningDocId(null);
+    setIsLoadingPreview(false);
+    setPreviewOpen(false);
+    setPreviewPdfBytes(null);
+    setPreviewPageError(null);
+    setFailedPage(null);
+    setPreviewAllowDownload(false);
+    setPreviewObligations([]);
+    const sid = activeSessionIdRef.current;
+    activeSessionIdRef.current = null;
+    setPreviewSessionId(null);
+    setPreviewVersionNo(null);
+    if (notifyServer && sid) {
+      endAccessSessionFireAndForget(sid);
     }
-    setPreviewOpen(open);
   }, []);
 
+  const handleClosePreview = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        closePreviewLocally(true);
+      } else {
+        setPreviewOpen(true);
+      }
+    },
+    [closePreviewLocally],
+  );
+
+  useEffect(() => {
+    const unsubSession = subscribeRealtimeEvent<{
+      id?: string;
+      sessionId?: string;
+      documentId?: string;
+      status?: string;
+      action?: string;
+      terminatedSessionIds?: string[];
+    }>('ACCESS_SESSION_UPDATED', (event) => {
+      if (!previewOpenRef.current) return;
+      const p = event.payload;
+      const isTerminated =
+        p?.status === 'TERMINATED' || p?.action === 'TERMINATED' || p?.action === 'GRANT_REVOKED';
+      if (!isTerminated) return;
+      const currentSid = activeSessionIdRef.current;
+      const currentDoc = previewDocRef.current;
+      const matchedBySession = Boolean(
+        currentSid &&
+        (p.sessionId === currentSid ||
+          p.id === currentSid ||
+          (Array.isArray(p.terminatedSessionIds) && p.terminatedSessionIds.includes(currentSid))),
+      );
+      const matchedByDoc = Boolean(
+        currentDoc && !p.sessionId && !p.id && p.documentId && p.documentId === currentDoc.id,
+      );
+      if (!matchedBySession && !matchedByDoc) return;
+      closePreviewLocally(false);
+      setMessage(null);
+      setErrorMessage(
+        'Phiên xem tài liệu đang mở đã bị chấm dứt bởi chính sách an ninh hoặc thao tác lưu trữ.',
+      );
+    });
+
+    return () => {
+      unsubSession();
+    };
+  }, [closePreviewLocally, setErrorMessage, setMessage]);
+
   async function handleOpenPreview(doc: DocumentItem) {
+    previewAbortRef.current?.abort();
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+
     if (activeSessionIdRef.current) {
       endAccessSessionFireAndForget(activeSessionIdRef.current);
       activeSessionIdRef.current = null;
     }
     const reqId = ++previewReqIdRef.current;
+    setOpeningDocId(doc.id);
     setPreviewPdfBytes(null);
     setPreviewPageError(null);
+    setFailedPage(null);
+    setPreviewAllowDownload(false);
+    setPreviewObligations([]);
+    setMfaActionRequired(false);
     setErrorMessage(null);
     setPreviewDoc(doc);
     setPreviewSessionId(null);
@@ -84,49 +173,73 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
     setPreviewPage(1);
     setPreviewTotalPages(1);
     setIsLoadingPreview(true);
-    setPreviewOpen(true);
 
     try {
-      const sessionResult = await apiClient<{ sessionId: string; versionNo?: number }>(
-        `/documents/${doc.id}/sessions`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ action: 'VIEW' }),
-        },
-      );
+      const deviceFingerprint = getOrCreateDeviceFingerprint();
+      const sessionPayload: { action: 'VIEW'; deviceFingerprint?: string } = { action: 'VIEW' };
+      if (deviceFingerprint) {
+        sessionPayload.deviceFingerprint = deviceFingerprint;
+      }
 
-      if (previewReqIdRef.current !== reqId) {
+      const sessionResult = await apiClient<{
+        sessionId: string;
+        versionNo?: number;
+        allowDownload?: boolean;
+        obligations?: string[];
+      }>(`/documents/${doc.id}/sessions`, {
+        method: 'POST',
+        body: JSON.stringify(sessionPayload),
+        signal: controller.signal,
+      });
+
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         endAccessSessionFireAndForget(sessionResult.sessionId);
         return;
       }
+
+      const obligations = Array.isArray(sessionResult.obligations) ? sessionResult.obligations : [];
+      const sessionAllowDownload = sessionResult.allowDownload === true;
+      const effectiveAllowDownload =
+        sessionAllowDownload &&
+        Boolean(doc.allowDownload) &&
+        hasPermission('DOCUMENT:DOWNLOAD') &&
+        !obligations.includes('FORBID_DOWNLOAD');
 
       activeSessionIdRef.current = sessionResult.sessionId;
       setPreviewSessionId(sessionResult.sessionId);
       setPreviewVersionNo(
         typeof sessionResult.versionNo === 'number' ? sessionResult.versionNo : null,
       );
+      setPreviewObligations(obligations);
+      setPreviewAllowDownload(effectiveAllowDownload);
+      setOpeningDocId(null);
+      setPreviewOpen(true);
 
       const pdfBlob = await apiDownload(`/documents/${doc.id}/preview/page/1`, {
         headers: { 'x-access-session-id': sessionResult.sessionId },
+        signal: controller.signal,
       });
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
       }
       if (!(await verifyPdfMagicBytes(pdfBlob))) {
         throw new Error('INVALID_PDF_MAGIC_BYTES');
       }
       const bytes = new Uint8Array(await pdfBlob.arrayBuffer());
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
       }
       setPreviewTotalPages(pdfBlob.totalPages && pdfBlob.totalPages > 0 ? pdfBlob.totalPages : 1);
       setPreviewPdfBytes(bytes);
     } catch (err) {
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
       }
-      handleClosePreview(false);
+      closePreviewLocally(true);
       if (err instanceof ApiError) {
+        if (shouldOfferMfaActionForError(err.errorCode, err.response?.details)) {
+          setMfaActionRequired(true);
+        }
         setErrorMessage(err.message || 'Không thể tải bản xem trước tài liệu. Vui lòng thử lại.');
       } else if (err instanceof Error && err.message === 'INVALID_PDF_MAGIC_BYTES') {
         setErrorMessage('Dữ liệu bản xem trước không hợp lệ nên hệ thống không thể hiển thị.');
@@ -135,6 +248,7 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
       }
     } finally {
       if (previewReqIdRef.current === reqId) {
+        setOpeningDocId(null);
         setIsLoadingPreview(false);
       }
     }
@@ -142,40 +256,59 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
 
   async function handlePageChange(newPage: number) {
     if (!previewDoc || !previewSessionId || newPage < 1 || newPage > previewTotalPages) return;
+    previewAbortRef.current?.abort();
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+
     const reqId = ++previewReqIdRef.current;
     setIsLoadingPreview(true);
     setPreviewPageError(null);
+    setMfaActionRequired(false);
     try {
       const pageBlob = await apiDownload(`/documents/${previewDoc.id}/preview/page/${newPage}`, {
         headers: { 'x-access-session-id': previewSessionId },
+        signal: controller.signal,
       });
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
       }
       if (!(await verifyPdfMagicBytes(pageBlob))) {
         throw new Error('INVALID_PDF_MAGIC_BYTES');
       }
       const bytes = new Uint8Array(await pageBlob.arrayBuffer());
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
       }
+      setFailedPage(null);
       setPreviewPdfBytes(bytes);
       setPreviewPage(newPage);
     } catch (err) {
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
+      }
+      if (
+        err instanceof ApiError &&
+        shouldOfferMfaActionForError(err.errorCode, err.response?.details)
+      ) {
+        setMfaActionRequired(true);
       }
       const isFatal =
         err instanceof ApiError &&
-        (err.status === 401 || err.status === 403 || err.errorCode === 'SESSION_TERMINATED');
+        (err.status === 401 ||
+          err.status === 403 ||
+          err.errorCode === 'SESSION_TERMINATED' ||
+          err.errorCode === 'SESSION_EXPIRED' ||
+          err.errorCode === 'GRANT_REVOKED' ||
+          err.errorCode === 'GRANT_EXPIRED');
       if (isFatal || (err instanceof Error && err.message === 'INVALID_PDF_MAGIC_BYTES')) {
-        handleClosePreview(false);
+        closePreviewLocally(false);
         setErrorMessage(
           err instanceof ApiError
             ? err.message || 'Không thể tải trang tài liệu. Vui lòng thử lại.'
             : 'Dữ liệu trang tài liệu không hợp lệ nên phiên xem đã được đóng.',
         );
       } else {
+        setFailedPage(newPage);
         setPreviewPageError(
           err instanceof ApiError
             ? err.message || `Không thể tải trang ${newPage}.`
@@ -189,22 +322,39 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
     }
   }
 
+  async function handleRetryPage() {
+    await handlePageChange(failedPage ?? previewPage);
+  }
+
   async function handleDownloadWithTicket(doc: DocumentItem) {
     if (!doc.allowDownload) {
       setErrorMessage('Tài liệu này chỉ được phép xem trực tuyến theo mức độ mật hiện hành.');
       return;
     }
 
-    setDownloadingDocId(doc.id);
+    setDownloadingDocIds((prev) => {
+      const next = new Set(prev);
+      next.add(doc.id);
+      return next;
+    });
     setErrorMessage(null);
+    setMfaActionRequired(false);
 
     let downloadSessionId: string | null = null;
     try {
+      const deviceFingerprint = getOrCreateDeviceFingerprint();
+      const sessionPayload: { action: 'DOWNLOAD'; deviceFingerprint?: string } = {
+        action: 'DOWNLOAD',
+      };
+      if (deviceFingerprint) {
+        sessionPayload.deviceFingerprint = deviceFingerprint;
+      }
+
       const sessionResult = await apiClient<{ sessionId: string }>(
         `/documents/${doc.id}/sessions`,
         {
           method: 'POST',
-          body: JSON.stringify({ action: 'DOWNLOAD' }),
+          body: JSON.stringify(sessionPayload),
         },
       );
       downloadSessionId = sessionResult.sessionId;
@@ -220,31 +370,46 @@ export function useOwnerDelivery({ setMessage, setErrorMessage }: UseOwnerDelive
         endAccessSessionFireAndForget(downloadSessionId);
       }
       if (err instanceof ApiError) {
+        if (shouldOfferMfaActionForError(err.errorCode, err.response?.details)) {
+          setMfaActionRequired(true);
+        }
         setErrorMessage(err.message || 'Không thể tải tài liệu.');
       } else {
         setErrorMessage('Đã xảy ra lỗi khi tạo bản sao tải về.');
       }
     } finally {
-      setDownloadingDocId(null);
+      setDownloadingDocIds((prev) => {
+        const next = new Set(prev);
+        next.delete(doc.id);
+        return next;
+      });
     }
   }
 
   return {
     previewOpen,
+    openingDocId,
     previewDoc,
     previewSessionId,
     previewVersionNo,
+    previewAllowDownload,
+    previewObligations,
     previewPdfBytes,
     previewPdfUrl: null as string | null,
     previewPage,
+    failedPage,
     previewTotalPages,
     previewPageError,
     isLoadingPreview,
-    downloadingDocId,
+    mfaActionRequired,
+    clearMfaActionRequired: () => setMfaActionRequired(false),
+    downloadingDocIds,
+    downloadingDocId: downloadingDocIds.values().next().value ?? null,
+    closePreviewLocally,
     handleClosePreview,
     handleOpenPreview,
     handlePageChange,
-    handleRetryPage: () => handlePageChange(previewPage),
+    handleRetryPage,
     handleDownloadWithTicket,
   };
 }

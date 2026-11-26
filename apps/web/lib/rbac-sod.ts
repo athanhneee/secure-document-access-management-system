@@ -66,6 +66,7 @@ export const SYSTEM_ROLE_ALLOWED_CODES: Readonly<Record<string, ReadonlySet<stri
     'WATERMARK_CONFIG_MANAGE',
     'SYSTEM_HEALTH_VIEW',
     'SYSTEM_HEALTH_MANAGE',
+    'NOTIFICATION_VIEW',
   ]),
   SECURITY_OFFICER: new Set([
     'AUDIT_VIEW',
@@ -76,6 +77,7 @@ export const SYSTEM_ROLE_ALLOWED_CODES: Readonly<Record<string, ReadonlySet<stri
     'INCIDENT_CREATE',
     'INCIDENT_MANAGE',
     'ACCESS_SESSION_TERMINATE',
+    'NOTIFICATION_VIEW',
   ]),
   AUDITOR: new Set([
     'AUDIT_VIEW',
@@ -83,6 +85,7 @@ export const SYSTEM_ROLE_ALLOWED_CODES: Readonly<Record<string, ReadonlySet<stri
     'ALERT_VIEW',
     'WATERMARK_TRACE',
     'SYSTEM_REPORT_EXPORT',
+    'NOTIFICATION_VIEW',
   ]),
   DOCUMENT_OWNER: new Set([
     'DOCUMENT_UPLOAD',
@@ -148,7 +151,6 @@ const BUSINESS_EXCLUSIVE_CODES = new Set([
   'ACCESS_GRANT_CREATE',
   'ACCESS_GRANT_REVOKE',
   'ACCESS_GRANT_VIEW',
-  'NOTIFICATION_VIEW',
 ]);
 
 export interface PermissionLike {
@@ -199,9 +201,7 @@ export function allowedArchetypesForPermission(
   if (
     BUSINESS_EXCLUSIVE_CODES.has(code) ||
     (resource !== undefined &&
-      ['DOCUMENT', 'DOCUMENT_VERSION', 'ACCESS_REQUEST', 'ACCESS_GRANT', 'NOTIFICATION'].includes(
-        resource,
-      ))
+      ['DOCUMENT', 'DOCUMENT_VERSION', 'ACCESS_REQUEST', 'ACCESS_GRANT'].includes(resource))
   ) {
     return ['BUSINESS_DOCUMENT'];
   }

@@ -1,6 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useId, useState, type FormEvent, type KeyboardEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react';
 import Link from 'next/link';
 import {
   AlertCircle,
@@ -52,6 +60,8 @@ export function MfaEnrollmentCard({
   onSwitchToVerify,
 }: MfaEnrollmentCardProps) {
   const tabBaseId = useId();
+  const webauthnTabRef = useRef<HTMLButtonElement | null>(null);
+  const totpTabRef = useRef<HTMLButtonElement | null>(null);
   const [enrollMethod, setEnrollMethod] = useState<EnrollMethod>(defaultMethod);
   const [enrollData, setEnrollData] = useState<MfaEnrollResponse | null>(null);
   const [totpAlreadyActive, setTotpAlreadyActive] = useState(false);
@@ -109,6 +119,11 @@ export function MfaEnrollmentCard({
       const next: EnrollMethod = enrollMethod === 'webauthn' ? 'totp' : 'webauthn';
       setEnrollMethod(next);
       setErrorMessage(null);
+      if (next === 'webauthn') {
+        webauthnTabRef.current?.focus();
+      } else {
+        totpTabRef.current?.focus();
+      }
     }
   }
 
@@ -138,8 +153,13 @@ export function MfaEnrollmentCard({
           body: JSON.stringify({ code: verificationCode.trim() }),
         },
       );
+      const codes = Array.isArray(res.recoveryCodes) ? res.recoveryCodes : [];
       setEnrolledUser(res.user ?? null);
-      setRecoveryCodes(res.recoveryCodes || []);
+      if (codes.length > 0) {
+        setRecoveryCodes(codes);
+      } else {
+        await onComplete(res.user ?? null);
+      }
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError
@@ -157,8 +177,13 @@ export function MfaEnrollmentCard({
     setIsRegisteringWebAuthn(true);
     try {
       const res = await executeWebAuthnRegistration(deviceLabel);
+      const codes = Array.isArray(res.recoveryCodes) ? res.recoveryCodes : [];
       setEnrolledUser(res.user ?? null);
-      setRecoveryCodes(res.recoveryCodes);
+      if (codes.length > 0) {
+        setRecoveryCodes(codes);
+      } else {
+        await onComplete(res.user ?? null);
+      }
     } catch (err: unknown) {
       setErrorMessage(formatWebAuthnError(err));
     } finally {
@@ -175,7 +200,7 @@ export function MfaEnrollmentCard({
     }
   }
 
-  if (recoveryCodes) {
+  if (recoveryCodes && recoveryCodes.length > 0) {
     return (
       <MfaRecoveryCodesCard
         recoveryCodes={recoveryCodes}
@@ -209,6 +234,7 @@ export function MfaEnrollmentCard({
           className="grid grid-cols-2 gap-1 rounded-full border border-[#ebebeb] bg-[#f7f7f7] p-1"
         >
           <button
+            ref={webauthnTabRef}
             id={webauthnTabId}
             type="button"
             role="tab"
@@ -230,6 +256,7 @@ export function MfaEnrollmentCard({
             <span className="truncate">Khóa bảo mật / Passkey</span>
           </button>
           <button
+            ref={totpTabRef}
             id={totpTabId}
             type="button"
             role="tab"
@@ -253,10 +280,7 @@ export function MfaEnrollmentCard({
         </div>
 
         {errorMessage && (
-          <Alert
-            variant="destructive"
-            className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
-          >
+          <Alert variant="destructive" className="rounded-[20px] text-xs">
             <AlertCircle
               size={16}
               strokeWidth={1.75}

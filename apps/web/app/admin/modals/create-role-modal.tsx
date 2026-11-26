@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import {
   Dialog,
@@ -22,6 +22,9 @@ interface CreateRoleModalProps {
   onError: (errorMessage: string) => void;
 }
 
+/**
+ * Thuật toán: Tạo Vai Trò Mới Kèm Dọn Sạch Trường Nháp Khi Đóng & Chặn Đóng Giữa Giao Tác (`CreateRoleModal`, BUG-095)
+ */
 export function CreateRoleModal({
   open,
   onOpenChange,
@@ -33,6 +36,28 @@ export function CreateRoleModal({
   const [newRoleName, setNewRoleName] = useState('');
   const [newRoleDesc, setNewRoleDesc] = useState('');
   const [isCreatingRole, setIsCreatingRole] = useState(false);
+
+  const resetForm = useCallback(() => {
+    setNewRoleCode('');
+    setNewRoleName('');
+    setNewRoleDesc('');
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      // oxlint-disable-next-line react/set-state-in-effect
+      resetForm();
+    }
+  }, [open, resetForm]);
+
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen && isCreatingRole) return;
+    if (!nextOpen) {
+      resetForm();
+      onClearError();
+    }
+    onOpenChange(nextOpen);
+  }
 
   async function handleCreateRole(e: FormEvent) {
     e.preventDefault();
@@ -54,10 +79,9 @@ export function CreateRoleModal({
       });
 
       const createdName = newRoleName.trim();
+      resetForm();
+      setIsCreatingRole(false);
       onOpenChange(false);
-      setNewRoleCode('');
-      setNewRoleName('');
-      setNewRoleDesc('');
       await onSuccess(`Đã tạo vai trò mới "${createdName}" thành công.`);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -65,14 +89,16 @@ export function CreateRoleModal({
       } else {
         onError('Đã xảy ra lỗi khi tạo vai trò.');
       }
-    } finally {
       setIsCreatingRole(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+      <DialogContent
+        showClose={!isCreatingRole}
+        className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+      >
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
             Tạo vai trò mới
@@ -82,7 +108,7 @@ export function CreateRoleModal({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleCreateRole} className="space-y-3.5 py-2 text-xs">
+        <form onSubmit={handleCreateRole} noValidate className="space-y-3.5 py-2 text-xs">
           <div className="space-y-1">
             <label htmlFor="role-code" className="font-medium text-[#222222]">
               Mã vai trò <span className="text-[#C13515]">*</span>
@@ -90,6 +116,7 @@ export function CreateRoleModal({
             <Input
               id="role-code"
               required
+              disabled={isCreatingRole}
               value={newRoleCode}
               onChange={(e) => setNewRoleCode(e.target.value.toUpperCase())}
               placeholder="COMPLIANCE_OFFICER"
@@ -104,6 +131,7 @@ export function CreateRoleModal({
             <Input
               id="role-name"
               required
+              disabled={isCreatingRole}
               value={newRoleName}
               onChange={(e) => setNewRoleName(e.target.value)}
               placeholder="Chuyên viên kiểm soát tuân thủ"
@@ -118,6 +146,7 @@ export function CreateRoleModal({
             <Textarea
               id="role-desc"
               rows={3}
+              disabled={isCreatingRole}
               value={newRoleDesc}
               onChange={(e) => setNewRoleDesc(e.target.value)}
               placeholder="Nhiệm vụ và phạm vi quyền hạn của vai trò…"
@@ -131,7 +160,8 @@ export function CreateRoleModal({
               variant="ghost"
               size="sm"
               text="Hủy"
-              onClick={() => onOpenChange(false)}
+              disabled={isCreatingRole}
+              onClick={() => handleDialogOpenChange(false)}
             />
             <InteractiveHoverButton
               type="submit"

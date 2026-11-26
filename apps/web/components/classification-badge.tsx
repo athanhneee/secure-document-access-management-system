@@ -52,7 +52,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-semibold text-[#717171] select-none tracking-wide',
+            'staff-badge bg-transparent border-0 p-0 inline-flex shrink-0 items-center whitespace-nowrap font-semibold text-[#717171] select-none tracking-wide',
             sizeClasses[size],
             className,
           )}
@@ -80,7 +80,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-semibold text-[#008489] select-none tracking-wide',
+            'staff-badge bg-transparent border-0 p-0 inline-flex shrink-0 items-center whitespace-nowrap font-semibold text-[#008489] select-none tracking-wide',
             sizeClasses[size],
             className,
           )}
@@ -107,7 +107,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-bold text-[#222222] select-none tracking-wide',
+            'staff-badge bg-transparent border-0 p-0 inline-flex shrink-0 items-center whitespace-nowrap font-bold text-[#222222] select-none tracking-wide',
             sizeClasses[size],
             className,
           )}
@@ -134,7 +134,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-bold text-[#C13515] select-none tracking-wider',
+            'staff-badge bg-transparent border-0 p-0 inline-flex shrink-0 items-center whitespace-nowrap font-bold text-[#C13515] select-none tracking-wider',
             sizeClasses[size],
             className,
           )}
@@ -159,7 +159,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge bg-transparent border-0 p-0 inline-flex items-center font-extrabold text-[#C13515] select-none tracking-wider uppercase',
+            'staff-badge bg-transparent border-0 p-0 inline-flex shrink-0 items-center whitespace-nowrap font-extrabold text-[#C13515] select-none tracking-wider uppercase',
             sizeClasses[size],
             className,
           )}
@@ -186,7 +186,7 @@ export function ClassificationBadge({
       return (
         <span
           className={cn(
-            'staff-badge bg-transparent border-0 p-0 inline-flex items-center text-xs font-semibold text-[#717171] select-none',
+            'staff-badge bg-transparent border-0 p-0 inline-flex shrink-0 items-center whitespace-nowrap text-xs font-semibold text-[#717171] select-none',
             className,
           )}
           {...props}

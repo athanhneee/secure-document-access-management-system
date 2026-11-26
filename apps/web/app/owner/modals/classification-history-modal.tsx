@@ -64,8 +64,8 @@ export function ClassificationHistoryModal({
                   key={ch.id}
                   className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1.5"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
                       <ClassificationBadge level={ch.classificationLevelCode} size="sm" />
                       <span className="font-semibold text-[#222222]">
                         {ch.businessCategoryName}

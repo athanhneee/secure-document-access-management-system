@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { Building2, Check } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import {
@@ -13,6 +13,8 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
+import { collectDepartmentSubtreeIds } from '../helpers';
 import type { DepartmentRow } from '../types';
 
 interface DepartmentModalProps {
@@ -28,8 +30,9 @@ interface DepartmentModalProps {
 const DEPT_CODE_REGEX = /^[A-Z0-9_]{2,30}$/u;
 
 /**
- * Thuật toán: Khởi Tạo & Cập Nhật Nút Cây Phòng Ban Chống Chu Trình Tự Tham Chiếu (`DepartmentModal`)
- * Mục đích: Chuẩn hóa mã phòng ban `^[A-Z0-9_]+$` khi tạo mới (`POST /departments`) và kiểm soát phiên bản OCC `expectedVersion` khi cập nhật (`PATCH /departments/:id`), loại trừ chính phòng ban đang sửa khỏi danh sách đơn vị cấp trên.
+ * Thuật toán: Khởi Tạo & Cập Nhật Nút Cây Phòng Ban Chống Chu Trình Cây Con BFS (`DepartmentModal`, BUG-120)
+ * Mục đích: Loại trừ cả phòng ban đang sửa lẫn toàn bộ cây con hậu duệ (BFS) khỏi danh sách đơn vị cấp trên,
+ * sử dụng thành phần `<Select>` chuẩn hóa và chặn đóng modal khi đang lưu.
  */
 export function DepartmentModal({
   open,
@@ -41,10 +44,19 @@ export function DepartmentModal({
   onError,
 }: DepartmentModalProps) {
   const isEdit = Boolean(department);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen && isSubmitting) return;
+    onOpenChange(nextOpen);
+  }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+      <DialogContent
+        showClose={!isSubmitting}
+        className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+      >
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
             {isEdit ? `Chỉnh sửa phòng ban: ${department?.code}` : 'Thêm phòng ban mới'}
@@ -61,6 +73,8 @@ export function DepartmentModal({
             key={department ? `${department.id}-${department.version}` : 'create-department'}
             department={department}
             departments={departments}
+            isSubmitting={isSubmitting}
+            setIsSubmitting={setIsSubmitting}
             onClose={() => onOpenChange(false)}
             onClearError={onClearError}
             onSuccess={onSuccess}
@@ -75,6 +89,8 @@ export function DepartmentModal({
 interface DepartmentFormProps {
   department: DepartmentRow | null;
   departments: DepartmentRow[];
+  isSubmitting: boolean;
+  setIsSubmitting: (busy: boolean) => void;
   onClose: () => void;
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
@@ -84,6 +100,8 @@ interface DepartmentFormProps {
 function DepartmentForm({
   department,
   departments,
+  isSubmitting,
+  setIsSubmitting,
   onClose,
   onClearError,
   onSuccess,
@@ -93,12 +111,21 @@ function DepartmentForm({
   const [code, setCode] = useState(department?.code ?? '');
   const [name, setName] = useState(department?.name ?? '');
   const [parentId, setParentId] = useState(department?.parentId ? String(department.parentId) : '');
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const parentCandidates = departments.filter(
-    (d) =>
-      (!department || String(d.id) !== String(department.id)) &&
-      (d.isActive || String(d.id) === parentId),
+  const excludedSubtreeIds = useMemo(
+    () =>
+      department
+        ? collectDepartmentSubtreeIds(departments, String(department.id))
+        : new Set<string>(),
+    [department, departments],
+  );
+
+  const parentCandidates = useMemo(
+    () =>
+      departments.filter(
+        (d) => !excludedSubtreeIds.has(String(d.id)) && (d.isActive || String(d.id) === parentId),
+      ),
+    [departments, excludedSubtreeIds, parentId],
   );
 
   async function handleSubmit(e: FormEvent) {
@@ -129,6 +156,7 @@ function DepartmentForm({
             parentId: parentId ? parentId : null,
           }),
         });
+        setIsSubmitting(false);
         onClose();
         await onSuccess(`Đã cập nhật phòng ban "${trimmedName}" (${department.code}).`);
       } else {
@@ -140,6 +168,7 @@ function DepartmentForm({
             parentId: parentId ? parentId : null,
           }),
         });
+        setIsSubmitting(false);
         onClose();
         await onSuccess(`Đã thêm phòng ban mới "${trimmedName}" (${normalizedCode}).`);
       }
@@ -149,13 +178,12 @@ function DepartmentForm({
           ? err.message || 'Không thể lưu thông tin phòng ban.'
           : 'Đã xảy ra lỗi khi lưu thông tin phòng ban.',
       );
-    } finally {
       setIsSubmitting(false);
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3.5 py-2 text-xs">
+    <form onSubmit={handleSubmit} noValidate className="space-y-3.5 py-2 text-xs">
       <div className="space-y-1">
         <label htmlFor="dept-modal-code" className="font-medium text-[#222222]">
           Mã phòng ban <span className="text-[#C13515]">*</span>
@@ -163,7 +191,7 @@ function DepartmentForm({
         <Input
           id="dept-modal-code"
           required
-          disabled={isEdit}
+          disabled={isEdit || isSubmitting}
           maxLength={30}
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
@@ -179,6 +207,7 @@ function DepartmentForm({
         <Input
           id="dept-modal-name"
           required
+          disabled={isSubmitting}
           maxLength={150}
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -191,11 +220,11 @@ function DepartmentForm({
         <label htmlFor="dept-modal-parent" className="font-medium text-[#222222]">
           Phòng ban cấp trên
         </label>
-        <select
+        <Select
           id="dept-modal-parent"
+          disabled={isSubmitting}
           value={parentId}
           onChange={(e) => setParentId(e.target.value)}
-          className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
         >
           <option value="">Trụ sở chính (Cấp cao nhất)</option>
           {parentCandidates.map((d) => (
@@ -203,7 +232,7 @@ function DepartmentForm({
               {d.name} ({d.code})
             </option>
           ))}
-        </select>
+        </Select>
       </div>
 
       <DialogFooter className="pt-2">

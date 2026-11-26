@@ -38,8 +38,16 @@ export function UpdateClearanceModal({
   onSuccess,
   onError,
 }: UpdateClearanceModalProps) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && isSubmitting) return;
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
@@ -55,6 +63,7 @@ export function UpdateClearanceModal({
             key={`${user.id}-${user.version}-${user.clearanceOptionId ?? 'none'}`}
             user={user}
             clearanceOptions={clearanceOptions}
+            onSubmittingChange={setIsSubmitting}
             onClose={() => onOpenChange(false)}
             onClearError={onClearError}
             onSuccess={onSuccess}
@@ -69,6 +78,7 @@ export function UpdateClearanceModal({
 interface UpdateClearanceFormProps {
   user: UserRow;
   clearanceOptions: ClearanceOptionRow[];
+  onSubmittingChange: (submitting: boolean) => void;
   onClose: () => void;
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
@@ -78,6 +88,7 @@ interface UpdateClearanceFormProps {
 function UpdateClearanceForm({
   user,
   clearanceOptions,
+  onSubmittingChange,
   onClose,
   onClearError,
   onSuccess,
@@ -96,6 +107,7 @@ function UpdateClearanceForm({
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setIsSubmitting(true);
+    onSubmittingChange(true);
     onClearError();
 
     try {
@@ -138,11 +150,12 @@ function UpdateClearanceForm({
       );
     } finally {
       setIsSubmitting(false);
+      onSubmittingChange(false);
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3.5 py-2 text-xs">
+    <form onSubmit={handleSubmit} noValidate className="space-y-3.5 py-2 text-xs">
       <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 flex items-center justify-between gap-2">
         <span className="text-[#717171]">Cấp thẩm quyền hiện tại</span>
         {user.clearanceCode ? (
@@ -163,7 +176,7 @@ function UpdateClearanceForm({
           id="clearance-option-select"
           value={selectedOptionId}
           onChange={(e) => setSelectedOptionId(e.target.value)}
-          className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+          className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15 cursor-pointer"
         >
           <option value="">Chưa cấp / Thu hồi thẩm quyền (Cấp 0)</option>
           {clearanceOptions.map((opt) => (

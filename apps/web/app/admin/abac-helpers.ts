@@ -45,7 +45,10 @@ export function normalizeVisualObligations(raw: unknown): VisualObligation[] {
         const minutes = Number(rec['minutes']);
         normalized.push({
           type: 'MAX_SESSION_MINUTES',
-          minutes: Number.isFinite(minutes) && minutes >= 1 ? Math.round(minutes) : 30,
+          minutes:
+            Number.isFinite(minutes) && minutes >= 1
+              ? Math.min(1440, Math.max(1, Math.round(minutes)))
+              : 30,
         });
       } else if (SIMPLE_OBLIGATION_TYPES.has(type)) {
         normalized.push({ type } as VisualObligation);
@@ -63,6 +66,9 @@ export function normalizeAbacPolicyRow(raw: AbacPolicyApiDto): AbacPolicyRow {
   const rawAction = (raw.targetAction ?? raw.target_action ?? 'ALL').toUpperCase() as TargetAction;
   const rawObligations =
     raw.obligations !== undefined ? normalizeVisualObligations(raw.obligations) : undefined;
+  const validFrom = raw.validFrom ?? raw.valid_from;
+  const validTo =
+    raw.validTo !== undefined ? raw.validTo : raw.valid_to !== undefined ? raw.valid_to : undefined;
 
   return {
     id: String(raw.id),
@@ -72,6 +78,8 @@ export function normalizeAbacPolicyRow(raw: AbacPolicyApiDto): AbacPolicyRow {
     effect: raw.effect,
     priority: raw.priority,
     targetAction: rawAction,
+    ...(validFrom !== undefined ? { validFrom } : {}),
+    ...(validTo !== undefined ? { validTo } : {}),
     isActive: Boolean(raw.isActive ?? raw.is_active),
     obligations: rawObligations,
     groups: raw.groups,
@@ -147,6 +155,11 @@ export function resolveVisualRuleForPolicy(p: AbacPolicyRow): VisualPolicyRule {
       .slice(0, 24)}`;
   const normalizedObligations = normalizeVisualObligations(p.obligations);
 
+  const validityWindowPatch = {
+    ...(p.validFrom !== undefined ? { validFrom: p.validFrom } : {}),
+    ...(p.validTo !== undefined ? { validTo: p.validTo } : {}),
+  };
+
   if (p.groups && p.groups.length > 0) {
     return {
       id: p.id,
@@ -158,6 +171,7 @@ export function resolveVisualRuleForPolicy(p: AbacPolicyRow): VisualPolicyRule {
       targetResource: 'DOCUMENT',
       targetAction: p.targetAction ?? 'ALL',
       combiningAlgorithm: 'DENY_OVERRIDES',
+      ...validityWindowPatch,
       groups: p.groups,
       obligations: normalizedObligations,
     };
@@ -174,6 +188,7 @@ export function resolveVisualRuleForPolicy(p: AbacPolicyRow): VisualPolicyRule {
       targetResource: 'DOCUMENT',
       targetAction: p.targetAction ?? 'ALL',
       combiningAlgorithm: 'DENY_OVERRIDES',
+      ...validityWindowPatch,
       groups: mapStoredConditionsToGroups(p.policy_rule_conditions),
       obligations: normalizedObligations,
     };
@@ -186,7 +201,14 @@ export function resolveVisualRuleForPolicy(p: AbacPolicyRow): VisualPolicyRule {
       p.name.toLowerCase().includes(t.rule.name.toLowerCase()),
   );
   if (matchedTemplate) {
-    return { ...matchedTemplate.rule, id: p.id, code: baseCode, name: p.name, effect: p.effect };
+    return {
+      ...matchedTemplate.rule,
+      id: p.id,
+      code: baseCode,
+      name: p.name,
+      effect: p.effect,
+      ...validityWindowPatch,
+    };
   }
 
   return {
@@ -199,6 +221,7 @@ export function resolveVisualRuleForPolicy(p: AbacPolicyRow): VisualPolicyRule {
     targetResource: 'DOCUMENT',
     targetAction: p.targetAction ?? 'ALL',
     combiningAlgorithm: 'DENY_OVERRIDES',
+    ...validityWindowPatch,
     groups: [],
     obligations: normalizedObligations,
   };

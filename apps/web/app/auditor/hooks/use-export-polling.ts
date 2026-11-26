@@ -18,6 +18,19 @@ export function isAbortError(err: unknown, signal?: AbortSignal): boolean {
 const DISCONNECTED_POLL_INTERVAL_MS = 15_000;
 const CONNECTED_SAFETY_POLL_INTERVAL_MS = 30_000;
 
+const TERMINAL_EXPORT_STATUSES = new Set<string>(['COMPLETED', 'FAILED', 'EXPIRED']);
+const NON_TERMINAL_EXPORT_STATUSES = new Set<string>(['PENDING', 'PROCESSING']);
+
+function isTerminalExportRegression(
+  currentStatus: string | undefined,
+  incomingStatus: string | undefined,
+): boolean {
+  if (!currentStatus || !incomingStatus) return false;
+  return (
+    TERMINAL_EXPORT_STATUSES.has(currentStatus) && NON_TERMINAL_EXPORT_STATUSES.has(incomingStatus)
+  );
+}
+
 /**
  * Thuật toán: Đồng Bộ Tiến Độ Xuất Báo Cáo Thời Gian Thực Qua SSE & Đối Soát An Toàn Đơn Yêu Cầu (`useExportJobsPolling`)
  * Mục đích:
@@ -47,11 +60,13 @@ export function useExportJobsPolling(
             const fallbackFormat = (fresh.format as ExportFormat | undefined) ?? 'CSV';
             return [normalizeExportJob({ ...fresh, id: jobId }, fallbackFormat), ...prev];
           }
-          return prev.map((job) =>
-            job.id === jobId
-              ? normalizeExportJob({ ...job, ...fresh, id: jobId }, job.format)
-              : job,
-          );
+          return prev.map((job) => {
+            if (job.id !== jobId) return job;
+            if (isTerminalExportRegression(job.status, fresh.status)) {
+              return job;
+            }
+            return normalizeExportJob({ ...job, ...fresh, id: jobId }, job.format);
+          });
         });
       },
     );

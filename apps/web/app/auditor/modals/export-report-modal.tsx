@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { Download, FileJson, FileSpreadsheet, FileText, Shield } from 'lucide-react';
+import { AlertTriangle, Download, FileJson, FileSpreadsheet, FileText, Shield } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import {
   Dialog,
@@ -12,8 +12,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
 import { formatExportFormatLabel, formatExportTypeLabel } from '@/lib/ui-labels';
-import { buildExportFilterParamsFromAuditFilters, normalizeExportJob } from '../helpers';
+import {
+  buildExportFilterParamsFromAuditFilters,
+  isInvalidDateRange,
+  normalizeExportJob,
+} from '../helpers';
 import type { AuditTrailFilters, ExportFormat, ExportJobItem, ExportReportType } from '../types';
 
 interface ExportReportModalProps {
@@ -40,10 +45,10 @@ const FORMAT_OPTIONS: Array<{
 ];
 
 /**
- * Thuật toán: Khởi Tạo Tác Vụ Xuất Báo Cáo Tuân Thủ Đa Miền Kèm Bộ Lọc Đang Áp Dụng (`ExportReportModal`)
+ * Thuật toán: Khởi Tạo Tác Vụ Xuất Báo Cáo Tuân Thủ Đa Miền Có Khóa Điều Kiện Khoảng Ngày Lỗi (`ExportReportModal`)
  * Mục đích:
- *   - Chỉ hiển thị các miền dữ liệu mà kiểm toán viên được cấp quyền (`AUDIT_LOGS`, `SYSTEM_REPORT`, `SECURITY_ALERTS`) để tránh lỗi 403 khi chỉ có `SYSTEM_REPORT:EXPORT`.
- *   - Cho phép đính kèm bộ lọc nhật ký đang chọn vào `filterParams` và khóa nút Hủy khi đang gửi yêu cầu.
+ *   - Chỉ chặn nút xuất và hiện cảnh báo tiếng Việt khi đồng thời thỏa `exportType === 'AUDIT_LOGS' && applyCurrentFilters && isInvalidDateRange(...)`.
+ *   - Mở khóa tức thì ngay khi người dùng bỏ chọn `applyCurrentFilters` hoặc chuyển sang miền `SYSTEM_REPORT` / `SECURITY_ALERTS`.
  */
 export function ExportReportModal({
   open,
@@ -78,11 +83,23 @@ export function ExportReportModal({
     [activeAuditFilters],
   );
   const activeFilterCount = Object.keys(computedFilterParams).length;
+  const hasInvalidAuditDates = isInvalidDateRange(
+    activeAuditFilters.fromDate,
+    activeAuditFilters.toDate,
+  );
+  const isBlockedByInvalidDateRange =
+    exportType === 'AUDIT_LOGS' && applyCurrentFilters && hasInvalidAuditDates;
 
   async function handleTriggerExport(e: FormEvent) {
     e.preventDefault();
     if (allowedExportTypes.length === 0) {
       onError('Tài khoản của bạn không có quyền xuất báo cáo.');
+      return;
+    }
+    if (isBlockedByInvalidDateRange) {
+      onError(
+        'Khoảng ngày lọc nhật ký không hợp lệ (Từ ngày lớn hơn Đến ngày). Vui lòng bỏ chọn áp dụng bộ lọc hoặc chỉnh lại ngày trước khi xuất.',
+      );
       return;
     }
 
@@ -137,24 +154,26 @@ export function ExportReportModal({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleTriggerExport} className="space-y-4 py-2 text-xs">
+        <form onSubmit={handleTriggerExport} className="space-y-4 py-2 text-xs" noValidate>
           <div className="space-y-1.5">
             <label htmlFor="auditor-export-type" className="font-medium text-[#222222] block">
               Loại báo cáo
             </label>
-            <select
+            <Select
               id="auditor-export-type"
               value={exportType}
               disabled={isExporting || allowedExportTypes.length <= 1}
-              onChange={(e) => setSelectedType(e.target.value as ExportReportType)}
-              className="min-h-11 sm:h-10 w-full rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:opacity-70"
+              onChange={(e) => {
+                setSelectedType(e.target.value as ExportReportType);
+                onClearError();
+              }}
             >
               {allowedExportTypes.map((typeOption) => (
                 <option key={typeOption} value={typeOption}>
                   {formatExportTypeLabel(typeOption)}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <fieldset className="space-y-1.5 border-0 p-0 m-0 min-w-0">
@@ -183,24 +202,47 @@ export function ExportReportModal({
             </div>
           </fieldset>
 
-          {exportType === 'AUDIT_LOGS' && activeFilterCount > 0 && (
-            <label
-              htmlFor="auditor-apply-filters-checkbox"
-              className="flex items-start gap-2.5 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 cursor-pointer"
-            >
-              <input
-                id="auditor-apply-filters-checkbox"
-                type="checkbox"
-                checked={applyCurrentFilters}
-                disabled={isExporting}
-                onChange={(e) => setApplyCurrentFilters(e.target.checked)}
-                className="mt-0.5 h-4 w-4 accent-[#FF385C] cursor-pointer"
-              />
-              <span className="text-[#222222] leading-relaxed">
-                Áp dụng <strong>{activeFilterCount}</strong> bộ lọc nhật ký đang chọn trên màn hình
-                (bỏ chọn để xuất toàn bộ tối đa 1.000 bản ghi gần nhất).
-              </span>
-            </label>
+          {exportType === 'AUDIT_LOGS' && (activeFilterCount > 0 || hasInvalidAuditDates) && (
+            <div className="space-y-2">
+              <label
+                htmlFor="auditor-apply-filters-checkbox"
+                className="flex items-start gap-2.5 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 cursor-pointer"
+              >
+                <input
+                  id="auditor-apply-filters-checkbox"
+                  type="checkbox"
+                  checked={applyCurrentFilters}
+                  disabled={isExporting}
+                  onChange={(e) => {
+                    setApplyCurrentFilters(e.target.checked);
+                    onClearError();
+                  }}
+                  className="mt-0.5 h-4 w-4 accent-[#FF385C] cursor-pointer"
+                />
+                <span className="text-[#222222] leading-relaxed">
+                  Áp dụng <strong>{activeFilterCount}</strong> bộ lọc nhật ký đang chọn trên màn
+                  hình (bỏ chọn để xuất toàn bộ tối đa 1.000 bản ghi gần nhất).
+                </span>
+              </label>
+
+              {isBlockedByInvalidDateRange && (
+                <p
+                  role="alert"
+                  className="flex items-start gap-1.5 text-xs font-medium text-[#C13515] leading-relaxed"
+                >
+                  <AlertTriangle
+                    size={16}
+                    strokeWidth={1.75}
+                    className="shrink-0 mt-0.5 text-[#C13515]"
+                    aria-hidden="true"
+                  />
+                  <span>
+                    Khoảng ngày lọc đang không hợp lệ (Từ ngày lớn hơn Đến ngày). Hãy bỏ chọn ô áp
+                    dụng bộ lọc ở trên hoặc đổi sang loại báo cáo khác để tiếp tục xuất tệp.
+                  </span>
+                </p>
+              )}
+            </div>
           )}
 
           {isSpreadsheetFormat && (
@@ -232,7 +274,9 @@ export function ExportReportModal({
               text="Bắt đầu xuất tệp"
               icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
               isLoading={isExporting}
-              disabled={isExporting || allowedExportTypes.length === 0}
+              disabled={
+                isExporting || allowedExportTypes.length === 0 || isBlockedByInvalidDateRange
+              }
             />
           </DialogFooter>
         </form>

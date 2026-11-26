@@ -33,9 +33,17 @@ export function ArchiveDocumentModal({
   isArchiving,
   onSubmit,
 }: ArchiveDocumentModalProps) {
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen && isArchiving) return;
+    onOpenChange(nextOpen);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border border-[#C13515]/20 bg-[#ffffff] text-[#222222]">
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+      <DialogContent
+        showClose={!isArchiving}
+        className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+      >
         <DialogHeader>
           <div className="flex items-center gap-2 text-[#C13515]">
             <Archive size={20} strokeWidth={1.75} aria-hidden="true" />
@@ -49,7 +57,7 @@ export function ArchiveDocumentModal({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={onSubmit} className="space-y-3.5 py-2 text-xs">
+        <form onSubmit={onSubmit} noValidate className="space-y-3.5 py-2 text-xs">
           <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 space-y-1">
             <div>
               Tài liệu: <strong>{document?.title}</strong>
@@ -64,6 +72,8 @@ export function ArchiveDocumentModal({
             <Textarea
               id="archive-reason"
               rows={3}
+              maxLength={500}
+              disabled={isArchiving}
               value={archiveReason}
               onChange={(e) => onReasonChange(e.target.value)}
               placeholder="Ví dụ: Tài liệu đã hoàn thành chu kỳ sử dụng và chuyển sang lưu trữ…"
@@ -77,7 +87,8 @@ export function ArchiveDocumentModal({
               variant="ghost"
               size="sm"
               text="Hủy"
-              onClick={() => onOpenChange(false)}
+              disabled={isArchiving}
+              onClick={() => handleDialogOpenChange(false)}
             />
             <InteractiveHoverButton
               type="submit"

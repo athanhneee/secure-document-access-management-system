@@ -161,7 +161,7 @@ function LoginForm() {
             {errorMessage && (
               <Alert
                 variant="destructive"
-                className="rounded-[16px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
+                className="rounded-[16px] border border-[#dddddd] bg-[#f7f7f7] text-[#C13515] text-xs"
               >
                 <AlertCircle
                   size={16}

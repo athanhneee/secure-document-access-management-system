@@ -113,10 +113,7 @@ export function SimulatorTracePanel({ result }: SimulatorTracePanelProps) {
       </div>
 
       {result.bellLaPadulaBlocked && (
-        <Alert
-          variant="destructive"
-          className="rounded-[12px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
-        >
+        <Alert variant="destructive" className="rounded-[12px] text-xs">
           <ShieldAlert size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
           <AlertDescription className="ml-2">
             Chặn cứng theo bất biến <strong>Bell-LaPadula (No Read Up)</strong>: cấp thẩm quyền của
@@ -180,7 +177,7 @@ export function SimulatorTracePanel({ result }: SimulatorTracePanelProps) {
                 className={`rounded-[12px] border p-3 space-y-2 text-xs ${
                   ruleEval.matched
                     ? ruleEval.effect === 'DENY'
-                      ? 'border-[#C13515]/30 bg-[#C13515]/5'
+                      ? 'border-[#dddddd] bg-[#C13515]/5'
                       : 'border-[#008A05]/30 bg-[#008A05]/5'
                     : 'border-[#ebebeb] bg-[#ffffff]'
                 }`}

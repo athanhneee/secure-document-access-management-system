@@ -44,19 +44,11 @@ const ROLE_NAV_ITEMS: ReadonlyArray<{
  * Thuật toán: Thanh Đầu Đề Điều Phối Góc Nhìn RBAC Đã Lọc Quyền, Chuông Nội Bộ Có Điều Kiện & Quản Lý Phiên `375px` (`AppHeader`)
  * Mục đích:
  *   - Chỉ hiển thị bộ chuyển đổi góc nhìn thả xuống khi tài khoản sở hữu từ 2 phân hệ trở lên; khi chỉ có 1 phân hệ thì dựng liên kết pill dẫn thẳng về phân hệ đó để người dùng quay về nhanh từ `/sessions` (`V-59`).
- *   - Chỉ hiển thị biểu tượng chuông thông báo (`NotificationBellDialog`) khi tài khoản thực sự có quyền `NOTIFICATION:VIEW`.
+ *   - Hiển thị biểu tượng chuông thông báo (`NotificationBellDialog`) cho mọi người dùng đã xác thực (`@AllowAuthenticatedSelf` — `BUG-062`).
  *   - Hiển thị tên tài khoản kèm cấp thẩm quyền bảo mật (`clearanceCode`) trên màn hình rộng và trong ngăn kéo di động (`V-30`).
  */
 export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
-  const {
-    user,
-    activeRole,
-    setActiveRole,
-    logout,
-    isAuthenticated,
-    hasPermission,
-    canAccessPortal,
-  } = useAuth();
+  const { user, activeRole, setActiveRole, logout, isAuthenticated, canAccessPortal } = useAuth();
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -97,7 +89,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
   const authorizedRoleItems = user
     ? ROLE_NAV_ITEMS.filter((item) => canAccessPortal(item.role))
     : [];
-  const canViewNotifications = hasPermission('NOTIFICATION:VIEW');
+  const canViewNotifications = Boolean(isAuthenticated && user);
   const singleRoleItem = authorizedRoleItems.length === 1 ? authorizedRoleItems[0]! : null;
   const singleRoleLabel = singleRoleItem
     ? ROLE_LABELS[singleRoleItem.role]
@@ -144,7 +136,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
             <button
               type="button"
               onClick={() => setRoleMenuOpen(!roleMenuOpen)}
-              className="flex min-h-11 sm:min-h-9 min-w-0 max-w-full items-center gap-1.5 sm:gap-2 rounded-full border border-[#ebebeb] bg-[#ffffff] px-2.5 py-1 sm:px-3 text-xs font-medium text-[#222222] transition-colors hover:border-[#dddddd] hover:bg-[#f7f7f7] cursor-pointer shadow-2xs"
+              className="flex min-h-11 sm:min-h-9 min-w-0 max-w-full items-center gap-1.5 sm:gap-2 rounded-full border border-[#ebebeb] bg-[#f7f7f7] sm:bg-[#ffffff] px-3 py-1 text-xs font-semibold sm:font-medium text-[#222222] transition-colors hover:border-[#dddddd] hover:bg-[#f7f7f7] cursor-pointer"
               aria-expanded={roleMenuOpen}
               aria-haspopup="true"
             >
@@ -183,7 +175,7 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
                       }}
                       className={`flex min-h-11 sm:min-h-9 w-full items-center justify-between rounded-full px-3 py-2 text-xs transition-colors cursor-pointer ${
                         isCurrent
-                          ? 'bg-[#FF385C]/10 font-semibold text-[#E31C5F] border border-[#E31C5F]/30'
+                          ? 'bg-[#f7f7f7] font-semibold text-[#E31C5F] border border-[#ebebeb]'
                           : 'text-[#222222] hover:bg-[#f7f7f7]'
                       }`}
                       role="menuitem"
@@ -223,7 +215,9 @@ export function AppHeader({ onToggleSidebar, isSidebarOpen }: AppHeaderProps) {
               href="/sessions"
               aria-current={pathname === '/sessions' ? 'page' : undefined}
               className={`flex h-11 w-11 md:h-auto md:w-auto md:min-h-9 items-center justify-center gap-1.5 rounded-full border border-[#ebebeb] bg-[#ffffff] md:px-3 md:py-1 text-xs text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors shadow-2xs ${
-                pathname === '/sessions' ? 'border-[#E31C5F]/40 bg-[#FF385C]/10 text-[#E31C5F]' : ''
+                pathname === '/sessions'
+                  ? 'border-[#222222] bg-[#f7f7f7] text-[#222222] font-semibold'
+                  : ''
               }`}
               title="Quản lý phiên, mật khẩu và MFA"
               aria-label="Quản lý phiên và thiết bị"

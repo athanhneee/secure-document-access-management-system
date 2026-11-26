@@ -36,7 +36,7 @@ export function LoginDemoPanel({ onSelectAccount }: LoginDemoPanelProps) {
                 key={item.user}
                 type="button"
                 onClick={() => onSelectAccount(item.user)}
-                className="group flex items-center justify-between px-3.5 py-2.5 rounded-full border border-[#ebebeb] bg-[#f7f7f7] hover:border-[#FF385C]/30 hover:bg-[#ffffff] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:-translate-y-0.5 active:scale-[0.98] text-xs transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer text-left shadow-2xs"
+                className="group flex items-center justify-between px-3.5 py-2.5 rounded-full border border-[#ebebeb] bg-[#f7f7f7] hover:border-[#dddddd] hover:bg-[#ffffff] hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] hover:-translate-y-0.5 active:scale-[0.98] text-xs transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer text-left shadow-2xs"
               >
                 <span className="staff-badge bg-transparent border-0 p-0 inline-flex items-center gap-1.5 font-medium text-[#222222]">
                   <span

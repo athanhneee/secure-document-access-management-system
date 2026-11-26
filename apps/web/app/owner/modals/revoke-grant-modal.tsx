@@ -33,9 +33,17 @@ export function RevokeGrantModal({
   isRevoking,
   onSubmit,
 }: RevokeGrantModalProps) {
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen && isRevoking) return;
+    onOpenChange(nextOpen);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border border-[#C13515]/20 bg-[#ffffff] text-[#222222]">
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+      <DialogContent
+        showClose={!isRevoking}
+        className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+      >
         <DialogHeader>
           <div className="flex items-center gap-2 text-[#C13515]">
             <AlertOctagon size={20} strokeWidth={1.75} aria-hidden="true" />
@@ -49,7 +57,7 @@ export function RevokeGrantModal({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={onSubmit} className="space-y-3.5 py-2">
+        <form onSubmit={onSubmit} noValidate className="space-y-3.5 py-2">
           <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 text-xs space-y-1">
             <div>
               Đối tượng: <strong className="text-[#222222]">{grant?.principalName}</strong>
@@ -66,16 +74,18 @@ export function RevokeGrantModal({
             <Textarea
               id="revoke-reason"
               required
+              disabled={isRevoking}
+              maxLength={500}
               rows={3}
               value={revokeReason}
               onChange={(e) => onReasonChange(e.target.value)}
               placeholder="Ví dụ: Dự án đã hoàn thành trước hạn hoặc cần thay đổi nhân sự phụ trách…"
-              className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+              className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0]"
             />
-            <p className="text-[13px] text-[#717171]">
+            <p className="text-xs text-[#717171] tabular-nums">
               {revokeReason.trim().length < 10
-                ? `Cần thêm ${10 - revokeReason.trim().length} ký tự (tối thiểu 10 ký tự).`
-                : `Đã đạt yêu cầu (${revokeReason.trim().length} ký tự).`}
+                ? `Cần thêm ${10 - revokeReason.trim().length} ký tự (tối thiểu 10, tối đa 500 ký tự).`
+                : `Đã đạt yêu cầu (${revokeReason.trim().length} / 500 ký tự).`}
             </p>
           </div>
 
@@ -85,7 +95,8 @@ export function RevokeGrantModal({
               variant="ghost"
               size="sm"
               text="Hủy"
-              onClick={() => onOpenChange(false)}
+              disabled={isRevoking}
+              onClick={() => handleDialogOpenChange(false)}
             />
             <InteractiveHoverButton
               type="submit"

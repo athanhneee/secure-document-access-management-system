@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
 import type { ClearanceOptionRow, DepartmentRow } from '../types';
 
 interface CreateUserModalProps {
@@ -26,8 +27,10 @@ interface CreateUserModalProps {
 }
 
 /**
- * Thuật toán: Tạo Tài Khoản Người Dùng Bắt Buộc Gán Phòng Ban ABAC (`CreateUserModal`)
- * Mục đích: Đồng bộ trường `departmentId` bắt buộc với thuộc tính `SUBJECT_DEPARTMENT` (`is_required = true`) của chính sách ABAC để ngăn tạo tài khoản không thể mở xem tài liệu.
+ * Thuật toán: Tạo Tài Khoản Người Dùng Xóa Trắng Mật Khẩu Khi Đóng & Chặn Thoát Giữa Giao Tác (`CreateUserModal`, BUG-095)
+ * Mục đích:
+ *   - Gọi `resetForm()` xóa sạch toàn bộ dữ liệu nháp (đặc biệt `newPassword = ''`) ngay khi đóng modal để không lộ mật khẩu ở lần mở kế tiếp.
+ *   - Khóa đóng modal khi đang gửi API, gắn `autoComplete="new-password"` và `noValidate`.
  */
 export function CreateUserModal({
   open,
@@ -54,8 +57,43 @@ export function CreateUserModal({
   const effectiveClearanceOptionId =
     newClearanceOptionId === null ? defaultClearanceId : newClearanceOptionId;
 
+  function resetForm() {
+    setNewUsername('');
+    setNewFullName('');
+    setNewEmployeeCode('');
+    setNewEmail('');
+    setNewPassword('');
+    setNewDepartmentId(null);
+    setNewClearanceOptionId(null);
+  }
+
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (!open) {
+      resetForm();
+    }
+  }
+
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen && createSubmitting) return;
+    if (!nextOpen) {
+      resetForm();
+      onClearError();
+    }
+    onOpenChange(nextOpen);
+  }
+
   async function handleCreateUser(e: FormEvent) {
     e.preventDefault();
+    if (!newUsername.trim() || !newFullName.trim() || !newEmail.trim()) {
+      onError('Vui lòng nhập đầy đủ tên đăng nhập, họ tên và địa chỉ email nội bộ.');
+      return;
+    }
+    if (newPassword.length < 15) {
+      onError('Mật khẩu khởi tạo phải có tối thiểu 15 ký tự.');
+      return;
+    }
     if (!effectiveDepartmentId) {
       onError('Vui lòng chọn phòng ban trực thuộc cho tài khoản.');
       return;
@@ -77,14 +115,9 @@ export function CreateUserModal({
         }),
       });
 
+      resetForm();
+      setCreateSubmitting(false);
       onOpenChange(false);
-      setNewUsername('');
-      setNewFullName('');
-      setNewEmployeeCode('');
-      setNewEmail('');
-      setNewPassword('');
-      setNewDepartmentId(null);
-      setNewClearanceOptionId(null);
       await onSuccess('Đã tạo tài khoản mới thành công.');
     } catch (err) {
       if (err instanceof ApiError) {
@@ -92,14 +125,16 @@ export function CreateUserModal({
       } else {
         onError('Đã xảy ra lỗi khi tạo tài khoản.');
       }
-    } finally {
       setCreateSubmitting(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+      <DialogContent
+        showClose={!createSubmitting}
+        className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+      >
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
             Tạo tài khoản người dùng mới
@@ -109,7 +144,7 @@ export function CreateUserModal({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleCreateUser} className="space-y-3.5 py-2">
+        <form onSubmit={handleCreateUser} noValidate className="space-y-3.5 py-2">
           <div className="space-y-1">
             <label htmlFor="modal-username" className="text-xs font-medium text-[#222222]">
               Tên đăng nhập <span className="text-[#C13515]">*</span>
@@ -117,6 +152,7 @@ export function CreateUserModal({
             <Input
               id="modal-username"
               required
+              disabled={createSubmitting}
               value={newUsername}
               onChange={(e) => setNewUsername(e.target.value)}
               placeholder="nguyenvana"
@@ -131,6 +167,7 @@ export function CreateUserModal({
             <Input
               id="modal-fullname"
               required
+              disabled={createSubmitting}
               value={newFullName}
               onChange={(e) => setNewFullName(e.target.value)}
               placeholder="Nguyễn Văn A"
@@ -145,6 +182,7 @@ export function CreateUserModal({
             <Input
               id="modal-employee-code"
               maxLength={50}
+              disabled={createSubmitting}
               value={newEmployeeCode}
               onChange={(e) => setNewEmployeeCode(e.target.value)}
               placeholder="VD: NV-2026-001"
@@ -160,6 +198,7 @@ export function CreateUserModal({
               id="modal-email"
               type="email"
               required
+              disabled={createSubmitting}
               value={newEmail}
               onChange={(e) => setNewEmail(e.target.value)}
               placeholder="a.nguyen@doanhnghiep.vn"
@@ -174,8 +213,10 @@ export function CreateUserModal({
             <Input
               id="modal-password"
               type="password"
+              autoComplete="new-password"
               minLength={15}
               required
+              disabled={createSubmitting}
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               placeholder="••••••••••••••••"
@@ -187,12 +228,12 @@ export function CreateUserModal({
             <label htmlFor="modal-department" className="text-xs font-medium text-[#222222]">
               Phòng ban trực thuộc <span className="text-[#C13515]">*</span>
             </label>
-            <select
+            <Select
               id="modal-department"
               required
+              disabled={createSubmitting}
               value={effectiveDepartmentId}
               onChange={(e) => setNewDepartmentId(e.target.value)}
-              className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
               {activeDepartments.length === 0 ? (
                 <option value="" disabled>
@@ -208,7 +249,7 @@ export function CreateUserModal({
                   {d.name} ({d.code})
                 </option>
               ))}
-            </select>
+            </Select>
             <p className="text-[11px] text-[#717171]">
               Bắt buộc theo chính sách bảo mật để tài khoản được phép tải lên và xem tài liệu.
             </p>
@@ -218,11 +259,11 @@ export function CreateUserModal({
             <label htmlFor="modal-clearance" className="text-xs font-medium text-[#222222]">
               Cấp thẩm quyền bảo mật
             </label>
-            <select
+            <Select
               id="modal-clearance"
+              disabled={createSubmitting}
               value={effectiveClearanceOptionId}
               onChange={(e) => setNewClearanceOptionId(e.target.value)}
-              className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
             >
               <option value="">Chưa cấp (Cấp 0 — Không được truy cập tài liệu mật)</option>
               {clearanceOptions.map((opt) => (
@@ -230,7 +271,7 @@ export function CreateUserModal({
                   {opt.name} · Cấp {opt.rank}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <DialogFooter className="pt-2">
@@ -239,7 +280,8 @@ export function CreateUserModal({
               variant="ghost"
               size="sm"
               text="Hủy"
-              onClick={() => onOpenChange(false)}
+              disabled={createSubmitting}
+              onClick={() => handleDialogOpenChange(false)}
             />
             <InteractiveHoverButton
               type="submit"

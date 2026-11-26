@@ -8,6 +8,34 @@ import type {
   WatermarkVerifyDto,
 } from './types';
 
+export const AUDIT_PARTITIONS = [
+  'GLOBAL',
+  'AUTH',
+  'DOCUMENT',
+  'ACCESS_SESSION',
+  'RBAC',
+  'AUDIT',
+  'SECURITY',
+  'SECURITY_OPERATIONS',
+] as const;
+
+const MAX_PG_BIGINT = 9223372036854775807n;
+
+/**
+ * Thuật toán: Kiểm Định Định Danh Số Nguyên Dương PostgreSQL `BIGINT` (`isValidPositiveBigIntId`)
+ * Mục đích: Chỉ chấp nhận số nguyên dương thuộc đoạn `[1, 9223372036854775807]`, từ chối `"0"`, số âm và giá trị tràn 64-bit có dấu.
+ */
+export function isValidPositiveBigIntId(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!/^[1-9]\d*$/u.test(trimmed) || trimmed.length > 19) return false;
+  try {
+    const val = BigInt(trimmed);
+    return val >= 1n && val <= MAX_PG_BIGINT;
+  } catch {
+    return false;
+  }
+}
+
 const WATERMARK_CLASSIFICATION_LABELS: Readonly<Record<string, string>> = {
   PUBLIC: 'Công khai',
   UNCLASSIFIED: 'Không mật',
@@ -27,7 +55,6 @@ function formatWatermarkClassification(raw: string): string {
 
 /**
  * Thuật toán: Chuẩn hóa Dữ liệu Cảnh báo, Mô tả Kỹ thuật, IP Nguồn & Lịch sử Ghi chú Điều tra (`mapAlertDto`)
- * Mục đích: Ánh xạ trung thực `description`, `ipAddress`, `resolutionNote`, `notes[]` và `linkedAuditLogs` từ máy chủ (#01, #02, #03).
  */
 export function mapAlertDto(a: AlertApiDto): SecurityAlertItem {
   const detailResolution =
@@ -108,10 +135,10 @@ export function filterSecurityAlerts(
 }
 
 /**
- * Thuật toán: Chuẩn Hóa & Trích Xuất Token Watermark Hỗ Trợ Dán QR JSON & Dải 12–64 Ký Tự Hex (`normalizeWatermarkTokenInput`)
+ * Thuật toán: Chuẩn Hóa & Trích Xuất Token Watermark Không Phân Biệt Hoa Thường Hỗ Trợ QR JSON & Dải 12–64 Ký Tự Hex (`normalizeWatermarkTokenInput`)
  * Mục đích:
- *   - Tự động trích xuất `token` nếu cán bộ SOC quét mã QR từ PDF rò rỉ và dán nguyên chuỗi JSON `{"token":"WM-...","u":"..."}` (N14).
- *   - Tự động ghép tiền tố `WM-` nếu dán chuỗi hex 12–64 ký tự từ văn bản PDF; đồng bộ biên độ `{12,64}` với Backend (#47).
+ *   - Tự động trích xuất `token` nếu quét mã QR từ PDF rò rỉ và dán nguyên chuỗi JSON `{"token":"WM-..."}`.
+ *   - Chấp nhận tiền tố `WM-` hoặc `wm-` không phân biệt hoa thường (`/iu`) và chuẩn hóa đầu ra về `'WM-' + hex.toLowerCase()`.
  */
 export function normalizeWatermarkTokenInput(
   raw: string,
@@ -128,17 +155,17 @@ export function normalizeWatermarkTokenInput(
         candidate = parsed['token'].trim();
       }
     } catch {
-      // Fall through to inline token extraction / regex rejection
+      // Thử trích xuất bằng biểu thức chính quy bên dưới
     }
   }
 
   const embeddedMatch = /\bWM-([0-9a-fA-F]{12,64})\b/iu.exec(candidate);
   if (embeddedMatch && embeddedMatch[1]) {
-    return { valid: true, token: `WM-${embeddedMatch[1].toLowerCase()}` };
+    return { valid: true, token: 'WM-' + embeddedMatch[1].toLowerCase() };
   }
 
   if (/^[0-9a-fA-F]{12,64}$/u.test(candidate)) {
-    return { valid: true, token: `WM-${candidate.toLowerCase()}` };
+    return { valid: true, token: 'WM-' + candidate.toLowerCase() };
   }
 
   return {
@@ -162,7 +189,6 @@ export function filterNetworkDlpAlerts(alerts: SecurityAlertItem[]): SecurityAle
 
 /**
  * Thuật toán: Chuẩn hóa Đầy Đủ 8 Trường Pháp Chứng Watermark Chế độ Fail-Closed (`mapWatermarkVerifyDto`)
- * Mục đích: Bảo toàn toàn bộ bằng chứng `outputSha256Hash`, `originalSha256Hash`, `renderedText`, `userAgent`, `email`, cấu hình watermark và Việt hóa độ mật (#21, #41).
  */
 export function mapWatermarkVerifyDto(res: WatermarkVerifyDto): WatermarkProvenance {
   const rawClassification = res.classificationName || res.document?.classificationName || '';

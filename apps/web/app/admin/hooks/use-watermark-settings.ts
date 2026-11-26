@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import type { WatermarkConfigRow } from '../types';
 import {
   DEFAULT_WATERMARK_COLOR_HEX,
   DEFAULT_WATERMARK_ROTATION,
   DEFAULT_WATERMARK_TEMPLATE,
+  hasWatermarkRecipientIdentity,
   isValidHexColor,
   isWatermarkColorTooLight,
   requiresQrOrFullTokenForWatermarkConfig,
@@ -23,7 +24,7 @@ interface UseWatermarkSettingsOptions {
 
 /**
  * Thuật toán: Quản Lý Trạng Thái Hồ Sơ Thủy Ấn Động Đầy Đủ Tham Số & Chọn Mặc Định `isDefault` (`useWatermarkSettings`)
- * Mục đích: Đồng bộ độ mờ (10–90%), cỡ chữ (8–72px), góc xoay (-90°..90°), màu sắc (`colorHex`), cờ mã QR và mẫu `templateText` từ `/watermarks/configs`, ưu tiên cấu hình `isDefault` khi khởi tạo và cập nhật trực tiếp từ phản hồi `PATCH /watermarks/configs/:id`.
+ * Mục đích: Đồng bộ độ mờ (10–90%), cỡ chữ (8–72px), góc xoay (-90°..90°), màu sắc (`colorHex`), cờ mã QR và mẫu `templateText` từ `/watermarks/configs`, ưu tiên cấu hình `isDefault` khi khởi tạo mà không lồng `setState` bên trong hàm cập nhật trạng thái (`BUG-117`).
  */
 export function useWatermarkSettings({
   onRefresh,
@@ -32,6 +33,7 @@ export function useWatermarkSettings({
 }: UseWatermarkSettingsOptions) {
   const [configs, setConfigs] = useState<WatermarkConfigRow[]>([]);
   const [activeConfigId, setActiveConfigId] = useState<string | null>(null);
+  const activeConfigIdRef = useRef<string | null>(null);
   const [showQr, setShowQr] = useState(true);
   const [opacity, setOpacity] = useState(25);
   const [fontSize, setFontSize] = useState(12);
@@ -53,12 +55,11 @@ export function useWatermarkSettings({
     (loaded: WatermarkConfigRow[]) => {
       setConfigs(loaded);
       if (loaded.length === 0) return;
-      setActiveConfigId((prevId) => {
-        const chosen = selectInitialWatermarkConfig(loaded, prevId);
-        if (!chosen) return prevId;
-        applyConfigToForm(chosen);
-        return chosen.id;
-      });
+      const chosen = selectInitialWatermarkConfig(loaded, activeConfigIdRef.current);
+      if (!chosen) return;
+      activeConfigIdRef.current = chosen.id;
+      setActiveConfigId(chosen.id);
+      applyConfigToForm(chosen);
     },
     [applyConfigToForm],
   );
@@ -66,6 +67,7 @@ export function useWatermarkSettings({
   function selectConfig(configId: string) {
     const found = configs.find((c) => c.id === configId);
     if (found) {
+      activeConfigIdRef.current = found.id;
       setActiveConfigId(found.id);
       applyConfigToForm(found);
     }
@@ -80,6 +82,12 @@ export function useWatermarkSettings({
     const trimmedTemplate = templateText.trim();
     if (trimmedTemplate.length < 5 || trimmedTemplate.length > 250) {
       onError('Mẫu văn bản watermark phải dài từ 5 đến 250 ký tự.');
+      return;
+    }
+    if (!hasWatermarkRecipientIdentity(trimmedTemplate)) {
+      onError(
+        'Mẫu văn bản watermark bắt buộc phải chứa ít nhất {username} hoặc {fullName} để bảo toàn truy vết người nhận.',
+      );
       return;
     }
 

@@ -107,12 +107,18 @@ function waitForPeerRefreshResult(timeoutMs: number): Promise<boolean | null> {
 }
 
 export function isRefreshExcludedEndpoint(endpoint: string): boolean {
-  const clean = endpoint.replace(/^https?:\/\/[^/]+/iu, '').replace(/^\/api\/v1/u, '');
+  const clean = endpoint
+    .replace(/^https?:\/\/[^/]+/iu, '')
+    .replace(/[?#].*$/u, '')
+    .replace(/^\/api\/v1(?=\/|$)/u, '');
   const normalized = clean.startsWith('/') ? clean : `/${clean}`;
   return (
     normalized.startsWith('/auth/login') ||
     normalized.startsWith('/auth/refresh') ||
     normalized.startsWith('/auth/logout') ||
+    normalized === '/auth/change-password' ||
+    normalized.startsWith('/auth/change-password/') ||
+    normalized === '/auth/mfa' ||
     normalized.startsWith('/auth/mfa/') ||
     normalized.startsWith('/auth/password-reset/') ||
     normalized.startsWith('/auth/forgot-password') ||

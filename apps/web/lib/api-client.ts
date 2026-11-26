@@ -127,15 +127,15 @@ export interface ApiErrorResponse {
 }
 
 export class ApiError extends Error {
+  public readonly status: number;
+  public readonly response: ApiErrorResponse;
   public readonly errorCode: string | undefined;
 
-  constructor(
-    public readonly status: number,
-    public readonly response: ApiErrorResponse,
-    message?: string,
-  ) {
+  constructor(status: number, response: ApiErrorResponse, message?: string) {
     super(localizeApiErrorMessage(status, response, message));
     this.name = 'ApiError';
+    this.status = status;
+    this.response = response;
     this.errorCode = response.errorCode ?? response.code;
   }
 }
@@ -164,14 +164,28 @@ function emitSessionExpired(reason: SessionExpiredReason = 'session_revoked'): v
   }
 }
 
+function isPreMfaErrorPayload(payload: ApiErrorResponse | null | undefined): boolean {
+  if (!payload) return false;
+  if (payload.errorCode === 'MFA_REQUIRED' || payload.code === 'MFA_REQUIRED') {
+    return true;
+  }
+  const msg = Array.isArray(payload.message)
+    ? payload.message.join(' ')
+    : typeof payload.message === 'string'
+      ? payload.message
+      : '';
+  return msg.toLowerCase().includes('mfa verification is required');
+}
+
+export function isPreMfaApiError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401 && isPreMfaErrorPayload(err.response);
+}
+
 async function isPreMfa401Response(response: Response): Promise<boolean> {
   try {
     const cloned = response.clone();
-    const payload = (await cloned.json()) as { message?: string | string[] };
-    const msg = Array.isArray(payload?.message)
-      ? payload.message.join(' ')
-      : payload?.message || '';
-    return msg.toLowerCase().includes('mfa verification is required');
+    const payload = (await cloned.json()) as ApiErrorResponse;
+    return isPreMfaErrorPayload(payload);
   } catch {
     return false;
   }

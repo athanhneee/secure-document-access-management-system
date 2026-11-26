@@ -9,6 +9,7 @@
 import { useEffect, useId, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { lockBodyScroll } from '@/components/ui/body-scroll-lock';
 import { getVisibleFocusables } from '@/components/ui/dialog-focus';
 import { SidebarDirectory } from './sidebar-directory';
 
@@ -32,10 +33,19 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
   useEffect(() => {
     if (!isOpen) return;
 
+    const desktopMedia =
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(min-width: 1024px)')
+        : null;
+    if (desktopMedia?.matches) {
+      onCloseRef.current?.();
+      return;
+    }
+
     const dialogEl = dialogRef.current;
     previousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    document.body.style.overflow = 'hidden';
+    const unlockBodyScroll = lockBodyScroll();
 
     if (dialogEl && !dialogEl.open && typeof dialogEl.showModal === 'function') {
       try {
@@ -52,6 +62,12 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
         candidates[0] ??
         dialogEl;
       preferred.focus();
+    }
+
+    function handleViewportChange(event: MediaQueryListEvent) {
+      if (event.matches) {
+        onCloseRef.current?.();
+      }
     }
 
     function handleKeyDown(e: KeyboardEvent) {
@@ -90,13 +106,15 @@ export function AppSidebar({ isOpen = false, onClose }: AppSidebarProps) {
       }
     }
 
+    desktopMedia?.addEventListener('change', handleViewportChange);
     dialogEl?.addEventListener('keydown', handleKeyDown);
     dialogEl?.addEventListener('click', handleBackdropClick);
 
     return () => {
+      desktopMedia?.removeEventListener('change', handleViewportChange);
       dialogEl?.removeEventListener('keydown', handleKeyDown);
       dialogEl?.removeEventListener('click', handleBackdropClick);
-      document.body.style.overflow = '';
+      unlockBodyScroll();
       if (dialogEl?.open && typeof dialogEl.close === 'function') {
         try {
           dialogEl.close();

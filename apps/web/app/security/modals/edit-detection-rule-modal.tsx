@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
 import type { DetectionRuleItem } from '../types';
 
 interface EditDetectionRuleModalProps {
@@ -24,9 +25,17 @@ interface EditDetectionRuleModalProps {
   onError: (errorMessage: string) => void;
 }
 
+function parseStrictInteger(raw: string): number {
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/u.test(trimmed)) return Number.NaN;
+  return Number(trimmed);
+}
+
 /**
- * Thuật toán: Cấu Hình Tham Số Cửa Sổ Trượt, Mức Nghiêm Trọng & Tham Số Giờ Làm Việc Luật Phát Hiện SOC (`EditDetectionRuleModal`)
- * Mục đích: Kiểm định miền giá trị ngưỡng (`1..1000`), cửa sổ/giãn cách (`1..1440`), chỉnh `startHourUtc`/`endHourUtc` & `minClassificationRank` cho `OFF_HOURS_ACCESS` (#26), khóa bật bắt buộc cho `AUDIT_INTEGRITY_COMPROMISED` (N04) và dùng `noValidate` (N15).
+ * Thuật toán: Cấu Hình Tham Số Cửa Sổ Trượt, Mức Nghiêm Trọng & Khung Giờ Hành Chính Luật Phát Hiện SOC (`EditDetectionRuleModal`)
+ * Mục đích:
+ *   - Giữ trạng thái chuỗi nháp (`string`) cho các ô nhập số để xóa chữ số khi đang gõ không bị nhảy về `0`.
+ *   - Kiểm định ngưỡng (`1..1000`), cửa sổ/giãn cách (`1..1440`), chặn `startHourVn === endHourVn` trên `OFF_HOURS_ACCESS` và dùng `noValidate`.
  */
 export function EditDetectionRuleModal({
   open,
@@ -90,11 +99,15 @@ function EditDetectionRuleForm({
   const initialMinRank = Number(rule.parameters?.['minClassificationRank'] ?? 2);
 
   const [severity, setSeverity] = useState(rule.severity || 'HIGH');
-  const [thresholdCount, setThresholdCount] = useState(rule.threshold ?? rule.thresholdCount ?? 5);
-  const [windowMinutes, setWindowMinutes] = useState(rule.windowMinutes ?? 15);
-  const [cooldownMinutes, setCooldownMinutes] = useState(rule.cooldownMinutes ?? 30);
-  const [startHourVn, setStartHourVn] = useState((initialStartUtc + 7) % 24);
-  const [endHourVn, setEndHourVn] = useState((initialEndUtc + 7) % 24);
+  const [thresholdDraft, setThresholdDraft] = useState(() =>
+    String(rule.threshold ?? rule.thresholdCount ?? 5),
+  );
+  const [windowDraft, setWindowDraft] = useState(() => String(rule.windowMinutes ?? 15));
+  const [cooldownDraft, setCooldownDraft] = useState(() => String(rule.cooldownMinutes ?? 30));
+  const [startHourVnDraft, setStartHourVnDraft] = useState(() =>
+    String((initialStartUtc + 7) % 24),
+  );
+  const [endHourVnDraft, setEndHourVnDraft] = useState(() => String((initialEndUtc + 7) % 24));
   const [minClassificationRank, setMinClassificationRank] = useState(
     Number.isFinite(initialMinRank) ? initialMinRank : 2,
   );
@@ -103,6 +116,12 @@ function EditDetectionRuleForm({
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    const thresholdCount = parseStrictInteger(thresholdDraft);
+    const windowMinutes = parseStrictInteger(windowDraft);
+    const cooldownMinutes = parseStrictInteger(cooldownDraft);
+    const startHourVn = parseStrictInteger(startHourVnDraft);
+    const endHourVn = parseStrictInteger(endHourVnDraft);
+
     const valid =
       Number.isInteger(thresholdCount) &&
       thresholdCount >= 1 &&
@@ -120,17 +139,26 @@ function EditDetectionRuleForm({
       return;
     }
 
-    if (
-      isOffHoursRule &&
-      (!Number.isInteger(startHourVn) ||
+    if (isOffHoursRule) {
+      if (
+        !Number.isInteger(startHourVn) ||
         startHourVn < 0 ||
         startHourVn > 23 ||
         !Number.isInteger(endHourVn) ||
         endHourVn < 0 ||
-        endHourVn > 23)
-    ) {
-      onError('Giờ bắt đầu và giờ kết thúc hành chính (giờ Việt Nam) phải nằm trong khoảng 0–23.');
-      return;
+        endHourVn > 23
+      ) {
+        onError(
+          'Giờ bắt đầu và giờ kết thúc hành chính (giờ Việt Nam) phải là số nguyên nằm trong khoảng 0–23.',
+        );
+        return;
+      }
+      if (startHourVn === endHourVn) {
+        onError(
+          'Giờ bắt đầu và giờ kết thúc hành chính không được trùng nhau (khung giờ làm việc phải lớn hơn 0 giờ).',
+        );
+        return;
+      }
     }
 
     setIsSaving(true);
@@ -172,17 +200,12 @@ function EditDetectionRuleForm({
         <label htmlFor="rule-severity" className="font-medium text-[#222222]">
           Mức độ nghiêm trọng <span className="text-[#C13515]">*</span>
         </label>
-        <select
-          id="rule-severity"
-          value={severity}
-          onChange={(e) => setSeverity(e.target.value)}
-          className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] cursor-pointer"
-        >
+        <Select id="rule-severity" value={severity} onChange={(e) => setSeverity(e.target.value)}>
           <option value="LOW">Thấp</option>
           <option value="MEDIUM">Trung bình</option>
           <option value="HIGH">Cao</option>
           <option value="CRITICAL">Nghiêm trọng</option>
-        </select>
+        </Select>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -193,10 +216,11 @@ function EditDetectionRuleForm({
           <Input
             id="rule-threshold-count"
             type="number"
+            inputMode="numeric"
             min={1}
             max={1000}
-            value={thresholdCount}
-            onChange={(e) => setThresholdCount(Number(e.target.value))}
+            value={thresholdDraft}
+            onChange={(e) => setThresholdDraft(e.target.value)}
             className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
           />
         </div>
@@ -207,10 +231,11 @@ function EditDetectionRuleForm({
           <Input
             id="rule-window-minutes"
             type="number"
+            inputMode="numeric"
             min={1}
             max={1440}
-            value={windowMinutes}
-            onChange={(e) => setWindowMinutes(Number(e.target.value))}
+            value={windowDraft}
+            onChange={(e) => setWindowDraft(e.target.value)}
             className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
           />
         </div>
@@ -221,10 +246,11 @@ function EditDetectionRuleForm({
           <Input
             id="rule-cooldown-minutes"
             type="number"
+            inputMode="numeric"
             min={1}
             max={1440}
-            value={cooldownMinutes}
-            onChange={(e) => setCooldownMinutes(Number(e.target.value))}
+            value={cooldownDraft}
+            onChange={(e) => setCooldownDraft(e.target.value)}
             className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222]"
           />
         </div>
@@ -243,10 +269,11 @@ function EditDetectionRuleForm({
               <Input
                 id="rule-start-vn"
                 type="number"
+                inputMode="numeric"
                 min={0}
                 max={23}
-                value={startHourVn}
-                onChange={(e) => setStartHourVn(Number(e.target.value))}
+                value={startHourVnDraft}
+                onChange={(e) => setStartHourVnDraft(e.target.value)}
                 className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
               />
             </div>
@@ -257,10 +284,11 @@ function EditDetectionRuleForm({
               <Input
                 id="rule-end-vn"
                 type="number"
+                inputMode="numeric"
                 min={0}
                 max={23}
-                value={endHourVn}
-                onChange={(e) => setEndHourVn(Number(e.target.value))}
+                value={endHourVnDraft}
+                onChange={(e) => setEndHourVnDraft(e.target.value)}
                 className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
               />
             </div>
@@ -268,17 +296,16 @@ function EditDetectionRuleForm({
               <label htmlFor="rule-min-rank" className="font-medium text-[#222222]">
                 Độ mật tối thiểu
               </label>
-              <select
+              <Select
                 id="rule-min-rank"
                 value={minClassificationRank}
                 onChange={(e) => setMinClassificationRank(Number(e.target.value))}
-                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222]"
               >
                 <option value={1}>Từ Nội bộ trở lên</option>
                 <option value={2}>Từ Mật trở lên</option>
                 <option value={3}>Từ Tối mật trở lên</option>
                 <option value={4}>Chỉ Tuyệt mật</option>
-              </select>
+              </Select>
             </div>
           </div>
         </div>

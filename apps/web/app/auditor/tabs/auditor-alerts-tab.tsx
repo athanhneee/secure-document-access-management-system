@@ -1,13 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, ChevronLeft, ChevronRight, RotateCcw, Search } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
+  RotateCcw,
+  Search,
+} from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -28,30 +36,44 @@ import type { AuditorAlertItem, AuditorAlertPaginatedResponse } from '../types';
 
 interface AuditorAlertsTabProps {
   onSelectAlert: (alert: AuditorAlertItem) => void;
+  refreshSignal?: number | undefined;
 }
 
 const PAGE_SIZE = 20;
 
 /**
  * Thuật toán: Hàng Đợi Cảnh Báo An Ninh Chế Độ Chỉ Đọc Cho Kiểm Toán Viên (`AuditorAlertsTab`, UC36)
- * Mục đích: Mở quyền tra cứu `SECURITY_ALERT:VIEW` đã cấp cho `AUDITOR` trên giao diện tối ưu Mobile 375px + Desktop mà tuyệt đối không cho phép thay đổi trạng thái cảnh báo.
+ * Mục đích: Mở quyền tra cứu `SECURITY_ALERT:VIEW` đã cấp cho `AUDITOR` trên giao diện tối ưu Mobile 375px + Desktop kèm đồng bộ `refreshSignal` từ nút Làm mới và nút Xóa bộ lọc trên cả hai chế độ hiển thị.
  */
-export function AuditorAlertsTab({ onSelectAlert }: AuditorAlertsTabProps) {
+export function AuditorAlertsTab({ onSelectAlert, refreshSignal = 0 }: AuditorAlertsTabProps) {
   const [alerts, setAlerts] = useState<AuditorAlertItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [severityFilter, setSeverityFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [retryCounter, setRetryCounter] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [localError, setLocalError] = useState<string | null>(null);
+  const prevSearchRef = useRef('');
+
+  useEffect(() => {
+    if (prevSearchRef.current === searchQuery) return;
+    const timer = setTimeout(() => {
+      prevSearchRef.current = searchQuery;
+      setDebouncedSearchQuery(searchQuery);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const loadAlerts = useCallback(
     async (signal?: AbortSignal) => {
       const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
       if (severityFilter !== 'ALL') params.set('severity', severityFilter);
       if (statusFilter !== 'ALL') params.set('status', statusFilter);
-      if (searchQuery.trim()) params.set('search', searchQuery.trim());
+      if (debouncedSearchQuery.trim()) params.set('search', debouncedSearchQuery.trim());
 
       const res = await apiClient<AuditorAlertPaginatedResponse>(
         `/security-alerts?${params.toString()}`,
@@ -61,41 +83,41 @@ export function AuditorAlertsTab({ onSelectAlert }: AuditorAlertsTabProps) {
       const resolvedTotal = res?.meta?.total ?? res?.total ?? list.length;
       return { list, resolvedTotal };
     },
-    [page, searchQuery, severityFilter, statusFilter],
+    [page, debouncedSearchQuery, severityFilter, statusFilter],
   );
 
   useEffect(() => {
     let ignore = false;
     const controller = new AbortController();
-    const timer = setTimeout(
-      () => {
-        void (async () => {
-          setIsLoading(true);
-          setLocalError(null);
-          try {
-            const { list, resolvedTotal } = await loadAlerts(controller.signal);
-            if (ignore) return;
-            setAlerts(list);
-            setTotal(resolvedTotal);
-          } catch (err) {
-            if (ignore || isAbortError(err, controller.signal)) return;
-            setLocalError(
-              err instanceof ApiError ? err.message : 'Không thể tải danh sách cảnh báo an ninh.',
-            );
-          } finally {
-            if (!ignore && !controller.signal.aborted) setIsLoading(false);
-          }
-        })();
-      },
-      searchQuery.trim() ? 250 : 0,
-    );
+
+    void (async () => {
+      setIsLoading(true);
+      setLocalError(null);
+      try {
+        const { list, resolvedTotal } = await loadAlerts(controller.signal);
+        if (ignore) return;
+        const nextTotalPages = Math.max(1, Math.ceil(resolvedTotal / PAGE_SIZE));
+        if (page > nextTotalPages) {
+          setPage(nextTotalPages);
+          return;
+        }
+        setAlerts(list);
+        setTotal(resolvedTotal);
+      } catch (err) {
+        if (ignore || isAbortError(err, controller.signal)) return;
+        setLocalError(
+          err instanceof ApiError ? err.message : 'Không thể tải danh sách cảnh báo an ninh.',
+        );
+      } finally {
+        if (!ignore && !controller.signal.aborted) setIsLoading(false);
+      }
+    })();
 
     return () => {
       ignore = true;
-      clearTimeout(timer);
       controller.abort();
     };
-  }, [loadAlerts, searchQuery]);
+  }, [loadAlerts, page, refreshSignal, retryCounter]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const hasFilters =
@@ -123,11 +145,9 @@ export function AuditorAlertsTab({ onSelectAlert }: AuditorAlertsTabProps) {
               </label>
               <Input
                 id="auditor-alert-search"
+                maxLength={120}
                 value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setPage(1);
-                }}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Tìm tiêu đề, người dùng…"
                 className="min-h-11 sm:h-9 w-full rounded-full border-[#dddddd] bg-[#ffffff] text-xs placeholder:text-[#717171]"
               />
@@ -137,42 +157,40 @@ export function AuditorAlertsTab({ onSelectAlert }: AuditorAlertsTabProps) {
               <label htmlFor="auditor-alert-severity" className="sr-only">
                 Lọc theo mức độ nghiêm trọng
               </label>
-              <select
+              <Select
                 id="auditor-alert-severity"
                 value={severityFilter}
                 onChange={(e) => {
                   setSeverityFilter(e.target.value);
                   setPage(1);
                 }}
-                className="min-h-11 sm:h-9 w-full rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
               >
                 <option value="ALL">Mọi mức độ</option>
                 <option value="CRITICAL">Nghiêm trọng</option>
                 <option value="HIGH">Cao</option>
                 <option value="MEDIUM">Trung bình</option>
                 <option value="LOW">Thấp</option>
-              </select>
+              </Select>
             </div>
 
             <div>
               <label htmlFor="auditor-alert-status" className="sr-only">
                 Lọc theo trạng thái cảnh báo
               </label>
-              <select
+              <Select
                 id="auditor-alert-status"
                 value={statusFilter}
                 onChange={(e) => {
                   setStatusFilter(e.target.value);
                   setPage(1);
                 }}
-                className="min-h-11 sm:h-9 w-full rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
               >
                 <option value="ALL">Mọi trạng thái</option>
                 <option value="OPEN">Chờ xử lý</option>
                 <option value="INVESTIGATING">Đang điều tra</option>
                 <option value="RESOLVED">Đã xử lý</option>
                 <option value="FALSE_POSITIVE">Báo động giả</option>
-              </select>
+              </Select>
             </div>
           </div>
         </div>
@@ -185,7 +203,18 @@ export function AuditorAlertsTab({ onSelectAlert }: AuditorAlertsTabProps) {
               className="shrink-0 text-[#C13515]"
               aria-hidden="true"
             />
-            <AlertDescription className="ml-2">{localError}</AlertDescription>
+            <div className="ml-2 flex flex-wrap items-center justify-between gap-2 w-full">
+              <AlertDescription>{localError}</AlertDescription>
+              <InteractiveHoverButton
+                type="button"
+                size="sm"
+                variant="secondary"
+                text="Thử lại"
+                icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
+                disabled={isLoading}
+                onClick={() => setRetryCounter((c) => c + 1)}
+              />
+            </div>
           </Alert>
         )}
       </CardHeader>
@@ -236,7 +265,7 @@ export function AuditorAlertsTab({ onSelectAlert }: AuditorAlertsTabProps) {
                         variant={
                           alert.status === 'OPEN'
                             ? 'destructive'
-                            : alert.status === 'INVESTIGATING' || alert.status === 'ESCALATED'
+                            : alert.status === 'INVESTIGATING'
                               ? 'warning'
                               : 'success'
                         }
@@ -285,7 +314,19 @@ export function AuditorAlertsTab({ onSelectAlert }: AuditorAlertsTabProps) {
                   {alerts.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="py-8 text-center text-xs text-[#717171]">
-                        Không có cảnh báo an ninh nào khớp với bộ lọc hiện tại.
+                        <div className="flex flex-col items-center gap-2.5">
+                          <span>Không có cảnh báo an ninh nào khớp với bộ lọc hiện tại.</span>
+                          {hasFilters && (
+                            <InteractiveHoverButton
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              text="Xóa bộ lọc"
+                              icon={<RotateCcw size={16} strokeWidth={1.75} aria-hidden="true" />}
+                              onClick={resetFilters}
+                            />
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -329,7 +370,7 @@ export function AuditorAlertsTab({ onSelectAlert }: AuditorAlertsTabProps) {
                             variant={
                               alert.status === 'OPEN'
                                 ? 'destructive'
-                                : alert.status === 'INVESTIGATING' || alert.status === 'ESCALATED'
+                                : alert.status === 'INVESTIGATING'
                                   ? 'warning'
                                   : 'success'
                             }

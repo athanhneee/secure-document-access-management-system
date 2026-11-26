@@ -117,7 +117,7 @@ export function ExportQueueTab({
                       ? ` · Hết hạn: ${formatSafeDateVi(job.expiresAt, { includeTime: true })}`
                       : ''}
                   </div>
-                  {job.sha256Hash && (
+                  {job.sha256Hash && job.sha256Hash !== '—' && (
                     <div className="flex items-center justify-between gap-2 rounded-[12px] bg-[#f7f7f7] px-2.5 py-1.5">
                       <span className="font-mono text-[11px] text-[#717171] truncate">
                         SHA-256: {job.sha256Hash.slice(0, 20)}…
@@ -126,7 +126,7 @@ export function ExportQueueTab({
                         type="button"
                         onClick={() => void handleCopyText(job.sha256Hash!, `sha-${job.id}`)}
                         aria-label={`Sao chép mã băm SHA-256 của yêu cầu ${job.id.slice(0, 8)}`}
-                        className="inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-xs font-medium text-[#222222] hover:bg-[#ebebeb] cursor-pointer shrink-0"
+                        className="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center gap-1 rounded-full px-2 text-xs font-medium text-[#222222] hover:bg-[#ebebeb] cursor-pointer shrink-0"
                       >
                         {copiedKey === `sha-${job.id}` ? (
                           <Check
@@ -212,7 +212,7 @@ export function ExportQueueTab({
                             : '—'}{' '}
                           · {formatByteSizeVi(job.fileSizeBytes)}
                         </div>
-                        {job.sha256Hash && (
+                        {job.sha256Hash && job.sha256Hash !== '—' && (
                           <div className="flex items-center gap-1 mt-0.5">
                             <span
                               title={job.sha256Hash}
@@ -224,7 +224,7 @@ export function ExportQueueTab({
                               type="button"
                               onClick={() => void handleCopyText(job.sha256Hash!, `sha-${job.id}`)}
                               aria-label={`Sao chép mã băm SHA-256 của báo cáo ${job.id.slice(0, 8)}`}
-                              className="inline-flex items-center rounded-full p-1 text-[#717171] hover:text-[#222222] hover:bg-[#ebebeb] cursor-pointer"
+                              className="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-full px-2 text-[#717171] hover:text-[#222222] hover:bg-[#ebebeb] cursor-pointer"
                             >
                               {copiedKey === `sha-${job.id}` ? (
                                 <Check

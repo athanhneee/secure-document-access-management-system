@@ -1,11 +1,12 @@
 import type {
+  ExpectedValue,
   TargetAction,
   TimeWindow,
   VisualCondition,
   VisualObligation,
   VisualPolicyRule,
 } from './abac-models';
-import { simulatorCidrMatch } from './cidr-matcher';
+import { canonicalizeIpAddress, simulatorCidrMatch } from './cidr-matcher';
 import {
   buildSimulationPreset,
   type SimulationConditionResult,
@@ -30,6 +31,8 @@ export {
   type SimulationSubject,
 };
 
+type RuntimeValue = string | number | boolean | string[] | null | undefined;
+
 const OBLIGATION_ORDER: Readonly<Record<VisualObligation['type'], number>> = {
   REQUIRE_WATERMARK: 0,
   REQUIRE_MFA: 1,
@@ -38,11 +41,18 @@ const OBLIGATION_ORDER: Readonly<Record<VisualObligation['type'], number>> = {
   NO_CACHE: 4,
 };
 
+export const STRICT_ISO_DATE_PATTERN =
+  /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+
+const CLOCK_ONLY_TIME_PATTERN = /^(\d{2}):(\d{2})(?::(\d{2}))?$/u;
+
 function flattenSimulationContext(
   subject: SimulationSubject,
   resource: SimulationResource,
   environment: SimulationEnvironment,
-): Record<string, unknown> {
+): Record<string, RuntimeValue> {
+  const resolvedCurrentTime =
+    resolveSimulationDate(environment.currentTime)?.toISOString() ?? environment.currentTime;
   return {
     'subject.clearanceRank': subject.clearanceRank,
     'subject.departmentId': subject.departmentId,
@@ -53,13 +63,88 @@ function flattenSimulationContext(
     'resource.category': resource.category,
     'resource.status': resource.status,
     'resource.ownerId': resource.ownerId,
-    'environment.currentTime': environment.currentTime,
+    'environment.currentTime': resolvedCurrentTime,
     'environment.ip': environment.ip,
     'environment.trustedNetwork': environment.trustedNetwork,
     'environment.deviceTrust': environment.deviceTrust,
     'environment.mfa': environment.mfa,
     'environment.riskScore': environment.riskScore,
   };
+}
+
+/**
+ * Thuật toán: Kiểm tra thiếu vắng thuộc tính đồng bộ 1-1 với Backend (`isMissingAttribute`: `null`, `undefined`, hoặc mảng rỗng `[]`).
+ */
+export function isMissingAttribute(value: unknown): boolean {
+  return value === null || value === undefined || (Array.isArray(value) && value.length === 0);
+}
+
+/**
+ * Thuật toán: Phân tích chuỗi ngày giờ chuẩn ISO-8601 nghiêm ngặt có kiểm chứng lịch Gregorian thật chống cuộn ngày (VD: `2026-02-31`) (`MED-18`).
+ */
+export function parseStrictIsoTimestamp(value: string): number | null {
+  if (!STRICT_ISO_DATE_PATTERN.test(value)) return null;
+  const datePart = value.slice(0, 10);
+  const [yStr, mStr, dStr] = datePart.split('-');
+  const year = Number(yStr);
+  const month = Number(mStr);
+  const day = Number(dStr);
+  const calendarCheck = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendarCheck.getUTCFullYear() !== year ||
+    calendarCheck.getUTCMonth() !== month - 1 ||
+    calendarCheck.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+/**
+ * Thuật toán: Chuẩn hóa thời điểm giả lập từ chuỗi giờ `<input type="time">` (`HH:MM[:SS]`) hoặc chuỗi ISO-8601 đầy đủ sang đối tượng `Date`.
+ * Ghép `HH:MM[:SS]` vào ngày hiện tại theo múi giờ máy trạm trước khi đối chiếu khung hiệu lực `[validFrom, validTo)` hoặc đổi sang `tw.timeZone` (BUG-039).
+ */
+export function resolveSimulationDate(raw: string): Date | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const clockMatch = CLOCK_ONLY_TIME_PATTERN.exec(trimmed);
+  if (clockMatch) {
+    const hours = Number(clockMatch[1]);
+    const minutes = Number(clockMatch[2]);
+    const secs = Number(clockMatch[3] ?? '0');
+    if (hours > 23 || minutes > 59 || secs > 59) return null;
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, secs, 0);
+  }
+
+  const strictIso = parseStrictIsoTimestamp(trimmed);
+  if (strictIso !== null) {
+    return new Date(strictIso);
+  }
+
+  const parsed = new Date(trimmed);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+/**
+ * Thuật toán: Kiểm tra khoảng hiệu lực thời gian nửa mở `[validFrom, validTo)` của quy tắc chính sách đồng bộ với `policy-engine.ts` (BUG-039).
+ */
+export function isRuleActiveAtTime(rule: VisualPolicyRule, nowMs: number): boolean {
+  if (rule.validFrom !== undefined && rule.validFrom !== '') {
+    const validFromMs = Date.parse(rule.validFrom);
+    if (!Number.isFinite(validFromMs) || validFromMs > nowMs) {
+      return false;
+    }
+  }
+  if (rule.validTo !== null && rule.validTo !== undefined && rule.validTo !== '') {
+    const validToMs = Date.parse(rule.validTo);
+    if (!Number.isFinite(validToMs) || nowMs >= validToMs) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -87,7 +172,7 @@ export function mergeSimulationObligations(
 
 function evaluateRuleGroups(
   rule: VisualPolicyRule,
-  flatAttributes: Record<string, unknown>,
+  flatAttributes: Record<string, RuntimeValue>,
 ): SimulationGroupEvaluation[] {
   return rule.groups.map((group) => {
     const conditionResults: SimulationConditionResult[] = group.conditions.map((cond) => {
@@ -113,10 +198,18 @@ function isRuleActionTargeted(ruleAction: TargetAction, requestedAction: TargetA
   return ruleAction === 'ALL' || requestedAction === 'ALL' || ruleAction === requestedAction;
 }
 
+function compareRuleIds(left: string, right: string): number {
+  try {
+    const a = BigInt(left);
+    const b = BigInt(right);
+    return a < b ? -1 : a > b ? 1 : 0;
+  } catch {
+    return left.localeCompare(right);
+  }
+}
+
 /**
- * Thuật toán: Bộ Đánh Giá Quy Tắc Đơn Lẻ Có Bất Biến Bell-LaPadula & Step-Up MFA (`evaluatePolicySimulation`)
- * Mục đích: Xác định quyết định cấp quyền (`PERMIT` / `DENY`), chặn cứng Bell-LaPadula (`clearanceRank < classificationRank`),
- * nhận diện `STEP_UP_MFA_REQUIRED` trên luật `DENY` mang nghĩa vụ `REQUIRE_MFA` và xuất vết từng nhánh DNF.
+ * Thuật toán: Bộ Đánh Giá Quy Tắc Đơn Lẻ Có Bất Biến Bell-LaPadula, Khung Hiệu Lực `[validFrom, validTo)` & Step-Up MFA (`evaluatePolicySimulation`)
  */
 export function evaluatePolicySimulation(
   activeRule: VisualPolicyRule,
@@ -125,7 +218,17 @@ export function evaluatePolicySimulation(
   resource: SimulationResource,
   environment: SimulationEnvironment,
 ): SimulationResult {
-  // CONFLICT-RESOLVED: Bắt buộc kiểm tra bất biến Bell-LaPadula Simple Security Property đồng bộ tuyệt đối với PDP máy chủ.
+  if (subject.clearanceRank === null || resource.classificationRank === null) {
+    return {
+      decision: 'DENY',
+      reasonCode: 'MISSING_REQUIRED_ATTRIBUTE',
+      matchedRuleCodes: [],
+      obligations: [],
+      groupEvaluations: [],
+    };
+  }
+
+  // Bắt buộc kiểm tra bất biến Bell-LaPadula Simple Security Property đồng bộ tuyệt đối với PDP máy chủ.
   if (subject.clearanceRank < resource.classificationRank) {
     return {
       decision: 'DENY',
@@ -137,10 +240,34 @@ export function evaluatePolicySimulation(
     };
   }
 
-  if (!isRuleActionTargeted(activeRule.targetAction, action)) {
+  const simDate = resolveSimulationDate(environment.currentTime);
+  if (!simDate) {
+    return {
+      decision: 'DENY',
+      reasonCode: 'MISSING_REQUIRED_ATTRIBUTE',
+      matchedRuleCodes: [],
+      obligations: [],
+      groupEvaluations: [],
+    };
+  }
+
+  if (
+    activeRule.targetResource !== 'DOCUMENT' ||
+    !isRuleActionTargeted(activeRule.targetAction, action)
+  ) {
     return {
       decision: 'DENY',
       reasonCode: 'ACTION_NOT_TARGETED',
+      matchedRuleCodes: [],
+      obligations: [],
+      groupEvaluations: [],
+    };
+  }
+
+  if (!isRuleActiveAtTime(activeRule, simDate.getTime())) {
+    return {
+      decision: 'DENY',
+      reasonCode: 'DEFAULT_DENY_NO_GROUP_MATCH',
       matchedRuleCodes: [],
       obligations: [],
       groupEvaluations: [],
@@ -183,10 +310,6 @@ export function evaluatePolicySimulation(
 
 /**
  * Thuật toán: Bộ Đánh Giá Toàn Bộ Tập Chính Sách CSDL Theo Chuẩn PDP XACML `DENY_OVERRIDES` (`evaluatePolicySetSimulation`)
- * Cơ chế hoạt động:
- *   1. Kiểm tra bất biến độ mật Bell-LaPadula (`subject.clearanceRank >= resource.classificationRank`).
- *   2. Sắp xếp tập luật đang kích hoạt theo `(priority ASC, code ASC)` và đánh giá DNF cho từng luật.
- *   3. Áp dụng `DENY_OVERRIDES`: mọi luật `DENY` khớp thắng tuyệt đối (trả `STEP_UP_MFA_REQUIRED` nếu toàn bộ luật `DENY` khớp chỉ đòi MFA khi phiên chưa có MFA); nếu không có luật `PERMIT` khớp thì trả `DEFAULT_DENY`; ngược lại gộp nghĩa vụ chặt nhất.
  */
 export function evaluatePolicySetSimulation(
   rules: readonly VisualPolicyRule[],
@@ -195,6 +318,17 @@ export function evaluatePolicySetSimulation(
   resource: SimulationResource,
   environment: SimulationEnvironment,
 ): SimulationResult {
+  if (subject.clearanceRank === null || resource.classificationRank === null) {
+    return {
+      decision: 'DENY',
+      reasonCode: 'MISSING_REQUIRED_ATTRIBUTE',
+      matchedRuleCodes: [],
+      obligations: [],
+      groupEvaluations: [],
+      ruleEvaluations: [],
+    };
+  }
+
   if (subject.clearanceRank < resource.classificationRank) {
     return {
       decision: 'DENY',
@@ -207,15 +341,33 @@ export function evaluatePolicySetSimulation(
     };
   }
 
+  const simDate = resolveSimulationDate(environment.currentTime);
+  if (!simDate) {
+    return {
+      decision: 'DENY',
+      reasonCode: 'MISSING_REQUIRED_ATTRIBUTE',
+      matchedRuleCodes: [],
+      obligations: [],
+      groupEvaluations: [],
+      ruleEvaluations: [],
+    };
+  }
+  const nowMs = simDate.getTime();
+
   const flatAttributes = flattenSimulationContext(subject, resource, environment);
   const sortedRules = [...rules].sort(
-    (left, right) => left.priority - right.priority || left.code.localeCompare(right.code),
+    (left, right) =>
+      left.priority - right.priority ||
+      compareRuleIds(left.id ?? left.code, right.id ?? right.code),
   );
 
   const ruleEvaluations: SimulationRuleEvaluation[] = sortedRules.map((rule) => {
-    const actionTargeted = isRuleActionTargeted(rule.targetAction, action);
-    const groupEvaluations = actionTargeted ? evaluateRuleGroups(rule, flatAttributes) : [];
-    const matched = actionTargeted && groupEvaluations.some((g) => g.satisfied);
+    const actionTargeted =
+      rule.targetResource === 'DOCUMENT' && isRuleActionTargeted(rule.targetAction, action);
+    const temporallyActive = isRuleActiveAtTime(rule, nowMs);
+    const groupEvaluations =
+      actionTargeted && temporallyActive ? evaluateRuleGroups(rule, flatAttributes) : [];
+    const matched = actionTargeted && temporallyActive && groupEvaluations.some((g) => g.satisfied);
     return {
       ruleId: rule.id ?? rule.code,
       ruleCode: rule.code,
@@ -275,108 +427,120 @@ export function evaluatePolicySetSimulation(
   };
 }
 
-const STRICT_ISO_DATE_PATTERN =
-  /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
-
-function toComparableScalar(value: unknown): number | string | null {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value !== 'string') return null;
-  if (STRICT_ISO_DATE_PATTERN.test(value)) {
-    const ts = Date.parse(value);
-    return Number.isFinite(ts) ? ts : null;
+function equal(actual: unknown, expected: ExpectedValue): boolean {
+  if (typeof actual === 'string' && typeof expected === 'string') {
+    if (actual === expected) return true;
+    const leftIp = canonicalizeIpAddress(actual);
+    const rightIp = canonicalizeIpAddress(expected);
+    if (leftIp !== null && rightIp !== null) {
+      return leftIp === rightIp;
+    }
+    const leftTs = parseStrictIsoTimestamp(actual);
+    const rightTs = parseStrictIsoTimestamp(expected);
+    if (leftTs !== null && rightTs !== null) {
+      return leftTs === rightTs;
+    }
+    return false;
   }
-  return value;
+  return (typeof actual === 'number' || typeof actual === 'boolean') && actual === expected;
 }
 
-function compareScalars(leftRaw: unknown, rightRaw: unknown): number {
-  const left = toComparableScalar(leftRaw);
-  const right = toComparableScalar(rightRaw);
+function comparable(value: unknown): string | number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const timestamp = parseStrictIsoTimestamp(value);
+  return timestamp !== null ? timestamp : value;
+}
+
+function compare(actual: unknown, expected: unknown): number {
+  const left = comparable(actual);
+  const right = comparable(expected);
   if (left === null || right === null || typeof left !== typeof right) return Number.NaN;
   if (typeof left === 'number' && typeof right === 'number') return left - right;
   return String(left).localeCompare(String(right));
 }
 
-function isSetMemberNormalized(candidate: unknown, expectedSet: unknown[]): boolean {
-  return expectedSet.some((item) => {
-    if (item === candidate) return true;
-    if (typeof item === 'number' || typeof candidate === 'number') {
-      const leftStr = String(candidate).trim();
-      const rightStr = String(item).trim();
-      if (!leftStr || !rightStr) return false;
-      const leftNum = Number(leftStr);
-      const rightNum = Number(rightStr);
-      return Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum === rightNum;
-    }
-    return false;
-  });
+function matchArray(cond: VisualCondition, actual: unknown[]): boolean {
+  if (cond.operator === 'EQ') return actual.some((item) => equal(item, cond.expected));
+  if (cond.operator === 'NEQ') return actual.every((item) => !equal(item, cond.expected));
+  const expected = cond.expected;
+  if (cond.operator === 'IN' && Array.isArray(expected)) {
+    return actual.some((item) => expected.some((candidate) => equal(item, candidate)));
+  }
+  if (cond.operator === 'NOT_IN' && Array.isArray(expected)) {
+    return actual.every((item) => expected.every((candidate) => !equal(item, candidate)));
+  }
+  return false;
 }
 
-function extractClockTime(raw: string, timeZone?: string): string {
-  if (/^\d{2}:\d{2}(?::\d{2})?$/u.test(raw)) return raw;
-  const parsed = Date.parse(raw);
-  if (!Number.isFinite(parsed)) return raw;
+function seconds(value: string): number {
+  const [hours = 0, minutes = 0, secs = 0] = value.split(':').map(Number);
+  return hours * 3600 + minutes * 60 + secs;
+}
+
+function timeBetween(value: string, window: TimeWindow): boolean {
+  const date = resolveSimulationDate(value);
+  if (!date) return false;
   try {
-    return new Intl.DateTimeFormat('en-GB', {
-      timeZone: timeZone || 'Asia/Ho_Chi_Minh',
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: window.timeZone,
       hour: '2-digit',
       minute: '2-digit',
-      hour12: false,
-    }).format(new Date(parsed));
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+    const parts = Object.fromEntries(
+      formatter
+        .formatToParts(date)
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, Number(part.value)]),
+    );
+    const current =
+      (parts['hour'] ?? 0) * 3600 + (parts['minute'] ?? 0) * 60 + (parts['second'] ?? 0);
+    const start = seconds(window.start);
+    const end = seconds(window.end);
+    return start <= end ? current >= start && current <= end : current >= start || current <= end;
   } catch {
-    return raw;
+    return false;
   }
 }
 
 function evaluateCondition(cond: VisualCondition, actual: unknown): boolean {
+  const exists = !isMissingAttribute(actual);
   if (cond.operator === 'EXISTS') {
-    const exists =
-      actual !== undefined &&
-      actual !== null &&
-      actual !== '' &&
-      (!Array.isArray(actual) || actual.length > 0);
     return exists === Boolean(cond.expected);
   }
-  if (actual === undefined || actual === null) return false;
+  if (!exists) return false;
+  if (Array.isArray(actual)) return matchArray(cond, actual);
 
   switch (cond.operator) {
     case 'EQ':
-      return actual === cond.expected;
+      return equal(actual, cond.expected);
     case 'NEQ':
-      return actual !== cond.expected;
-    case 'GTE':
-      return compareScalars(actual, cond.expected) >= 0;
-    case 'LTE':
-      return compareScalars(actual, cond.expected) <= 0;
-    case 'BETWEEN':
-      if (Array.isArray(cond.expected) && cond.expected.length === 2) {
-        return (
-          compareScalars(actual, cond.expected[0]) >= 0 &&
-          compareScalars(actual, cond.expected[1]) <= 0
-        );
-      }
-      return false;
+      return !equal(actual, cond.expected);
     case 'IN':
-      if (!Array.isArray(cond.expected)) return false;
-      return Array.isArray(actual)
-        ? actual.some((a) => isSetMemberNormalized(a, cond.expected as unknown[]))
-        : isSetMemberNormalized(actual, cond.expected as unknown[]);
+      return Array.isArray(cond.expected) && cond.expected.some((item) => equal(actual, item));
     case 'NOT_IN':
-      if (!Array.isArray(cond.expected)) return false;
-      return Array.isArray(actual)
-        ? !actual.some((a) => isSetMemberNormalized(a, cond.expected as unknown[]))
-        : !isSetMemberNormalized(actual, cond.expected as unknown[]);
+      return Array.isArray(cond.expected) && cond.expected.every((item) => !equal(actual, item));
+    case 'GTE':
+      return compare(actual, cond.expected) >= 0;
+    case 'LTE':
+      return compare(actual, cond.expected) <= 0;
+    case 'BETWEEN':
+      return (
+        Array.isArray(cond.expected) &&
+        cond.expected.length === 2 &&
+        compare(actual, cond.expected[0]) >= 0 &&
+        compare(actual, cond.expected[1]) <= 0
+      );
     case 'TIME_BETWEEN':
-      if (typeof cond.expected === 'object' && cond.expected !== null) {
-        const tw = cond.expected as TimeWindow;
-        const current = extractClockTime(String(actual), tw.timeZone);
-        const start = tw.start.slice(0, 5);
-        const end = tw.end.slice(0, 5);
-        const cmpCurrent = current.slice(0, 5);
-        return start <= end
-          ? cmpCurrent >= start && cmpCurrent <= end
-          : cmpCurrent >= start || cmpCurrent <= end;
-      }
-      return false;
+      return (
+        typeof actual === 'string' &&
+        typeof cond.expected === 'object' &&
+        cond.expected !== null &&
+        !Array.isArray(cond.expected) &&
+        timeBetween(actual, cond.expected as TimeWindow)
+      );
     case 'CIDR_MATCH':
       if (typeof actual !== 'string') return false;
       if (typeof cond.expected === 'string') return simulatorCidrMatch(actual, cond.expected);

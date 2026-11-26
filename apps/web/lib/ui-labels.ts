@@ -66,7 +66,6 @@ const ALERT_SEVERITY_LABELS: Readonly<Record<string, string>> = {
 const ALERT_STATUS_LABELS: Readonly<Record<string, string>> = {
   OPEN: 'Chờ xử lý',
   INVESTIGATING: 'Đang điều tra',
-  ESCALATED: 'Đã chuyển cấp xử lý',
   RESOLVED: 'Đã xử lý',
   FALSE_POSITIVE: 'Báo động giả',
 };

@@ -33,8 +33,16 @@ export function AuthGuard({
   requiredRole,
   requiredPermission,
 }: AuthGuardProps) {
-  const { user, isLoading, isAuthenticated, hasRole, hasPermission, canAccessPortal, refreshUser } =
-    useAuth();
+  const {
+    user,
+    isLoading,
+    isAuthenticated,
+    mfaPending,
+    hasRole,
+    hasPermission,
+    canAccessPortal,
+    refreshUser,
+  } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [isRechecking, setIsRechecking] = useState(false);
@@ -42,10 +50,23 @@ export function AuthGuard({
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      const redirectUrl = pathname ? `/login?redirect=${encodeURIComponent(pathname)}` : '/login';
+      const fullPath =
+        pathname && typeof window !== 'undefined'
+          ? `${pathname}${window.location.search}`
+          : pathname;
+      if (mfaPending) {
+        if (!pathname?.startsWith('/mfa')) {
+          const mfaRedirectUrl = fullPath
+            ? `/mfa?redirect=${encodeURIComponent(fullPath)}`
+            : '/mfa';
+          router.replace(mfaRedirectUrl);
+        }
+        return;
+      }
+      const redirectUrl = fullPath ? `/login?redirect=${encodeURIComponent(fullPath)}` : '/login';
       router.replace(redirectUrl);
     }
-  }, [isLoading, isAuthenticated, router, pathname]);
+  }, [isLoading, isAuthenticated, mfaPending, router, pathname]);
 
   async function handleRecheckAccess() {
     setIsRechecking(true);
@@ -97,7 +118,7 @@ export function AuthGuard({
     return (
       <AppLayout>
         <div className="mx-auto flex min-h-[65vh] max-w-lg flex-col items-center justify-center p-4">
-          <Card className="w-full rounded-[24px] border border-[#C13515]/25 bg-[#ffffff] text-[#222222] shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
+          <Card className="w-full rounded-[24px] border border-[#dddddd] bg-[#ffffff] text-[#222222] shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
             <CardHeader className="text-center pb-2">
               <div className="mx-auto mb-2 flex items-center justify-center text-[#C13515]">
                 <Lock size={24} strokeWidth={1.75} aria-hidden="true" />

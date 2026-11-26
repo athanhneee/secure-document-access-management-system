@@ -43,7 +43,13 @@ export function ConfirmDialog({
   const resolvedConfirmText = confirmLabel ?? confirmText ?? 'Xác nhận thực hiện';
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && isLoading) return;
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base font-semibold text-[#222222]">
@@ -79,7 +85,7 @@ export function ConfirmDialog({
             icon={<Check size={16} strokeWidth={2} aria-hidden="true" />}
             isLoading={isLoading}
             disabled={isLoading}
-            onClick={() => void onConfirm()}
+            onClick={() => onConfirm()}
           />
         </DialogFooter>
       </DialogContent>

@@ -100,6 +100,7 @@ export const OPERATOR_LABELS: Record<PolicyOperator, string> = {
 };
 
 export {
+  COMPATIBLE_OPERATORS_BY_TYPE,
   CLEARANCE_OPTIONS,
   DEPARTMENT_OPTIONS,
   CATEGORY_OPTIONS,

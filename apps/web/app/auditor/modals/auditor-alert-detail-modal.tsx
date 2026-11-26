@@ -98,7 +98,7 @@ export function AuditorAlertDetailModal({
                   variant={
                     active.status === 'OPEN'
                       ? 'destructive'
-                      : active.status === 'INVESTIGATING' || active.status === 'ESCALATED'
+                      : active.status === 'INVESTIGATING'
                         ? 'warning'
                         : 'success'
                   }

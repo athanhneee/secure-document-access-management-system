@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import type { IncidentDraftPrefill, SecurityAlertItem } from '../types';
 
@@ -28,8 +29,10 @@ interface CreateIncidentModalProps {
 }
 
 /**
- * Thuật toán: Khởi Tạo Hồ Sơ Báo Cáo Sự Cố An Ninh Ở Trạng Thái DRAFT Kèm Liên Kết Cảnh Báo Nguồn (`CreateIncidentModal`)
- * Mục đích: Kiểm định tiêu đề (`>= 5` ký tự khớp Zod #07), tóm tắt (`>= 10` ký tự), gắn `alertId` tùy chọn (#22) và tắt pop-up HTML5 bằng `noValidate` (N15).
+ * Thuật toán: Khởi Tạo Hồ Sơ Báo Cáo Sự Cố An Ninh Ở Trạng Thái DRAFT Bảo Toàn Liên Kết Cảnh Báo DLP/Phân Trang (`CreateIncidentModal`)
+ * Mục đích:
+ *   - Nếu mở từ tab DLP hoặc `prefill.alertId` nằm ngoài trang `alerts` hiện hành, tự động chèn `<option value={syntheticAlertId}>` tổng hợp lên đầu `<Select>` để không bao giờ đánh mất liên kết cảnh báo nguồn.
+ *   - Kiểm định tiêu đề (`>= 5` ký tự), tóm tắt (`>= 10` ký tự) và tắt pop-up HTML5 bằng `noValidate`.
  */
 export function CreateIncidentModal({
   open,
@@ -85,10 +88,21 @@ function CreateIncidentForm({
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
 }) {
-  const [selectedAlertId, setSelectedAlertId] = useState(prefill?.alertId ?? '');
+  const prefillAlertId = prefill?.alertId?.trim() ?? '';
+  const [selectedAlertId, setSelectedAlertId] = useState(prefillAlertId);
   const [incTitle, setIncTitle] = useState(prefill?.title ?? '');
   const [incSummary, setIncSummary] = useState(prefill?.summary ?? '');
   const [isCreatingInc, setIsCreatingInc] = useState(false);
+
+  const syntheticAlertId =
+    prefillAlertId && !alerts.some((a) => a.id === prefillAlertId)
+      ? prefillAlertId
+      : selectedAlertId && !alerts.some((a) => a.id === selectedAlertId)
+        ? selectedAlertId
+        : '';
+  const syntheticAlertLabel = prefill?.title
+    ? `[Cảnh báo nguồn] ${prefill.title.slice(0, 68)}`
+    : `Cảnh báo an ninh đính kèm (#${syntheticAlertId.slice(0, 12)})`;
 
   const trimmedTitle = incTitle.trim();
   const trimmedSummary = incSummary.trim();
@@ -136,19 +150,19 @@ function CreateIncidentForm({
         <label htmlFor="inc-alert-id" className="font-medium text-[#222222]">
           Liên kết cảnh báo an ninh nguồn (tùy chọn)
         </label>
-        <select
+        <Select
           id="inc-alert-id"
           value={selectedAlertId}
           onChange={(e) => setSelectedAlertId(e.target.value)}
-          className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
         >
+          {syntheticAlertId && <option value={syntheticAlertId}>{syntheticAlertLabel}</option>}
           <option value="">Không gắn cảnh báo cụ thể</option>
           {alerts.map((a) => (
             <option key={a.id} value={a.id}>
               [{formatDetectionRuleLabel(a.ruleCode)}] {a.title.slice(0, 70)}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
 
       <div className="space-y-1">
@@ -157,12 +171,14 @@ function CreateIncidentForm({
         </label>
         <Input
           id="inc-title"
+          maxLength={200}
+          disabled={isCreatingInc}
           value={incTitle}
           onChange={(e) => setIncTitle(e.target.value)}
           placeholder="Ví dụ: Nghi vấn rò rỉ tài liệu mật phòng Tài chính"
-          className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C]"
+          className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171]"
         />
-        <p className="text-xs text-[#717171]">Tối thiểu 5 ký tự ({trimmedTitle.length}/5)</p>
+        <p className="text-xs text-[#717171]">Tối thiểu 5 ký tự ({trimmedTitle.length}/200)</p>
       </div>
 
       <div className="space-y-1">
@@ -172,12 +188,14 @@ function CreateIncidentForm({
         <Textarea
           id="inc-summary"
           rows={4}
+          maxLength={2000}
+          disabled={isCreatingInc}
           value={incSummary}
           onChange={(e) => setIncSummary(e.target.value)}
           placeholder="Mô tả sự việc, các bằng chứng sơ bộ và mức độ rủi ro đối với tổ chức…"
-          className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C]"
+          className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171]"
         />
-        <p className="text-xs text-[#717171]">Tối thiểu 10 ký tự ({trimmedSummary.length}/10)</p>
+        <p className="text-xs text-[#717171]">Tối thiểu 10 ký tự ({trimmedSummary.length}/2000)</p>
       </div>
 
       <DialogFooter className="pt-2">

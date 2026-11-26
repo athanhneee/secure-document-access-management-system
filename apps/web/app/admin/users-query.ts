@@ -145,7 +145,9 @@ export function resolveUserDepartmentName(
 }
 
 /**
- * Thuật toán: Khớp Tài Khoản Với Bộ Lọc Thao Tác Khả Dụng Trên Cột `Thao tác` (`matchesUserActionFilter`)
+ * Thuật toán: Khớp Tài Khoản Với Bộ Lọc Thao Tác Khả Dụng Trên Cột `Thao tác` (`matchesUserActionFilter`, BUG-105)
+ * Đồng bộ máy trạng thái vòng đời người dùng: `LOCK` chỉ áp dụng cho `ACTIVE`, `UNLOCK` cho `LOCKED`,
+ * `REACTIVATE` cho `DISABLED` hoặc `PENDING`, và `DISABLE` cho mọi trạng thái khác `DISABLED`.
  */
 export function matchesUserActionFilter(status: string, actionFilter: UserActionFilter): boolean {
   const normalized = normalizeStatus(status);
@@ -159,7 +161,7 @@ export function matchesUserActionFilter(status: string, actionFilter: UserAction
     case 'UNLOCK':
       return normalized === 'LOCKED';
     case 'REACTIVATE':
-      return normalized === 'DISABLED';
+      return normalized === 'DISABLED' || normalized === 'PENDING';
   }
 }
 

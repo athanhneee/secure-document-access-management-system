@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Check, CheckCircle2, Copy, QrCode, RotateCcw, Search } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +11,7 @@ import { mapAuditorWatermarkDto, normalizeAuditorWatermarkInput } from '../foren
 import type { AuditorWatermarkProvenance, AuditorWatermarkVerifyDto } from '../types';
 
 interface AuditorWatermarkTraceTabProps {
+  retrySignal?: number | undefined;
   onClearError: () => void;
   onMessage: (message: string) => void;
   onError: (errorMessage: string) => void;
@@ -18,9 +19,10 @@ interface AuditorWatermarkTraceTabProps {
 
 /**
  * Thuật toán: Đối Soát Nguồn Gốc Watermark Pháp Chứng Chế Độ Chỉ Đọc Cho Kiểm Toán Viên (`AuditorWatermarkTraceTab`, UC34)
- * Mục đích: Cho phép nhập mã `WM-<12..64hex>`, dán JSON quét từ mã QR hoặc dải chữ PDF để truy xuất đầy đủ 8 trường pháp chứng mà không phụ thuộc chéo vào module `/security`.
+ * Mục đích: Cho phép nhập mã `WM-`/`wm-` (12–64 ký tự hex), dán JSON quét từ mã QR hoặc dải chữ PDF để truy xuất đầy đủ 8 trường pháp chứng và hỗ trợ `retrySignal` từ nút Thử lại của trang.
  */
 export function AuditorWatermarkTraceTab({
+  retrySignal = 0,
   onClearError,
   onMessage,
   onError,
@@ -41,42 +43,64 @@ export function AuditorWatermarkTraceTab({
     }
   }
 
+  const executeWatermarkTrace = useCallback(
+    async (rawToken: string) => {
+      onClearError();
+
+      const normalized = normalizeAuditorWatermarkInput(rawToken);
+      if (!normalized.valid) {
+        setValidationError(normalized.error);
+        setTraceResult(null);
+        return;
+      }
+
+      setValidationError(null);
+      setWmInputToken(normalized.token);
+      setIsTracing(true);
+      setTraceResult(null);
+
+      try {
+        const res = await apiClient<AuditorWatermarkVerifyDto>(
+          `/watermarks/verify/${encodeURIComponent(normalized.token)}`,
+        );
+        const provenance = mapAuditorWatermarkDto(res);
+        if (provenance.verified) {
+          setTraceResult(provenance);
+          onMessage('Đã hoàn tất đối soát thông tin watermark bảo mật.');
+        } else {
+          onError('Không thể xác nhận tính hợp lệ của mã watermark này.');
+        }
+      } catch (err) {
+        onError(
+          err instanceof ApiError
+            ? err.message || 'Mã watermark không tồn tại hoặc không hợp lệ.'
+            : 'Không thể đối soát mã watermark.',
+        );
+      } finally {
+        setIsTracing(false);
+      }
+    },
+    [onClearError, onError, onMessage],
+  );
+
+  const prevRetrySignalRef = useRef(retrySignal);
+  const latestInputRef = useRef(wmInputToken);
+  useEffect(() => {
+    latestInputRef.current = wmInputToken;
+  }, [wmInputToken]);
+
+  useEffect(() => {
+    if (prevRetrySignalRef.current !== retrySignal) {
+      prevRetrySignalRef.current = retrySignal;
+      if (latestInputRef.current.trim()) {
+        void executeWatermarkTrace(latestInputRef.current);
+      }
+    }
+  }, [executeWatermarkTrace, retrySignal]);
+
   async function handleTraceWatermark(e: FormEvent) {
     e.preventDefault();
-    onClearError();
-
-    const normalized = normalizeAuditorWatermarkInput(wmInputToken);
-    if (!normalized.valid) {
-      setValidationError(normalized.error);
-      setTraceResult(null);
-      return;
-    }
-
-    setValidationError(null);
-    setWmInputToken(normalized.token);
-    setIsTracing(true);
-    setTraceResult(null);
-
-    try {
-      const res = await apiClient<AuditorWatermarkVerifyDto>(
-        `/watermarks/verify/${encodeURIComponent(normalized.token)}`,
-      );
-      const provenance = mapAuditorWatermarkDto(res);
-      if (provenance.verified) {
-        setTraceResult(provenance);
-        onMessage('Đã hoàn tất đối soát thông tin watermark bảo mật.');
-      } else {
-        onError('Không thể xác nhận tính hợp lệ của mã watermark này.');
-      }
-    } catch (err) {
-      onError(
-        err instanceof ApiError
-          ? err.message || 'Mã watermark không tồn tại hoặc không hợp lệ.'
-          : 'Không thể đối soát mã watermark.',
-      );
-    } finally {
-      setIsTracing(false);
-    }
+    await executeWatermarkTrace(wmInputToken);
   }
 
   return (
@@ -102,7 +126,7 @@ export function AuditorWatermarkTraceTab({
                 }}
                 placeholder="VD: WM-2e59958fa6c7 hoặc dán chuỗi JSON quét từ mã QR"
                 aria-invalid={Boolean(validationError)}
-                className="min-h-11 sm:h-9 font-mono text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#717171] focus-visible:border-[#FF385C]"
+                className="min-h-11 sm:h-9 font-mono text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#717171]"
               />
               {validationError && (
                 <p role="alert" className="text-xs font-medium text-[#C13515] pt-0.5">
@@ -155,8 +179,8 @@ export function AuditorWatermarkTraceTab({
         </CardHeader>
         <CardContent className="flex-1 flex flex-col justify-center text-xs">
           {traceResult ? (
-            <div className="space-y-3 rounded-[20px] border border-[#008A05]/20 bg-[#008A05]/5 p-4">
-              <div className="flex items-center gap-2 text-[#008A05] font-semibold border-b border-[#008A05]/15 pb-2">
+            <div className="space-y-3 rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-4">
+              <div className="flex items-center gap-2 text-[#008A05] font-semibold border-b border-[#ebebeb] pb-2">
                 <CheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" />
                 <span>Đối soát thành công · Mã watermark hợp lệ</span>
               </div>
@@ -217,27 +241,29 @@ export function AuditorWatermarkTraceTab({
                     {traceResult.renderedText}
                   </div>
                 </div>
-                <div className="min-w-0 sm:col-span-2 space-y-1.5 pt-1 border-t border-[#008A05]/15">
+                <div className="min-w-0 sm:col-span-2 space-y-1.5 pt-1 border-t border-[#ebebeb]">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[#717171]">SHA-256 tệp đầu ra (có watermark)</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyValue(traceResult.outputSha256Hash, 'out')}
-                      aria-label="Sao chép mã băm SHA-256 tệp có watermark"
-                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-[#222222] hover:bg-[#ffffff] cursor-pointer"
-                    >
-                      {copiedKey === 'out' ? (
-                        <Check
-                          size={16}
-                          strokeWidth={2}
-                          className="text-[#008A05]"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
-                      )}
-                      <span>{copiedKey === 'out' ? 'Đã chép' : 'Sao chép'}</span>
-                    </button>
+                    {traceResult.outputSha256Hash && traceResult.outputSha256Hash !== '—' && (
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyValue(traceResult.outputSha256Hash, 'out')}
+                        aria-label="Sao chép mã băm SHA-256 tệp có watermark"
+                        className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-[#222222] hover:bg-[#ffffff] cursor-pointer"
+                      >
+                        {copiedKey === 'out' ? (
+                          <Check
+                            size={16}
+                            strokeWidth={2}
+                            className="text-[#008A05]"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
+                        )}
+                        <span>{copiedKey === 'out' ? 'Đã chép' : 'Sao chép'}</span>
+                      </button>
+                    )}
                   </div>
                   <div className="font-mono text-[#222222] break-all">
                     {traceResult.outputSha256Hash}

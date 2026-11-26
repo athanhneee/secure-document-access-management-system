@@ -13,8 +13,9 @@ import {
   formatWebAuthnError,
   useLocalhostSwitchUrl,
 } from '@/app/mfa/webauthn-binary';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { CollapsibleCard } from '@/components/ui/collapsible-card';
 import {
   Dialog,
   DialogContent,
@@ -23,8 +24,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { HandwritingText } from '@/components/ui/handwriting-text';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+
+const PASSKEY_CARD_DESCRIPTION =
+  'Đăng ký Windows Hello (PIN / Vân tay / Khuôn mặt), Touch ID, Passkey điện thoại hoặc khóa bảo mật USB để xác thực bước 2 nhanh chóng. Khi đăng ký nhân tố MFA đầu tiên, hệ thống sẽ cấp bộ 10 mã khôi phục khẩn cấp dùng một lần.';
 
 export interface PasskeyEnrollmentCardProps {
   mfaVerified?: boolean | undefined;
@@ -77,88 +82,106 @@ export function PasskeyEnrollmentCard({
 
   return (
     <>
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Fingerprint
-                size={20}
-                strokeWidth={1.75}
-                className="text-[#FF385C] shrink-0"
-                aria-hidden="true"
+      <CollapsibleCard
+        icon={
+          <Fingerprint
+            size={20}
+            strokeWidth={1.75}
+            className="text-[#FF385C] shrink-0"
+            aria-hidden="true"
+          />
+        }
+        title="Khóa bảo mật & Passkey"
+        badge={
+          <Badge variant={mfaVerified ? 'success' : 'warning'}>
+            {mfaVerified ? 'Đã xác thực MFA' : 'Chưa xác thực MFA'}
+          </Badge>
+        }
+        contentClassName="space-y-3.5"
+      >
+        {({ isOpen, revealKey }) => (
+          <>
+            <p className="text-xs text-[#717171] leading-relaxed">
+              <HandwritingText
+                key={`passkey-desc-${revealKey}`}
+                text={PASSKEY_CARD_DESCRIPTION}
+                active={isOpen}
+                startDelayMs={80}
+                charIntervalMs={16}
+                maxDurationMs={1550}
               />
-              <CardTitle className="text-sm font-bold text-[#222222]">
-                Khóa bảo mật &amp; Passkey
-              </CardTitle>
-            </div>
-            <Badge variant={mfaVerified ? 'success' : 'warning'}>
-              {mfaVerified ? 'Đã xác thực MFA' : 'Chưa xác thực MFA'}
-            </Badge>
-          </div>
-          <CardDescription className="text-xs text-[#717171]">
-            Đăng ký Windows Hello (PIN / Vân tay / Khuôn mặt), Touch ID, Passkey điện thoại hoặc
-            khóa bảo mật USB để xác thực bước 2 nhanh chóng. Mỗi lần thêm khóa mới sẽ cấp thêm bộ 10
-            mã khôi phục khẩn cấp gắn với khóa đó.
-          </CardDescription>
-        </CardHeader>
+            </p>
 
-        <CardContent className="space-y-3.5">
-          {localhostUrl && (
-            <output className="block rounded-[16px] border border-[#E07912]/35 bg-[#E07912]/10 p-3 text-xs text-[#222222] space-y-1">
-              <div className="flex items-center gap-1.5 font-semibold text-[#222222]">
-                <AlertTriangle
-                  size={16}
-                  strokeWidth={1.75}
-                  className="text-[#E07912] shrink-0"
-                  aria-hidden="true"
-                />
-                <span>Cần truy cập bằng localhost để kích hoạt Passkey</span>
-              </div>
-              <p className="text-[#717171] leading-relaxed">
-                Chuẩn trình duyệt W3C WebAuthn không cho đăng ký khóa trên địa chỉ IP{' '}
-                <code>127.0.0.1</code>. Hãy mở{' '}
-                <a href={localhostUrl} className="font-semibold text-[#E31C5F] underline break-all">
-                  {localhostUrl}
-                </a>{' '}
-                rồi bấm nút đăng ký bên dưới.
-              </p>
-            </output>
-          )}
+            <div
+              className={cn(
+                'space-y-3.5 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
+                isOpen ? 'translate-y-0 opacity-100 delay-75' : 'translate-y-1.5 opacity-0',
+              )}
+            >
+              {localhostUrl && (
+                <output className="block rounded-[16px] border border-[#E07912]/35 bg-[#E07912]/10 p-3 text-xs text-[#222222] space-y-1">
+                  <div className="flex items-center gap-1.5 font-semibold text-[#222222]">
+                    <AlertTriangle
+                      size={16}
+                      strokeWidth={1.75}
+                      className="text-[#E07912] shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span>Cần truy cập bằng localhost để kích hoạt Passkey</span>
+                  </div>
+                  <p className="text-[#717171] leading-relaxed">
+                    Chuẩn trình duyệt W3C WebAuthn không cho đăng ký khóa trên địa chỉ IP{' '}
+                    <code>127.0.0.1</code>. Hãy mở{' '}
+                    <a
+                      href={localhostUrl}
+                      className="font-semibold text-[#E31C5F] underline break-all"
+                    >
+                      {localhostUrl}
+                    </a>{' '}
+                    rồi bấm nút đăng ký bên dưới.
+                  </p>
+                </output>
+              )}
 
-          <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row sm:items-end gap-3">
-            <div className="flex-1 min-w-0 space-y-1.5">
-              <label
-                htmlFor="sessions-passkey-label"
-                className="block text-xs font-semibold text-[#222222]"
+              <form
+                onSubmit={handleSubmit}
+                className="flex flex-col sm:flex-row sm:items-end gap-3"
               >
-                Tên gợi nhớ thiết bị / khóa bảo mật
-              </label>
-              <Input
-                id="sessions-passkey-label"
-                name="passkeyLabel"
-                type="text"
-                maxLength={80}
-                disabled={isRegistering}
-                value={deviceLabel}
-                onChange={(e) => setDeviceLabel(e.target.value)}
-                placeholder="VD: Windows Hello Laptop, khóa USB văn phòng…"
-                className="bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
-              />
-            </div>
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  <label
+                    htmlFor="sessions-passkey-label"
+                    className="block text-xs font-semibold text-[#222222]"
+                  >
+                    Tên gợi nhớ thiết bị / khóa bảo mật
+                  </label>
+                  <Input
+                    id="sessions-passkey-label"
+                    name="passkeyLabel"
+                    type="text"
+                    maxLength={80}
+                    disabled={isRegistering}
+                    value={deviceLabel}
+                    onChange={(e) => setDeviceLabel(e.target.value)}
+                    placeholder="VD: Windows Hello Laptop, khóa USB văn phòng…"
+                    className="bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171]"
+                  />
+                </div>
 
-            <InteractiveHoverButton
-              type="submit"
-              variant="primary"
-              size="md"
-              isLoading={isRegistering}
-              disabled={isRegistering}
-              icon={<Fingerprint size={16} strokeWidth={2} aria-hidden="true" />}
-              text="Đăng ký khóa bảo mật / Passkey"
-              className="w-full sm:w-auto shrink-0"
-            />
-          </form>
-        </CardContent>
-      </Card>
+                <InteractiveHoverButton
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  isLoading={isRegistering}
+                  disabled={isRegistering}
+                  icon={<Fingerprint size={16} strokeWidth={2} aria-hidden="true" />}
+                  text="Đăng ký khóa bảo mật / Passkey"
+                  className="w-full sm:w-auto shrink-0"
+                />
+              </form>
+            </div>
+          </>
+        )}
+      </CollapsibleCard>
 
       <Dialog
         open={Boolean(recoveryCodes)}
@@ -178,8 +201,9 @@ export function PasskeyEnrollmentCard({
               <span>Lưu 10 mã khôi phục khẩn cấp mới</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-[#717171]">
-              Khóa bảo mật / Passkey đã được kích hoạt. Hãy sao lưu bộ 10 mã dùng một lần dưới đây
-              để dự phòng khi thay đổi thiết bị — mã sẽ không hiển thị lại sau khi đóng hộp thoại.
+              Khóa bảo mật / Passkey đã được kích hoạt. Hãy sao lưu chính xác bộ 10 mã dùng một lần
+              dưới đây (phân biệt chữ HOA/thường) để dự phòng khi thay đổi thiết bị — mã sẽ không
+              hiển thị lại sau khi đóng hộp thoại.
             </DialogDescription>
           </DialogHeader>
 

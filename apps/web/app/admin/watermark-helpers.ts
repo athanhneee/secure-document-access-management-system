@@ -99,11 +99,22 @@ export interface WatermarkPreviewRenderOptions {
   username?: string | null | undefined;
   fullName?: string | null | undefined;
   classificationLabel?: string | null | undefined;
+  classificationCode?: string | null | undefined;
+  classificationRank?: number | null | undefined;
+  includeQrCode?: boolean | undefined;
 }
 
 /**
- * Thuật toán: Nội Suy Đầy Đủ 10 Biến Định Danh Pháp Chứng Đồng Bộ Với `formatForensicWatermarkText` Phía API (`renderWatermarkTemplateText`).
- * Hỗ trợ cả `{var}` lẫn `{{var}}` và áp dụng chốt chặn bảo toàn danh tính nếu mẫu không chứa `{username}` hoặc `{fullName}`.
+ * Thuật toán: Kiểm Tra Mẫu Watermark Bắt Buộc Chứa `{username}` Hoặc `{fullName}` (`hasWatermarkRecipientIdentity`).
+ */
+export function hasWatermarkRecipientIdentity(templateText: string): boolean {
+  return /\{\{?(?:username|fullName)\}?\}/u.test(templateText);
+}
+
+/**
+ * Thuật toán: Nội Suy Đầy Đủ 10 Biến Định Danh Pháp Chứng Đồng Bộ 1-1 Với `formatForensicWatermarkText` Phía API (`BUG-055`).
+ * Nếu mẫu thiếu `{username}`/`{fullName}` thì ghép tiền tố `${fullName} (${employeeCode}) | ` vào trước `substituted` thay vì xóa mất `{watermarkToken}`,
+ * và bảo toàn trọn vẹn mã 48-hex không bị cắt cụt bởi `.slice(0, 1000)`.
  */
 export function renderWatermarkTemplateText(
   rawTemplate: string,
@@ -133,7 +144,41 @@ export function renderWatermarkTemplateText(
     .replace(/\{token\}/gu, sampleShortCode);
 
   if (!substituted.includes(username) && !substituted.includes(fullName)) {
-    substituted = `${fullName} (${employeeCode}) | ${documentCode} | ${utcTimestamp} | ${sampleShortCode}`;
+    substituted =
+      substituted.trim().length > 0
+        ? `${fullName} (${employeeCode}) | ${substituted}`
+        : `${fullName} (${employeeCode}) | ${documentCode} | ${utcTimestamp} | ${sampleShortCode}`;
+  }
+
+  const normalizedClassUpper = classification.toUpperCase();
+  const isHighClassification =
+    (typeof options.classificationRank === 'number' && options.classificationRank >= 3) ||
+    options.classificationCode === 'SECRET' ||
+    options.classificationCode === 'TOP_SECRET' ||
+    normalizedClassUpper === 'SECRET' ||
+    normalizedClassUpper === 'TOP_SECRET' ||
+    normalizedClassUpper === 'TỐI MẬT' ||
+    normalizedClassUpper === 'TUYỆT MẬT';
+
+  const mustPreserveFullToken =
+    substituted.includes(sampleFullCode) ||
+    (isHighClassification && options.includeQrCode === false);
+  if (mustPreserveFullToken && !substituted.includes(sampleFullCode)) {
+    substituted = `${substituted} | ${sampleFullCode}`;
+  }
+
+  if (substituted.length <= 1000) {
+    return substituted;
+  }
+  if (mustPreserveFullToken) {
+    const suffix = ` | ${sampleFullCode}`;
+    const withoutToken = substituted
+      .split(sampleFullCode)
+      .join('')
+      .replace(/\s+\|\s*$/u, '')
+      .trim();
+    const maxHeadLength = Math.max(0, 1000 - suffix.length);
+    return `${withoutToken.slice(0, maxHeadLength)}${suffix}`;
   }
   return substituted.slice(0, 1000);
 }

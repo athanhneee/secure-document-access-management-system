@@ -18,6 +18,8 @@ import {
   DEFAULT_INITIAL_RULE,
   serializePolicyAst,
   deserializePolicyAst,
+  parseSessionMinutesDraft,
+  validateVisualPolicyRule,
   clonePolicyTemplate,
   addConditionToGroup,
   removeConditionFromGroup,
@@ -71,6 +73,7 @@ export function VisualPolicyBuilder({
   const [jsonText, setJsonText] = useState(() => serializePolicyAst(initialRule));
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [builderWarning, setBuilderWarning] = useState<string | null>(null);
+  const [sessionMinutesDraft, setSessionMinutesDraft] = useState<string | null>(null);
   const [isSavingRule, setIsSavingRule] = useState(false);
   const [searchPalette, setSearchPalette] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<
@@ -90,24 +93,74 @@ export function VisualPolicyBuilder({
     setBuilderWarning(null);
   };
 
+  const resolveRuleForSubmission = (): VisualPolicyRule | null => {
+    if (viewMode === 'json') {
+      try {
+        const parsed = deserializePolicyAst(jsonText);
+        setRule(parsed);
+        setJsonError(null);
+        setBuilderWarning(null);
+        setSessionMinutesDraft(null);
+        return parsed;
+      } catch (err) {
+        setJsonError((err as Error).message);
+        return null;
+      }
+    }
+
+    let nextRule = rule;
+    if (
+      sessionMinutesDraft !== null &&
+      nextRule.obligations.some((o) => o.type === 'MAX_SESSION_MINUTES')
+    ) {
+      const draftCheck = parseSessionMinutesDraft(sessionMinutesDraft);
+      if (!draftCheck.valid) {
+        setBuilderWarning(draftCheck.message);
+        return null;
+      }
+      nextRule = {
+        ...nextRule,
+        obligations: nextRule.obligations.map((o) =>
+          o.type === 'MAX_SESSION_MINUTES' ? { ...o, minutes: draftCheck.minutes } : o,
+        ),
+      };
+    }
+
+    const validationError = validateVisualPolicyRule(nextRule);
+    if (validationError) {
+      setBuilderWarning(validationError);
+      return null;
+    }
+    if (nextRule !== rule) {
+      setRule(nextRule);
+      setJsonText(serializePolicyAst(nextRule));
+    }
+    setBuilderWarning(null);
+    return nextRule;
+  };
+
   const handleSetViewMode = (mode: 'visual' | 'json') => {
-    if (mode === 'json') setJsonText(serializePolicyAst(rule));
+    if (mode === viewMode) return;
+    const resolved = resolveRuleForSubmission();
+    if (!resolved) return;
+    if (mode === 'json') {
+      setRule(resolved);
+      setJsonText(serializePolicyAst(resolved));
+      setJsonError(null);
+      setBuilderWarning(null);
+      setSessionMinutesDraft(null);
+    }
     setViewMode(mode);
   };
 
   const handleJsonApply = () => {
-    try {
-      const parsed = deserializePolicyAst(jsonText);
-      setRule(parsed);
-      setJsonError(null);
-      setBuilderWarning(null);
-      setViewMode('visual');
-    } catch (err) {
-      setJsonError((err as Error).message);
-    }
+    const resolved = resolveRuleForSubmission();
+    if (!resolved) return;
+    setViewMode('visual');
   };
 
   const handleSelectTemplate = (tpl: PolicyTemplate) => {
+    setSessionMinutesDraft(null);
     updateRule(clonePolicyTemplate(tpl, departments));
     setTemplateDialogOpen(false);
   };
@@ -161,6 +214,8 @@ export function VisualPolicyBuilder({
         onSetViewMode={handleSetViewMode}
         onUpdateRule={updateRule}
         onOpenSimulator={() => {
+          const resolved = resolveRuleForSubmission();
+          if (!resolved) return;
           onClearError?.();
           setSimulatorOpen(true);
         }}
@@ -172,10 +227,13 @@ export function VisualPolicyBuilder({
         onSelectTemplate={handleSelectTemplate}
         onSaveRule={
           onSaveRule
-            ? async (nextRule) => {
+            ? async () => {
+                const resolved = resolveRuleForSubmission();
+                if (!resolved) return;
+                onClearError?.();
                 setIsSavingRule(true);
                 try {
-                  await onSaveRule(nextRule);
+                  await onSaveRule(resolved);
                 } finally {
                   setIsSavingRule(false);
                 }
@@ -202,7 +260,10 @@ export function VisualPolicyBuilder({
         <PolicyJsonPreview
           jsonText={jsonText}
           jsonError={jsonError}
-          onChangeJsonText={setJsonText}
+          onChangeJsonText={(nextText) => {
+            setJsonText(nextText);
+            if (jsonError) setJsonError(null);
+          }}
           onApplyJson={handleJsonApply}
         />
       ) : (
@@ -253,7 +314,7 @@ export function VisualPolicyBuilder({
                 type="button"
                 variant="outline"
                 onClick={() => updateRule(addDisjunctiveGroup(rule))}
-                className="rounded-full border-dashed border-[#dddddd] hover:border-[#FF385C] bg-[#ffffff] text-[#222222] text-xs min-h-11 sm:h-10 px-6 flex items-center gap-2 shadow-xs"
+                className="rounded-full border-dashed border-[#dddddd] hover:border-[#222222] bg-[#ffffff] text-[#222222] text-xs min-h-11 sm:h-10 px-6 flex items-center gap-2 shadow-xs"
               >
                 <Plus size={16} strokeWidth={2} className="text-[#E31C5F]" aria-hidden="true" />
                 <span className="font-semibold">Thêm nhóm điều kiện thay thế (HOẶC)</span>
@@ -262,9 +323,12 @@ export function VisualPolicyBuilder({
 
             <ObligationsPanel
               obligations={rule.obligations}
-              onToggleObligation={(type) =>
-                updateRule({ ...rule, obligations: toggleRuleObligation(rule.obligations, type) })
-              }
+              onToggleObligation={(type) => {
+                if (type === 'MAX_SESSION_MINUTES') {
+                  setSessionMinutesDraft(null);
+                }
+                updateRule({ ...rule, obligations: toggleRuleObligation(rule.obligations, type) });
+              }}
               onSetSessionMinutes={(minutes) =>
                 updateRule({
                   ...rule,
@@ -273,6 +337,7 @@ export function VisualPolicyBuilder({
                   ),
                 })
               }
+              onSessionMinutesDraftChange={setSessionMinutesDraft}
             />
           </div>
         </div>

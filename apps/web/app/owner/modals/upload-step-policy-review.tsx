@@ -1,6 +1,6 @@
 'use client';
 
-import { ShieldCheck, Download, Eye } from 'lucide-react';
+import { AlertTriangle, ShieldCheck, Download, Eye } from 'lucide-react';
 import { ClassificationBadge } from '@/components/classification-badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -30,6 +30,7 @@ export function UploadStepPolicyReview({
   const {
     docFile,
     docTitle,
+    docCode,
     docDescription,
     setDocDescription,
     docDepartmentId,
@@ -50,10 +51,11 @@ export function UploadStepPolicyReview({
           <Textarea
             id="doc-desc"
             rows={3}
+            maxLength={2000}
             value={docDescription}
             onChange={(e) => setDocDescription(e.target.value)}
             placeholder="Nội dung chính và phạm vi sử dụng của tài liệu…"
-            className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
+            className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0]"
           />
         </div>
 
@@ -107,15 +109,16 @@ export function UploadStepPolicyReview({
             onChange={(e) => setDocRetentionDate(e.target.value)}
             aria-invalid={Boolean(retentionDateError)}
             aria-describedby={retentionDateError ? 'doc-retention-error' : 'doc-retention-hint'}
-            className={`min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] text-[#222222] placeholder:text-[#b0b0b0] ${
-              retentionDateError
-                ? 'border-[#C13515] focus-visible:border-[#C13515]'
-                : 'border-[#dddddd] focus-visible:border-[#FF385C]'
-            }`}
+            className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0]"
           />
           {retentionDateError ? (
-            <p id="doc-retention-error" role="alert" className="text-xs text-[#C13515]">
-              {retentionDateError}
+            <p
+              id="doc-retention-error"
+              role="alert"
+              className="flex items-center gap-1.5 text-xs text-[#C13515]"
+            >
+              <AlertTriangle size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+              <span>{retentionDateError}</span>
             </p>
           ) : (
             <p id="doc-retention-hint" className="text-xs text-[#717171]">
@@ -130,16 +133,18 @@ export function UploadStepPolicyReview({
 
   return (
     <div className="space-y-3 text-xs">
-      <div className="rounded-[24px] border border-[#008A05]/20 bg-[#008A05]/5 p-3.5 space-y-2">
+      <div className="rounded-[24px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-2">
         <div className="flex items-center gap-2 text-[#008A05] font-semibold">
           <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
           <span>Xác minh trước khi mã hóa lưu trữ</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[#222222] pt-1 border-t border-[#008A05]/15">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[#222222] pt-1 border-t border-[#ebebeb]">
           <span className="text-[#717171]">Tiêu đề:</span>
           <span className="font-semibold text-[#222222]">{docTitle}</span>
+          <span className="text-[#717171]">Mã tài liệu:</span>
+          <span className="font-mono text-[#222222]">{docCode.trim() || 'Tự động cấp'}</span>
           <span className="text-[#717171]">Tệp nguồn:</span>
-          <span className="font-bold text-[#222222]">
+          <span className="font-bold text-[#222222] break-all">
             {docFile ? `${docFile.name} (${(docFile.size / 1024).toFixed(1)} KB)` : 'Chưa chọn tệp'}
           </span>
           <span className="text-[#717171]">Phòng ban:</span>

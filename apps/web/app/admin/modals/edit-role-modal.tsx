@@ -32,8 +32,16 @@ export function EditRoleModal({
   onSuccess,
   onError,
 }: EditRoleModalProps) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && isSubmitting) return;
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
@@ -48,6 +56,7 @@ export function EditRoleModal({
           <EditRoleForm
             key={role.id}
             role={role}
+            onSubmittingChange={setIsSubmitting}
             onClose={() => onOpenChange(false)}
             onClearError={onClearError}
             onSuccess={onSuccess}
@@ -61,22 +70,34 @@ export function EditRoleModal({
 
 interface EditRoleFormProps {
   role: RoleRow;
+  onSubmittingChange: (submitting: boolean) => void;
   onClose: () => void;
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
 }
 
-function EditRoleForm({ role, onClose, onClearError, onSuccess, onError }: EditRoleFormProps) {
+function EditRoleForm({
+  role,
+  onSubmittingChange,
+  onClose,
+  onClearError,
+  onSuccess,
+  onError,
+}: EditRoleFormProps) {
   const [editRoleName, setEditRoleName] = useState(role.name);
   const [editRoleDesc, setEditRoleDesc] = useState(role.description || '');
   const [isEditingRole, setIsEditingRole] = useState(false);
 
   async function handleEditRole(e: FormEvent) {
     e.preventDefault();
-    if (!editRoleName.trim()) return;
+    if (!editRoleName.trim()) {
+      onError('Vui lòng nhập tên hiển thị của vai trò.');
+      return;
+    }
 
     setIsEditingRole(true);
+    onSubmittingChange(true);
     onClearError();
     try {
       await apiClient(`/rbac/roles/${role.id}`, {
@@ -99,11 +120,12 @@ function EditRoleForm({ role, onClose, onClearError, onSuccess, onError }: EditR
       }
     } finally {
       setIsEditingRole(false);
+      onSubmittingChange(false);
     }
   }
 
   return (
-    <form onSubmit={handleEditRole} className="space-y-3.5 py-2 text-xs">
+    <form onSubmit={handleEditRole} noValidate className="space-y-3.5 py-2 text-xs">
       <div className="space-y-1">
         <label htmlFor="edit-role-name" className="font-medium text-[#222222]">
           Tên hiển thị <span className="text-[#C13515]">*</span>
@@ -136,6 +158,7 @@ function EditRoleForm({ role, onClose, onClearError, onSuccess, onError }: EditR
           variant="ghost"
           size="sm"
           text="Hủy"
+          disabled={isEditingRole}
           onClick={onClose}
         />
         <InteractiveHoverButton

@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { ReaderWorkspace } from './reader-workspace';
 
@@ -9,5 +10,9 @@ export const metadata: Metadata = {
 };
 
 export default function ReaderPage() {
-  return <ReaderWorkspace />;
+  return (
+    <Suspense fallback={null}>
+      <ReaderWorkspace />
+    </Suspense>
+  );
 }

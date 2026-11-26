@@ -12,6 +12,9 @@ export const WORKSPACE_TAB_EVENT = 'sda:workspace-tab';
 export interface NotificationPortalCapabilities {
   canAccessOwner: boolean;
   canAccessReader: boolean;
+  canAccessSecurity?: boolean | undefined;
+  canAccessAuditor?: boolean | undefined;
+  hasPermission?: ((permission: string) => boolean) | undefined;
 }
 
 export interface RoutableNotificationLike {
@@ -31,7 +34,25 @@ const OWNER_DOCUMENT_TYPES = new Set([
   'RETENTION_EXPIRATION_WARNING',
   'DOCUMENT_OWNERSHIP_TRANSFERRED',
 ]);
-const OWNER_HISTORY_TYPES = new Set(['INCIDENT_REPORT_SUBMITTED']);
+const INCIDENT_NOTIFICATION_TYPES = new Set([
+  'INCIDENT_REPORT_SUBMITTED',
+  'INCIDENT_REPORT_UPDATED',
+  'INCIDENT_REPORT_CLOSED',
+  'INCIDENT_REPORT_CREATED',
+  'INCIDENT_REPORT_IN_REVIEW',
+]);
+const SECURITY_ALERT_TYPES = new Set([
+  'SECURITY_ALERT_CREATED',
+  'SECURITY_ALERT_UPDATED',
+  'SECURITY_DIGEST',
+]);
+const AUDITOR_EXPORT_TYPES = new Set([
+  'EXPORT_JOB_COMPLETED',
+  'EXPORT_JOB_FAILED',
+  'EXPORT_JOB_UPDATED',
+  'REPORT_EXPORT_READY',
+  'REPORT_EXPORT_COMPLETED',
+]);
 const READER_REQUEST_TYPES = new Set(['ACCESS_REQUEST_REJECTED', 'ACCESS_REQUEST_APPROVED']);
 const READER_GRANT_TYPES = new Set([
   'ACCESS_GRANT_ISSUED',
@@ -40,7 +61,7 @@ const READER_GRANT_TYPES = new Set([
 ]);
 
 /**
- * Thuật toán: Ánh xạ loại thông báo + đối tượng liên quan sang tuyến đường đích hợp lệ với phân hệ người dùng được phép truy cập.
+ * Thuật toán: Ánh xạ loại thông báo + đối tượng liên quan sang tuyến đường đích hợp lệ với cả phân hệ lẫn quyền mở từng tab đích.
  */
 export function resolveNotificationHref(
   item: RoutableNotificationLike,
@@ -49,44 +70,98 @@ export function resolveNotificationHref(
   const notifType = (item.notificationType ?? '').trim().toUpperCase();
   const objType = (item.relatedObjectType ?? '').trim().toUpperCase();
 
+  const checkPerm = capabilities.hasPermission;
+  const hasAnyTabPerm = (candidates: readonly string[]): boolean =>
+    checkPerm ? candidates.some((perm) => checkPerm(perm)) : true;
+
+  const canOpenOwnerDocuments =
+    capabilities.canAccessOwner &&
+    hasAnyTabPerm(['DOCUMENT:DISCOVER', 'DOCUMENT:VIEW', 'DOCUMENT:MANAGE', 'DOCUMENT:UPLOAD']);
+  const canOpenOwnerRequests =
+    capabilities.canAccessOwner &&
+    hasAnyTabPerm(['ACCESS_REQUEST:DECIDE', 'ACCESS_REQUEST:VIEW_OWN']);
+  const canOpenOwnerGrants =
+    capabilities.canAccessOwner &&
+    hasAnyTabPerm(['ACCESS_GRANT:VIEW', 'ACCESS_GRANT:CREATE', 'ACCESS_GRANT:REVOKE']);
+  const canOpenOwnerHistory = capabilities.canAccessOwner && hasAnyTabPerm(['AUDIT_LOG:VIEW']);
+
+  const canOpenReaderDocs = capabilities.canAccessReader && hasAnyTabPerm(['DOCUMENT:VIEW']);
+  const canOpenReaderRequests =
+    capabilities.canAccessReader && hasAnyTabPerm(['ACCESS_REQUEST:VIEW_OWN']);
+
+  const canOpenSecurityAlerts =
+    Boolean(capabilities.canAccessSecurity) && hasAnyTabPerm(['SECURITY_ALERT:VIEW']);
+  const canOpenSecurityIncidents =
+    Boolean(capabilities.canAccessSecurity) &&
+    hasAnyTabPerm(['SECURITY_ALERT:VIEW', 'INCIDENT_REPORT:CREATE', 'INCIDENT_REPORT:MANAGE']);
+  const canOpenSecuritySessions =
+    Boolean(capabilities.canAccessSecurity) && hasAnyTabPerm(['ACCESS_SESSION:TERMINATE']);
+
+  const canOpenAuditorLogs =
+    Boolean(capabilities.canAccessAuditor) && hasAnyTabPerm(['AUDIT_LOG:VIEW']);
+  const canOpenAuditorExports =
+    Boolean(capabilities.canAccessAuditor) &&
+    hasAnyTabPerm(['AUDIT_LOG:EXPORT', 'SYSTEM_REPORT:EXPORT']);
+
   if (OWNER_REQUEST_TYPES.has(notifType)) {
-    return capabilities.canAccessOwner ? '/owner?tab=requests' : null;
+    return canOpenOwnerRequests ? '/owner?tab=requests' : null;
   }
   if (OWNER_DOCUMENT_TYPES.has(notifType)) {
-    return capabilities.canAccessOwner ? '/owner?tab=documents' : null;
+    return canOpenOwnerDocuments ? '/owner?tab=documents' : null;
   }
-  if (OWNER_HISTORY_TYPES.has(notifType)) {
-    return capabilities.canAccessOwner ? '/owner?tab=history' : null;
+  if (INCIDENT_NOTIFICATION_TYPES.has(notifType)) {
+    if (canOpenSecurityIncidents) return '/security?tab=incidents';
+    return canOpenOwnerHistory ? '/owner?tab=history' : null;
+  }
+  if (SECURITY_ALERT_TYPES.has(notifType)) {
+    return canOpenSecurityAlerts ? '/security?tab=alerts' : null;
+  }
+  if (AUDITOR_EXPORT_TYPES.has(notifType)) {
+    return canOpenAuditorExports ? '/auditor?tab=exports' : null;
   }
   if (READER_REQUEST_TYPES.has(notifType)) {
-    return capabilities.canAccessReader ? '/reader?tab=my-requests' : null;
+    return canOpenReaderRequests ? '/reader?tab=my-requests' : null;
   }
   if (READER_GRANT_TYPES.has(notifType)) {
-    return capabilities.canAccessReader ? '/reader?tab=my-docs' : null;
+    return canOpenReaderDocs ? '/reader?tab=my-docs' : null;
   }
 
   if (objType === 'ACCESS_REQUEST') {
     if (capabilities.canAccessOwner && !capabilities.canAccessReader) {
-      return '/owner?tab=requests';
+      return canOpenOwnerRequests ? '/owner?tab=requests' : null;
     }
-    return capabilities.canAccessReader ? '/reader?tab=my-requests' : null;
+    if (canOpenReaderRequests) return '/reader?tab=my-requests';
+    return canOpenOwnerRequests ? '/owner?tab=requests' : null;
   }
   if (objType === 'DOCUMENT') {
     if (capabilities.canAccessOwner && !capabilities.canAccessReader) {
-      return '/owner?tab=documents';
+      return canOpenOwnerDocuments ? '/owner?tab=documents' : null;
     }
-    return capabilities.canAccessReader ? '/reader?tab=my-docs' : null;
+    if (canOpenReaderDocs) return '/reader?tab=my-docs';
+    return canOpenOwnerDocuments ? '/owner?tab=documents' : null;
   }
   if (objType === 'ACCESS_GRANT') {
-    if (capabilities.canAccessReader) return '/reader?tab=my-docs';
-    return capabilities.canAccessOwner ? '/owner?tab=grants' : null;
+    if (canOpenReaderDocs) return '/reader?tab=my-docs';
+    return canOpenOwnerGrants ? '/owner?tab=grants' : null;
   }
   if (objType === 'ACCESS_SESSION') {
-    if (capabilities.canAccessReader) return '/reader?tab=my-docs';
-    return capabilities.canAccessOwner ? '/owner?tab=history' : null;
+    if (canOpenSecuritySessions) return '/security?tab=sessions';
+    if (canOpenReaderDocs) return '/reader?tab=my-docs';
+    return canOpenOwnerHistory ? '/owner?tab=history' : null;
   }
   if (objType === 'INCIDENT_REPORT') {
-    return capabilities.canAccessOwner ? '/owner?tab=history' : null;
+    if (canOpenSecurityIncidents) return '/security?tab=incidents';
+    return canOpenOwnerHistory ? '/owner?tab=history' : null;
+  }
+  if (objType === 'SECURITY_ALERT') {
+    return canOpenSecurityAlerts ? '/security?tab=alerts' : null;
+  }
+  if (objType === 'ASYNC_EXPORT_JOB' || objType === 'EXPORT_JOB') {
+    return canOpenAuditorExports ? '/auditor?tab=exports' : null;
+  }
+  if (objType === 'AUDIT_LOG') {
+    if (canOpenAuditorLogs) return '/auditor?tab=logs';
+    return canOpenOwnerHistory ? '/owner?tab=history' : null;
   }
   return null;
 }

@@ -1,73 +1,90 @@
 /**
- * Thuật toán: Đối Sánh Mặt Nạ Mạng Con IPv4/IPv6 CIDR 128-Bit Hằng Độ Phức Tạp (`simulatorCidrMatch`)
- * Mục đích: Xác minh địa chỉ IP nguồn (IPv4 hoặc IPv6 nén `::`) có thuộc dải mạng con CIDR được phép trong chính sách ABAC hay không.
+ * Thuật toán: Đối Chiếu Mặt Nạ Mạng Con IPv4/IPv6 Dual-Stack 32/128-Bit BigInt Đồng Bộ 1-1 Với Backend (`cidr-matcher`, RFC 4291, BUG-039)
  * Cơ chế hoạt động:
- *   - Chuyển đổi IPv4 sang không gian IPv4-mapped IPv6 `::ffff:0:0/96` và khai triển IPv6 nén thành số nguyên `BigInt` 128-bit.
- *   - Dựng mặt nạ bit bậc cao `mask` theo độ dài tiền tố hiệu dụng và đối chiếu `(candidate.bits & mask) === (network.bits & mask)`.
+ *   1. Phân tích địa chỉ IP nguồn và địa chỉ mạng (kèm cắt bỏ zone index `%eth0`) sang `{ value: bigint, bits: 32 | 128 }`.
+ *   2. Chuẩn hóa chéo địa chỉ IPv4-mapped IPv6 (`::ffff:a.b.c.d`, tiền tố 96-bit `0xffff`) và từ chối khớp chéo giữa IPv4 thuần với IPv6 thuần (`address.bits !== network.bits`).
+ *   3. Hỗ trợ cả CIDR có `/prefix` lẫn địa chỉ IP đơn lẻ không hậu tố `/`, dịch phải `bits - prefix` bit để so sánh tiền tố mạng.
  */
-function parseIpv4Bits(ip: string): bigint | null {
-  const parts = ip.split('.');
-  if (parts.length !== 4) return null;
-  let value = 0n;
-  for (const part of parts) {
-    if (!/^(?:0|[1-9]\d{0,2})$/.test(part)) return null;
-    const octet = Number(part);
-    if (octet < 0 || octet > 255) return null;
-    value = (value << 8n) | BigInt(octet);
+export function cidrMatch(ip: string, cidr: string): boolean {
+  const [networkText, prefixText, extra] = cidr.trim().split('/');
+  if (!networkText || extra !== undefined) return false;
+  if (prefixText !== undefined && !/^\d{1,3}$/u.test(prefixText)) return false;
+  let address = parseAddress(ip);
+  const network = parseAddress(networkText);
+  if (!address || !network) return false;
+  if (address.bits === 128 && network.bits === 32 && address.value >> 32n === 0xffffn) {
+    address = { value: address.value & 0xffffffffn, bits: 32 };
+  } else if (network.bits === 128 && address.bits === 32 && network.value >> 32n === 0xffffn) {
+    address = { value: (0xffffn << 32n) | address.value, bits: 128 };
   }
-  return (0xffffn << 32n) | value;
+  if (address.bits !== network.bits) return false;
+  const prefix = prefixText === undefined ? address.bits : Number(prefixText);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > address.bits) return false;
+  const shift = BigInt(address.bits - prefix);
+  return address.value >> shift === network.value >> shift;
 }
 
-function parseIp128(rawIp: string): { bits: bigint; isIpv4: boolean } | null {
-  const trimmed = rawIp.trim();
-  const v4 = parseIpv4Bits(trimmed);
-  if (v4 !== null) return { bits: v4, isIpv4: true };
-  if (!trimmed.includes(':') || trimmed.includes(':::')) return null;
+export function isValidCidr(cidr: string): boolean {
+  const trimmed = cidr.trim();
+  if (trimmed.length === 0) return false;
+  const [networkText, prefixText, extra] = trimmed.split('/');
+  if (!networkText || extra !== undefined) return false;
+  const network = parseAddress(networkText);
+  if (!network) return false;
+  if (prefixText === undefined) return true;
+  if (!/^\d{1,3}$/u.test(prefixText)) return false;
+  const prefix = Number(prefixText);
+  return Number.isInteger(prefix) && prefix >= 0 && prefix <= network.bits;
+}
 
-  let normalized = trimmed;
-  if (normalized.includes('.')) {
-    const lastColon = normalized.lastIndexOf(':');
-    const embeddedV4 = parseIpv4Bits(normalized.slice(lastColon + 1));
-    if (embeddedV4 === null) return null;
-    const low32 = embeddedV4 & 0xffffffffn;
-    const hi = Number((low32 >> 16n) & 0xffffn).toString(16);
-    const lo = Number(low32 & 0xffffn).toString(16);
-    normalized = `${normalized.slice(0, lastColon)}:${hi}:${lo}`;
-  }
-
-  const halves = normalized.split('::');
-  if (halves.length > 2) return null;
-  const left = halves[0] ? halves[0].split(':') : [];
-  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
-  const missing = halves.length === 2 ? 8 - (left.length + right.length) : 0;
-  if ((halves.length === 1 && left.length !== 8) || (halves.length === 2 && missing < 1)) {
+export function parseAddress(value: string): { value: bigint; bits: 32 | 128 } | null {
+  const normalized = value.trim().toLowerCase().split('%')[0]!;
+  if (normalized.includes(':')) return parseIpv6(normalized);
+  const parts = normalized.split('.');
+  if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/u.test(part) || Number(part) > 255)) {
     return null;
   }
-  const groups = [...left, ...Array<string>(missing).fill('0'), ...right];
-  if (groups.length !== 8) return null;
+  return {
+    value: parts.reduce((result, part) => (result << 8n) | BigInt(Number(part)), 0n),
+    bits: 32,
+  };
+}
 
-  let result = 0n;
-  for (const group of groups) {
-    if (!/^[0-9a-fA-F]{1,4}$/.test(group)) return null;
-    result = (result << 16n) | BigInt(Number.parseInt(group, 16));
+export function parseIpv6(value: string): { value: bigint; bits: 128 } | null {
+  if ((value.match(/::/gu) ?? []).length > 1) return null;
+  let source = value;
+  const ipv4Tail = source.match(/(?:^|:)(\d{1,3}(?:\.\d{1,3}){3})$/u)?.[1];
+  if (ipv4Tail) {
+    const parsed = parseAddress(ipv4Tail);
+    if (!parsed || parsed.bits !== 32) return null;
+    const high = ((parsed.value >> 16n) & 0xffffn).toString(16);
+    const low = (parsed.value & 0xffffn).toString(16);
+    source = `${source.slice(0, -ipv4Tail.length)}${high}:${low}`;
   }
-  return { bits: result, isIpv4: false };
+  const halves = source.split('::');
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves[1] ? halves[1].split(':') : [];
+  const omitted = 8 - left.length - right.length;
+  if ((halves.length === 1 && omitted !== 0) || (halves.length === 2 && omitted < 1)) return null;
+  const groups = [...left, ...Array.from({ length: omitted }, () => '0'), ...right];
+  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-f]{1,4}$/u.test(group))) return null;
+  return {
+    value: groups.reduce((result, group) => (result << 16n) | BigInt(`0x${group}`), 0n),
+    bits: 128,
+  };
+}
+
+export function canonicalizeIpAddress(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.includes('/')) return null;
+  let parsed = parseAddress(trimmed);
+  if (!parsed) return null;
+  if (parsed.bits === 128 && parsed.value >> 32n === 0xffffn) {
+    parsed = { value: parsed.value & 0xffffffffn, bits: 32 };
+  }
+  return `${parsed.bits}:${parsed.value.toString(16)}`;
 }
 
 export function simulatorCidrMatch(ipRaw: string, cidrRaw: string): boolean {
-  const candidate = parseIp128(ipRaw);
-  if (!candidate) return false;
-  const slashIdx = cidrRaw.indexOf('/');
-  if (slashIdx <= 0) return false;
-  const network = parseIp128(cidrRaw.slice(0, slashIdx));
-  const prefixText = cidrRaw.slice(slashIdx + 1);
-  if (!network || !/^\d{1,3}$/.test(prefixText)) return false;
-  const prefixLen = Number(prefixText);
-  const maxPrefix = network.isIpv4 ? 32 : 128;
-  if (prefixLen < 0 || prefixLen > maxPrefix) return false;
-  const effectivePrefix = network.isIpv4 ? 96 + prefixLen : prefixLen;
-  if (effectivePrefix === 0) return true;
-  const shift = BigInt(128 - effectivePrefix);
-  const mask = ((1n << BigInt(effectivePrefix)) - 1n) << shift;
-  return (candidate.bits & mask) === (network.bits & mask);
+  return cidrMatch(ipRaw, cidrRaw);
 }

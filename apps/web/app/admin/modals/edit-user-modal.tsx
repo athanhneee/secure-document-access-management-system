@@ -40,8 +40,16 @@ export function EditUserModal({
   onSuccess,
   onError,
 }: EditUserModalProps) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && isSubmitting) return;
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogContent className="max-w-md border-[#ebebeb] bg-[#ffffff] text-[#222222]">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
@@ -58,6 +66,7 @@ export function EditUserModal({
             user={user}
             departments={departments}
             clearanceOptions={clearanceOptions}
+            onSubmittingChange={setIsSubmitting}
             onClose={() => onOpenChange(false)}
             onClearError={onClearError}
             onSuccess={onSuccess}
@@ -73,6 +82,7 @@ interface EditUserFormProps {
   user: UserRow;
   departments: DepartmentRow[];
   clearanceOptions: ClearanceOptionRow[];
+  onSubmittingChange: (submitting: boolean) => void;
   onClose: () => void;
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
@@ -83,6 +93,7 @@ function EditUserForm({
   user,
   departments,
   clearanceOptions,
+  onSubmittingChange,
   onClose,
   onClearError,
   onSuccess,
@@ -116,6 +127,7 @@ function EditUserForm({
     }
 
     setIsSubmitting(true);
+    onSubmittingChange(true);
     onClearError();
     try {
       await apiClient(`/users/${user.id}`, {
@@ -140,11 +152,12 @@ function EditUserForm({
       );
     } finally {
       setIsSubmitting(false);
+      onSubmittingChange(false);
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3.5 py-2 text-xs">
+    <form onSubmit={handleSubmit} noValidate className="space-y-3.5 py-2 text-xs">
       <div className="space-y-1">
         <label htmlFor="edit-user-fullname" className="font-medium text-[#222222]">
           Họ và tên đầy đủ <span className="text-[#C13515]">*</span>
@@ -197,7 +210,7 @@ function EditUserForm({
           required
           value={departmentId}
           onChange={(e) => setDepartmentId(e.target.value)}
-          className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+          className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15 cursor-pointer"
         >
           <option value="" disabled>
             Chọn phòng ban trực thuộc…
@@ -234,7 +247,7 @@ function EditUserForm({
           id="edit-user-clearance"
           value={clearanceOptionId}
           onChange={(e) => setClearanceOptionId(e.target.value)}
-          className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+          className="w-full min-h-11 sm:h-10 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 py-2 text-xs text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15 cursor-pointer"
         >
           <option value="">Chưa cấp / Thu hồi thẩm quyền (Cấp 0)</option>
           {clearanceOptions.map((opt) => (

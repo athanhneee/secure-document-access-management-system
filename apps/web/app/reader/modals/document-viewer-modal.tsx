@@ -15,6 +15,8 @@ export function DocumentViewerModal({ viewer }: DocumentViewerModalProps) {
     previewOpen,
     previewDoc,
     previewSessionId,
+    previewAllowDownload,
+    previewObligations,
     previewPdfBytes,
     previewPage,
     previewTotalPages,
@@ -37,7 +39,8 @@ export function DocumentViewerModal({ viewer }: DocumentViewerModalProps) {
       page={previewPage}
       totalPages={previewTotalPages}
       versionNo={previewVersionNo}
-      allowDownload={previewDoc?.allowDownload ?? false}
+      allowDownload={previewAllowDownload}
+      obligations={previewObligations}
       pageError={previewPageError}
       onRetryPage={() => void handleRetryPage()}
       isLoading={isLoadingPreview}

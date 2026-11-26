@@ -27,8 +27,8 @@ interface AuditHistoryTabProps {
 }
 
 /**
- * Thuật toán: Bảng Nhật Ký Truy Vết Tài Liệu Cuộn Có Trần Chiều Cao & Chống Xô Lệch Cột (`AuditHistoryTab`)
- * Mục đích: Đặt danh sách sự kiện truy cập tài liệu của Chủ sở hữu trong khung cuộn cố định tiêu đề cột, cắt gọn các chuỗi mã dài kèm `title` và tự động cuộn về đầu bảng khi chuyển trang.
+ * Thuật toán: Bảng Nhật Ký Truy Vết Tài Liệu Đa Nền Tảng Có Thẻ Di Động `375px` & Bảng Máy Tính 7 Cột (`AuditHistoryTab`, BUG-115)
+ * Mục đích: Hiển thị thẻ tóm tắt thoáng rõ trên màn hình di động (`md:hidden`) song song với bảng 7 cột cố định trên máy tính (`hidden md:block`) và tự động cuộn về đầu trang khi chuyển trang.
  */
 export function AuditHistoryTab({
   auditLogs,
@@ -69,96 +69,158 @@ export function AuditHistoryTab({
         />
       </CardHeader>
       <CardContent className="p-0">
-        <Table containerRef={tableScrollRef} className="min-w-[840px] table-fixed">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[172px] text-xs text-[#717171]">Thời điểm</TableHead>
-              <TableHead className="w-[140px] text-xs text-[#717171]">Người thực hiện</TableHead>
-              <TableHead className="w-[185px] text-xs text-[#717171]">Hành động</TableHead>
-              <TableHead className="text-xs text-[#717171]">Thông tin liên quan</TableHead>
-              <TableHead className="w-[115px] text-xs text-[#717171]">Địa chỉ IP</TableHead>
-              <TableHead className="w-[110px] text-xs text-[#717171]">Kết quả</TableHead>
-              <TableHead className="w-[92px] text-xs text-[#717171] text-right">Thao tác</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoadingAudit ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-[#717171] text-xs">
-                  <RefreshCw
-                    size={20}
-                    strokeWidth={1.75}
-                    className="animate-spin mx-auto mb-2 text-[#FF385C]"
-                    aria-hidden="true"
-                  />
-                  Đang tải lịch sử truy cập…
-                </TableCell>
-              </TableRow>
-            ) : auditLogs.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-[#717171] text-xs">
-                  Chưa có sự kiện truy cập nào được ghi nhận cho tài liệu của bạn.
-                </TableCell>
-              </TableRow>
-            ) : (
-              auditLogs.map((log) => (
-                <TableRow key={log.id} className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60">
-                  <TableCell className="text-xs text-[#222222] whitespace-nowrap tabular-nums truncate">
-                    {formatSafeDateVi(log.occurredAt, { includeTime: true })}
-                  </TableCell>
-                  <TableCell>
-                    <div
-                      title={log.actorUsername || 'Hệ thống'}
-                      className="text-xs font-semibold text-[#222222] truncate"
-                    >
-                      {log.actorUsername || 'Hệ thống'}
-                    </div>
-                  </TableCell>
-                  <TableCell title={formatAuditActionLabel(log.action)} className="truncate">
-                    <Badge variant="secondary" className="text-xs max-w-full truncate">
+        {isLoadingAudit ? (
+          <div className="py-10 flex flex-col items-center justify-center gap-2 text-xs text-[#717171]">
+            <RefreshCw
+              size={20}
+              strokeWidth={1.75}
+              className="animate-spin text-[#FF385C]"
+              aria-hidden="true"
+            />
+            <span>Đang tải lịch sử truy cập…</span>
+          </div>
+        ) : auditLogs.length === 0 ? (
+          <div className="py-10 px-4 text-center text-xs text-[#717171]">
+            Chưa có sự kiện truy cập nào được ghi nhận cho tài liệu của bạn.
+          </div>
+        ) : (
+          <>
+            {/* Bố cục thẻ di động tối ưu 375px (BUG-115) */}
+            <div className="md:hidden divide-y divide-[#ebebeb]">
+              {auditLogs.map((log) => (
+                <article key={log.id} className="px-4 py-4 space-y-2.5 bg-[#ffffff]">
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge variant="secondary" className="max-w-[65%] truncate">
                       {formatAuditActionLabel(log.action)}
                     </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs text-[#222222] truncate">
-                    {log.documentId ? (
-                      <div className="text-xs text-[#717171] truncate">
-                        Tài liệu #{log.documentId.slice(0, 8)}
-                      </div>
-                    ) : (
-                      <span className="text-[#717171]">—</span>
-                    )}
-                    {log.accessSessionId && (
-                      <div className="text-xs text-[#008489] truncate">Có phiên đọc bảo mật</div>
-                    )}
-                  </TableCell>
-                  <TableCell
-                    title={log.ipAddress || '—'}
-                    className="text-xs text-[#717171] font-mono whitespace-nowrap tabular-nums truncate"
-                  >
-                    {log.ipAddress || '—'}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    <Badge
-                      variant={log.outcome === 'SUCCESS' ? 'success' : 'destructive'}
-                      className="text-xs"
-                    >
+                    <Badge variant={log.outcome === 'SUCCESS' ? 'success' : 'destructive'}>
                       {formatAuditOutcomeLabel(log.outcome)}
                     </Badge>
-                  </TableCell>
-                  <TableCell className="text-right whitespace-nowrap">
-                    <InteractiveHoverButton
-                      variant="ghost"
-                      size="sm"
-                      text="Xem"
-                      icon={<Info size={16} strokeWidth={1.75} aria-hidden="true" />}
-                      onClick={() => onInspectLog(log)}
-                    />
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+                  </div>
+
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="text-sm font-semibold text-[#222222] truncate">
+                      {log.actorUsername || 'Hệ thống'}
+                    </div>
+                    <div className="text-xs text-[#717171] tabular-nums">
+                      {formatSafeDateVi(log.occurredAt, { includeTime: true })}
+                    </div>
+                  </div>
+
+                  <div className="rounded-[12px] bg-[#f7f7f7] px-3 py-2 space-y-1 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#717171] shrink-0">Tài liệu</span>
+                      <span className="text-[#222222] font-medium truncate">
+                        {log.documentId ? `#${log.documentId.slice(0, 8)}` : '—'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#717171] shrink-0">Địa chỉ IP</span>
+                      <span className="text-[#222222] font-mono tabular-nums truncate">
+                        {log.ipAddress || '—'}
+                      </span>
+                    </div>
+                    {log.accessSessionId && (
+                      <div className="text-[#008489] font-medium pt-0.5">Có phiên đọc bảo mật</div>
+                    )}
+                  </div>
+
+                  <InteractiveHoverButton
+                    variant="secondary"
+                    size="sm"
+                    text="Xem chi tiết"
+                    icon={<Info size={16} strokeWidth={1.75} aria-hidden="true" />}
+                    onClick={() => onInspectLog(log)}
+                    className="w-full"
+                  />
+                </article>
+              ))}
+            </div>
+
+            {/* Bảng dữ liệu máy tính 7 cột */}
+            <div className="hidden md:block">
+              <Table containerRef={tableScrollRef} className="min-w-[840px] table-fixed">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[172px] text-xs text-[#717171]">Thời điểm</TableHead>
+                    <TableHead className="w-[140px] text-xs text-[#717171]">
+                      Người thực hiện
+                    </TableHead>
+                    <TableHead className="w-[185px] text-xs text-[#717171]">Hành động</TableHead>
+                    <TableHead className="text-xs text-[#717171]">Thông tin liên quan</TableHead>
+                    <TableHead className="w-[115px] text-xs text-[#717171]">Địa chỉ IP</TableHead>
+                    <TableHead className="w-[110px] text-xs text-[#717171]">Kết quả</TableHead>
+                    <TableHead className="w-[92px] text-xs text-[#717171] text-right">
+                      Thao tác
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {auditLogs.map((log) => (
+                    <TableRow
+                      key={log.id}
+                      className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
+                    >
+                      <TableCell className="text-xs text-[#222222] whitespace-nowrap tabular-nums truncate">
+                        {formatSafeDateVi(log.occurredAt, { includeTime: true })}
+                      </TableCell>
+                      <TableCell>
+                        <div
+                          title={log.actorUsername || 'Hệ thống'}
+                          className="text-xs font-semibold text-[#222222] truncate"
+                        >
+                          {log.actorUsername || 'Hệ thống'}
+                        </div>
+                      </TableCell>
+                      <TableCell title={formatAuditActionLabel(log.action)} className="truncate">
+                        <Badge variant="secondary" className="text-xs max-w-full truncate">
+                          {formatAuditActionLabel(log.action)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-[#222222] truncate">
+                        {log.documentId ? (
+                          <div className="text-xs text-[#717171] truncate">
+                            Tài liệu #{log.documentId.slice(0, 8)}
+                          </div>
+                        ) : (
+                          <span className="text-[#717171]">—</span>
+                        )}
+                        {log.accessSessionId && (
+                          <div className="text-xs text-[#008489] truncate">
+                            Có phiên đọc bảo mật
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        title={log.ipAddress || '—'}
+                        className="text-xs text-[#717171] font-mono whitespace-nowrap tabular-nums truncate"
+                      >
+                        {log.ipAddress || '—'}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <Badge
+                          variant={log.outcome === 'SUCCESS' ? 'success' : 'destructive'}
+                          className="text-xs"
+                        >
+                          {formatAuditOutcomeLabel(log.outcome)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right whitespace-nowrap">
+                        <InteractiveHoverButton
+                          variant="ghost"
+                          size="sm"
+                          text="Xem"
+                          icon={<Info size={16} strokeWidth={1.75} aria-hidden="true" />}
+                          onClick={() => onInspectLog(log)}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
 
         <div className="px-4 py-2.5 border-t border-[#ebebeb] bg-[#f7f7f7]/60 flex flex-wrap items-center justify-between gap-2 text-xs text-[#717171]">
           <span>

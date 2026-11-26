@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { ShieldAlert, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, RefreshCw, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import {
   Dialog,
@@ -30,29 +30,43 @@ interface RolePermissionsModalProps {
   onOpenChange: (open: boolean) => void;
   role: RoleRow | null;
   permissions: PermissionRow[];
+  permissionsLoaded?: boolean | undefined;
+  onRetryLoadPermissions?: (() => void) | undefined;
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
 }
 
 /**
- * Thuật toán: Modal Phân Quyền Nhóm Theo 4 Trụ Cột Phân Tách Nhiệm Vụ SoD & Khóa Chéo Tự Động (`RolePermissionsModal`)
+ * Thuật toán: Modal Phân Quyền Nhóm Theo 4 Trụ Cột Phân Tách Nhiệm Vụ SoD, Khóa Chéo Tự Động & Khóa Cứng Khi Thiếu Danh Mục (`RolePermissionsModal`, BUG-091)
  * Mục đích:
- *   - Với vai trò hệ thống: khóa các ô nằm ngoài ma trận đặc quyền tối thiểu `SYSTEM_ROLE_ALLOWED_CODES`.
- *   - Với vai trò tùy chỉnh (Custom Role): tính giao tập trụ cột SoD của các quyền đang tick theo thời gian thực và tự động khóa mọi quyền gây trộn chéo giữa 4 trụ cột (Quản trị / SOC / Kiểm toán / Nghiệp vụ tài liệu).
+ *   - Chặn tuyệt đối thao tác lưu khi `!permissionsLoaded || permissions.length === 0` để không bao giờ gửi `{ permissionIds: [] }` xóa trắng quyền vai trò khi `GET /rbac/permissions` gặp lỗi.
+ *   - Áp dụng ma trận đặc quyền tối thiểu cho vai trò hệ thống và khóa chéo 4 trụ cột SoD cho vai trò tùy chỉnh.
  */
 export function RolePermissionsModal({
   open,
   onOpenChange,
   role,
   permissions,
+  permissionsLoaded = false,
+  onRetryLoadPermissions,
   onClearError,
   onSuccess,
   onError,
 }: RolePermissionsModalProps) {
+  const [isSavingPerms, setIsSavingPerms] = useState(false);
+
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen && isSavingPerms) return;
+    onOpenChange(nextOpen);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl border-[#ebebeb] bg-[#ffffff] text-[#222222]">
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+      <DialogContent
+        showClose={!isSavingPerms}
+        className="max-w-2xl border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+      >
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
             Phân quyền cho vai trò: {role?.name} ({role?.code})
@@ -66,10 +80,14 @@ export function RolePermissionsModal({
 
         {open && role && (
           <RolePermissionsForm
-            key={role.id}
+            key={`${role.id}-${permissionsLoaded ? permissions.length : 'unloaded'}`}
             role={role}
             permissions={permissions}
-            onClose={() => onOpenChange(false)}
+            permissionsLoaded={permissionsLoaded}
+            onRetryLoadPermissions={onRetryLoadPermissions}
+            isSavingPerms={isSavingPerms}
+            setIsSavingPerms={setIsSavingPerms}
+            onClose={() => handleDialogOpenChange(false)}
             onClearError={onClearError}
             onSuccess={onSuccess}
             onError={onError}
@@ -83,6 +101,10 @@ export function RolePermissionsModal({
 interface RolePermissionsFormProps {
   role: RoleRow;
   permissions: PermissionRow[];
+  permissionsLoaded: boolean;
+  onRetryLoadPermissions?: (() => void) | undefined;
+  isSavingPerms: boolean;
+  setIsSavingPerms: (saving: boolean) => void;
   onClose: () => void;
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
@@ -92,6 +114,10 @@ interface RolePermissionsFormProps {
 function RolePermissionsForm({
   role,
   permissions,
+  permissionsLoaded,
+  onRetryLoadPermissions,
+  isSavingPerms,
+  setIsSavingPerms,
   onClose,
   onClearError,
   onSuccess,
@@ -100,8 +126,8 @@ function RolePermissionsForm({
   const [selectedPermIds, setSelectedPermIds] = useState<string[]>(() =>
     resolveRolePermissionIds(role, permissions),
   );
-  const [isSavingPerms, setIsSavingPerms] = useState(false);
 
+  const catalogUnavailable = !permissionsLoaded || permissions.length === 0;
   const allowedSet = role.isSystemRole ? SYSTEM_ROLE_ALLOWED_CODES[role.code] : undefined;
 
   const selectedPermissions = useMemo(
@@ -133,6 +159,12 @@ function RolePermissionsForm({
 
   async function handleSaveRolePermissions(e: FormEvent) {
     e.preventDefault();
+    if (catalogUnavailable) {
+      onError(
+        'Danh mục quyền hạn chưa được tải thành công từ máy chủ. Đã khóa thao tác lưu để ngăn xóa nhầm quyền của vai trò.',
+      );
+      return;
+    }
     setIsSavingPerms(true);
     onClearError();
     try {
@@ -141,7 +173,8 @@ function RolePermissionsForm({
         body: JSON.stringify({ permissionIds: selectedPermIds }),
       });
 
-      onClose();
+      setIsSavingPerms(false);
+      onOpenSafeClose();
       await onSuccess(`Đã cập nhật danh sách quyền hạn cho vai trò "${role.name}".`);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -149,14 +182,53 @@ function RolePermissionsForm({
       } else {
         onError('Đã xảy ra lỗi khi cập nhật quyền hạn vai trò.');
       }
-    } finally {
       setIsSavingPerms(false);
     }
   }
 
+  function onOpenSafeClose() {
+    onClose();
+  }
+
   return (
-    <form onSubmit={handleSaveRolePermissions} className="space-y-4 py-2 text-xs">
-      {!role.isSystemRole && (
+    <form onSubmit={handleSaveRolePermissions} noValidate className="space-y-4 py-2 text-xs">
+      {catalogUnavailable && (
+        <div
+          role="alert"
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3 text-xs text-[#222222]"
+        >
+          <div className="flex items-start gap-2 min-w-0">
+            <AlertTriangle
+              size={16}
+              strokeWidth={1.75}
+              className="mt-0.5 shrink-0 text-[#C13515]"
+              aria-hidden="true"
+            />
+            <div className="space-y-0.5 leading-relaxed">
+              <div className="font-semibold text-[#C13515]">
+                Không thể tải danh mục quyền hạn hệ thống
+              </div>
+              <p className="text-[#717171]">
+                Nút lưu đã được khóa an toàn để ngăn gửi danh sách rỗng làm mất toàn bộ quyền hiện
+                tại của vai trò. Vui lòng tải lại danh mục trước khi chỉnh sửa.
+              </p>
+            </div>
+          </div>
+          {onRetryLoadPermissions && (
+            <InteractiveHoverButton
+              type="button"
+              variant="secondary"
+              size="sm"
+              text="Tải lại quyền"
+              icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
+              onClick={onRetryLoadPermissions}
+              className="shrink-0"
+            />
+          )}
+        </div>
+      )}
+
+      {!catalogUnavailable && !role.isSystemRole && (
         <div className="flex items-start gap-2 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] px-3 py-2 text-xs text-[#222222]">
           <ShieldAlert
             size={16}
@@ -183,75 +255,77 @@ function RolePermissionsForm({
         </div>
       )}
 
-      <div className="max-h-80 overflow-y-auto pr-1 space-y-4">
-        {groupedPermissions.map((group) => (
-          <div key={group.key} className="space-y-2">
-            <div className="flex flex-wrap items-baseline justify-between gap-1 border-b border-[#ebebeb] pb-1">
-              <span className="font-semibold text-xs text-[#222222]">{group.title}</span>
-              <span className="text-[11px] text-[#717171]">{group.hint}</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {group.items.map((perm) => {
-                const isChecked = selectedPermIds.includes(perm.id);
-                const isDisallowedByMatrix = Boolean(allowedSet && !allowedSet.has(perm.code));
-                const isBlockedBySod =
-                  !role.isSystemRole &&
-                  !isChecked &&
-                  selectedPermissions.length > 0 &&
-                  !isPermissionSodCompatibleWithSelection(perm, compatibleArchetypes);
-                const isDisabled = isDisallowedByMatrix || isBlockedBySod;
-                const permLabel = resolvePermissionLabel(perm);
-                const permScopeLabel = resolvePermissionScopeLabel(perm);
-                const tooltip = isDisallowedByMatrix
-                  ? `${perm.code} — Không nằm trong ma trận đặc quyền của vai trò hệ thống ${role.code}`
-                  : isBlockedBySod
-                    ? `${perm.code} — Bị khóa do vi phạm Phân tách nhiệm vụ (SoD) với các quyền đang chọn`
-                    : perm.code;
+      {!catalogUnavailable && (
+        <div className="max-h-80 overflow-y-auto pr-1 space-y-4">
+          {groupedPermissions.map((group) => (
+            <div key={group.key} className="space-y-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-1 border-b border-[#ebebeb] pb-1">
+                <span className="font-semibold text-xs text-[#222222]">{group.title}</span>
+                <span className="text-[11px] text-[#717171]">{group.hint}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {group.items.map((perm) => {
+                  const isChecked = selectedPermIds.includes(perm.id);
+                  const isDisallowedByMatrix = Boolean(allowedSet && !allowedSet.has(perm.code));
+                  const isBlockedBySod =
+                    !role.isSystemRole &&
+                    !isChecked &&
+                    selectedPermissions.length > 0 &&
+                    !isPermissionSodCompatibleWithSelection(perm, compatibleArchetypes);
+                  const isDisabled = isDisallowedByMatrix || isBlockedBySod || isSavingPerms;
+                  const permLabel = resolvePermissionLabel(perm);
+                  const permScopeLabel = resolvePermissionScopeLabel(perm);
+                  const tooltip = isDisallowedByMatrix
+                    ? `${perm.code} — Không nằm trong ma trận đặc quyền của vai trò hệ thống ${role.code}`
+                    : isBlockedBySod
+                      ? `${perm.code} — Bị khóa do vi phạm Phân tách nhiệm vụ (SoD) với các quyền đang chọn`
+                      : perm.code;
 
-                return (
-                  <label
-                    key={perm.id}
-                    htmlFor={`role-perm-${perm.id}`}
-                    aria-label={permLabel}
-                    title={tooltip}
-                    className={`flex items-start gap-2.5 min-h-11 p-2.5 rounded-[16px] border transition-colors min-w-0 ${
-                      isDisabled
-                        ? 'border-[#ebebeb] bg-[#f7f7f7] opacity-55 cursor-not-allowed'
-                        : isChecked
-                          ? 'border-[#FF385C] bg-[#FF385C]/5 cursor-pointer'
-                          : 'border-[#ebebeb] hover:bg-[#f7f7f7] cursor-pointer'
-                    }`}
-                  >
-                    <input
-                      id={`role-perm-${perm.id}`}
-                      type="checkbox"
-                      checked={isChecked}
-                      disabled={isDisabled}
-                      onChange={(e) => {
-                        if (isDisabled) return;
-                        if (e.target.checked) {
-                          setSelectedPermIds((prev) => Array.from(new Set([...prev, perm.id])));
-                        } else {
-                          setSelectedPermIds((prev) => prev.filter((id) => id !== perm.id));
-                        }
-                      }}
-                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#dddddd] text-[#FF385C] focus:ring-[#FF385C] disabled:opacity-50"
-                    />
-                    <div className="min-w-0">
-                      <div className="font-semibold text-[13px] text-[#222222] leading-snug break-words">
-                        {permLabel}
+                  return (
+                    <label
+                      key={perm.id}
+                      htmlFor={`role-perm-${perm.id}`}
+                      aria-label={permLabel}
+                      title={tooltip}
+                      className={`flex items-start gap-2.5 min-h-11 p-2.5 rounded-[16px] border transition-colors min-w-0 ${
+                        isDisabled
+                          ? 'border-[#ebebeb] bg-[#f7f7f7] opacity-55 cursor-not-allowed'
+                          : isChecked
+                            ? 'border-[#222222] bg-[#f7f7f7] cursor-pointer'
+                            : 'border-[#ebebeb] hover:bg-[#f7f7f7] cursor-pointer'
+                      }`}
+                    >
+                      <input
+                        id={`role-perm-${perm.id}`}
+                        type="checkbox"
+                        checked={isChecked}
+                        disabled={isDisabled}
+                        onChange={(e) => {
+                          if (isDisabled) return;
+                          if (e.target.checked) {
+                            setSelectedPermIds((prev) => Array.from(new Set([...prev, perm.id])));
+                          } else {
+                            setSelectedPermIds((prev) => prev.filter((id) => id !== perm.id));
+                          }
+                        }}
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#dddddd] accent-[#FF385C] disabled:opacity-50"
+                      />
+                      <div className="min-w-0">
+                        <div className="font-semibold text-[13px] text-[#222222] leading-snug break-words">
+                          {permLabel}
+                        </div>
+                        <div className="text-xs text-[#717171] mt-0.5 break-words">
+                          {permScopeLabel}
+                        </div>
                       </div>
-                      <div className="text-xs text-[#717171] mt-0.5 break-words">
-                        {permScopeLabel}
-                      </div>
-                    </div>
-                  </label>
-                );
-              })}
+                    </label>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       <DialogFooter className="pt-2">
         <InteractiveHoverButton
@@ -259,15 +333,20 @@ function RolePermissionsForm({
           variant="ghost"
           size="sm"
           text="Hủy"
+          disabled={isSavingPerms}
           onClick={onClose}
         />
         <InteractiveHoverButton
           type="submit"
           variant="primary"
           size="sm"
-          text="Cập nhật quyền hạn"
+          text="Lưu"
           icon={<ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
-          disabled={isSavingPerms || (!role.isSystemRole && compatibleArchetypes.size === 0)}
+          disabled={
+            catalogUnavailable ||
+            isSavingPerms ||
+            (!role.isSystemRole && compatibleArchetypes.size === 0)
+          }
           isLoading={isSavingPerms}
         />
       </DialogFooter>

@@ -1,7 +1,6 @@
 import type { SharedPaginationMeta } from '@sda/contracts';
 
-export type AlertLifecycleStatus =
-  'OPEN' | 'INVESTIGATING' | 'ESCALATED' | 'RESOLVED' | 'FALSE_POSITIVE';
+export type AlertLifecycleStatus = 'OPEN' | 'INVESTIGATING' | 'RESOLVED' | 'FALSE_POSITIVE';
 
 export type GatewayHealthStatus = 'ONLINE' | 'DEGRADED' | 'OFFLINE';
 export type DlpEnforcementMode = 'BLOCK' | 'AUDIT_ONLY' | 'DISABLED' | 'OFFLINE';
@@ -74,6 +73,7 @@ export interface IncidentActionItem {
   id: string;
   actionType: string;
   recommendation: string;
+  assignedTo?: string | null | undefined;
   dueAt?: string | null | undefined;
   isCompleted?: boolean | undefined;
   completedAt?: string | null | undefined;

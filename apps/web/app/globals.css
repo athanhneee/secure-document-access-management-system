@@ -63,10 +63,12 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Accessibility: Focus-visible standard */
-:focus-visible {
-  outline: 2px solid #ff385c;
-  outline-offset: 2px;
+/* Accessibility: Focus-visible standard (inside @layer base so Tailwind focus-visible:outline-none overrides cleanly, neutral #222222 only — no red/coral rings) */
+@layer base {
+  :focus-visible {
+    outline: 2px solid #222222;
+    outline-offset: 2px;
+  }
 }
 
 /* Skip-to-content link */
@@ -96,17 +98,17 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f2f2f2;
+  background: #f7f7f7;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #b5b5b5;
+  background: #b0b0b0;
   border-radius: 9999px;
-  border: 2px solid #f2f2f2;
+  border: 2px solid #f7f7f7;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #888888;
+  background: #717171;
 }
 
 .sda-table-scroll {
@@ -117,7 +119,7 @@ body {
 @-moz-document url-prefix() {
   .sda-table-scroll {
     scrollbar-width: thin;
-    scrollbar-color: #b5b5b5 #f2f2f2;
+    scrollbar-color: #b0b0b0 #f7f7f7;
   }
 }
 
@@ -136,7 +138,7 @@ body {
   input[type='time'],
   textarea,
   select {
-    font-size: 16px !important;
+    font-size: 0.875rem;
   }
 
   button,
@@ -146,6 +148,15 @@ body {
   textarea {
     touch-action: manipulation;
   }
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 .overflow-x-auto,

@@ -1,6 +1,7 @@
 'use client';
 
-import { AlertTriangle, Download, Eye, KeyRound, Lock } from 'lucide-react';
+import { AlertTriangle, Clock, Download, Eye, KeyRound, Lock } from 'lucide-react';
+import { formatRetentionDateVi } from '@sda/contracts';
 import {
   Dialog,
   DialogContent,
@@ -37,6 +38,7 @@ interface CreateGrantModalProps {
 export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModalProps) {
   const {
     grantableDocuments,
+    isLoadingGrantDocs,
     eligibleUsers,
     directGrantOpen,
     setDirectGrantOpen,
@@ -72,12 +74,18 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
 
   const timeRangeError = validateDirectGrantTimeRange(directValidFrom, directValidUntil, {
     maxDurationDays: GRANT_MAX_DURATION_DAYS,
+    retentionUntil: selectedDirectDoc?.retentionUntil,
   });
 
   const nowLocalIso = toLocalISO(new Date());
   const minValidUntil =
     directValidFrom && directValidFrom > nowLocalIso ? directValidFrom : nowLocalIso;
-  const maxValidUntil = computeMaxGrantValidUntilLocal(directValidFrom, GRANT_MAX_DURATION_DAYS);
+  const maxValidUntil = computeMaxGrantValidUntilLocal(
+    directValidFrom,
+    GRANT_MAX_DURATION_DAYS,
+    selectedDirectDoc?.retentionUntil,
+  );
+  const selectedRetentionLabelVi = formatRetentionDateVi(selectedDirectDoc?.retentionUntil);
 
   const hasValidPrincipal =
     directPrincipalType === 'USER'
@@ -93,7 +101,10 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
 
   return (
     <Dialog open={directGrantOpen} onOpenChange={setDirectGrantOpen}>
-      <DialogContent className="max-w-lg border-[#ebebeb] bg-[#ffffff] text-[#222222]">
+      <DialogContent
+        showClose={!isSubmittingDirectGrant}
+        className="max-w-lg border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+      >
         <DialogHeader>
           <div className="flex items-center gap-2">
             <KeyRound size={20} strokeWidth={1.75} className="text-[#FF385C]" aria-hidden="true" />
@@ -107,7 +118,7 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleCreateDirectGrant} className="space-y-3.5 py-2 text-xs">
+        <form onSubmit={handleCreateDirectGrant} noValidate className="space-y-3.5 py-2 text-xs">
           <div className="space-y-1">
             <label htmlFor="direct-doc" className="font-medium text-[#222222]">
               Chọn tài liệu cấp quyền <span className="text-[#C13515]">*</span>
@@ -115,12 +126,18 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
             <select
               id="direct-doc"
               value={directDocId}
-              disabled={grantableDocuments.length === 0}
+              disabled={
+                isSubmittingDirectGrant || isLoadingGrantDocs || grantableDocuments.length === 0
+              }
               onChange={(e) => setDirectDocId(e.target.value)}
-              className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:bg-[#f7f7f7] disabled:text-[#717171] disabled:cursor-not-allowed"
+              className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15 cursor-pointer disabled:bg-[#f7f7f7] disabled:text-[#717171] disabled:cursor-not-allowed"
             >
               {grantableDocuments.length === 0 ? (
-                <option value="">Chưa có tài liệu đang hiệu lực để cấp quyền</option>
+                <option value="">
+                  {isLoadingGrantDocs
+                    ? 'Đang tải danh sách tài liệu…'
+                    : 'Chưa có tài liệu đang hiệu lực để cấp quyền'}
+                </option>
               ) : (
                 grantableDocuments.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -140,11 +157,12 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
                 <button
                   key={pType}
                   type="button"
+                  disabled={isSubmittingDirectGrant}
                   aria-pressed={directPrincipalType === pType}
                   onClick={() => setDirectPrincipalType(pType)}
-                  className={`min-h-11 sm:min-h-9 py-2 px-3 rounded-full border text-xs font-semibold cursor-pointer transition-colors ${
+                  className={`min-h-11 sm:min-h-9 py-2 px-3 rounded-full border text-xs font-semibold cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                     directPrincipalType === pType
-                      ? 'border-[#FF385C] bg-[#FF385C] text-[#ffffff]'
+                      ? 'border-transparent bg-[#FF385C] text-[#ffffff]'
                       : 'border-[#dddddd] bg-[#ffffff] text-[#222222] hover:border-[#222222]'
                   }`}
                 >
@@ -162,9 +180,9 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
               <select
                 id="direct-user"
                 value={directUserId}
-                disabled={eligibleUsers.length === 0}
+                disabled={isSubmittingDirectGrant || eligibleUsers.length === 0}
                 onChange={(e) => setDirectUserId(e.target.value)}
-                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:bg-[#f7f7f7] disabled:text-[#717171] disabled:cursor-not-allowed"
+                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15 cursor-pointer disabled:bg-[#f7f7f7] disabled:text-[#717171] disabled:cursor-not-allowed"
               >
                 {eligibleUsers.length === 0 ? (
                   <option value="">Không có người dùng đủ điều kiện nhận quyền</option>
@@ -185,9 +203,9 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
               <select
                 id="direct-role"
                 value={directRoleId}
-                disabled={rolesLookup.length === 0}
+                disabled={isSubmittingDirectGrant || rolesLookup.length === 0}
                 onChange={(e) => setDirectRoleId(e.target.value)}
-                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:bg-[#f7f7f7] disabled:text-[#717171] disabled:cursor-not-allowed"
+                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15 cursor-pointer disabled:bg-[#f7f7f7] disabled:text-[#717171] disabled:cursor-not-allowed"
               >
                 {rolesLookup.length === 0 ? (
                   <option value="">Không có vai trò phù hợp để cấp quyền</option>
@@ -205,13 +223,13 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
           {isClearanceWarning && (
             <div
               role="alert"
-              className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/5 p-3 text-xs text-[#C13515] space-y-1"
+              className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3 text-xs text-[#222222] space-y-1"
             >
-              <div className="flex items-center gap-1.5 font-bold">
+              <div className="flex items-center gap-1.5 font-bold text-[#C13515]">
                 <AlertTriangle size={16} strokeWidth={1.75} aria-hidden="true" />
                 <span>Không đủ cấp thẩm quyền bảo mật</span>
               </div>
-              <div>
+              <div className="text-[#717171]">
                 Người dùng {selectedDirectUser?.fullName} đang có cấp thẩm quyền Cấp{' '}
                 {selectedDirectUser?.clearanceRank}, thấp hơn mức độ mật của tài liệu (Cấp{' '}
                 {selectedDirectDoc?.classificationRank}). Hệ thống chặn cấp quyền theo nguyên tắc
@@ -225,11 +243,12 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
+                disabled={isSubmittingDirectGrant}
                 aria-pressed={effectivePermissionMode === 'VIEW'}
                 onClick={() => setDirectPermissionMode('VIEW')}
-                className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold cursor-pointer transition-colors ${
+                className={`min-h-11 sm:min-h-9 flex items-center justify-center gap-1.5 px-3 py-2 rounded-full border text-xs font-semibold cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                   effectivePermissionMode === 'VIEW'
-                    ? 'border-[#FF385C] bg-[#FF385C] text-[#ffffff]'
+                    ? 'border-transparent bg-[#FF385C] text-[#ffffff]'
                     : 'border-[#dddddd] bg-[#ffffff] text-[#222222] hover:border-[#222222]'
                 }`}
               >
@@ -239,7 +258,7 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
               <button
                 type="button"
                 aria-pressed={effectivePermissionMode === 'DOWNLOAD'}
-                disabled={!canDownloadSelectedDoc}
+                disabled={isSubmittingDirectGrant || !canDownloadSelectedDoc}
                 onClick={() => {
                   if (canDownloadSelectedDoc) setDirectPermissionMode('DOWNLOAD');
                 }}
@@ -247,7 +266,7 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
                   !canDownloadSelectedDoc
                     ? 'border-[#ebebeb] bg-[#f7f7f7] text-[#b0b0b0] cursor-not-allowed'
                     : effectivePermissionMode === 'DOWNLOAD'
-                      ? 'border-[#FF385C] bg-[#FF385C] text-[#ffffff] cursor-pointer'
+                      ? 'border-transparent bg-[#FF385C] text-[#ffffff] cursor-pointer'
                       : 'border-[#dddddd] bg-[#ffffff] text-[#222222] hover:border-[#222222] cursor-pointer'
                 }`}
               >
@@ -275,6 +294,7 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
                 <Input
                   id="valid-from"
                   type="datetime-local"
+                  disabled={isSubmittingDirectGrant}
                   value={directValidFrom}
                   onChange={(e) => setDirectValidFrom(e.target.value)}
                   className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd]"
@@ -287,6 +307,7 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
                 <Input
                   id="valid-until"
                   type="datetime-local"
+                  disabled={isSubmittingDirectGrant}
                   value={directValidUntil}
                   min={minValidUntil}
                   max={maxValidUntil}
@@ -300,9 +321,17 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
                 {timeRangeError}
               </p>
             ) : (
-              <p className="text-xs text-[#717171]">
-                Thời hạn hiệu lực tối đa {GRANT_MAX_DURATION_DAYS} ngày và thời điểm kết thúc phải ở
-                tương lai.
+              <p className="text-xs text-[#717171] flex items-center gap-1.5 flex-wrap">
+                <Clock size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                <span>
+                  Thời hạn hiệu lực tối đa {GRANT_MAX_DURATION_DAYS} ngày
+                  {selectedRetentionLabelVi
+                    ? ` và không vượt quá hạn lưu trữ tài liệu (${selectedRetentionLabelVi})`
+                    : ''}
+                  {selectedDirectDoc?.defaultViewDays
+                    ? ` · Mặc định mức mật: ${selectedDirectDoc.defaultViewDays} ngày.`
+                    : ' và thời điểm kết thúc phải ở tương lai.'}
+                </span>
               </p>
             )}
           </div>
@@ -313,6 +342,7 @@ export function CreateGrantModal({ grantsControl, rolesLookup }: CreateGrantModa
               variant="ghost"
               size="sm"
               text="Hủy"
+              disabled={isSubmittingDirectGrant}
               onClick={() => setDirectGrantOpen(false)}
             />
             <InteractiveHoverButton

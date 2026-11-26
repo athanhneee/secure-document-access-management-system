@@ -72,6 +72,50 @@ export function resolveParentDepartmentLabel(
 }
 
 /**
+ * Thuật toán: Duyệt Chiều Rộng BFS Bao Đóng Cây Con Phòng Ban Chống Chu Trình (`collectDepartmentSubtreeIds`, BUG-120)
+ * Mục đích: Thu thập tập hợp định danh gồm chính nút `rootId` và toàn bộ các phòng ban con cháu trực tiếp/gián tiếp
+ * trong thời gian tuyến tính `O(V)` với tập `visited` chống lặp vô hạn để loại trừ khỏi danh sách phòng ban cấp trên.
+ */
+export function collectDepartmentSubtreeIds(
+  departments: ReadonlyArray<Pick<DepartmentRow, 'id' | 'parentId'>>,
+  rootId: string,
+): Set<string> {
+  const childrenByParent = new Map<string, string[]>();
+  for (const dept of departments) {
+    if (dept.parentId !== null && dept.parentId !== undefined && dept.parentId !== '') {
+      const parentKey = String(dept.parentId);
+      const bucket = childrenByParent.get(parentKey);
+      if (bucket) {
+        bucket.push(String(dept.id));
+      } else {
+        childrenByParent.set(parentKey, [String(dept.id)]);
+      }
+    }
+  }
+
+  const visited = new Set<string>();
+  const queue: string[] = [String(rootId)];
+  let head = 0;
+  while (head < queue.length) {
+    const current = queue[head++]!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const children = childrenByParent.get(current);
+    if (children) {
+      for (const childId of children) {
+        if (!visited.has(childId)) {
+          queue.push(childId);
+        }
+      }
+    }
+  }
+  return visited;
+}
+
+/** Khoảng dung sai lệch đồng hồ 5 phút khớp máy chủ khi gán vai trò (`BUG-093`). */
+export const CLIENT_PAST_TOLERANCE_MS = 5 * 60_000;
+
+/**
  * Thuật toán: Định Dạng Mốc Thời Gian Cục Bộ ISO-8601 & Khung Hiệu Lực Vai Trò 30 Ngày (`getDefaultRoleAssignmentWindow`)
  */
 export function formatLocalDateTimeInput(d: Date): string {
@@ -86,6 +130,22 @@ export function getDefaultRoleAssignmentWindow(): { validFrom: string; validTo: 
     validFrom: formatLocalDateTimeInput(now),
     validTo: formatLocalDateTimeInput(nextMonth),
   };
+}
+
+/**
+ * Thuật toán: Nhận Diện Phản Hồi Sức Khỏe Hạ Tầng Suy Giảm Thực Sự (`503`) Khác Biệt Với Lỗi Kết Nối Mạng (`isGenuineHealthPayload`, BUG-091)
+ * Mục đích: Chỉ coi phản hồi lỗi là dữ liệu sức khỏe hợp lệ khi có cấu trúc `dependencies` hoặc `checks` từ điểm cuối `/health/*`,
+ * tuyệt đối không bịa đặt trạng thái `OFFLINE` giả cho toàn bộ dịch vụ khi trình duyệt rớt mạng tạm thời.
+ */
+export function isGenuineHealthPayload(raw: unknown): raw is Record<string, unknown> {
+  if (!raw || typeof raw !== 'object') return false;
+  const obj = raw as Record<string, unknown>;
+  const hasDependencies =
+    'dependencies' in obj &&
+    typeof obj['dependencies'] === 'object' &&
+    obj['dependencies'] !== null;
+  const hasChecks = 'checks' in obj && typeof obj['checks'] === 'object' && obj['checks'] !== null;
+  return hasDependencies || hasChecks;
 }
 
 /**

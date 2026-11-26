@@ -1,52 +1,65 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import {
   evaluateUploadSubjectReadiness,
+  filterDepartmentsByUploadScope,
   getMinRetentionDate,
   isClassificationAllowedForClearance,
   resolveUploadWizardDefaults,
+  validateDocumentCodeInput,
   validateRetentionDateInput,
+  validateUploadFileInput,
 } from '../helpers';
 import type {
   BusinessCategoryLookupItem,
   ClassificationLevelLookupItem,
   DepartmentLookupItem,
 } from '../types';
-
 import type { OwnerTab } from './use-owner-data';
 
 interface UseUploadWizardParams {
   userDepartmentId?: string | number | null | undefined;
   userClearanceRank?: number | null | undefined;
   userStatus?: string | null | undefined;
+  hasGlobalDocumentUpload?: boolean | undefined;
+  documentUploadDepartmentIds?: readonly (string | number)[] | undefined;
+  canCreateVersion?: boolean | undefined;
+  canClassify?: boolean | undefined;
   departments: DepartmentLookupItem[];
   businessCategories: BusinessCategoryLookupItem[];
   classificationLevels: ClassificationLevelLookupItem[];
   ensureUploadLookups?: () => Promise<void>;
   refreshData: (options?: { silent?: boolean; scope?: OwnerTab }) => Promise<void>;
   setMessage: (msg: string | null) => void;
-  setErrorMessage: (msg: string | null) => void;
+  setDialogError: (msg: string | null) => void;
 }
 
 /**
- * Thuật toán: Quy trình Tải lên Tài liệu 3 Bước Bắt buộc Gắn Nhãn Mật & Tải Lười Danh Mục (`useUploadWizard`)
- * Khởi tạo phòng ban/danh mục/mức mật mặc định suy dẫn tự động ngay khi danh mục tra cứu hoàn tất tải lười, tải lên multipart, gắn phiên bản hiện hành và kích hoạt tài liệu `ACTIVE`.
+ * Thuật toán: Quy Trình Tải Lên Tài Liệu 3 Bước Có Kiểm Định Tệp 50MB, Đuôi Kép, Mã Tài Liệu & Phạm Vi Phòng Ban (`useUploadWizard`, BUG-102, BUG-103, BUG-120)
+ * Mục đích:
+ *   - Chặn ngay tại Bước 1 tệp rỗng, tệp vượt 50MB, phần mở rộng thực thi ngụy trang (`.pdf.exe`, `.docx.bat`, `.js`, `.ps1`...) và `docCode` sai biểu thức chính quy.
+ *   - Lọc danh sách phòng ban chủ quản theo đúng cây con phòng ban được cấp quyền tải lên của chủ thể.
+ *   - Khóa đóng hộp thoại khi đang truyền tải tệp lên máy chủ (`isSubmittingDoc`).
  */
 export function useUploadWizard({
   userDepartmentId,
   userClearanceRank,
   userStatus,
+  hasGlobalDocumentUpload,
+  documentUploadDepartmentIds,
+  canCreateVersion = true,
+  canClassify = true,
   departments,
   businessCategories,
   classificationLevels,
   ensureUploadLookups,
   refreshData,
   setMessage,
-  setErrorMessage,
+  setDialogError,
 }: UseUploadWizardParams) {
-  const [uploadWizardOpen, setUploadWizardOpen] = useState(false);
+  const [uploadWizardOpen, setUploadWizardOpenState] = useState(false);
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [docFile, setDocFile] = useState<File | null>(null);
   const [docTitle, setDocTitle] = useState('');
@@ -58,14 +71,36 @@ export function useUploadWizard({
   const [docRetentionDate, setDocRetentionDate] = useState('');
   const [isSubmittingDoc, setIsSubmittingDoc] = useState(false);
 
+  const permittedDepartments = useMemo(
+    () =>
+      filterDepartmentsByUploadScope({
+        departments,
+        userDepartmentId,
+        hasGlobalUploadScope: hasGlobalDocumentUpload,
+        uploadDepartmentIds: documentUploadDepartmentIds,
+      }),
+    [departments, documentUploadDepartmentIds, hasGlobalDocumentUpload, userDepartmentId],
+  );
+
   const wizardDefaults = resolveUploadWizardDefaults({
     userDepartmentId,
     userClearanceRank,
-    departments,
+    departments: permittedDepartments,
     businessCategories,
     classificationLevels,
   });
-  const docDepartmentId = docDepartmentOverride ?? wizardDefaults.departmentId;
+
+  const effectiveDepartmentId = useMemo(() => {
+    if (
+      docDepartmentOverride !== null &&
+      (permittedDepartments.length === 0 ||
+        permittedDepartments.some((d) => Number(d.id) === docDepartmentOverride))
+    ) {
+      return docDepartmentOverride;
+    }
+    return wizardDefaults.departmentId;
+  }, [docDepartmentOverride, permittedDepartments, wizardDefaults.departmentId]);
+
   const docCategoryId = docCategoryOverride ?? wizardDefaults.categoryId;
   const docClassificationId = docClassificationOverride ?? wizardDefaults.classificationId;
 
@@ -75,11 +110,21 @@ export function useUploadWizard({
 
   const minRetentionDate = getMinRetentionDate();
   const retentionDateError = validateRetentionDateInput(docRetentionDate);
+  const fileValidationError = docFile ? validateUploadFileInput(docFile) : null;
+  const docCodeError = validateDocumentCodeInput(docCode);
   const subjectReadiness = evaluateUploadSubjectReadiness({
     departmentId: userDepartmentId,
     clearanceRank: userClearanceRank,
     status: userStatus,
   });
+
+  function setUploadWizardOpen(nextOpen: boolean) {
+    if (!nextOpen && isSubmittingDoc) return;
+    if (!nextOpen) {
+      setDialogError(null);
+    }
+    setUploadWizardOpenState(nextOpen);
+  }
 
   function resolveClearanceError(): string | null {
     if (!subjectReadiness.ready && subjectReadiness.blockingReason) {
@@ -94,22 +139,31 @@ export function useUploadWizard({
     return null;
   }
 
+  function validateStepOne(): string | null {
+    const fileErr = validateUploadFileInput(docFile);
+    if (fileErr) return fileErr;
+    if (!docTitle.trim()) {
+      return 'Tiêu đề tài liệu không được để trống.';
+    }
+    const codeErr = validateDocumentCodeInput(docCode);
+    if (codeErr) return codeErr;
+    if (
+      permittedDepartments.length > 0 &&
+      !permittedDepartments.some((d) => Number(d.id) === Number(effectiveDepartmentId))
+    ) {
+      return 'Phòng ban chủ quản đã chọn nằm ngoài phạm vi tải lên được cấp quyền của bạn.';
+    }
+    return resolveClearanceError();
+  }
+
   function handleNextStep() {
     if (wizardStep === 1) {
-      if (!docFile) {
-        setErrorMessage('Vui lòng chọn tệp tài liệu trước khi tiếp tục.');
+      const stepOneErr = validateStepOne();
+      if (stepOneErr) {
+        setDialogError(stepOneErr);
         return;
       }
-      if (!docTitle.trim()) {
-        setErrorMessage('Tiêu đề tài liệu không được để trống.');
-        return;
-      }
-      const clearanceErr = resolveClearanceError();
-      if (clearanceErr) {
-        setErrorMessage(clearanceErr);
-        return;
-      }
-      setErrorMessage(null);
+      setDialogError(null);
       setWizardStep(2);
       return;
     }
@@ -117,16 +171,16 @@ export function useUploadWizard({
     if (wizardStep === 2) {
       const retentionErr = validateRetentionDateInput(docRetentionDate);
       if (retentionErr) {
-        setErrorMessage(retentionErr);
+        setDialogError(retentionErr);
         return;
       }
-      setErrorMessage(null);
+      setDialogError(null);
       setWizardStep(3);
     }
   }
 
   function openUploadWizard() {
-    setErrorMessage(null);
+    setDialogError(null);
     void ensureUploadLookups?.();
     if (!docFile && !docTitle.trim()) {
       setDocDepartmentOverride(null);
@@ -134,38 +188,26 @@ export function useUploadWizard({
       setDocClassificationOverride(null);
     }
     setWizardStep(1);
-    setUploadWizardOpen(true);
+    setUploadWizardOpenState(true);
   }
 
   async function handleFinishUpload() {
-    if (!docFile) {
-      setErrorMessage('Vui lòng chọn tệp tài liệu trước khi tiếp tục.');
-      setWizardStep(1);
-      return;
-    }
-
-    if (!docTitle.trim()) {
-      setErrorMessage('Tiêu đề tài liệu không được để trống.');
-      setWizardStep(1);
-      return;
-    }
-
-    const clearanceErr = resolveClearanceError();
-    if (clearanceErr) {
-      setErrorMessage(clearanceErr);
+    const stepOneErr = validateStepOne();
+    if (stepOneErr || !docFile) {
+      setDialogError(stepOneErr || 'Vui lòng chọn tệp tài liệu trước khi tiếp tục.');
       setWizardStep(1);
       return;
     }
 
     const retentionErr = validateRetentionDateInput(docRetentionDate);
     if (retentionErr) {
-      setErrorMessage(retentionErr);
+      setDialogError(retentionErr);
       setWizardStep(2);
       return;
     }
 
     setIsSubmittingDoc(true);
-    setErrorMessage(null);
+    setDialogError(null);
 
     try {
       const formData = new FormData();
@@ -173,7 +215,7 @@ export function useUploadWizard({
       if (docCode.trim()) {
         formData.append('documentCode', docCode.trim());
       }
-      formData.append('departmentId', String(docDepartmentId));
+      formData.append('departmentId', String(effectiveDepartmentId));
       formData.append('classificationLevelId', String(docClassificationId));
       formData.append('businessCategoryId', String(docCategoryId));
       if (docDescription.trim()) {
@@ -198,35 +240,38 @@ export function useUploadWizard({
 
       const docId = uploadRes.documentId;
 
-      try {
-        await apiClient(`/documents/${docId}/current-version`, {
-          method: 'POST',
-          body: JSON.stringify({ versionNo: uploadRes.versionNo ?? 1 }),
-        });
-      } catch (verErr) {
-        console.warn('Could not explicitly set current-version:', verErr);
+      if (canCreateVersion) {
+        try {
+          await apiClient(`/documents/${docId}/current-version`, {
+            method: 'POST',
+            body: JSON.stringify({ versionNo: uploadRes.versionNo ?? 1 }),
+          });
+        } catch (verErr) {
+          console.warn('Could not explicitly set current-version:', verErr);
+        }
       }
 
       let activated = false;
-      try {
-        await apiClient(`/documents/${docId}/activate`, {
-          method: 'POST',
-        });
-        activated = true;
-      } catch (actErr) {
-        console.warn('Could not automatically activate document, leaving as DRAFT:', actErr);
+      if (canClassify) {
+        try {
+          await apiClient(`/documents/${docId}/activate`, {
+            method: 'POST',
+          });
+          activated = true;
+        } catch (actErr) {
+          console.warn('Could not automatically activate document, leaving as DRAFT:', actErr);
+        }
       }
 
       const selectedLevel = classificationLevels.find(
         (l) => String(l.id) === String(docClassificationId),
       );
       const levelName = selectedLevel?.name ?? 'Mật';
-      setMessage(
-        activated
-          ? `Tài liệu "${docTitle.trim()}" (${docFile.name}) đã được tải lên và kích hoạt thành công với mức độ mật ${levelName}.`
-          : `Tài liệu "${docTitle.trim()}" (${docFile.name}) đã được tải lên ở trạng thái bản nháp (mức độ mật ${levelName}). Bạn có thể kích hoạt thủ công trong danh sách.`,
-      );
-      setUploadWizardOpen(false);
+      const uploadedTitle = docTitle.trim();
+      const uploadedFilename = docFile.name;
+
+      setIsSubmittingDoc(false);
+      setUploadWizardOpenState(false);
       setWizardStep(1);
       setDocFile(null);
       setDocTitle('');
@@ -236,14 +281,18 @@ export function useUploadWizard({
       setDocDepartmentOverride(null);
       setDocCategoryOverride(null);
       setDocClassificationOverride(null);
+      setMessage(
+        activated
+          ? `Tài liệu "${uploadedTitle}" (${uploadedFilename}) đã được tải lên và kích hoạt thành công với mức độ mật ${levelName}.`
+          : `Tài liệu "${uploadedTitle}" (${uploadedFilename}) đã được tải lên ở trạng thái bản nháp (mức độ mật ${levelName}). Bạn có thể kích hoạt thủ công trong danh sách.`,
+      );
       await refreshData({ silent: true, scope: 'documents' });
     } catch (err) {
       if (err instanceof ApiError) {
-        setErrorMessage(err.message || 'Không thể tải lên tài liệu mới.');
+        setDialogError(err.message || 'Không thể tải lên tài liệu mới.');
       } else {
-        setErrorMessage('Đã xảy ra lỗi trong quá trình tải lên tài liệu.');
+        setDialogError('Đã xảy ra lỗi trong quá trình tải lên tài liệu.');
       }
-    } finally {
       setIsSubmittingDoc(false);
     }
   }
@@ -261,7 +310,7 @@ export function useUploadWizard({
     setDocCode,
     docDescription,
     setDocDescription,
-    docDepartmentId,
+    docDepartmentId: effectiveDepartmentId,
     setDocDepartmentId,
     docCategoryId,
     setDocCategoryId,
@@ -269,6 +318,9 @@ export function useUploadWizard({
     setDocClassificationId,
     docRetentionDate,
     setDocRetentionDate,
+    permittedDepartments,
+    fileValidationError,
+    docCodeError,
     minRetentionDate,
     retentionDateError,
     subjectReadiness,

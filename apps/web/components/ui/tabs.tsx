@@ -93,7 +93,14 @@ export interface TabsTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonE
   value: string;
 }
 
-export function TabsTrigger({ id, className, value, children, ...props }: TabsTriggerProps) {
+export function TabsTrigger({
+  id,
+  className,
+  value,
+  onClick,
+  children,
+  ...props
+}: TabsTriggerProps) {
   const context = React.useContext(TabsContext);
   if (!context) throw new Error('TabsTrigger must be used within Tabs');
 
@@ -109,9 +116,14 @@ export function TabsTrigger({ id, className, value, children, ...props }: TabsTr
       aria-selected={isSelected}
       aria-controls={panelId}
       tabIndex={isSelected ? 0 : -1}
-      onClick={() => context.onValueChange(value)}
+      onClick={(e) => {
+        onClick?.(e);
+        if (!e.defaultPrevented) {
+          context.onValueChange(value);
+        }
+      }}
       className={cn(
-        'inline-flex min-h-9 items-center justify-center whitespace-nowrap rounded-full px-3 sm:px-4 py-1.5 text-xs font-medium transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
+        'inline-flex min-h-11 sm:min-h-9 items-center justify-center whitespace-nowrap rounded-[10px] sm:rounded-full px-3 sm:px-4 py-1.5 text-xs font-medium transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#222222] disabled:pointer-events-none disabled:opacity-50 cursor-pointer',
         isSelected
           ? 'bg-[#ffffff] text-[#222222] shadow-xs font-semibold'
           : 'text-[#717171] hover:text-[#222222] hover:bg-[#ffffff]/80',

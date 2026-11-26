@@ -96,7 +96,7 @@ export function BetweenBoundsInput({
           aria-label="Giá trị tối thiểu"
           value={String(minVal)}
           onChange={(e) => onChange([coerceBound(e.target.value), maxVal])}
-          className="flex-1 min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+          className="flex-1 min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
         >
           {options.map((opt) => (
             <option key={`min-${String(opt.value)}`} value={String(opt.value)}>
@@ -113,7 +113,7 @@ export function BetweenBoundsInput({
           aria-label="Giá trị tối đa"
           value={String(maxVal)}
           onChange={(e) => onChange([minVal, coerceBound(e.target.value)])}
-          className="flex-1 min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+          className="flex-1 min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
         >
           {options.map((opt) => (
             <option key={`max-${String(opt.value)}`} value={String(opt.value)}>

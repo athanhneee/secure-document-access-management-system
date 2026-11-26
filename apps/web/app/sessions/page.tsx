@@ -222,10 +222,7 @@ function SessionsPageContent() {
         )}
 
         {errorMessage && !(fetchError && sessions.length === 0) && (
-          <Alert
-            variant="destructive"
-            className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
-          >
+          <Alert variant="destructive" className="rounded-[20px] text-xs">
             <AlertTriangle
               size={16}
               strokeWidth={1.75}
@@ -251,14 +248,14 @@ function SessionsPageContent() {
           departmentName={user?.departmentName}
           clearanceCode={user?.clearanceCode}
           clearanceRank={user?.clearanceRank}
-          mfaVerified={currentSession?.mfaVerified}
+          mfaVerified={currentSession?.mfaVerified ?? user?.mfaVerified}
           ipAddress={currentSession?.ipAddress}
           createdAt={currentSession?.createdAt}
           onLogoutCurrent={() => setConfirmLogoutCurrentOpen(true)}
         />
 
         <MfaFactorsCard
-          mfaVerified={currentSession?.mfaVerified}
+          mfaVerified={currentSession?.mfaVerified ?? user?.mfaVerified}
           refreshTrigger={mfaRefreshTick}
           onSuccess={(msg) => {
             setErrorMessage(null);
@@ -273,7 +270,7 @@ function SessionsPageContent() {
         />
 
         <PasskeyEnrollmentCard
-          mfaVerified={currentSession?.mfaVerified}
+          mfaVerified={currentSession?.mfaVerified ?? user?.mfaVerified}
           onRegistered={async (msg) => {
             setErrorMessage(null);
             setSuccessMessage(msg);
@@ -289,9 +286,9 @@ function SessionsPageContent() {
 
         <ChangePasswordCard
           onPasswordChanged={handleSecurityResetRedirect}
-          onError={(msg) => {
+          onError={() => {
             setSuccessMessage(null);
-            setErrorMessage(msg);
+            setErrorMessage(null);
           }}
         />
 

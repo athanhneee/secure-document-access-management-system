@@ -186,138 +186,247 @@ export function AbacTab({
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <Table>
-                <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
-                  <TableRow>
-                    <TableHead className="text-xs text-[#717171]">Tên quy tắc</TableHead>
-                    <TableHead className="text-xs text-[#717171]">Mô tả hành vi</TableHead>
-                    <TableHead className="text-xs text-[#717171]">Hiệu lực</TableHead>
-                    <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
-                    {canManagePolicies && (
-                      <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
-                    )}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {policies.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={canManagePolicies ? 5 : 4}
-                        className="text-center py-8 text-xs text-[#717171]"
-                      >
-                        {canManagePolicies
-                          ? 'Chưa có quy tắc chính sách truy cập nào.'
-                          : 'Bạn có quyền mô phỏng chính sách — hãy nhấn "Mô phỏng chính sách" ở góc trên để kiểm thử.'}
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    policies.map((p) => (
-                      <TableRow
-                        key={p.id}
-                        className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
-                      >
-                        <TableCell className="font-semibold text-xs text-[#222222]">
-                          {p.name}
-                        </TableCell>
-                        <TableCell className="text-xs text-[#222222] max-w-md">
+              {/* Bố cục thẻ di động tối ưu 375px */}
+              <div className="md:hidden divide-y divide-[#ebebeb]">
+                {policies.length === 0 ? (
+                  <div className="py-8 px-4 text-center text-xs text-[#717171]">
+                    {canManagePolicies
+                      ? 'Chưa có quy tắc chính sách truy cập nào.'
+                      : 'Bạn có quyền mô phỏng chính sách — hãy nhấn "Mô phỏng chính sách" ở góc trên để kiểm thử.'}
+                  </div>
+                ) : (
+                  policies.map((p) => (
+                    <article key={p.id} className="px-4 py-4 space-y-2.5 bg-[#ffffff]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Badge variant={p.effect === 'PERMIT' ? 'success' : 'destructive'}>
+                          {formatPolicyEffectLabel(p.effect)}
+                        </Badge>
+                        {p.isActive ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#008A05]">
+                            <Check size={16} strokeWidth={1.75} aria-hidden="true" />
+                            <span>Đang thực thi</span>
+                          </span>
+                        ) : (
+                          <Badge variant="secondary">Tạm tắt</Badge>
+                        )}
+                      </div>
+                      <h3 className="text-sm font-semibold text-[#222222] break-words">{p.name}</h3>
+                      {p.description && (
+                        <p className="text-xs text-[#717171] leading-relaxed break-words">
                           {p.description}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={p.effect === 'PERMIT' ? 'success' : 'destructive'}>
-                            {formatPolicyEffectLabel(p.effect)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
+                        </p>
+                      )}
+                      {canManagePolicies && (
+                        <div className="flex flex-wrap gap-2 pt-1">
                           {p.isActive ? (
-                            <span className="flex items-center gap-1 text-xs text-[#008A05]">
-                              <Check size={16} strokeWidth={1.75} aria-hidden="true" />
-                              <span>Đang thực thi</span>
-                            </span>
+                            <InteractiveHoverButton
+                              variant="secondary"
+                              size="sm"
+                              text="Tạm tắt"
+                              icon={
+                                <PauseCircle
+                                  size={16}
+                                  strokeWidth={1.75}
+                                  className="text-[#E07912]"
+                                  aria-hidden="true"
+                                />
+                              }
+                              onClick={() => {
+                                onClearError();
+                                setPendingPolicyAction({ policy: p, action: 'deactivate' });
+                              }}
+                              className="flex-1"
+                            />
                           ) : (
-                            <Badge variant="secondary" className="text-[13px]">
-                              Tạm tắt
-                            </Badge>
+                            <InteractiveHoverButton
+                              variant="primary"
+                              size="sm"
+                              text="Kích hoạt"
+                              icon={<ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
+                              isLoading={activatingId === p.id}
+                              disabled={activatingId === p.id}
+                              onClick={async () => {
+                                setActivatingId(p.id);
+                                try {
+                                  await onActivatePolicy(p.id);
+                                } finally {
+                                  setActivatingId(null);
+                                }
+                              }}
+                              className="flex-1"
+                            />
                           )}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              onClearError();
+                              setSelectedRuleForBuilder(resolveVisualRuleForPolicy(p));
+                              setBuilderOpen(true);
+                            }}
+                            className="flex-1 min-h-11 text-xs rounded-full border-[#dddddd] text-[#E31C5F] font-semibold"
+                          >
+                            Sửa trực quan
+                          </Button>
+                          <InteractiveHoverButton
+                            variant="danger"
+                            size="sm"
+                            text="Xóa"
+                            icon={<Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />}
+                            onClick={() => {
+                              onClearError();
+                              setPendingPolicyAction({ policy: p, action: 'delete' });
+                            }}
+                            className="w-full"
+                          />
+                        </div>
+                      )}
+                    </article>
+                  ))
+                )}
+              </div>
+
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+                    <TableRow>
+                      <TableHead className="text-xs text-[#717171]">Tên quy tắc</TableHead>
+                      <TableHead className="text-xs text-[#717171]">Mô tả hành vi</TableHead>
+                      <TableHead className="text-xs text-[#717171]">Hiệu lực</TableHead>
+                      <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
+                      {canManagePolicies && (
+                        <TableHead className="text-xs text-[#717171] text-right">
+                          Thao tác
+                        </TableHead>
+                      )}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {policies.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={canManagePolicies ? 5 : 4}
+                          className="text-center py-8 text-xs text-[#717171]"
+                        >
+                          {canManagePolicies
+                            ? 'Chưa có quy tắc chính sách truy cập nào.'
+                            : 'Bạn có quyền mô phỏng chính sách — hãy nhấn "Mô phỏng chính sách" ở góc trên để kiểm thử.'}
                         </TableCell>
-                        {canManagePolicies && (
-                          <TableCell className="text-right">
-                            <div className="flex flex-wrap items-center justify-end gap-1.5">
-                              {p.isActive ? (
+                      </TableRow>
+                    ) : (
+                      policies.map((p) => (
+                        <TableRow
+                          key={p.id}
+                          className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
+                        >
+                          <TableCell className="font-semibold text-xs text-[#222222]">
+                            {p.name}
+                          </TableCell>
+                          <TableCell className="text-xs text-[#222222] max-w-md">
+                            {p.description}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={p.effect === 'PERMIT' ? 'success' : 'destructive'}>
+                              {formatPolicyEffectLabel(p.effect)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {p.isActive ? (
+                              <span className="flex items-center gap-1 text-xs text-[#008A05]">
+                                <Check size={16} strokeWidth={1.75} aria-hidden="true" />
+                                <span>Đang thực thi</span>
+                              </span>
+                            ) : (
+                              <Badge variant="secondary" className="text-[13px]">
+                                Tạm tắt
+                              </Badge>
+                            )}
+                          </TableCell>
+                          {canManagePolicies && (
+                            <TableCell className="text-right">
+                              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                                {p.isActive ? (
+                                  <InteractiveHoverButton
+                                    variant="ghost"
+                                    size="sm"
+                                    text="Tạm tắt"
+                                    icon={
+                                      <PauseCircle
+                                        size={16}
+                                        strokeWidth={1.75}
+                                        className="text-[#E07912]"
+                                        aria-hidden="true"
+                                      />
+                                    }
+                                    onClick={() => {
+                                      onClearError();
+                                      setPendingPolicyAction({ policy: p, action: 'deactivate' });
+                                    }}
+                                  />
+                                ) : (
+                                  <InteractiveHoverButton
+                                    variant="primary"
+                                    size="sm"
+                                    text="Kích hoạt"
+                                    icon={
+                                      <ShieldCheck
+                                        size={16}
+                                        strokeWidth={1.75}
+                                        aria-hidden="true"
+                                      />
+                                    }
+                                    isLoading={activatingId === p.id}
+                                    disabled={activatingId === p.id}
+                                    onClick={async () => {
+                                      setActivatingId(p.id);
+                                      try {
+                                        await onActivatePolicy(p.id);
+                                      } finally {
+                                        setActivatingId(null);
+                                      }
+                                    }}
+                                  />
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    onClearError();
+                                    setSelectedRuleForBuilder(resolveVisualRuleForPolicy(p));
+                                    setBuilderOpen(true);
+                                  }}
+                                  className="text-xs rounded-full hover:bg-[#f7f7f7] text-[#E31C5F] font-semibold"
+                                >
+                                  Sửa trực quan
+                                </Button>
                                 <InteractiveHoverButton
                                   variant="ghost"
                                   size="sm"
-                                  text="Tạm tắt"
+                                  text="Xóa"
                                   icon={
-                                    <PauseCircle
+                                    <Trash2
                                       size={16}
                                       strokeWidth={1.75}
-                                      className="text-[#E07912]"
+                                      className="text-[#C13515]"
                                       aria-hidden="true"
                                     />
                                   }
                                   onClick={() => {
                                     onClearError();
-                                    setPendingPolicyAction({ policy: p, action: 'deactivate' });
+                                    setPendingPolicyAction({ policy: p, action: 'delete' });
                                   }}
                                 />
-                              ) : (
-                                <InteractiveHoverButton
-                                  variant="primary"
-                                  size="sm"
-                                  text="Kích hoạt"
-                                  icon={
-                                    <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
-                                  }
-                                  isLoading={activatingId === p.id}
-                                  disabled={activatingId === p.id}
-                                  onClick={async () => {
-                                    setActivatingId(p.id);
-                                    try {
-                                      await onActivatePolicy(p.id);
-                                    } finally {
-                                      setActivatingId(null);
-                                    }
-                                  }}
-                                />
-                              )}
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  onClearError();
-                                  setSelectedRuleForBuilder(resolveVisualRuleForPolicy(p));
-                                  setBuilderOpen(true);
-                                }}
-                                className="text-xs rounded-full hover:bg-[#f7f7f7] text-[#E31C5F] font-semibold"
-                              >
-                                Sửa trực quan
-                              </Button>
-                              <InteractiveHoverButton
-                                variant="ghost"
-                                size="sm"
-                                text="Xóa"
-                                icon={
-                                  <Trash2
-                                    size={16}
-                                    strokeWidth={1.75}
-                                    className="text-[#C13515]"
-                                    aria-hidden="true"
-                                  />
-                                }
-                                onClick={() => {
-                                  onClearError();
-                                  setPendingPolicyAction({ policy: p, action: 'delete' });
-                                }}
-                              />
-                            </div>
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                              </div>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         )

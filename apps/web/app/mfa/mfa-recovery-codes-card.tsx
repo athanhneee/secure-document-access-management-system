@@ -31,7 +31,8 @@ export function MfaRecoveryCodesCard({
           <span>Lưu 10 mã khôi phục khẩn cấp</span>
         </CardTitle>
         <CardDescription className="text-xs text-[#717171]">
-          Mỗi mã chỉ dùng một lần khi mất thiết bị xác thực và sẽ không hiển thị lại sau bước này.
+          Mỗi mã gồm 22 ký tự (phân biệt chữ HOA/thường), chỉ dùng một lần khi mất thiết bị xác thực
+          và sẽ không hiển thị lại sau bước này.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

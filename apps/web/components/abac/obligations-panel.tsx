@@ -1,14 +1,24 @@
 'use client';
 
+import { useState } from 'react';
 import { FileCheck2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import type { VisualObligation } from './abac-models';
+import {
+  DEFAULT_SESSION_MINUTES,
+  MAX_SESSION_MINUTES,
+  MIN_SESSION_MINUTES,
+  clampSessionMinutes,
+  normalizeSessionMinutesDraftOnBlur,
+  parseSessionMinutesDraft,
+} from './policy-ast-helpers';
 
 interface ObligationsPanelProps {
   obligations: VisualObligation[];
   onToggleObligation: (type: string) => void;
   onSetSessionMinutes: (minutes: number) => void;
+  onSessionMinutesDraftChange?: ((draft: string | null) => void) | undefined;
 }
 
 const BOOLEAN_OBLIGATION_CARDS = [
@@ -42,8 +52,24 @@ export function ObligationsPanel({
   obligations,
   onToggleObligation,
   onSetSessionMinutes,
+  onSessionMinutesDraftChange,
 }: ObligationsPanelProps) {
   const hasObligation = (type: string) => obligations.some((o) => o.type === type);
+  const sessionObligation = obligations.find(
+    (o): o is Extract<VisualObligation, { type: 'MAX_SESSION_MINUTES' }> =>
+      o.type === 'MAX_SESSION_MINUTES',
+  );
+  const committedMinutes = sessionObligation
+    ? clampSessionMinutes(sessionObligation.minutes, DEFAULT_SESSION_MINUTES)
+    : DEFAULT_SESSION_MINUTES;
+
+  const [draftMinutes, setDraftMinutes] = useState<string>(() => String(committedMinutes));
+  const [syncedMinutes, setSyncedMinutes] = useState<number>(committedMinutes);
+
+  if (syncedMinutes !== committedMinutes) {
+    setSyncedMinutes(committedMinutes);
+    setDraftMinutes(String(committedMinutes));
+  }
 
   return (
     <div className="p-4 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-3 shadow-xs">
@@ -86,7 +112,10 @@ export function ObligationsPanel({
             id="ob-max-session-minutes"
             type="checkbox"
             checked={hasObligation('MAX_SESSION_MINUTES')}
-            onChange={() => onToggleObligation('MAX_SESSION_MINUTES')}
+            onChange={() => {
+              onSessionMinutesDraftChange?.(null);
+              onToggleObligation('MAX_SESSION_MINUTES');
+            }}
             className="h-4 w-4 mt-1 rounded border-[#dddddd] accent-[#FF385C] cursor-pointer"
           />
           <div className="flex-1 space-y-1">
@@ -97,7 +126,8 @@ export function ObligationsPanel({
               Giới hạn thời gian phiên
             </label>
             <span className="text-xs text-[#717171] block">
-              Tự động thu hồi quyền xem sau số phút chỉ định.
+              Tự động thu hồi quyền xem sau số phút chỉ định ({MIN_SESSION_MINUTES}–
+              {MAX_SESSION_MINUTES} phút).
             </span>
             {hasObligation('MAX_SESSION_MINUTES') && (
               <div className="flex items-center gap-2 pt-1">
@@ -105,15 +135,33 @@ export function ObligationsPanel({
                   id="ob-session-minutes-input"
                   aria-label="Số phút tối đa của phiên đọc"
                   type="number"
-                  min="5"
-                  max="240"
-                  value={
-                    (
-                      obligations.find((o) => o.type === 'MAX_SESSION_MINUTES') as
-                        { minutes: number } | undefined
-                    )?.minutes || 30
-                  }
-                  onChange={(e) => onSetSessionMinutes(Number(e.target.value))}
+                  inputMode="numeric"
+                  min={MIN_SESSION_MINUTES}
+                  max={MAX_SESSION_MINUTES}
+                  step={1}
+                  value={draftMinutes}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setDraftMinutes(raw);
+                    onSessionMinutesDraftChange?.(raw);
+                    const parsed = parseSessionMinutesDraft(raw);
+                    if (parsed.valid) {
+                      setSyncedMinutes(parsed.minutes);
+                      onSetSessionMinutes(parsed.minutes);
+                    }
+                  }}
+                  onBlur={() => {
+                    const normalized = normalizeSessionMinutesDraftOnBlur(
+                      draftMinutes,
+                      committedMinutes,
+                    );
+                    setDraftMinutes(String(normalized));
+                    setSyncedMinutes(normalized);
+                    onSessionMinutesDraftChange?.(null);
+                    if (!sessionObligation || sessionObligation.minutes !== normalized) {
+                      onSetSessionMinutes(normalized);
+                    }
+                  }}
                   className="w-24 min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd]"
                 />
                 <label htmlFor="ob-session-minutes-input" className="text-xs text-[#717171]">

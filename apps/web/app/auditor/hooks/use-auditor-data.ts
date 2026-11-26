@@ -35,10 +35,10 @@ const DEFAULT_AUDIT_PAGE_SIZE = 20;
  *   - Bảo vệ trạng thái bằng `AbortController`, `Promise.allSettled`, kiểm định khoảng ngày `fromDate <= toDate`, xóa sạch thông báo cũ tránh hiện song song banner xanh/đỏ và theo dõi nguồn lỗi cho nút `Thử lại`.
  */
 export function useAuditorData() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, hasGlobalPermission } = useAuth();
   const canViewAuditLogs = hasPermission('AUDIT_LOG:VIEW');
   const canExportAuditLogs = hasPermission('AUDIT_LOG:EXPORT');
-  const canExportSystemReport = hasPermission('SYSTEM_REPORT:EXPORT');
+  const canExportSystemReport = hasGlobalPermission('SYSTEM_REPORT:EXPORT');
   const canExportReports = canExportAuditLogs || canExportSystemReport;
 
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
@@ -56,14 +56,17 @@ export function useAuditorData() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [message, setMessageState] = useState<string | null>(null);
+  const [errorMessage, setErrorMessageState] = useState<string | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
   const [lastErrorSource, setLastErrorSource] = useState<AuditorErrorSource>('general');
 
   const [outcomeFilter, setOutcomeFilterState] = useState<string>('ALL');
   const [actionFilter, setActionFilterState] = useState('');
+  const [debouncedActionFilter, setDebouncedActionFilter] = useState('');
   const [partitionFilter, setPartitionFilterState] = useState<string>('ALL');
   const [actorFilter, setActorFilterState] = useState('');
+  const [debouncedActorFilter, setDebouncedActorFilter] = useState('');
   const [fromDate, setFromDateState] = useState('');
   const [toDate, setToDateState] = useState('');
   const [sortOrder, setSortOrderState] = useState<'desc' | 'asc'>('desc');
@@ -72,10 +75,77 @@ export function useAuditorData() {
   const prevDebouncedTextRef = useRef('|');
   const refreshAbortRef = useRef<AbortController | null>(null);
   const lastFailedDownloadJobRef = useRef<ExportJobItem | null>(null);
+  const activeTabContextRef = useRef<string>('logs');
+  const retryHandlersRef = useRef<Partial<Record<AuditorErrorSource, () => void | Promise<void>>>>(
+    {},
+  );
+
+  const setMessage = useCallback((nextMsg: string | null) => {
+    setMessageState(nextMsg);
+    if (nextMsg) {
+      setErrorMessageState(null);
+    }
+  }, []);
+
+  const reportError = useCallback((msg: string | null, source: AuditorErrorSource = 'general') => {
+    if (msg) {
+      setMessageState(null);
+      setLastErrorSource(source);
+    }
+    setErrorMessageState(msg);
+  }, []);
+
+  const registerRetryHandler = useCallback(
+    (source: AuditorErrorSource, handler: (() => void | Promise<void>) | null) => {
+      if (handler) {
+        retryHandlersRef.current[source] = handler;
+      } else {
+        delete retryHandlersRef.current[source];
+      }
+    },
+    [],
+  );
+
+  const setActiveTabContext = useCallback((tab: string) => {
+    activeTabContextRef.current = tab;
+  }, []);
 
   const dateRangeError = isInvalidDateRange(fromDate, toDate)
     ? 'Ngày bắt đầu không được lớn hơn ngày kết thúc.'
     : null;
+
+  useEffect(() => {
+    const nextSig = `${actionFilter}|${actorFilter}`;
+    if (prevDebouncedTextRef.current === nextSig) return;
+    const timer = setTimeout(() => {
+      prevDebouncedTextRef.current = nextSig;
+      setDebouncedActionFilter(actionFilter);
+      setDebouncedActorFilter(actorFilter);
+      setPage(1);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [actionFilter, actorFilter]);
+
+  const queryFilters = useMemo<AuditTrailFilters>(
+    () => ({
+      outcomeFilter,
+      actionFilter: debouncedActionFilter,
+      partitionFilter,
+      actorFilter: debouncedActorFilter,
+      fromDate,
+      toDate,
+      sortOrder,
+    }),
+    [
+      outcomeFilter,
+      debouncedActionFilter,
+      partitionFilter,
+      debouncedActorFilter,
+      fromDate,
+      toDate,
+      sortOrder,
+    ],
+  );
 
   const activeFilters = useMemo<AuditTrailFilters>(
     () => ({
@@ -97,7 +167,6 @@ export function useAuditorData() {
 
   const setActionFilter = useCallback((value: string) => {
     setActionFilterState(value);
-    setPage(1);
   }, []);
 
   const setPartitionFilter = useCallback((value: string) => {
@@ -107,7 +176,6 @@ export function useAuditorData() {
 
   const setActorFilter = useCallback((value: string) => {
     setActorFilterState(value);
-    setPage(1);
   }, []);
 
   const setFromDate = useCallback((value: string) => {
@@ -166,7 +234,7 @@ export function useAuditorData() {
 
   const fetchAuditLogs = useCallback(
     async (signal?: AbortSignal) => {
-      const queryParams = buildAuditLogsQueryParams(activeFilters, page, pageSize);
+      const queryParams = buildAuditLogsQueryParams(queryFilters, page, pageSize);
       const logsRes = await apiClient<AuditLogsPaginatedResponse>(
         `/audit-logs?${queryParams.toString()}`,
         signal ? { signal } : undefined,
@@ -176,26 +244,24 @@ export function useAuditorData() {
         pagination: extractAuditorPagination(logsRes, page, pageSize),
       };
     },
-    [activeFilters, page, pageSize],
+    [queryFilters, page, pageSize],
   );
 
   const refreshData = useCallback(async () => {
-    if (dateRangeError) {
-      setErrorMessage(dateRangeError);
-      setLastErrorSource('logs');
-      return;
-    }
     refreshAbortRef.current?.abort();
     const controller = new AbortController();
     refreshAbortRef.current = controller;
 
     setIsLoading(true);
-    setMessage(null);
-    setErrorMessage(null);
+    setMessageState(null);
+    setErrorMessageState(null);
 
     try {
       const tasks: Promise<unknown>[] = [];
-      const logsIdx = canViewAuditLogs ? tasks.push(fetchAuditLogs(controller.signal)) - 1 : -1;
+      const logsIdx =
+        canViewAuditLogs && !dateRangeError
+          ? tasks.push(fetchAuditLogs(controller.signal)) - 1
+          : -1;
       const anchorsIdx = canViewAuditLogs ? tasks.push(fetchAnchors(controller.signal)) - 1 : -1;
       const exportsIdx = canExportReports ? tasks.push(fetchExportJobs(controller.signal)) - 1 : -1;
 
@@ -204,6 +270,11 @@ export function useAuditorData() {
 
       const errors: string[] = [];
       let source: AuditorErrorSource = 'general';
+
+      if (dateRangeError) {
+        source = 'logs';
+        errors.push(dateRangeError);
+      }
 
       if (logsIdx >= 0) {
         const res = settled[logsIdx];
@@ -251,8 +322,7 @@ export function useAuditorData() {
       }
 
       if (errors.length > 0) {
-        setLastErrorSource(source);
-        setErrorMessage(errors.join(' '));
+        reportError(errors.join(' '), source);
       }
     } finally {
       if (!controller.signal.aborted) setIsLoading(false);
@@ -265,6 +335,7 @@ export function useAuditorData() {
     fetchAuditLogs,
     fetchExportJobs,
     page,
+    reportError,
   ]);
 
   useEffect(() => {
@@ -277,9 +348,9 @@ export function useAuditorData() {
         if (!ignore) setExportJobs((prev) => mergeExportJobHistory(nextExports, prev));
       } catch (err) {
         if (ignore || isAbortError(err, controller.signal)) return;
-        setLastErrorSource('exports');
-        setErrorMessage(
+        reportError(
           err instanceof ApiError ? err.message : 'Không thể tải lịch sử xuất báo cáo.',
+          'exports',
         );
       }
     })();
@@ -287,7 +358,7 @@ export function useAuditorData() {
       ignore = true;
       controller.abort();
     };
-  }, [canExportReports, fetchExportJobs]);
+  }, [canExportReports, fetchExportJobs, reportError]);
 
   useEffect(() => {
     if (!canViewAuditLogs) return;
@@ -319,8 +390,7 @@ export function useAuditorData() {
       void Promise.resolve().then(() => {
         if (!ignore) {
           setIsLoading(false);
-          setErrorMessage(dateRangeError);
-          setLastErrorSource('logs');
+          reportError(dateRangeError, 'logs');
         }
       });
       return () => {
@@ -330,42 +400,35 @@ export function useAuditorData() {
 
     let ignore = false;
     const controller = new AbortController();
-    const textSignature = `${actionFilter}|${actorFilter}`;
-    const textChanged = prevDebouncedTextRef.current !== textSignature;
-    prevDebouncedTextRef.current = textSignature;
-    const delayMs = textChanged ? 250 : 0;
 
-    const timer = setTimeout(() => {
-      void (async () => {
-        setIsLoading(true);
-        setErrorMessage(null);
-        try {
-          const result = await fetchAuditLogs(controller.signal);
-          if (ignore) return;
-          setLogs(result.items);
-          setTotalPages(result.pagination.totalPages);
-          setTotalLogs(result.pagination.total);
-          if (page > result.pagination.totalPages) {
-            setPage(result.pagination.totalPages);
-          }
-        } catch (err) {
-          if (ignore || isAbortError(err, controller.signal)) return;
-          setLastErrorSource('logs');
-          setErrorMessage(
-            err instanceof ApiError ? err.message : 'Không thể tải nhật ký kiểm toán.',
-          );
-        } finally {
-          if (!ignore && !controller.signal.aborted) setIsLoading(false);
+    void (async () => {
+      setIsLoading(true);
+      setErrorMessageState(null);
+      try {
+        const result = await fetchAuditLogs(controller.signal);
+        if (ignore) return;
+        setLogs(result.items);
+        setTotalPages(result.pagination.totalPages);
+        setTotalLogs(result.pagination.total);
+        if (page > result.pagination.totalPages) {
+          setPage(result.pagination.totalPages);
         }
-      })();
-    }, delayMs);
+      } catch (err) {
+        if (ignore || isAbortError(err, controller.signal)) return;
+        reportError(
+          err instanceof ApiError ? err.message : 'Không thể tải nhật ký kiểm toán.',
+          'logs',
+        );
+      } finally {
+        if (!ignore && !controller.signal.aborted) setIsLoading(false);
+      }
+    })();
 
     return () => {
       ignore = true;
-      clearTimeout(timer);
       controller.abort();
     };
-  }, [actionFilter, actorFilter, canViewAuditLogs, dateRangeError, fetchAuditLogs, page]);
+  }, [canViewAuditLogs, dateRangeError, fetchAuditLogs, page, reportError]);
 
   useExportJobsPolling(exportJobs, setExportJobs, canExportReports);
 
@@ -373,8 +436,8 @@ export function useAuditorData() {
     async (partitionOverride?: string) => {
       const targetPartition = partitionOverride ?? verifyPartition;
       setIsVerifyingChain(true);
-      setMessage(null);
-      setErrorMessage(null);
+      setMessageState(null);
+      setErrorMessageState(null);
       try {
         const endpoint =
           targetPartition && targetPartition !== 'ALL'
@@ -396,40 +459,58 @@ export function useAuditorData() {
               : `Đã hoàn tất kiểm tra tính toàn vẹn trên ${partitionCount} phân vùng (${report.chainPartition}): Toàn vẹn, không phát hiện sai lệch (${report.totalEntriesChecked} bản ghi, ${report.totalAnchorsChecked} điểm neo).`,
           );
         } else {
-          setLastErrorSource('verify');
-          setErrorMessage(`Phát hiện sai lệch tính toàn vẹn tại ${violationCount} vị trí.`);
+          reportError(`Phát hiện sai lệch tính toàn vẹn tại ${violationCount} vị trí.`, 'verify');
         }
       } catch (err) {
-        setLastErrorSource('verify');
-        setErrorMessage(
+        reportError(
           err instanceof ApiError
             ? err.message || 'Kiểm tra tính toàn vẹn nhật ký thất bại.'
             : 'Đã xảy ra lỗi khi kiểm tra tính toàn vẹn nhật ký.',
+          'verify',
         );
       } finally {
         setIsVerifyingChain(false);
       }
     },
-    [canViewAuditLogs, fetchAnchors, verifyPartition],
+    [canViewAuditLogs, fetchAnchors, reportError, setMessage, verifyPartition],
   );
 
-  const downloadExport = useCallback(async (job: ExportJobItem) => {
-    setErrorMessage(null);
-    setDownloadingJobId(job.id);
-    lastFailedDownloadJobRef.current = job;
-    try {
-      const blob = await apiDownload(`/reports/export/${job.id}/download`);
-      triggerEphemeralBlobDownload(blob, job);
-      lastFailedDownloadJobRef.current = null;
-    } catch (err) {
-      setLastErrorSource('download');
-      setErrorMessage(err instanceof ApiError ? err.message : 'Đã xảy ra lỗi khi tải tệp báo cáo.');
-    } finally {
-      setDownloadingJobId((prev) => (prev === job.id ? null : prev));
-    }
-  }, []);
+  const downloadExport = useCallback(
+    async (job: ExportJobItem) => {
+      setErrorMessageState(null);
+      setDownloadingJobId(job.id);
+      lastFailedDownloadJobRef.current = job;
+      try {
+        const blob = await apiDownload(`/reports/export/${job.id}/download`);
+        triggerEphemeralBlobDownload(blob, job);
+        lastFailedDownloadJobRef.current = null;
+      } catch (err) {
+        reportError(
+          err instanceof ApiError ? err.message : 'Đã xảy ra lỗi khi tải tệp báo cáo.',
+          'download',
+        );
+      } finally {
+        setDownloadingJobId((prev) => (prev === job.id ? null : prev));
+      }
+    },
+    [reportError],
+  );
 
   const retryLastFailedOperation = useCallback(async () => {
+    if (lastErrorSource === 'watermark') {
+      const wmRetry = retryHandlersRef.current['watermark'];
+      if (wmRetry) {
+        await wmRetry();
+        return;
+      }
+    }
+    if (lastErrorSource === 'alerts') {
+      const alertsRetry = retryHandlersRef.current['alerts'];
+      if (alertsRetry) {
+        await alertsRetry();
+        return;
+      }
+    }
     if (lastErrorSource === 'verify') {
       await verifyHashChain();
       return;
@@ -438,22 +519,35 @@ export function useAuditorData() {
       await downloadExport(lastFailedDownloadJobRef.current);
       return;
     }
+    if (lastErrorSource === 'logs' || lastErrorSource === 'exports') {
+      await refreshData();
+      return;
+    }
+
+    const activeTab = activeTabContextRef.current;
+    if (activeTab === 'watermark-trace' && retryHandlersRef.current['watermark']) {
+      await retryHandlersRef.current['watermark']();
+      return;
+    }
+    if (activeTab === 'security-alerts' && retryHandlersRef.current['alerts']) {
+      await retryHandlersRef.current['alerts']();
+      return;
+    }
+    if (activeTab === 'chain-verify') {
+      await verifyHashChain();
+      return;
+    }
     await refreshData();
   }, [downloadExport, lastErrorSource, refreshData, verifyHashChain]);
 
-  const prependExportJob = useCallback((job: ExportJobItem, msg: string) => {
-    setExportJobs((prev) => [job, ...prev.filter((existing) => existing.id !== job.id)]);
-    setErrorMessage(null);
-    setMessage(msg);
-  }, []);
-
-  const reportError = useCallback((msg: string | null, source: AuditorErrorSource = 'general') => {
-    if (msg) {
-      setMessage(null);
-      setLastErrorSource(source);
-    }
-    setErrorMessage(msg);
-  }, []);
+  const prependExportJob = useCallback(
+    (job: ExportJobItem, msg: string) => {
+      setExportJobs((prev) => [job, ...prev.filter((existing) => existing.id !== job.id)]);
+      setDialogError(null);
+      setMessage(msg);
+    },
+    [setMessage],
+  );
 
   return {
     logs,
@@ -474,6 +568,8 @@ export function useAuditorData() {
     setMessage,
     errorMessage,
     setErrorMessage: reportError,
+    dialogError,
+    setDialogError,
     lastErrorSource,
     dateRangeError,
     activeFilters,
@@ -498,5 +594,7 @@ export function useAuditorData() {
     downloadExport,
     retryLastFailedOperation,
     prependExportJob,
+    registerRetryHandler,
+    setActiveTabContext,
   };
 }

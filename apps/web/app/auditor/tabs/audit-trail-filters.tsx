@@ -1,7 +1,8 @@
 'use client';
 
-import { ArrowUpDown, Calendar, RotateCcw, Search, User } from 'lucide-react';
+import { ArrowUpDown, RotateCcw, Search, User } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { formatAuditPartitionLabel } from '@/lib/ui-labels';
 import { AUDIT_PARTITION_OPTIONS } from '../helpers';
@@ -57,34 +58,32 @@ export function AuditTrailFiltersBar({
     sortOrder !== 'desc';
 
   return (
-    <div className="space-y-2.5">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2 min-w-0">
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2 min-w-0">
         <div className="min-w-0">
           <label htmlFor="auditor-outcome-filter" className="sr-only">
             Lọc theo kết quả kiểm toán
           </label>
-          <select
+          <Select
             id="auditor-outcome-filter"
             value={outcomeFilter}
             onChange={(e) => onOutcomeFilterChange(e.target.value)}
-            className="min-h-11 sm:h-9 w-full rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
           >
             <option value="ALL">Tất cả kết quả</option>
             <option value="SUCCESS">Thành công</option>
             <option value="DENIED">Bị từ chối</option>
             <option value="FAILED">Thất bại</option>
-          </select>
+          </Select>
         </div>
 
         <div className="min-w-0">
           <label htmlFor="auditor-partition-filter" className="sr-only">
             Lọc theo phân vùng kiểm toán
           </label>
-          <select
+          <Select
             id="auditor-partition-filter"
             value={partitionFilter}
             onChange={(e) => onPartitionFilterChange(e.target.value)}
-            className="min-h-11 sm:h-9 w-full rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
           >
             <option value="ALL">Tất cả phân vùng</option>
             {AUDIT_PARTITION_OPTIONS.filter((p) => p !== 'ALL').map((partition) => (
@@ -92,10 +91,10 @@ export function AuditTrailFiltersBar({
                 {formatAuditPartitionLabel(partition)}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
 
-        <div className="relative min-w-0">
+        <div className="relative col-span-2 sm:col-span-1 min-w-0">
           <label htmlFor="auditor-action-filter" className="sr-only">
             Lọc theo mã hành động
           </label>
@@ -108,14 +107,15 @@ export function AuditTrailFiltersBar({
           <Input
             id="auditor-action-filter"
             type="text"
+            maxLength={120}
             placeholder="Mã hành động (VD: LOGIN)…"
             value={actionFilter}
             onChange={(e) => onActionFilterChange(e.target.value)}
-            className="pl-9 min-h-11 sm:h-9 w-full text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
+            className="pl-10 h-11 sm:h-9 w-full rounded-[12px] sm:rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171]"
           />
         </div>
 
-        <div className="relative min-w-0">
+        <div className="relative col-span-2 sm:col-span-1 min-w-0">
           <label htmlFor="auditor-actor-filter" className="sr-only">
             Lọc theo tên tài khoản thực hiện
           </label>
@@ -128,21 +128,19 @@ export function AuditTrailFiltersBar({
           <Input
             id="auditor-actor-filter"
             type="text"
+            maxLength={120}
             placeholder="Tài khoản thực hiện…"
             value={actorFilter}
             onChange={(e) => onActorFilterChange(e.target.value)}
-            className="pl-9 min-h-11 sm:h-9 w-full text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
+            className="pl-10 h-11 sm:h-9 w-full rounded-[12px] sm:rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171]"
           />
         </div>
 
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Calendar
-            size={16}
-            strokeWidth={1.75}
-            className="shrink-0 text-[#717171]"
-            aria-hidden="true"
-          />
-          <label htmlFor="auditor-from-date" className="sr-only">
+        <div className="col-span-2 sm:col-span-1 min-w-0">
+          <label
+            htmlFor="auditor-from-date"
+            className="block text-[11px] font-medium text-[#717171] mb-1"
+          >
             Từ ngày
           </label>
           <Input
@@ -151,15 +149,15 @@ export function AuditTrailFiltersBar({
             value={fromDate}
             aria-invalid={Boolean(dateRangeError)}
             onChange={(e) => onFromDateChange(e.target.value)}
-            className="min-h-11 sm:h-9 w-full text-xs rounded-full bg-[#ffffff] border-[#dddddd] px-3 text-[#222222] focus:border-[#FF385C]"
+            className="h-11 sm:h-9 w-full rounded-[12px] sm:rounded-full bg-[#ffffff] border-[#dddddd] px-3 text-[#222222]"
           />
         </div>
 
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-xs text-[#717171] shrink-0" aria-hidden="true">
-            đến
-          </span>
-          <label htmlFor="auditor-to-date" className="sr-only">
+        <div className="col-span-2 sm:col-span-1 min-w-0">
+          <label
+            htmlFor="auditor-to-date"
+            className="block text-[11px] font-medium text-[#717171] mb-1"
+          >
             Đến ngày
           </label>
           <Input
@@ -168,26 +166,31 @@ export function AuditTrailFiltersBar({
             value={toDate}
             aria-invalid={Boolean(dateRangeError)}
             onChange={(e) => onToDateChange(e.target.value)}
-            className="min-h-11 sm:h-9 w-full text-xs rounded-full bg-[#ffffff] border-[#dddddd] px-3 text-[#222222] focus:border-[#FF385C]"
+            className="h-11 sm:h-9 w-full rounded-[12px] sm:rounded-full bg-[#ffffff] border-[#dddddd] px-3 text-[#222222]"
           />
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <ArrowUpDown size={16} strokeWidth={1.75} className="text-[#717171]" aria-hidden="true" />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto min-w-0">
+          <ArrowUpDown
+            size={16}
+            strokeWidth={1.75}
+            className="shrink-0 text-[#717171]"
+            aria-hidden="true"
+          />
           <label htmlFor="auditor-sort-order" className="sr-only">
             Thứ tự sắp xếp nhật ký
           </label>
-          <select
+          <Select
             id="auditor-sort-order"
             value={sortOrder}
             onChange={(e) => onSortOrderChange(e.target.value === 'asc' ? 'asc' : 'desc')}
-            className="min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+            wrapperClassName="w-full sm:w-52"
           >
             <option value="desc">Thời gian: Mới nhất trước</option>
             <option value="asc">Thời gian: Cũ nhất trước</option>
-          </select>
+          </Select>
         </div>
 
         {hasActiveFilters && (
@@ -198,6 +201,7 @@ export function AuditTrailFiltersBar({
             text="Xóa bộ lọc"
             icon={<RotateCcw size={16} strokeWidth={1.75} aria-hidden="true" />}
             onClick={onResetFilters}
+            className="w-full sm:w-auto"
           />
         )}
       </div>

@@ -1,47 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import {
-  AlertTriangle,
-  Anchor,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  RefreshCw,
-  ShieldCheck,
-} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, Anchor, CheckCircle2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
+import { formatAuditPartitionLabel, formatAuditViolationMessage } from '@/lib/ui-labels';
+import { AUDIT_PARTITIONS } from '../helpers';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  formatAuditActionLabel,
-  formatAuditObjectTypeLabel,
-  formatAuditOutcomeLabel,
-  formatAuditPartitionLabel,
-  formatAuditViolationMessage,
-  formatSafeDateVi,
-} from '@/lib/ui-labels';
-
-interface AuditAnchorRow {
-  id: string;
-  chainPartition: string;
-  anchorSequence: string;
-  entryHash: string;
-  signature: string;
-  signerKeyId?: string | undefined;
-  status?: string | undefined;
-  anchoredAt: string;
-}
+  AuditAnchorsSection,
+  AuditSystemLogsSection,
+  type AuditAnchorRow,
+  type AuditLogRow,
+} from './audit-integrity-tables';
 
 interface AuditVerificationEntry {
   partition: string;
@@ -51,38 +25,25 @@ interface AuditVerificationEntry {
   violations: Array<{ code: string; partition: string; sequence: string; message: string }>;
 }
 
-interface AuditLogRow {
-  id: string;
-  chainPartition?: string;
-  action: string;
-  actorUsername?: string | null;
-  objectType?: string | null;
-  outcome: string;
-  ipAddress?: string | null;
-  occurredAt: string;
-}
-
 interface AuditIntegrityTabProps {
   canCreateAnchor: boolean;
+  refreshSignal?: number | undefined;
   onMessage: (message: string) => void;
   onError: (errorMessage: string) => void;
 }
 
-const AUDIT_PARTITIONS = [
-  'AUTH',
-  'ACCESS_SESSION',
-  'DOCUMENT',
-  'RBAC',
-  'SECURITY',
-  'SECURITY_OPERATIONS',
-  'GLOBAL',
-] as const;
-
 /**
  * Thuật toán: Kiểm Chứng Chuỗi Băm Kiểm Toán, Khởi Tạo Điểm Neo Chữ Ký HMAC (UC32) & Tra Cứu Nhật Ký SOC (`AuditIntegrityTab`)
- * Mục đích: Đưa đầy đủ tính năng `AUDIT_ANCHOR:CREATE` (#04) và `AUDIT_LOG:VIEW`/`VERIFY` (#28) vào cổng `/security` mà vẫn tuân thủ Phân tách nhiệm vụ SoD.
+ * Mục đích:
+ *   - Dùng chung `AUDIT_PARTITIONS` có đủ `'AUDIT'`, giữ `<Select>` `w-full` trên di động `375px`.
+ *   - Hiển thị biểu tượng `<AlertTriangle>` chữ `#C13515` phẳng theo mẫu `staff-001` khi phát hiện sai lệch, đếm số vi phạm ẩn `+(violations.length - 2)` và nạp lại nhật ký im lặng (`{ silent: true }`) sau khi xác minh chuỗi.
  */
-export function AuditIntegrityTab({ canCreateAnchor, onMessage, onError }: AuditIntegrityTabProps) {
+export function AuditIntegrityTab({
+  canCreateAnchor,
+  refreshSignal = 0,
+  onMessage,
+  onError,
+}: AuditIntegrityTabProps) {
   const [selectedPartition, setSelectedPartition] = useState<string>('AUTH');
   const [anchors, setAnchors] = useState<AuditAnchorRow[]>([]);
   const [logs, setLogs] = useState<AuditLogRow[]>([]);
@@ -95,50 +56,99 @@ export function AuditIntegrityTab({ canCreateAnchor, onMessage, onError }: Audit
   const [isVerifying, setIsVerifying] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  const loadAuditData = useCallback(async () => {
-    setIsLoading(true);
-    setLocalError(null);
-    const [anchorsRes, logsRes] = await Promise.allSettled([
-      apiClient<{ data: AuditAnchorRow[] }>('/audit-logs/anchors'),
-      apiClient<{
-        data: AuditLogRow[];
-        pagination?: { page: number; totalPages: number; total: number };
-      }>(`/audit-logs?page=${logsPage}&pageSize=15`),
-    ]);
+  const anchorsAbortRef = useRef<AbortController | null>(null);
+  const logsAbortRef = useRef<AbortController | null>(null);
 
-    if (anchorsRes.status === 'fulfilled') {
-      setAnchors(anchorsRes.value.data || []);
-    } else {
-      setLocalError(
-        anchorsRes.reason instanceof ApiError
-          ? anchorsRes.reason.message
-          : 'Không thể tải danh sách điểm neo kiểm toán.',
-      );
+  const loadAnchors = useCallback(async (options?: { silent?: boolean }) => {
+    anchorsAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    anchorsAbortRef.current = ctrl;
+    try {
+      const res = await apiClient<{ data: AuditAnchorRow[] }>('/audit-logs/anchors', {
+        signal: ctrl.signal,
+      });
+      if (ctrl.signal.aborted) return;
+      setAnchors(res.data || []);
+    } catch (err) {
+      if (ctrl.signal.aborted) return;
+      if (!options?.silent) {
+        setLocalError(
+          err instanceof ApiError ? err.message : 'Không thể tải danh sách điểm neo kiểm toán.',
+        );
+      }
     }
+  }, []);
 
-    if (logsRes.status === 'fulfilled') {
-      setLogs(logsRes.value.data || []);
-      setLogsTotal(logsRes.value.pagination?.total ?? logsRes.value.data?.length ?? 0);
-      setLogsTotalPages(Math.max(1, logsRes.value.pagination?.totalPages ?? 1));
-    } else {
-      setLocalError(
-        logsRes.reason instanceof ApiError
-          ? logsRes.reason.message
-          : 'Không thể tải danh sách nhật ký kiểm toán.',
-      );
-    }
-    setIsLoading(false);
-  }, [logsPage]);
+  const loadLogs = useCallback(
+    async (options?: { silent?: boolean }) => {
+      logsAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      logsAbortRef.current = ctrl;
+      if (!options?.silent) {
+        setIsLoading(true);
+        setLocalError(null);
+      }
+      try {
+        const res = await apiClient<{
+          data: AuditLogRow[];
+          pagination?: { page: number; totalPages: number; total: number };
+        }>(`/audit-logs?page=${logsPage}&pageSize=15`, { signal: ctrl.signal });
+        if (ctrl.signal.aborted) return;
+        setLogs(res.data || []);
+        setLogsTotal(res.pagination?.total ?? res.data?.length ?? 0);
+        setLogsTotalPages(Math.max(1, res.pagination?.totalPages ?? 1));
+      } catch (err) {
+        if (ctrl.signal.aborted) return;
+        if (!options?.silent) {
+          setLocalError(
+            err instanceof ApiError ? err.message : 'Không thể tải danh sách nhật ký kiểm toán.',
+          );
+        }
+      } finally {
+        if (!ctrl.signal.aborted && !options?.silent) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [logsPage],
+  );
+
+  const loadAuditData = useCallback(
+    async (options?: { silent?: boolean }) => {
+      await Promise.allSettled([loadAnchors(options), loadLogs(options)]);
+    },
+    [loadAnchors, loadLogs],
+  );
 
   useEffect(() => {
     let ignore = false;
     void Promise.resolve().then(() => {
-      if (!ignore) void loadAuditData();
+      if (!ignore) void loadAnchors();
     });
     return () => {
       ignore = true;
+      anchorsAbortRef.current?.abort();
     };
-  }, [loadAuditData]);
+  }, [loadAnchors]);
+
+  useEffect(() => {
+    let ignore = false;
+    void Promise.resolve().then(() => {
+      if (!ignore) void loadLogs();
+    });
+    return () => {
+      ignore = true;
+      logsAbortRef.current?.abort();
+    };
+  }, [loadLogs]);
+
+  const prevRefreshSignalRef = useRef(refreshSignal);
+  useEffect(() => {
+    if (prevRefreshSignalRef.current !== refreshSignal) {
+      prevRefreshSignalRef.current = refreshSignal;
+      void loadAuditData();
+    }
+  }, [refreshSignal, loadAuditData]);
 
   async function handleCreateAnchor() {
     setIsCreatingAnchor(true);
@@ -149,15 +159,14 @@ export function AuditIntegrityTab({ canCreateAnchor, onMessage, onError }: Audit
         body: JSON.stringify({ chainPartition: selectedPartition }),
       });
       onMessage(
-        `Đã khởi tạo điểm neo kiểm toán HMAC cho phân vùng ${created.chainPartition} tại bản ghi #${created.anchorSequence}.`,
+        `Đã khởi tạo điểm neo kiểm toán HMAC cho phân vùng ${formatAuditPartitionLabel(created.chainPartition)} tại bản ghi #${created.anchorSequence}.`,
       );
-      await loadAuditData();
+      await loadAuditData({ silent: true });
     } catch (err) {
       const msg =
         err instanceof ApiError
           ? err.message || 'Không thể khởi tạo điểm neo kiểm toán.'
           : 'Không thể khởi tạo điểm neo kiểm toán.';
-      setLocalError(msg);
       onError(msg);
     } finally {
       setIsCreatingAnchor(false);
@@ -186,15 +195,17 @@ export function AuditIntegrityTab({ canCreateAnchor, onMessage, onError }: Audit
           `Phát hiện ${brokenCount} phân vùng có dấu hiệu bất thường toàn vẹn chuỗi kiểm toán!`,
         );
       }
+      await loadAuditData({ silent: true });
     } catch (err) {
       const msg =
         err instanceof ApiError ? err.message : 'Không thể kiểm tra toàn vẹn chuỗi kiểm toán.';
-      setLocalError(msg);
       onError(msg);
     } finally {
       setIsVerifying(false);
     }
   }
+
+  const hasBrokenPartitions = Boolean(verifyReport && verifyReport.some((e) => !e.valid));
 
   return (
     <div className="space-y-4">
@@ -206,24 +217,24 @@ export function AuditIntegrityTab({ canCreateAnchor, onMessage, onError }: Audit
               <span>Toàn vẹn chuỗi băm &amp; Điểm neo kiểm toán ({anchors.length})</span>
             </CardTitle>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full lg:w-auto">
               {canCreateAnchor && (
                 <>
                   <label htmlFor="soc-anchor-partition" className="sr-only">
                     Chọn phân vùng chuỗi kiểm toán
                   </label>
-                  <select
+                  <Select
                     id="soc-anchor-partition"
                     value={selectedPartition}
                     onChange={(e) => setSelectedPartition(e.target.value)}
-                    className="min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] cursor-pointer"
+                    wrapperClassName="w-full sm:w-60"
                   >
                     {AUDIT_PARTITIONS.map((p) => (
                       <option key={p} value={p}>
                         Phân vùng: {formatAuditPartitionLabel(p)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <InteractiveHoverButton
                     type="button"
                     size="sm"
@@ -232,7 +243,8 @@ export function AuditIntegrityTab({ canCreateAnchor, onMessage, onError }: Audit
                     icon={<Anchor size={16} strokeWidth={1.75} aria-hidden="true" />}
                     isLoading={isCreatingAnchor}
                     disabled={isCreatingAnchor}
-                    onClick={() => void handleCreateAnchor()}
+                    onClick={() => handleCreateAnchor()}
+                    className="w-full sm:w-auto"
                   />
                 </>
               )}
@@ -241,11 +253,12 @@ export function AuditIntegrityTab({ canCreateAnchor, onMessage, onError }: Audit
                 type="button"
                 size="sm"
                 variant="secondary"
-                text="Kiểm chứng toàn chuỗi"
+                text="Kiểm chứng chuỗi"
                 icon={<ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
                 isLoading={isVerifying}
                 disabled={isVerifying}
-                onClick={() => void handleVerifyChain()}
+                onClick={() => handleVerifyChain()}
+                className="w-full sm:w-auto"
               />
             </div>
           </div>
@@ -265,95 +278,70 @@ export function AuditIntegrityTab({ canCreateAnchor, onMessage, onError }: Audit
 
         <CardContent className="space-y-4">
           {verifyReport && (
-            <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-2 text-xs">
-              <div className="font-semibold text-[#222222] flex items-center gap-1.5">
-                <CheckCircle2
-                  size={16}
-                  strokeWidth={1.75}
-                  className="text-[#008A05]"
-                  aria-hidden="true"
-                />
+            <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-2.5 text-xs">
+              <div
+                className={`font-semibold flex items-center gap-1.5 ${
+                  hasBrokenPartitions ? 'text-[#C13515]' : 'text-[#222222]'
+                }`}
+              >
+                {hasBrokenPartitions ? (
+                  <AlertTriangle
+                    size={16}
+                    strokeWidth={1.75}
+                    className="text-[#C13515] shrink-0"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <CheckCircle2
+                    size={16}
+                    strokeWidth={1.75}
+                    className="text-[#008A05] shrink-0"
+                    aria-hidden="true"
+                  />
+                )}
                 <span>
-                  Kết quả xác minh mật mã chuỗi kiểm toán ({verifyReport.length} phân vùng)
+                  {hasBrokenPartitions
+                    ? `Phát hiện sai lệch mật mã chuỗi kiểm toán (${verifyReport.length} phân vùng đã kiểm tra)`
+                    : `Kết quả xác minh mật mã chuỗi kiểm toán (${verifyReport.length} phân vùng toàn vẹn)`}
                 </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {verifyReport.map((entry) => (
-                  <div
-                    key={entry.partition}
-                    className="rounded-[12px] border border-[#ebebeb] bg-[#ffffff] p-2.5 space-y-1"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono font-semibold text-[#222222]">
-                        {formatAuditPartitionLabel(entry.partition)}
-                      </span>
-                      <Badge variant={entry.valid ? 'success' : 'destructive'}>
-                        {entry.valid ? 'Toàn vẹn' : `${entry.violations.length} lỗi`}
-                      </Badge>
-                    </div>
-                    <div className="text-[#717171]">
-                      Đã kiểm tra: {entry.totalChecked} bản ghi · {entry.anchorsChecked} điểm neo
-                    </div>
-                    {entry.violations.slice(0, 2).map((v, idx) => (
-                      <div key={idx} className="text-[#C13515]">
-                        {formatAuditViolationMessage(v.partition, v.code, v.sequence)}
+                {verifyReport.map((entry) => {
+                  const hiddenViolationsCount = Math.max(0, entry.violations.length - 2);
+                  return (
+                    <div
+                      key={entry.partition}
+                      className="rounded-[12px] border border-[#ebebeb] bg-[#ffffff] p-2.5 space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-[#222222]">
+                          {formatAuditPartitionLabel(entry.partition)}
+                        </span>
+                        <Badge variant={entry.valid ? 'success' : 'destructive'}>
+                          {entry.valid ? 'Toàn vẹn' : `${entry.violations.length} lỗi`}
+                        </Badge>
                       </div>
-                    ))}
-                  </div>
-                ))}
+                      <div className="text-[#717171]">
+                        Đã kiểm tra: {entry.totalChecked} bản ghi · {entry.anchorsChecked} điểm neo
+                      </div>
+                      {entry.violations.slice(0, 2).map((v, idx) => (
+                        <div key={idx} className="text-[#C13515] break-words">
+                          {formatAuditViolationMessage(v.partition, v.code, v.sequence)}
+                        </div>
+                      ))}
+                      {hiddenViolationsCount > 0 && (
+                        <div className="font-semibold text-[#C13515]">
+                          +{hiddenViolationsCount} vi phạm khác chưa hiển thị
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
-          <div className="rounded-[16px] border border-[#ebebeb] overflow-hidden">
-            <Table>
-              <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
-                <TableRow>
-                  <TableHead className="text-xs text-[#717171]">Phân vùng</TableHead>
-                  <TableHead className="text-xs text-[#717171]">Số thứ tự neo</TableHead>
-                  <TableHead className="text-xs text-[#717171]">Mã băm bản ghi</TableHead>
-                  <TableHead className="text-xs text-[#717171]">Khóa ký</TableHead>
-                  <TableHead className="text-xs text-[#717171]">Thời điểm neo</TableHead>
-                  <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {anchors.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-6 text-xs text-[#717171]">
-                      Chưa có điểm neo chữ ký nào. Chọn phân vùng và bấm &quot;Tạo điểm neo
-                      HMAC&quot; để đóng dấu toàn vẹn.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  anchors.map((a) => (
-                    <TableRow key={a.id} className="border-b border-[#ebebeb]">
-                      <TableCell className="font-mono font-semibold text-xs text-[#222222]">
-                        {formatAuditPartitionLabel(a.chainPartition)}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-[#222222]">
-                        #{a.anchorSequence}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-[#717171]">
-                        {a.entryHash.slice(0, 16)}…
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-[#717171]">
-                        {a.signerKeyId || 'v1'}
-                      </TableCell>
-                      <TableCell className="text-xs text-[#717171] whitespace-nowrap">
-                        {formatSafeDateVi(a.anchoredAt, { includeTime: true })}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={a.status === 'INVALID' ? 'destructive' : 'success'}>
-                          {a.status === 'INVALID' ? 'Sai lệch' : 'Hợp lệ'}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
+          <AuditAnchorsSection anchors={anchors} />
         </CardContent>
       </Card>
 
@@ -376,94 +364,17 @@ export function AuditIntegrityTab({ canCreateAnchor, onMessage, onError }: Audit
               />
             }
             disabled={isLoading}
-            onClick={() => void loadAuditData()}
+            onClick={() => loadAuditData()}
           />
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
-              <TableRow>
-                <TableHead className="text-xs text-[#717171]">Thời gian</TableHead>
-                <TableHead className="text-xs text-[#717171]">Tác nhân</TableHead>
-                <TableHead className="text-xs text-[#717171]">Hành động</TableHead>
-                <TableHead className="text-xs text-[#717171]">Đối tượng</TableHead>
-                <TableHead className="text-xs text-[#717171]">Địa chỉ IP</TableHead>
-                <TableHead className="text-xs text-[#717171]">Kết quả</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {logs.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-6 text-xs text-[#717171]">
-                    {isLoading
-                      ? 'Đang tải nhật ký kiểm toán…'
-                      : 'Chưa có bản ghi nhật ký kiểm toán.'}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                logs.map((log) => (
-                  <TableRow key={log.id} className="border-b border-[#ebebeb]">
-                    <TableCell className="text-xs text-[#717171] whitespace-nowrap">
-                      {formatSafeDateVi(log.occurredAt, { includeTime: true })}
-                    </TableCell>
-                    <TableCell className="text-xs font-medium text-[#222222]">
-                      {log.actorUsername || 'Hệ thống'}
-                    </TableCell>
-                    <TableCell className="text-xs text-[#222222]">
-                      {formatAuditActionLabel(log.action)}
-                    </TableCell>
-                    <TableCell className="text-xs text-[#717171]">
-                      {formatAuditObjectTypeLabel(log.objectType)}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-[#717171]">
-                      {log.ipAddress || '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          log.outcome === 'SUCCESS'
-                            ? 'success'
-                            : log.outcome === 'DENIED'
-                              ? 'destructive'
-                              : 'warning'
-                        }
-                      >
-                        {formatAuditOutcomeLabel(log.outcome)}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-
-          {logsTotalPages > 1 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#ebebeb] px-4 py-3 text-xs text-[#717171]">
-              <span>
-                Trang {logsPage} / {logsTotalPages}
-              </span>
-              <div className="flex items-center gap-2">
-                <InteractiveHoverButton
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  text="Trang trước"
-                  icon={<ChevronLeft size={16} strokeWidth={1.75} aria-hidden="true" />}
-                  disabled={logsPage <= 1}
-                  onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
-                />
-                <InteractiveHoverButton
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  text="Trang sau"
-                  icon={<ChevronRight size={16} strokeWidth={1.75} aria-hidden="true" />}
-                  disabled={logsPage >= logsTotalPages}
-                  onClick={() => setLogsPage((p) => Math.min(logsTotalPages, p + 1))}
-                />
-              </div>
-            </div>
-          )}
+          <AuditSystemLogsSection
+            logs={logs}
+            isLoading={isLoading}
+            logsPage={logsPage}
+            logsTotalPages={logsTotalPages}
+            onPageChange={setLogsPage}
+          />
         </CardContent>
       </Card>
     </div>

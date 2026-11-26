@@ -9,6 +9,8 @@ interface ForensicPreviewModalProps {
   document: DocumentItem | null;
   sessionId: string | null;
   versionNo?: number | null | undefined;
+  allowDownload?: boolean | undefined;
+  obligations?: readonly string[] | undefined;
   pdfBytes?: Uint8Array | null | undefined;
   pdfUrl?: string | null | undefined;
   page: number;
@@ -25,6 +27,8 @@ export function ForensicPreviewModal({
   document,
   sessionId,
   versionNo,
+  allowDownload = false,
+  obligations = [],
   pdfBytes,
   pdfUrl,
   page,
@@ -46,7 +50,8 @@ export function ForensicPreviewModal({
       pdfUrl={pdfUrl}
       page={page}
       totalPages={totalPages}
-      allowDownload={document?.allowDownload ?? false}
+      allowDownload={allowDownload}
+      obligations={obligations}
       pageError={pageError}
       onRetryPage={onRetryPage}
       isLoading={isLoading}

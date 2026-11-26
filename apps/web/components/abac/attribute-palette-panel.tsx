@@ -101,7 +101,7 @@ export function AttributePalettePanel({
               onDragStart={(e) => {
                 e.dataTransfer.setData('text/plain', attr.key);
               }}
-              className="group p-2.5 rounded-[12px] border border-[#ebebeb] bg-[#ffffff] hover:border-[#FF385C] hover:shadow-xs transition-all text-xs cursor-grab active:cursor-grabbing"
+              className="group p-2.5 rounded-[12px] border border-[#ebebeb] bg-[#ffffff] hover:border-[#dddddd] hover:bg-[#f7f7f7] hover:shadow-xs transition-all text-xs cursor-grab active:cursor-grabbing"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-1.5 font-semibold text-[#222222]">

@@ -8,7 +8,8 @@
  *   - Hỗ trợ phóng to/thu nhỏ, khớp chiều rộng, chặn chuột phải & chặn phím tắt lưu/in khi `allowDownload === false`.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, ShieldAlert } from 'lucide-react';
+import { Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
+import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
 export interface SecurePdfCanvasViewerProps {
   pdfBytes: Uint8Array;
@@ -28,6 +29,7 @@ export function SecurePdfCanvasViewer({
   const [renderError, setRenderError] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState(true);
   const [containerWidth, setContainerWidth] = useState(0);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -138,7 +140,7 @@ export function SecurePdfCanvasViewer({
         void loadingTask.destroy().catch(() => undefined);
       }
     };
-  }, [pdfBytes, zoomScale, containerWidth]);
+  }, [pdfBytes, zoomScale, containerWidth, retryCount]);
 
   return (
     <div
@@ -149,35 +151,44 @@ export function SecurePdfCanvasViewer({
       className="relative w-full h-[50dvh] sm:h-[62dvh] max-h-[600px] min-h-[260px] overflow-auto rounded-[16px] border border-[#dddddd] bg-[#ebebeb] p-2 sm:p-3 flex flex-col items-center select-none"
       aria-label={title ? `Nội dung trang tài liệu ${title}` : 'Nội dung trang tài liệu bảo mật'}
     >
-      {renderError ? (
+      {renderError && (
         <div
           role="alert"
-          className="my-auto w-full max-w-md rounded-[16px] border border-[#C13515]/30 bg-[#ffffff] p-4 text-center space-y-2"
+          className="my-auto w-full max-w-md rounded-[16px] border border-[#dddddd] bg-[#ffffff] p-4 text-center space-y-3"
         >
           <div className="flex justify-center text-[#C13515]">
             <ShieldAlert size={20} strokeWidth={1.75} aria-hidden="true" />
           </div>
           <p className="text-xs font-semibold text-[#C13515]">{renderError}</p>
-        </div>
-      ) : (
-        <div className="relative my-auto flex items-center justify-center">
-          <canvas
-            ref={canvasRef}
-            className="block rounded bg-[#ffffff] shadow-sm max-w-none"
-            aria-label={title || 'Trang tài liệu PDF bảo mật'}
-          />
-          {isRendering && (
-            <div className="absolute inset-0 flex items-center justify-center bg-[#ffffff]/75 rounded">
-              <Loader2
-                size={24}
-                strokeWidth={2}
-                className="animate-spin text-[#FF385C]"
-                aria-hidden="true"
-              />
-            </div>
-          )}
+          <div className="flex justify-center">
+            <InteractiveHoverButton
+              type="button"
+              size="sm"
+              variant="secondary"
+              text="Thử kết xuất lại"
+              icon={<RefreshCw size={16} strokeWidth={1.75} aria-hidden="true" />}
+              onClick={() => setRetryCount((prev) => prev + 1)}
+            />
+          </div>
         </div>
       )}
+      <div className={renderError ? 'hidden' : 'relative my-auto flex items-center justify-center'}>
+        <canvas
+          ref={canvasRef}
+          className="block rounded bg-[#ffffff] shadow-sm max-w-none"
+          aria-label={title || 'Trang tài liệu PDF bảo mật'}
+        />
+        {isRendering && (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#ffffff]/75 rounded">
+            <Loader2
+              size={24}
+              strokeWidth={2}
+              className="animate-spin text-[#FF385C]"
+              aria-hidden="true"
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

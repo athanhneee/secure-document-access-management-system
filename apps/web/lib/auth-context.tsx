@@ -6,6 +6,7 @@ import {
   apiClient,
   ApiError,
   getCsrfToken,
+  isPreMfaApiError,
   sanitizeRedirectPath,
   subscribeSessionExpired,
 } from './api-client';
@@ -33,10 +34,16 @@ export interface AuthUser {
   clearanceName?: string | null;
   clearanceRank?: number;
   mfaEnabled?: boolean;
+  mfaVerified?: boolean;
   status: string;
   version: number;
   roles: string[];
   permissions: string[];
+  globalPermissions?: string[] | undefined;
+  hasGlobalUserManage?: boolean | undefined;
+  userManageDepartmentIds?: string[] | undefined;
+  hasGlobalDocumentUpload?: boolean | undefined;
+  documentUploadDepartmentIds?: string[] | undefined;
 }
 
 export type RoleType = SystemRoleType;
@@ -115,11 +122,13 @@ interface AuthContextValue {
   accessiblePortals: RoleType[];
   isLoading: boolean;
   isAuthenticated: boolean;
+  mfaPending: boolean;
   setActiveRole: (role: RoleType) => void;
   hydrateUser: (nextUser: AuthUser | null) => void;
   refreshUser: () => Promise<AuthUser | null>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
+  hasGlobalPermission: (permission: string) => boolean;
   hasRole: (role: RoleType) => boolean;
   canAccessPortal: (portal: RoleType) => boolean;
 }
@@ -130,11 +139,12 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
  * Thuật toán: Máy Trạng Thái Phiên Xác Thực Không Chặn Điều Hướng, Định Tuyến Đúng Pre-MFA & Đăng Xuất Đợi Xóa Cookie (`AuthProvider`)
  * Mục đích:
  *   - Duy trì trạng thái định danh người dùng trong bộ nhớ React mà không gọi lại `/users/me` mỗi khi chuyển tuyến đường Sidebar.
- *   - Phân biệt lỗi `401` tiền-MFA (`mfa_required` -> `/mfa`, `V-14`) với lỗi hết phiên thực sự (`/login?reason=session_revoked`).
+ *   - Phân biệt lỗi `401` tiền-MFA (`mfa_required` -> `/mfa`, `V-14`, `BUG-036`) với lỗi hết phiên thực sự (`/login?reason=session_revoked`).
  *   - Khi đăng xuất (`logout`), đợi máy chủ xóa cookie HttpOnly (giới hạn 3 giây phòng rớt mạng) và xóa sạch cache thông báo trong RAM trước khi điều hướng (`V-11`).
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [mfaPending, setMfaPending] = useState(false);
   const [roleOverride, setRoleOverride] = useState<{
     role: RoleType;
     fromPath: string | null;
@@ -145,6 +155,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const hydrateUser = useCallback((nextUser: AuthUser | null) => {
     setUser(nextUser);
+    setMfaPending(false);
     if (!nextUser) {
       setRoleOverride(null);
     }
@@ -154,6 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshUser = useCallback(async (): Promise<AuthUser | null> => {
     try {
       const data = await apiClient<AuthUser>('/users/me');
+      setMfaPending(false);
       setUser(data);
       return data;
     } catch (err) {
@@ -161,6 +173,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (err instanceof ApiError && err.status === 401) {
         setUser(null);
         setRoleOverride(null);
+        setMfaPending(isPreMfaApiError(err));
       }
       return null;
     } finally {
@@ -175,13 +188,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       setRoleOverride(null);
       if (reason === 'mfa_required') {
-        router.replace('/mfa');
+        setMfaPending(true);
+        // BUG-036: Tuyệt đối giữ nguyên URL hiện tại khi đang đứng ở `/mfa...` (bảo toàn ?enroll=1&method=totp&redirect=...)
+        if (!pathname?.startsWith('/mfa')) {
+          const currentTarget =
+            typeof window !== 'undefined'
+              ? `${window.location.pathname}${window.location.search}`
+              : pathname;
+          if (
+            currentTarget &&
+            currentTarget !== '/' &&
+            !currentTarget.startsWith('/login') &&
+            !currentTarget.startsWith('/mfa')
+          ) {
+            router.replace(`/mfa?redirect=${encodeURIComponent(currentTarget)}`);
+          } else {
+            router.replace('/mfa');
+          }
+        }
+        return;
+      }
+      setMfaPending(false);
+      if (
+        pathname === '/' ||
+        pathname === '/forgot-password' ||
+        pathname?.startsWith('/reset-password') ||
+        pathname === '/login'
+      ) {
         return;
       }
       router.replace(`/login?reason=${reason}`);
     },
-    [router],
+    [pathname, router],
   );
+
+  // BUG-036: Đăng ký kênh lắng nghe 401 ngay khi mount AuthProvider để không đánh rơi tín hiệu mfa_required lúc F5 khởi tải.
+  useEffect(() => {
+    return subscribeSessionExpired((reason) => {
+      forceExpireSession(reason === 'mfa_required' ? 'mfa_required' : 'session_revoked');
+    });
+  }, [forceExpireSession]);
 
   useEffect(() => {
     if (!getCsrfToken()) {
@@ -193,7 +239,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refreshUser]);
 
   /**
-   * Thuật toán: Cưỡng Chế Đăng Xuất Tức Thì Khi Tài Khoản Bị Khóa/Vô Hiệu Qua SSE `USER_SESSION_REVOKED` Hoặc Lỗi `401` Hết Phiên (`AuthProvider`)
+   * Thuật toán: Cưỡng Chế Đăng Xuất Tức Thì Khi Tài Khoản Bị Khóa/Vô Hiệu Qua SSE `USER_SESSION_REVOKED` (`AuthProvider`)
    */
   const authenticatedUserId = user?.id ?? null;
   useEffect(() => {
@@ -218,12 +264,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         forceExpireSession('session_revoked');
       }
     });
-    const unsubscribe401 = subscribeSessionExpired((reason) => {
-      forceExpireSession(reason === 'mfa_required' ? 'mfa_required' : 'session_revoked');
-    });
     return () => {
       unsubscribeSse();
-      unsubscribe401();
     };
   }, [authenticatedUserId, forceExpireSession]);
 
@@ -271,6 +313,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Đảm bảo vẫn dọn sạch trạng thái phiên phía client nếu mất mạng
     } finally {
       setUser(null);
+      setMfaPending(false);
       setRoleOverride(null);
       router.replace('/login');
     }
@@ -278,6 +321,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const hasPermission = useCallback(
     (permission: string) => checkEffectivePermission(user, permission),
+    [user],
+  );
+
+  const hasGlobalPermission = useCallback(
+    (permission: string) => {
+      if (!user) return false;
+      if (Array.isArray(user.globalPermissions)) {
+        return checkEffectivePermission(
+          { roles: user.roles, permissions: user.globalPermissions },
+          permission,
+        );
+      }
+      return checkEffectivePermission(user, permission);
+    },
     [user],
   );
 
@@ -301,11 +358,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       accessiblePortals,
       isLoading,
       isAuthenticated: Boolean(user),
+      mfaPending,
       setActiveRole,
       hydrateUser,
       refreshUser,
       logout,
       hasPermission,
+      hasGlobalPermission,
       hasRole,
       canAccessPortal,
     }),
@@ -314,11 +373,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       activeRole,
       accessiblePortals,
       isLoading,
+      mfaPending,
       setActiveRole,
       hydrateUser,
       refreshUser,
       logout,
       hasPermission,
+      hasGlobalPermission,
       hasRole,
       canAccessPortal,
     ],

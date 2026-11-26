@@ -55,7 +55,7 @@ export function LoginFormFields({
             value={identifier}
             onChange={(e) => onChangeIdentifier(e.target.value)}
             placeholder="nguyenvana hoặc email nội bộ"
-            className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+            className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] shadow-2xs"
             aria-invalid={Boolean(fieldErrors.identifier)}
             aria-describedby={fieldErrors.identifier ? 'identifier-error' : undefined}
           />
@@ -92,7 +92,7 @@ export function LoginFormFields({
             value={password}
             onChange={(e) => onChangePassword(e.target.value)}
             placeholder="••••••••••••"
-            className="pl-10 pr-11 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+            className="pl-10 pr-11 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] shadow-2xs"
             aria-invalid={Boolean(fieldErrors.password)}
             aria-describedby={fieldErrors.password ? 'password-error' : undefined}
           />
@@ -101,7 +101,7 @@ export function LoginFormFields({
             disabled={isLoading}
             onClick={() => setShowPassword((prev) => !prev)}
             aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:opacity-50 cursor-pointer"
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#222222] disabled:opacity-50 cursor-pointer"
           >
             {showPassword ? (
               <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" />

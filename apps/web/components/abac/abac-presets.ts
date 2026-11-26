@@ -1,9 +1,15 @@
 /**
- * Thuật toán & Cấu hình: Từ Điển Siêu Dữ Liệu Thuộc Tính ABAC Động Từ CSDL (`abac-presets`)
- * Mục đích: Khai báo miền giá trị hợp lệ, kiểu tĩnh và toán tử cho phép đối với 15 thuộc tính Subject/Resource/Environment,
- * đồng thời hợp nhất danh sách phòng ban (`id` dạng chuỗi khớp PEP) và danh mục tài liệu nghiệp vụ thực tế từ CSDL.
+ * Thuật toán & Cấu hình: Từ Điển Siêu Dữ Liệu Thuộc Tính ABAC Động Từ CSDL Đồng Bộ 1-1 Với `policy-validator.ts` (`abac-presets`)
+ * Mục đích:
+ *   - Khai báo miền giá trị hợp lệ (bao gồm cấp độ `0 — Chưa phân loại (UNCLASSIFIED)`), kiểu tĩnh và tập toán tử tương thích 100% với `apps/api/src/modules/abac/policy-validator.ts`.
+ *   - Hợp nhất danh sách phòng ban (`id` dạng chuỗi khớp PEP) và danh mục tài liệu nghiệp vụ thực tế từ CSDL.
  */
-import type { AttributeMetadata, AttributeOption } from './abac-models';
+import type {
+  AttributeMetadata,
+  AttributeOption,
+  AttributeType,
+  PolicyOperator,
+} from './abac-models';
 
 export interface DynamicDepartmentOption {
   id: string;
@@ -17,8 +23,19 @@ export interface DynamicCategoryOption {
   name: string;
 }
 
-// CONFLICT-RESOLVED: Đồng bộ danh mục cấp bậc độ mật ABAC (1 = INTERNAL .. 4 = TOP_SECRET) khớp với CSDL và ClassificationRank trong @sda/contracts.
+export const COMPATIBLE_OPERATORS_BY_TYPE: Readonly<
+  Record<AttributeType, readonly PolicyOperator[]>
+> = {
+  STRING: ['EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
+  NUMBER: ['EQ', 'NEQ', 'IN', 'NOT_IN', 'GTE', 'LTE', 'BETWEEN', 'EXISTS'],
+  BOOLEAN: ['EQ', 'NEQ', 'EXISTS'],
+  DATE: ['TIME_BETWEEN', 'EQ', 'NEQ', 'GTE', 'LTE', 'BETWEEN', 'EXISTS'],
+  IP: ['CIDR_MATCH', 'EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
+};
+
+// CONFLICT-RESOLVED: Đồng bộ đầy đủ thang bậc độ mật ABAC (0 = UNCLASSIFIED, 1 = INTERNAL .. 4 = TOP_SECRET) khớp với CSDL và ClassificationRank trong @sda/contracts.
 export const CLEARANCE_OPTIONS: AttributeOption[] = [
+  { label: '0 — Chưa phân loại (UNCLASSIFIED)', value: 0 },
   { label: 'Cấp 1 — Nội bộ', value: 1 },
   { label: 'Cấp 2 — Mật', value: 2 },
   { label: 'Cấp 3 — Tối mật', value: 3 },
@@ -56,8 +73,8 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     options: CLEARANCE_OPTIONS,
     defaultValue: 2,
     description:
-      'Cấp thẩm quyền bảo mật tối đa của người dùng (0 = Không mật, 1 = Nội bộ đến 4 = Tuyệt mật).',
-    supportedOperators: ['EQ', 'NEQ', 'GTE', 'LTE', 'BETWEEN', 'IN'],
+      'Cấp thẩm quyền bảo mật tối đa của người dùng (0 = Chưa phân loại, 1 = Nội bộ đến 4 = Tuyệt mật).',
+    supportedOperators: ['EQ', 'NEQ', 'GTE', 'LTE', 'BETWEEN', 'IN', 'NOT_IN', 'EXISTS'],
   },
   'subject.departmentId': {
     key: 'subject.departmentId',
@@ -78,7 +95,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     defaultValue: 'ACTIVE',
     description:
       'Trạng thái làm việc của người dùng trong tổ chức (thuộc tính EMPLOYMENT_STATUS hoặc trạng thái tài khoản).',
-    supportedOperators: ['EQ', 'NEQ', 'IN'],
+    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
     options: EMPLOYMENT_STATUS_OPTIONS,
   },
   'subject.projects': {
@@ -88,7 +105,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     type: 'STRING',
     defaultValue: ['PROJECT_ALPHA'],
     description: 'Danh mục dự án mà nhân sự đang được phân công tham gia.',
-    supportedOperators: ['IN', 'NOT_IN', 'EXISTS'],
+    supportedOperators: ['IN', 'NOT_IN', 'EQ', 'NEQ', 'EXISTS'],
   },
   'resource.classificationRank': {
     key: 'resource.classificationRank',
@@ -97,8 +114,8 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     type: 'NUMBER',
     options: CLEARANCE_OPTIONS,
     defaultValue: 3,
-    description: 'Mức độ mật của tài liệu (0 = Không mật, 1 = Nội bộ đến 4 = Tuyệt mật).',
-    supportedOperators: ['EQ', 'NEQ', 'GTE', 'LTE', 'BETWEEN', 'IN'],
+    description: 'Mức độ mật của tài liệu (0 = Chưa phân loại, 1 = Nội bộ đến 4 = Tuyệt mật).',
+    supportedOperators: ['EQ', 'NEQ', 'GTE', 'LTE', 'BETWEEN', 'IN', 'NOT_IN', 'EXISTS'],
   },
   'resource.departmentId': {
     key: 'resource.departmentId',
@@ -108,7 +125,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     options: DEPARTMENT_OPTIONS,
     defaultValue: '4',
     description: 'Đơn vị ban hành và quản lý tài liệu (khớp ID phòng ban CSDL).',
-    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN'],
+    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
   },
   'resource.category': {
     key: 'resource.category',
@@ -117,7 +134,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     type: 'STRING',
     defaultValue: 'FINANCIAL_REPORTS',
     description: 'Phân loại danh mục nghiệp vụ thực tế của tài liệu trong hệ thống.',
-    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN'],
+    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
     options: CATEGORY_OPTIONS,
   },
   'resource.status': {
@@ -127,7 +144,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     type: 'STRING',
     defaultValue: 'ACTIVE',
     description: 'Trạng thái vòng đời hiện tại của tài liệu trong hệ thống.',
-    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN'],
+    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
     options: [
       { label: 'Bản nháp (DRAFT)', value: 'DRAFT' },
       { label: 'Đang hiệu lực (ACTIVE)', value: 'ACTIVE' },
@@ -142,7 +159,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     type: 'STRING',
     defaultValue: '1',
     description: 'Mã tài khoản của người tải lên hoặc quản lý tài liệu.',
-    supportedOperators: ['EQ', 'NEQ', 'EXISTS'],
+    supportedOperators: ['EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
   },
   'environment.trustedNetwork': {
     key: 'environment.trustedNetwork',
@@ -151,7 +168,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     type: 'BOOLEAN',
     defaultValue: true,
     description: 'Truy cập xuất phát từ dải IP nội bộ hoặc VPN của tổ chức.',
-    supportedOperators: ['EQ'],
+    supportedOperators: ['EQ', 'NEQ', 'EXISTS'],
     options: [
       { label: 'Trong mạng nội bộ tin cậy', value: true },
       { label: 'Ngoài mạng nội bộ', value: false },
@@ -164,7 +181,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     type: 'BOOLEAN',
     defaultValue: true,
     description: 'Thiết bị đáp ứng tiêu chuẩn quản trị bảo mật của tổ chức.',
-    supportedOperators: ['EQ'],
+    supportedOperators: ['EQ', 'NEQ', 'EXISTS'],
     options: [
       { label: 'Thiết bị tin cậy đã kiểm định', value: true },
       { label: 'Thiết bị chưa kiểm định', value: false },
@@ -178,7 +195,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     defaultValue: true,
     description:
       'Phiên đăng nhập đã hoàn tất xác thực đa yếu tố (khóa bảo mật, Passkey hoặc mã OTP).',
-    supportedOperators: ['EQ'],
+    supportedOperators: ['EQ', 'NEQ', 'EXISTS'],
     options: [
       { label: 'Đã xác thực MFA', value: true },
       { label: 'Chưa xác thực MFA', value: false },
@@ -191,7 +208,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     type: 'NUMBER',
     defaultValue: 30,
     description: 'Điểm đánh giá mức độ rủi ro của phiên làm việc (0 = An toàn, 100 = Nguy cơ cao).',
-    supportedOperators: ['LTE', 'GTE', 'BETWEEN', 'EQ'],
+    supportedOperators: ['LTE', 'GTE', 'BETWEEN', 'EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
   },
   'environment.currentTime': {
     key: 'environment.currentTime',
@@ -199,7 +216,7 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     category: 'ENVIRONMENT',
     type: 'DATE',
     description: 'Giới hạn giờ làm việc hoặc khung thời gian hợp lệ trong ngày.',
-    supportedOperators: ['TIME_BETWEEN'],
+    supportedOperators: ['TIME_BETWEEN', 'EQ', 'NEQ', 'GTE', 'LTE', 'BETWEEN', 'EXISTS'],
     defaultValue: { start: '08:00', end: '17:30', timeZone: 'Asia/Ho_Chi_Minh' },
   },
   'environment.ip': {
@@ -207,9 +224,9 @@ export const ATTRIBUTE_REGISTRY: Record<string, AttributeMetadata> = {
     label: 'Dải địa chỉ IP nguồn',
     category: 'ENVIRONMENT',
     type: 'IP',
-    defaultValue: '192.168.1.0/24',
+    defaultValue: ['192.168.1.0/24'],
     description: 'Khớp dải địa chỉ IP theo ký hiệu CIDR (ví dụ: 192.168.1.0/24 hoặc 10.0.0.0/8).',
-    supportedOperators: ['CIDR_MATCH', 'EQ', 'NEQ'],
+    supportedOperators: ['CIDR_MATCH', 'EQ', 'NEQ', 'IN', 'NOT_IN', 'EXISTS'],
   },
 };
 
@@ -241,7 +258,6 @@ export function buildCategorySelectOptions(
 
 /**
  * Thuật toán: Hợp Nhất Từ Điển Thuộc Tính ABAC Với Dữ Liệu Phòng Ban & Danh Mục Động Từ CSDL (`buildDynamicAttributeRegistry`)
- * Mục đích: Đảm bảo mọi phòng ban hoặc danh mục tài liệu vừa thêm từ Quản trị lập tức xuất hiện trong Trình dựng chính sách ABAC với đúng định danh số mà PEP đối chiếu lúc chạy.
  */
 export function buildDynamicAttributeRegistry(
   departments?: readonly DynamicDepartmentOption[],

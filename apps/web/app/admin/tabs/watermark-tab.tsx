@@ -10,6 +10,7 @@ import {
   DEFAULT_WATERMARK_COLOR_HEX,
   DEFAULT_WATERMARK_ROTATION,
   DEFAULT_WATERMARK_TEMPLATE,
+  hasWatermarkRecipientIdentity,
   isValidHexColor,
   isWatermarkColorTooLight,
   normalizeHexColor,
@@ -84,6 +85,7 @@ export function WatermarkTab({
 
   const colorInvalid = effectiveColorHex.trim().length > 0 && !isValidHexColor(effectiveColorHex);
   const colorTooLight = !colorInvalid && isWatermarkColorTooLight(effectiveColorHex);
+  const missingRecipientIdentity = !hasWatermarkRecipientIdentity(effectiveTemplate);
   const missingHighTierQrOrToken = requiresQrOrFullTokenForWatermarkConfig({
     classificationCode: activeConfig?.classificationLevel?.code,
     classificationRank: activeConfig?.classificationLevel?.rank,
@@ -116,6 +118,7 @@ export function WatermarkTab({
               !activeConfigId ||
               colorInvalid ||
               colorTooLight ||
+              missingRecipientIdentity ||
               missingHighTierQrOrToken
             }
             isLoading={isSaving}
@@ -132,7 +135,7 @@ export function WatermarkTab({
                 id="wm-config-select"
                 value={activeConfigId || ''}
                 onChange={(e) => onSelectConfig(e.target.value)}
-                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222]"
+                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
               >
                 {configs.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -163,7 +166,7 @@ export function WatermarkTab({
                   type="button"
                   title={`Chèn ${item.label}`}
                   onClick={() => appendTemplateVariable(item.token)}
-                  className="min-h-11 sm:min-h-8 rounded-full border border-[#dddddd] bg-[#f7f7f7] px-2.5 py-0.5 font-mono text-xs text-[#222222] hover:border-[#FF385C] hover:text-[#E31C5F] transition-colors cursor-pointer"
+                  className="min-h-11 sm:min-h-8 rounded-full border border-[#dddddd] bg-[#f7f7f7] px-2.5 py-0.5 font-mono text-xs text-[#222222] hover:border-[#222222] hover:bg-[#ffffff] transition-colors cursor-pointer"
                 >
                   {item.token}
                 </button>
@@ -173,6 +176,20 @@ export function WatermarkTab({
               Nhấn vào từng thẻ biến để chèn nhanh. Khuyên dùng dấu <code>|</code> hoặc{' '}
               <code>-</code> ngăn cách để tương thích tuyệt đối phông chữ PDF chuẩn.
             </p>
+            {missingRecipientIdentity && (
+              <Alert variant="warning" className="text-xs">
+                <AlertTriangle
+                  size={16}
+                  strokeWidth={1.75}
+                  className="shrink-0 text-[#E07912]"
+                  aria-hidden="true"
+                />
+                <AlertDescription className="ml-2">
+                  Mẫu watermark bắt buộc phải chứa ít nhất biến <code>{'{username}'}</code> hoặc{' '}
+                  <code>{'{fullName}'}</code> để bảo toàn định danh người nhận pháp chứng.
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
 
           <div className="flex justify-between items-center pt-1">
@@ -264,8 +281,8 @@ export function WatermarkTab({
                   onClick={() => onRotationDegreesChange?.(angle)}
                   className={`min-h-11 sm:min-h-8 rounded-full border px-2.5 py-0.5 text-xs font-medium cursor-pointer transition-colors ${
                     effectiveRotation === angle
-                      ? 'border-[#FF385C] bg-[#FF385C] text-[#ffffff]'
-                      : 'border-[#dddddd] bg-[#ffffff] text-[#222222] hover:border-[#FF385C]'
+                      ? 'border-transparent bg-[#FF385C] text-[#ffffff]'
+                      : 'border-[#dddddd] bg-[#ffffff] text-[#222222] hover:border-[#222222]'
                   }`}
                 >
                   {angle > 0 ? `+${angle}°` : `${angle}°`}
@@ -308,7 +325,7 @@ export function WatermarkTab({
                   onClick={() => onColorHexChange?.(preset.hex)}
                   className={`inline-flex min-h-11 sm:min-h-8 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs cursor-pointer transition-colors ${
                     effectiveColorHex.toUpperCase() === preset.hex.toUpperCase()
-                      ? 'border-[#FF385C] bg-[#f7f7f7] font-semibold text-[#222222]'
+                      ? 'border-[#222222] bg-[#f7f7f7] font-semibold text-[#222222]'
                       : 'border-[#dddddd] bg-[#ffffff] text-[#717171] hover:border-[#222222]'
                   }`}
                 >
@@ -344,6 +361,8 @@ export function WatermarkTab({
         previewUsername={previewUsername}
         previewFullName={previewFullName}
         classificationLabel={activeConfig?.classificationLevel?.name}
+        classificationCode={activeConfig?.classificationLevel?.code}
+        classificationRank={activeConfig?.classificationLevel?.rank}
       />
     </div>
   );

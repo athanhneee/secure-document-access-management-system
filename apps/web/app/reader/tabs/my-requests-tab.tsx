@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Search, X } from 'lucide-react';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import {
   Table,
@@ -34,6 +35,26 @@ interface MyRequestsTabProps {
   cancellingRequestId: string | null;
   canCancelRequest?: boolean;
   onCancelRequest: (requestId: string) => void;
+}
+
+/**
+ * Thuật toán: Định Dạng Tiền Tố Mốc Thời Gian Quyết Định Theo Trạng Thái Yêu Cầu (`formatDecisionTimestampPrefix`, BUG-119)
+ */
+function formatDecisionTimestampPrefix(status: MyRequestItem['status']): string {
+  if (status === 'APPROVED') return 'Duyệt:';
+  if (status === 'REJECTED') return 'Từ chối:';
+  if (status === 'CANCELLED') return 'Hủy:';
+  if (status === 'EXPIRED') return 'Hết hạn:';
+  return 'Xử lý:';
+}
+
+/**
+ * Thuật toán: Định Dạng Nhãn Ghi Chú Quyết Định Theo Trạng Thái Yêu Cầu (`formatDecisionNoteHeading`, BUG-119)
+ */
+function formatDecisionNoteHeading(status: MyRequestItem['status']): string {
+  if (status === 'REJECTED') return 'Lý do từ chối:';
+  if (status === 'CANCELLED') return 'Ghi chú hủy:';
+  return 'Phản hồi phê duyệt:';
 }
 
 /**
@@ -76,30 +97,14 @@ export function MyRequestsTab({
 
   return (
     <Card>
-      <CardHeader className="pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <CardTitle className="text-sm sm:text-base text-[#222222]">
+      <CardHeader className="p-4 sm:p-5 pb-3.5 border-b border-[#ebebeb] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <CardTitle className="text-sm sm:text-base text-[#222222] shrink-0">
           Yêu cầu truy cập của tôi (
           {typeof totalCount === 'number' ? totalCount : myRequests.length})
         </CardTitle>
+
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto shrink-0">
-          {onStatusFilterChange && (
-            <select
-              id="reader-requests-status-filter"
-              name="reader-requests-status-filter"
-              aria-label="Lọc yêu cầu theo trạng thái"
-              value={statusFilter}
-              onChange={(e) => onStatusFilterChange(e.target.value)}
-              className="min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
-            >
-              <option value="ALL">Tất cả trạng thái</option>
-              <option value="PENDING">Chờ duyệt</option>
-              <option value="APPROVED">Đã duyệt</option>
-              <option value="REJECTED">Từ chối</option>
-              <option value="CANCELLED">Đã hủy</option>
-              <option value="EXPIRED">Đã hết hạn</option>
-            </select>
-          )}
-          <div className="relative w-full sm:w-56">
+          <div className="relative w-full sm:w-56 sm:order-2">
             <Search
               size={16}
               strokeWidth={1.75}
@@ -114,9 +119,37 @@ export function MyRequestsTab({
               placeholder="Tìm tên tài liệu, mã hoặc ghi chú…"
               value={localQuery}
               onChange={(e) => setLocalQuery(e.target.value)}
-              className="pl-10 min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+              className={`pl-10 ${localQuery ? 'pr-10' : ''} h-11 sm:h-9 rounded-[12px] sm:rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15 shadow-2xs`}
             />
+            {localQuery && (
+              <button
+                type="button"
+                onClick={() => setLocalQuery('')}
+                aria-label="Xóa từ khóa tìm kiếm"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-9 w-9 sm:h-7 sm:w-7 items-center justify-center rounded-full text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] cursor-pointer"
+              >
+                <X size={16} strokeWidth={2} aria-hidden="true" />
+              </button>
+            )}
           </div>
+
+          {onStatusFilterChange && (
+            <Select
+              id="reader-requests-status-filter"
+              name="reader-requests-status-filter"
+              aria-label="Lọc yêu cầu theo trạng thái"
+              value={statusFilter}
+              onChange={(e) => onStatusFilterChange(e.target.value)}
+              wrapperClassName="w-full sm:w-44 sm:order-1"
+            >
+              <option value="ALL">Tất cả trạng thái</option>
+              <option value="PENDING">Chờ duyệt</option>
+              <option value="APPROVED">Đã duyệt</option>
+              <option value="REJECTED">Từ chối</option>
+              <option value="CANCELLED">Đã hủy</option>
+              <option value="EXPIRED">Đã hết hạn</option>
+            </Select>
+          )}
         </div>
       </CardHeader>
 
@@ -147,63 +180,85 @@ export function MyRequestsTab({
                   req.requestedUntil,
                 );
                 return (
-                  <article key={req.id} className="p-3.5 space-y-2 text-xs bg-[#ffffff]">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <h3 className="font-semibold text-[#222222] break-words">
-                          {req.documentTitle}
-                        </h3>
-                        {req.documentCode && (
-                          <div className="text-xs font-bold text-[#717171]">{req.documentCode}</div>
-                        )}
-                      </div>
+                  <article key={req.id} className="px-4 py-4 space-y-3 bg-[#ffffff]">
+                    <div className="flex items-center justify-between gap-2">
                       <Badge variant={badgeVariantFor(req.status)}>
                         {formatRequestStatusLabel(req.status)}
                       </Badge>
+                      {req.documentCode && (
+                        <span className="font-mono text-xs text-[#717171] truncate">
+                          {req.documentCode}
+                        </span>
+                      )}
                     </div>
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#717171]">
-                      <Badge variant="secondary">
-                        {formatPermissionActionLabel(req.requestedAction)}
-                      </Badge>
-                      <span>Gửi: {formatSafeDateVi(req.createdAt, { includeTime: true })}</span>
-                    </div>
-                    {req.requestedFrom && req.requestedUntil && (
-                      <div className="text-xs text-[#222222]">
-                        Thời hạn: {formatSafeDateVi(req.requestedFrom)} →{' '}
-                        {formatSafeDateVi(req.requestedUntil)}
-                        {durationLabel ? ` (${durationLabel})` : ''}
+
+                    <h3 className="text-sm font-semibold text-[#222222] leading-snug break-words">
+                      {req.documentTitle}
+                    </h3>
+
+                    <div className="rounded-[12px] bg-[#f7f7f7] px-3 py-2 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#717171] shrink-0">Quyền đề nghị</span>
+                        <Badge variant="secondary">
+                          {formatPermissionActionLabel(req.requestedAction)}
+                        </Badge>
                       </div>
-                    )}
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#717171] shrink-0">Ngày gửi</span>
+                        <span className="text-[#222222] tabular-nums">
+                          {formatSafeDateVi(req.createdAt, { includeTime: true })}
+                        </span>
+                      </div>
+                      {req.requestedFrom && req.requestedUntil && (
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="text-[#717171] shrink-0">Thời hạn</span>
+                          <span className="text-[#222222] text-right tabular-nums">
+                            {formatSafeDateVi(req.requestedFrom)} →{' '}
+                            {formatSafeDateVi(req.requestedUntil)}
+                            {durationLabel ? ` (${durationLabel})` : ''}
+                          </span>
+                        </div>
+                      )}
+                      {req.decidedAt && (
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[#717171] shrink-0">
+                            {formatDecisionTimestampPrefix(req.status).replace(/:$/, '')}
+                          </span>
+                          <span className="text-[#717171] tabular-nums">
+                            {formatSafeDateVi(req.decidedAt, { includeTime: true })}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
                     {req.justification && (
-                      <p className="text-xs text-[#717171] leading-relaxed">
+                      <p className="text-xs text-[#717171] leading-relaxed break-words">
                         <strong className="text-[#222222]">Lý do đề xuất:</strong>{' '}
                         {req.justification}
                       </p>
                     )}
+
                     {req.decisionNote && (
                       <p
-                        className={`text-xs leading-relaxed ${
+                        className={`text-xs leading-relaxed break-words ${
                           req.status === 'REJECTED'
                             ? 'text-[#C13515] font-medium'
                             : 'text-[#222222]'
                         }`}
                       >
-                        <strong>Phản hồi phê duyệt:</strong> {req.decisionNote}
+                        <strong>{formatDecisionNoteHeading(req.status)}</strong> {req.decisionNote}
                       </p>
                     )}
-                    {req.decidedAt && (
-                      <div className="text-xs text-[#717171]">
-                        Xử lý lúc: {formatSafeDateVi(req.decidedAt, { includeTime: true })}
-                      </div>
-                    )}
+
                     {req.status === 'PENDING' && canCancelRequest && (
-                      <div className="pt-1">
+                      <div className="pt-0.5">
                         <InteractiveHoverButton
                           size="sm"
                           variant="secondary"
                           text="Hủy yêu cầu"
                           onClick={() => onCancelRequest(req.id)}
                           isLoading={cancellingRequestId === req.id}
+                          className="w-full"
                         />
                       </div>
                     )}
@@ -294,7 +349,8 @@ export function MyRequestsTab({
                             )}
                             {req.decidedAt && (
                               <div className="text-xs text-[#717171]">
-                                Duyệt: {formatSafeDateVi(req.decidedAt, { includeTime: true })}
+                                {formatDecisionTimestampPrefix(req.status)}{' '}
+                                {formatSafeDateVi(req.decidedAt, { includeTime: true })}
                               </div>
                             )}
                           </div>
@@ -321,7 +377,7 @@ export function MyRequestsTab({
 
         {onPageChange && (page > 1 || hasMore) && (
           <div className="flex items-center justify-between gap-2 border-t border-[#ebebeb] px-4 py-3 text-xs">
-            <span className="text-[#717171] font-medium">Trang {page}</span>
+            <span className="text-[#717171] font-medium tabular-nums">Trang {page}</span>
             <div className="flex items-center gap-2">
               <InteractiveHoverButton
                 type="button"

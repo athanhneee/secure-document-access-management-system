@@ -1,7 +1,13 @@
+import {
+  ACCESS_DURATION_DAY_MS,
+  DEFAULT_GRANT_MAX_DURATION_DAYS,
+  formatRetentionDateVi,
+  resolveRetentionCeilingSafeLocal,
+} from '@sda/contracts';
 import type { DocumentItem, UserLookupItem } from './types';
 
-export const GRANT_MAX_DURATION_DAYS = 30;
-const DAY_MS = 86_400_000;
+export const GRANT_MAX_DURATION_DAYS = DEFAULT_GRANT_MAX_DURATION_DAYS;
+const DAY_MS = ACCESS_DURATION_DAY_MS;
 
 function formatLocalDateTimeInput(d: Date): string {
   const pad = (n: number) => n.toString().padStart(2, '0');
@@ -86,13 +92,17 @@ export function formatGrantPermissionSummary(permissions: ReadonlyArray<string>)
 
 /**
  * Thuật toán: Kiểm Định Khoảng Thời Hạn Cấp Quyền Trực Tiếp Phía Giao Diện (`validateDirectGrantTimeRange`)
- * Mục đích: Bảo đảm `validUntil > validFrom`, `validUntil > now` (không tạo quyền đã hết hạn trong quá khứ)
- * và tổng thời lượng không vượt quá trần `maxDurationDays` (mặc định 30 ngày).
+ * Mục đích: Bảo đảm `validUntil > validFrom`, `validUntil > now` (không tạo quyền đã hết hạn trong quá khứ),
+ * tổng thời lượng không vượt quá trần `maxDurationDays` (mặc định 30 ngày) và không vượt quá ngày lưu trữ bảo mật `retentionUntil` của tài liệu.
  */
 export function validateDirectGrantTimeRange(
   validFrom: string,
   validUntil: string,
-  options?: { now?: Date; maxDurationDays?: number },
+  options?: {
+    now?: Date | undefined;
+    maxDurationDays?: number | undefined;
+    retentionUntil?: string | null | undefined;
+  },
 ): string | null {
   if (!validFrom || !validUntil) {
     return 'Vui lòng nhập đầy đủ thời điểm bắt đầu và kết thúc hiệu lực.';
@@ -113,17 +123,34 @@ export function validateDirectGrantTimeRange(
   if (untilDate.getTime() - fromDate.getTime() > maxDays * DAY_MS) {
     return `Thời hạn cấp quyền tối đa là ${maxDays} ngày. Vui lòng rút ngắn khoảng hiệu lực.`;
   }
+  const retentionCeiling = resolveRetentionCeilingSafeLocal(options?.retentionUntil);
+  if (retentionCeiling) {
+    const retentionLabel = formatRetentionDateVi(options?.retentionUntil);
+    if (retentionCeiling.getTime() <= now.getTime()) {
+      return `Tài liệu đã quá thời hạn lưu trữ bảo mật (${retentionLabel}) nên không thể cấp quyền mới.`;
+    }
+    if (untilDate.getTime() > retentionCeiling.getTime()) {
+      return `Thời điểm kết thúc không được vượt quá thời hạn lưu trữ bảo mật của tài liệu (${retentionLabel}).`;
+    }
+  }
   return null;
 }
 
 /**
- * Thuật toán: Tính Mốc Thời Điểm Kết Thúc Tối Đa Cho Ô `datetime-local` (`computeMaxGrantValidUntilLocal`)
+ * Thuật toán: Tính Mốc Thời Điểm Kết Thúc Tối Đa Cho Ô `datetime-local` Có Cắt Trần Theo `retentionUntil` (`computeMaxGrantValidUntilLocal`)
  */
 export function computeMaxGrantValidUntilLocal(
   validFrom: string,
   maxDurationDays: number = GRANT_MAX_DURATION_DAYS,
+  retentionUntil?: string | null,
 ): string | undefined {
   const parsed = new Date(validFrom);
   if (Number.isNaN(parsed.getTime())) return undefined;
-  return formatLocalDateTimeInput(new Date(parsed.getTime() + maxDurationDays * DAY_MS));
+  const durationMax = new Date(parsed.getTime() + maxDurationDays * DAY_MS);
+  const retentionCeiling = resolveRetentionCeilingSafeLocal(retentionUntil);
+  const effectiveMax =
+    retentionCeiling && retentionCeiling.getTime() < durationMax.getTime()
+      ? retentionCeiling
+      : durationMax;
+  return formatLocalDateTimeInput(effectiveMax);
 }

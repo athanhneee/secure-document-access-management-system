@@ -104,17 +104,16 @@ export function useAdminLifecycleMutations({
       return false;
     }
     setErrorMessage(null);
-    let snapshot: RoleRow[] = [];
-    setRoles((prev) => {
-      snapshot = prev;
-      return removeOptimisticById(prev, role.id);
-    });
+    const removedRole = role;
+    setRoles((prev) => removeOptimisticById(prev, removedRole.id));
     try {
-      await apiClient(`/rbac/roles/${role.id}`, { method: 'DELETE' });
-      setMessage(`Đã xóa vai trò "${role.name}" thành công.`);
+      await apiClient(`/rbac/roles/${removedRole.id}`, { method: 'DELETE' });
+      setMessage(`Đã xóa vai trò "${removedRole.name}" thành công.`);
       return true;
     } catch (err) {
-      setRoles(snapshot);
+      setRoles((curr) =>
+        curr.some((r) => r.id === removedRole.id) ? curr : [...curr, removedRole],
+      );
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể xóa vai trò.'
@@ -155,14 +154,16 @@ export function useAdminLifecycleMutations({
       setPolicies((prev) => removeOptimisticById(prev, policy.id));
       return true;
     }
-    const snapshot = policies;
-    setPolicies((prev) => removeOptimisticById(prev, policy.id));
+    const removedPolicy = policy;
+    setPolicies((prev) => removeOptimisticById(prev, removedPolicy.id));
     try {
-      await apiClient(`/abac/policies/${policy.id}`, { method: 'DELETE' });
-      setMessage(`Đã xóa chính sách truy cập "${policy.name}" thành công.`);
+      await apiClient(`/abac/policies/${removedPolicy.id}`, { method: 'DELETE' });
+      setMessage(`Đã xóa chính sách truy cập "${removedPolicy.name}" thành công.`);
       return true;
     } catch (err) {
-      setPolicies(snapshot);
+      setPolicies((curr) =>
+        curr.some((p) => p.id === removedPolicy.id) ? curr : [removedPolicy, ...curr],
+      );
       setErrorMessage(
         err instanceof ApiError
           ? err.message || 'Không thể xóa chính sách truy cập.'

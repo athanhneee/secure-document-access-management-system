@@ -91,7 +91,7 @@ export function ConditionGroupCard({
               variant="outline"
               size="sm"
               onClick={() => onAddCondition(group.id)}
-              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C] flex items-center gap-1"
+              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#222222] flex items-center gap-1"
             >
               <Plus size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
               <span>Thêm điều kiện</span>

@@ -140,7 +140,8 @@ export interface AuditTrailFilters {
   sortOrder: 'desc' | 'asc';
 }
 
-export type AuditorErrorSource = 'logs' | 'exports' | 'verify' | 'download' | 'alerts' | 'general';
+export type AuditorErrorSource =
+  'logs' | 'exports' | 'verify' | 'download' | 'alerts' | 'watermark' | 'general';
 
 export interface AuditorAlertNoteItem {
   id?: string | undefined;
@@ -164,7 +165,7 @@ export interface AuditorAlertApiDto {
   title?: string;
   description?: string;
   severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-  status?: 'OPEN' | 'INVESTIGATING' | 'ESCALATED' | 'RESOLVED' | 'FALSE_POSITIVE';
+  status?: 'OPEN' | 'INVESTIGATING' | 'RESOLVED' | 'FALSE_POSITIVE';
   detectedUserId?: string | null;
   detectedUser?: { fullName?: string; username?: string } | null;
   ipAddress?: string | null;
@@ -187,7 +188,7 @@ export interface AuditorAlertItem {
   title: string;
   description: string;
   severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-  status: 'OPEN' | 'INVESTIGATING' | 'ESCALATED' | 'RESOLVED' | 'FALSE_POSITIVE';
+  status: 'OPEN' | 'INVESTIGATING' | 'RESOLVED' | 'FALSE_POSITIVE';
   detectedUserName: string;
   ipAddress: string;
   detectedAt: string;

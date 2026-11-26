@@ -64,7 +64,7 @@ export function MfaMethodCards({
         </CardTitle>
         <CardDescription className="text-xs text-[#717171]">
           {isRecoveryMode
-            ? 'Nhập 1 trong các mã khôi phục đã được cấp khi thiết lập tài khoản.'
+            ? 'Nhập chính xác 1 trong các mã khôi phục (phân biệt chữ HOA/thường) đã được cấp khi thiết lập tài khoản.'
             : 'Sử dụng khóa bảo mật, sinh trắc học thiết bị hoặc ứng dụng xác thực.'}
         </CardDescription>
       </CardHeader>
@@ -83,7 +83,7 @@ export function MfaMethodCards({
         {errorMessage && (
           <Alert
             variant="destructive"
-            className="rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/10 text-[#C13515] text-xs"
+            className="rounded-[20px] border border-[#dddddd] bg-[#f7f7f7] text-[#C13515] text-xs"
           >
             <AlertCircle
               size={16}
@@ -136,7 +136,7 @@ export function MfaMethodCards({
                 value={totpCode}
                 onChange={(e) => onChangeTotpCode(e.target.value.replace(/\D/g, ''))}
                 placeholder="123456"
-                className="text-center font-bold text-xl tracking-[0.4em] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+                className="text-center font-bold text-xl tracking-[0.4em] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] shadow-2xs"
                 aria-label="Mã xác thực 6 chữ số"
               />
               <p className="text-xs text-[#717171] text-center">
@@ -153,13 +153,25 @@ export function MfaMethodCards({
                 name="recoveryCode"
                 type="text"
                 autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                maxLength={64}
                 disabled={isLoading || isWebAuthnLoading}
                 value={recoveryCode}
-                onChange={(e) => onChangeRecoveryCode(e.target.value.toUpperCase())}
-                placeholder="ABCD-EFGH-IJKL-MNOP"
-                className="text-center font-bold text-sm tracking-wider bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+                onChange={(e) => onChangeRecoveryCode(e.target.value)}
+                placeholder="VD: k9Pq_xR2mN8aBcDeFgHiJk"
+                className="text-center font-mono font-semibold text-sm tracking-normal bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] shadow-2xs"
                 aria-label="Mã khôi phục khẩn cấp"
+                aria-describedby="recovery-code-hint"
               />
+              <p
+                id="recovery-code-hint"
+                className="text-xs text-[#717171] text-center leading-relaxed"
+              >
+                Nhập đúng mã khôi phục 22 ký tự (phân biệt chữ HOA/thường, gồm chữ cái, số, dấu{' '}
+                <code>-</code> và <code>_</code>).
+              </p>
               <p className="text-xs text-[#C13515] font-medium text-center">
                 Lưu ý: Mỗi mã khôi phục chỉ sử dụng được duy nhất một lần.
               </p>

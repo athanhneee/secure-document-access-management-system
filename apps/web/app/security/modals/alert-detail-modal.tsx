@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { mapAlertDto } from '../helpers';
 import type { OptimisticAlertPatch } from '../hooks/use-security-data';
@@ -59,7 +60,7 @@ export function AlertDetailModal({
           </DialogDescription>
         </DialogHeader>
 
-        {open && alert && (
+        {open && alert ? (
           <AlertDetailForm
             key={alert.id}
             alert={alert}
@@ -72,6 +73,22 @@ export function AlertDetailModal({
             onSuccess={onSuccess}
             onError={onError}
           />
+        ) : (
+          <div className="space-y-3 py-2 text-xs">
+            <p className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-4 text-center text-[#717171]">
+              Không tìm thấy dữ liệu cảnh báo hiện tại. Bạn có thể đóng hộp thoại và làm mới danh
+              sách.
+            </p>
+            <DialogFooter className="pt-1">
+              <InteractiveHoverButton
+                type="button"
+                variant="secondary"
+                size="sm"
+                text="Đóng"
+                onClick={() => onOpenChange(false)}
+              />
+            </DialogFooter>
+          </div>
         )}
       </DialogContent>
     </Dialog>
@@ -198,9 +215,16 @@ function AlertDetailForm({
             createdAt: new Date().toISOString(),
           }
         : undefined;
+      const isReopeningInvestigation =
+        statusChanged && (mapped.status === 'INVESTIGATING' || mapped.status === 'OPEN');
+      const nextResolutionNote = isReopeningInvestigation
+        ? null
+        : mapped.resolutionNote !== undefined
+          ? mapped.resolutionNote
+          : trimmedResNote || undefined;
       onOptimisticUpdate?.(fullAlert.id, {
         status: mapped.status,
-        resolutionNote: mapped.resolutionNote ?? (trimmedResNote || undefined),
+        resolutionNote: nextResolutionNote,
         addedNote: confirmedNote,
       });
       setInvestigationNote('');
@@ -239,19 +263,18 @@ function AlertDetailForm({
               <label htmlFor="alert-status-select" className="font-medium text-[#222222]">
                 Trạng thái xử lý
               </label>
-              <select
+              <Select
                 id="alert-status-select"
                 value={newStatus}
                 disabled={isTerminalStatus || isUpdatingAlert}
                 onChange={(e) => setNewStatus(e.target.value as SecurityAlertItem['status'])}
-                className="w-full min-h-11 sm:h-10 rounded-full border border-[#ebebeb] bg-[#f7f7f7] px-4 py-2 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {allowedStatuses.map((opt) => (
                   <option key={opt} value={opt}>
                     {STATUS_LABELS[opt]}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             {requiresResolutionNote && (
@@ -262,10 +285,12 @@ function AlertDetailForm({
                 <Textarea
                   id="res-note"
                   rows={2}
+                  maxLength={1000}
+                  disabled={isUpdatingAlert}
                   value={resolutionNote}
                   onChange={(e) => setResolutionNote(e.target.value)}
                   placeholder="Nêu rõ kết quả xác minh hoặc nguyên nhân báo động giả…"
-                  className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C]"
+                  className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171]"
                 />
               </div>
             )}
@@ -277,10 +302,12 @@ function AlertDetailForm({
               <Textarea
                 id="inv-note"
                 rows={2}
+                maxLength={1000}
+                disabled={isUpdatingAlert}
                 value={investigationNote}
                 onChange={(e) => setInvestigationNote(e.target.value)}
                 placeholder="Ghi nhận các bước rà soát nhật ký, trao đổi với người dùng…"
-                className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C]"
+                className="text-xs rounded-[20px] bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171]"
               />
             </div>
           </>

@@ -14,8 +14,14 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
-import { formatLocalDateTimeInput, getDefaultRoleAssignmentWindow } from '../helpers';
-import type { RoleRow, UserRoleAssignmentRow, UserRow } from '../types';
+import { Select } from '@/components/ui/select';
+import {
+  CLIENT_PAST_TOLERANCE_MS,
+  formatLocalDateTimeInput,
+  getDefaultRoleAssignmentWindow,
+} from '../helpers';
+import { buildAssignableRoleScopeOptions } from '../role-scope-options';
+import type { DepartmentRow, RoleRow, UserRoleAssignmentRow, UserRow } from '../types';
 import { UserRoleAssignmentsList } from './user-role-assignments-list';
 
 interface AssignRoleModalProps {
@@ -23,6 +29,9 @@ interface AssignRoleModalProps {
   onOpenChange: (open: boolean) => void;
   targetUser: UserRow | null;
   currentUserId?: string | undefined;
+  hasGlobalUserManage?: boolean | undefined;
+  userManageDepartmentIds?: readonly string[] | undefined;
+  departments: DepartmentRow[];
   roles: RoleRow[];
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
@@ -34,20 +43,34 @@ export function AssignRoleModal({
   onOpenChange,
   targetUser,
   currentUserId,
+  hasGlobalUserManage,
+  userManageDepartmentIds,
+  departments,
   roles,
   onClearError,
   onSuccess,
   onError,
 }: AssignRoleModalProps) {
+  const [isAssigningRole, setIsAssigningRole] = useState(false);
+
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen && isAssigningRole) return;
+    onOpenChange(nextOpen);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg border-[#ebebeb] bg-[#ffffff] text-[#222222]">
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
+      <DialogContent
+        showClose={!isAssigningRole}
+        className="max-w-lg border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+      >
         <DialogHeader>
           <DialogTitle className="text-base font-semibold text-[#222222]">
             Quản lý vai trò: {targetUser?.fullName}
           </DialogTitle>
           <DialogDescription className="text-xs text-[#717171]">
-            Xem vai trò hiện có, thu hồi hoặc gán mới vai trò với khoảng thời gian hiệu lực hợp lệ.
+            Xem vai trò hiện có, thu hồi hoặc gán mới vai trò với phạm vi phòng ban và khoảng thời
+            gian hiệu lực hợp lệ.
           </DialogDescription>
         </DialogHeader>
 
@@ -56,7 +79,12 @@ export function AssignRoleModal({
             key={targetUser.id}
             targetUser={targetUser}
             isSelf={Boolean(currentUserId && targetUser.id === currentUserId)}
+            hasGlobalUserManage={hasGlobalUserManage}
+            userManageDepartmentIds={userManageDepartmentIds}
+            departments={departments}
             roles={roles}
+            isAssigningRole={isAssigningRole}
+            setIsAssigningRole={setIsAssigningRole}
             onClose={() => onOpenChange(false)}
             onClearError={onClearError}
             onSuccess={onSuccess}
@@ -71,22 +99,33 @@ export function AssignRoleModal({
 interface AssignRoleFormProps {
   targetUser: UserRow;
   isSelf: boolean;
+  hasGlobalUserManage?: boolean | undefined;
+  userManageDepartmentIds?: readonly string[] | undefined;
+  departments: DepartmentRow[];
   roles: RoleRow[];
+  isAssigningRole: boolean;
+  setIsAssigningRole: (busy: boolean) => void;
   onClose: () => void;
   onClearError: () => void;
   onSuccess: (message: string) => Promise<void>;
   onError: (errorMessage: string) => void;
 }
 
-const CLIENT_PAST_TOLERANCE_MS = 60_000;
-
 /**
- * Thuật toán: Biểu Mẫu Gán & Thu Hồi Vai Trò Có Lọc Vai Trò Đang Hoạt Động & Chặn Ngày Quá Khứ (`AssignRoleForm`)
+ * Thuật toán: Biểu Mẫu Gán & Thu Hồi Vai Trò Chốt Mốc `minDateTimeLocal` Một Lần & Dung Sai 5 Phút (`AssignRoleForm`, BUG-093)
+ * Mục đích:
+ *   - Chốt `minDateTimeLocal` đúng một lần khi mở hộp thoại thay vì tính lại mỗi lần render.
+ *   - Nếu quản trị viên không tự sửa ô `validFrom`, tự động gửi `new Date().toISOString()` tại thời điểm nhấn lưu; nếu đã sửa thủ công, áp dụng dung sai `CLIENT_PAST_TOLERANCE_MS` (5 phút) khớp máy chủ và luôn kiểm tra `validFrom < validTo`.
  */
 function AssignRoleForm({
   targetUser,
   isSelf,
+  hasGlobalUserManage,
+  userManageDepartmentIds,
+  departments,
   roles,
+  isAssigningRole,
+  setIsAssigningRole,
   onClose,
   onClearError,
   onSuccess,
@@ -97,14 +136,37 @@ function AssignRoleForm({
   const effectiveRoleId = activeRoles.some((r) => r.id === assignRoleId)
     ? assignRoleId
     : (activeRoles[0]?.id ?? '');
-  const [minDateTimeLocal] = useState(() => formatLocalDateTimeInput(new Date()));
-  const [assignValidFrom, setAssignValidFrom] = useState(
-    () => getDefaultRoleAssignmentWindow().validFrom,
+
+  const scopeOptions = useMemo(
+    () =>
+      buildAssignableRoleScopeOptions({
+        targetDepartmentId: targetUser.departmentId,
+        departments,
+        hasGlobalUserManage,
+        userManageDepartmentIds,
+      }),
+    [targetUser.departmentId, departments, hasGlobalUserManage, userManageDepartmentIds],
   );
-  const [assignValidTo, setAssignValidTo] = useState(
-    () => getDefaultRoleAssignmentWindow().validTo,
-  );
-  const [isAssigningRole, setIsAssigningRole] = useState(false);
+  const [selectedScopeValue, setSelectedScopeValue] = useState<string | null>(null);
+  const effectiveScopeOption = useMemo(() => {
+    if (selectedScopeValue !== null) {
+      const matched = scopeOptions.find((opt) => opt.value === selectedScopeValue);
+      if (matched) return matched;
+    }
+    return scopeOptions[0] ?? null;
+  }, [scopeOptions, selectedScopeValue]);
+
+  const [initialWindow] = useState(() => {
+    const now = new Date();
+    return {
+      minLocal: formatLocalDateTimeInput(now),
+      defaults: getDefaultRoleAssignmentWindow(),
+    };
+  });
+  const minDateTimeLocal = initialWindow.minLocal;
+  const [assignValidFrom, setAssignValidFrom] = useState(() => initialWindow.defaults.validFrom);
+  const [validFromEdited, setValidFromEdited] = useState(false);
+  const [assignValidTo, setAssignValidTo] = useState(() => initialWindow.defaults.validTo);
   const [assignments, setAssignments] = useState<UserRoleAssignmentRow[]>([]);
   const [assignmentsAsOfMs, setAssignmentsAsOfMs] = useState<number>(() => Date.now());
   const [loadingAssignments, setLoadingAssignments] = useState(true);
@@ -175,15 +237,20 @@ function AssignRoleForm({
       onError('Vui lòng chọn vai trò đang hoạt động để gán.');
       return;
     }
+    if (!effectiveScopeOption) {
+      onError('Không có phạm vi phòng ban hợp lệ trong thẩm quyền quản trị của bạn.');
+      return;
+    }
 
     const nowMs = Date.now();
-    const validFromDate = assignValidFrom ? new Date(assignValidFrom) : new Date(nowMs);
+    const validFromDate =
+      !validFromEdited || !assignValidFrom ? new Date(nowMs) : new Date(assignValidFrom);
     if (!Number.isFinite(validFromDate.getTime())) {
       onError('Thời điểm bắt đầu hiệu lực không hợp lệ.');
       return;
     }
-    if (validFromDate.getTime() < nowMs - CLIENT_PAST_TOLERANCE_MS) {
-      onError('Thời điểm bắt đầu hiệu lực không được nằm trong quá khứ.');
+    if (validFromEdited && validFromDate.getTime() < nowMs - CLIENT_PAST_TOLERANCE_MS) {
+      onError('Thời điểm bắt đầu hiệu lực không được nằm trong quá khứ quá 5 phút.');
       return;
     }
 
@@ -211,12 +278,13 @@ function AssignRoleForm({
         method: 'POST',
         body: JSON.stringify({
           roleId: effectiveRoleId,
-          scopeDepartmentId: null,
-          validFrom: validFromDate.toISOString(),
+          scopeDepartmentId: effectiveScopeOption.scopeDepartmentId,
+          validFrom: !validFromEdited ? new Date().toISOString() : validFromDate.toISOString(),
           validTo: validToDate ? validToDate.toISOString() : null,
         }),
       });
 
+      setIsAssigningRole(false);
       onClose();
       await onSuccess(`Đã gán vai trò thành công cho người dùng ${targetUser.fullName}.`);
     } catch (err) {
@@ -225,7 +293,6 @@ function AssignRoleForm({
       } else {
         onError('Đã xảy ra lỗi khi gán vai trò cho người dùng.');
       }
-    } finally {
       setIsAssigningRole(false);
     }
   }
@@ -254,17 +321,16 @@ function AssignRoleForm({
           </AlertDescription>
         </Alert>
       ) : (
-        <form onSubmit={handleAssignUserRole} className="space-y-3.5">
+        <form onSubmit={handleAssignUserRole} noValidate className="space-y-3.5">
           <div className="space-y-1">
             <label htmlFor="assign-role-id" className="font-medium text-[#222222]">
               Chọn vai trò mới để gán <span className="text-[#C13515]">*</span>
             </label>
-            <select
+            <Select
               id="assign-role-id"
               value={effectiveRoleId}
               onChange={(e) => setAssignRoleId(e.target.value)}
-              disabled={activeRoles.length === 0}
-              className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:opacity-60"
+              disabled={activeRoles.length === 0 || isAssigningRole}
             >
               {activeRoles.length === 0 ? (
                 <option value="">
@@ -279,7 +345,33 @@ function AssignRoleForm({
                   </option>
                 ))
               )}
-            </select>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="assign-role-scope" className="font-medium text-[#222222]">
+              Phạm vi áp dụng vai trò <span className="text-[#C13515]">*</span>
+            </label>
+            <Select
+              id="assign-role-scope"
+              value={effectiveScopeOption?.value ?? ''}
+              onChange={(e) => setSelectedScopeValue(e.target.value)}
+              disabled={scopeOptions.length === 0 || isAssigningRole}
+            >
+              {scopeOptions.length === 0 ? (
+                <option value="">Không có phạm vi phòng ban hợp lệ cho tài khoản người nhận</option>
+              ) : (
+                scopeOptions.map((opt) => (
+                  <option key={opt.value || '__global__'} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))
+              )}
+            </Select>
+            <p className="text-[11px] text-[#717171]">
+              Chỉ cho phép chọn phạm vi bao hàm phòng ban hiện tại của người nhận và nằm trong thẩm
+              quyền của bạn.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -292,7 +384,11 @@ function AssignRoleForm({
                 type="datetime-local"
                 min={minDateTimeLocal}
                 value={assignValidFrom}
-                onChange={(e) => setAssignValidFrom(e.target.value)}
+                disabled={isAssigningRole}
+                onChange={(e) => {
+                  setValidFromEdited(true);
+                  setAssignValidFrom(e.target.value);
+                }}
                 className="min-h-11 sm:h-9 text-xs rounded-full"
               />
             </div>
@@ -305,6 +401,7 @@ function AssignRoleForm({
                 type="datetime-local"
                 min={assignValidFrom || minDateTimeLocal}
                 value={assignValidTo}
+                disabled={isAssigningRole}
                 onChange={(e) => setAssignValidTo(e.target.value)}
                 className="min-h-11 sm:h-9 text-xs rounded-full"
               />
@@ -317,6 +414,7 @@ function AssignRoleForm({
               variant="ghost"
               size="sm"
               text="Đóng"
+              disabled={isAssigningRole}
               onClick={onClose}
             />
             <InteractiveHoverButton
@@ -324,7 +422,7 @@ function AssignRoleForm({
               variant="primary"
               size="sm"
               text="Xác nhận gán"
-              disabled={isAssigningRole || activeRoles.length === 0}
+              disabled={isAssigningRole || activeRoles.length === 0 || !effectiveScopeOption}
               isLoading={isAssigningRole}
             />
           </DialogFooter>

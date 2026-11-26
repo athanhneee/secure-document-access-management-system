@@ -2,6 +2,9 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { apiClient, apiDownload, ApiError, verifyPdfMagicBytes } from '@/lib/api-client';
+import { shouldOfferMfaActionForError } from '@/lib/api-error-messages';
+import { useAuth } from '@/lib/auth-context';
+import { getOrCreateDeviceFingerprint } from '@/lib/device-fingerprint';
 import { subscribeRealtimeEvent } from '@/lib/realtime-events';
 import { triggerWatermarkedDownload } from '../helpers';
 import type { MyGrantedDoc } from '../types';
@@ -13,6 +16,18 @@ interface UseReaderViewerParams {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Thuật toán: Nhận Diện Hủy Tải Bản Xem Trước Chủ Động Qua `AbortController` (`isPreviewAbortError`, BUG-102)
+ */
+function isPreviewAbortError(err: unknown): boolean {
+  return (
+    (typeof DOMException !== 'undefined' &&
+      err instanceof DOMException &&
+      err.name === 'AbortError') ||
+    (err instanceof Error && err.name === 'AbortError')
+  );
+}
+
 function endAccessSessionFireAndForget(sessionId: string | null): void {
   if (!sessionId || !UUID_RE.test(sessionId)) return;
   void apiClient(`/access-sessions/${encodeURIComponent(sessionId)}/end`, {
@@ -22,19 +37,25 @@ function endAccessSessionFireAndForget(sessionId: string | null): void {
 }
 
 /**
- * Thuật toán: Mở Hộp Thoại Xem Trước Canvas Tức Thì Dưới 16ms, Đồng Bộ Đóng Phiên SSE & Chống Rò Rỉ URL (`useReaderViewer`)
+ * Thuật toán: Mở Khung Xem Trước Canvas Sau Xác Thực Phiên Không Nháy Modal, Đính Kèm `deviceFingerprint`, Đồng Bộ Đóng Phiên SSE & Chống Rò Rỉ URL (`useReaderViewer`)
  * Mục đích:
- *   - Mở ngay hộp thoại phương thức trước `await`, nạp duy nhất trang 1 (`/preview/page/1`) sang mảng byte `Uint8Array` (không tạo `blob:` URL cho trình xem — `V-01`, `V-04`, `V-57`) với mã phiên qua header `X-Access-Session-Id` (`V-12`).
+ *   - Phản hồi tức thì `< 16ms` qua `openingDocId` trên chính nút bấm, gửi `deviceFingerprint` ổn định tới `POST /documents/:id/sessions` và chỉ mở hộp thoại xem trước sau khi phiên được PEP phê duyệt (tránh nháy rồi đóng sập modal khi nhận `403`).
+ *   - Nạp duy nhất trang 1 (`/preview/page/1`) sang mảng byte `Uint8Array` (không tạo `blob:` URL cho trình xem — `V-01`, `V-04`, `V-57`) với mã phiên qua header `X-Access-Session-Id` (`V-12`).
  *   - Bảo vệ cả mở đầu lẫn chuyển trang bằng khóa tăng dần `previewReqIdRef` chống race condition (`V-07`), lắng nghe SSE `ACCESS_GRANT_UPDATED` / `ACCESS_SESSION_UPDATED` để đóng ngay tài liệu khi bị thu hồi quyền hoặc SOC ngắt phiên (`V-05`), và gọi `POST /access-sessions/:id/end` khi người xem đóng modal (`V-10`).
  *   - Tải xuống trực tiếp qua kênh xác thực `GET /documents/:id/download` kèm `X-Access-Session-Id` (không lộ vé trên URL — `V-02`), bảo toàn tên/đuôi tệp thật (`V-08`) và quản lý song song bằng `Set` `downloadingDocIds` (`V-42`).
  */
 export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewerParams) {
+  const { hasPermission } = useAuth();
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [openingDocId, setOpeningDocId] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<MyGrantedDoc | null>(null);
   const [previewSessionId, setPreviewSessionId] = useState<string | null>(null);
   const [previewVersionNo, setPreviewVersionNo] = useState<number | null>(null);
+  const [previewAllowDownload, setPreviewAllowDownload] = useState(false);
+  const [previewObligations, setPreviewObligations] = useState<readonly string[]>([]);
   const [previewPdfBytes, setPreviewPdfBytes] = useState<Uint8Array | null>(null);
   const [previewPage, setPreviewPage] = useState(1);
+  const [failedPage, setFailedPage] = useState<number | null>(null);
   const [previewTotalPages, setPreviewTotalPages] = useState(1);
   const [previewPageError, setPreviewPageError] = useState<string | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
@@ -43,6 +64,7 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
     () => new Set<string>(),
   );
   const previewReqIdRef = useRef(0);
+  const previewAbortRef = useRef<AbortController | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const previewDocRef = useRef<MyGrantedDoc | null>(null);
   const previewOpenRef = useRef(false);
@@ -61,6 +83,8 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
 
   useEffect(() => {
     return () => {
+      previewAbortRef.current?.abort();
+      previewAbortRef.current = null;
       if (activeSessionIdRef.current) {
         endAccessSessionFireAndForget(activeSessionIdRef.current);
         activeSessionIdRef.current = null;
@@ -70,10 +94,16 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
 
   const closePreviewLocally = useCallback((notifyServer: boolean) => {
     previewReqIdRef.current += 1;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
+    setOpeningDocId(null);
     setIsLoadingPreview(false);
     setPreviewOpen(false);
     setPreviewPdfBytes(null);
     setPreviewPageError(null);
+    setFailedPage(null);
+    setPreviewAllowDownload(false);
+    setPreviewObligations([]);
     const sid = activeSessionIdRef.current;
     activeSessionIdRef.current = null;
     setPreviewSessionId(null);
@@ -107,10 +137,10 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
       const isRevoked = p?.action === 'REVOKED' || p?.status === 'REVOKED';
       if (!isRevoked) return;
       const currentDoc = previewDocRef.current;
-      if (
-        !currentDoc ||
-        (p.documentId && p.documentId !== currentDoc.documentId && p.id && p.id !== currentDoc.id)
-      ) {
+      if (!currentDoc) return;
+      const matchedDoc = Boolean(p?.documentId && p.documentId === currentDoc.documentId);
+      const matchedGrant = Boolean(p?.id && p.id === currentDoc.id);
+      if (!matchedDoc && !matchedGrant) {
         return;
       }
       closePreviewLocally(false);
@@ -169,8 +199,15 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
     }
 
     const reqId = ++previewReqIdRef.current;
+    previewAbortRef.current?.abort();
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+    setOpeningDocId(doc.documentId);
     setPreviewPdfBytes(null);
     setPreviewPageError(null);
+    setFailedPage(null);
+    setPreviewAllowDownload(false);
+    setPreviewObligations([]);
     setMfaActionRequired(false);
     setErrorMessage(null);
     setPreviewDoc(doc);
@@ -179,56 +216,84 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
     setPreviewPage(1);
     setPreviewTotalPages(1);
     setIsLoadingPreview(true);
-    setPreviewOpen(true);
 
     try {
-      const sessionPayload: { action: 'VIEW'; grantId?: string } = { action: 'VIEW' };
+      const deviceFingerprint = getOrCreateDeviceFingerprint();
+      const sessionPayload: {
+        action: 'VIEW';
+        grantId?: string;
+        deviceFingerprint?: string;
+      } = { action: 'VIEW' };
       if (UUID_RE.test(doc.id)) {
         sessionPayload.grantId = doc.id;
+      }
+      if (deviceFingerprint) {
+        sessionPayload.deviceFingerprint = deviceFingerprint;
       }
 
       const sessionResult = await apiClient<{
         sessionId: string;
         versionNo?: number;
+        allowDownload?: boolean;
+        obligations?: string[];
       }>(`/documents/${doc.documentId}/sessions`, {
         method: 'POST',
         body: JSON.stringify(sessionPayload),
+        signal: controller.signal,
       });
 
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         endAccessSessionFireAndForget(sessionResult.sessionId);
         return;
       }
+
+      const obligations = Array.isArray(sessionResult.obligations) ? sessionResult.obligations : [];
+      const sessionAllowDownload = sessionResult.allowDownload === true;
+      const effectiveAllowDownload =
+        sessionAllowDownload &&
+        Boolean(doc.allowDownload) &&
+        doc.permissions.includes('DOWNLOAD') &&
+        hasPermission('DOCUMENT:DOWNLOAD') &&
+        !obligations.includes('FORBID_DOWNLOAD');
 
       activeSessionIdRef.current = sessionResult.sessionId;
       setPreviewSessionId(sessionResult.sessionId);
       setPreviewVersionNo(
         typeof sessionResult.versionNo === 'number' ? sessionResult.versionNo : null,
       );
+      setPreviewObligations(obligations);
+      setPreviewAllowDownload(effectiveAllowDownload);
+      setOpeningDocId(null);
+      setPreviewOpen(true);
 
       // CONFLICT-RESOLVED: Nạp đúng trang 1 (/preview/page/1) qua header X-Access-Session-Id và kết xuất Canvas không tạo blob URL (V-01, V-04, V-12).
       const pdfBlob = await apiDownload(`/documents/${doc.documentId}/preview/page/1`, {
         headers: { 'x-access-session-id': sessionResult.sessionId },
+        signal: controller.signal,
       });
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
       }
       if (!(await verifyPdfMagicBytes(pdfBlob))) {
         throw new Error('INVALID_PDF_MAGIC_BYTES');
       }
       const bytes = new Uint8Array(await pdfBlob.arrayBuffer());
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
       }
       setPreviewTotalPages(pdfBlob.totalPages && pdfBlob.totalPages > 0 ? pdfBlob.totalPages : 1);
       setPreviewPdfBytes(bytes);
     } catch (err) {
-      if (previewReqIdRef.current !== reqId) {
+      if (
+        isPreviewAbortError(err) ||
+        controller.signal.aborted ||
+        previewReqIdRef.current !== reqId
+      ) {
         return;
       }
       closePreviewLocally(true);
       if (err instanceof ApiError) {
-        if (err.errorCode === 'STEP_UP_MFA_REQUIRED') {
+        if (shouldOfferMfaActionForError(err.errorCode, err.response?.details)) {
           setMfaActionRequired(true);
         }
         setErrorMessage(err.message || 'Không thể tải bản xem trước tài liệu. Vui lòng thử lại.');
@@ -239,6 +304,7 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
       }
     } finally {
       if (previewReqIdRef.current === reqId) {
+        setOpeningDocId(null);
         setIsLoadingPreview(false);
       }
     }
@@ -247,30 +313,46 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
   async function handlePageChange(newPage: number) {
     if (newPage < 1 || newPage > previewTotalPages || !previewDoc || !previewSessionId) return;
     const reqId = ++previewReqIdRef.current;
+    previewAbortRef.current?.abort();
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
     setIsLoadingPreview(true);
     setPreviewPageError(null);
+    setMfaActionRequired(false);
     try {
       const pdfBlob = await apiDownload(
         `/documents/${previewDoc.documentId}/preview/page/${newPage}`,
         {
           headers: { 'x-access-session-id': previewSessionId },
+          signal: controller.signal,
         },
       );
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
       }
       if (!(await verifyPdfMagicBytes(pdfBlob))) {
         throw new Error('INVALID_PDF_MAGIC_BYTES');
       }
       const bytes = new Uint8Array(await pdfBlob.arrayBuffer());
-      if (previewReqIdRef.current !== reqId) {
+      if (previewReqIdRef.current !== reqId || controller.signal.aborted) {
         return;
       }
+      setFailedPage(null);
       setPreviewPage(newPage);
       setPreviewPdfBytes(bytes);
     } catch (err) {
-      if (previewReqIdRef.current !== reqId) {
+      if (
+        isPreviewAbortError(err) ||
+        controller.signal.aborted ||
+        previewReqIdRef.current !== reqId
+      ) {
         return;
+      }
+      if (
+        err instanceof ApiError &&
+        shouldOfferMfaActionForError(err.errorCode, err.response?.details)
+      ) {
+        setMfaActionRequired(true);
       }
       const isFatalSessionError =
         err instanceof ApiError &&
@@ -293,6 +375,7 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
         );
       } else {
         // Giữ nguyên hộp thoại xem trước khi lỗi mạng tạm thời khi chuyển trang (V-07)
+        setFailedPage(newPage);
         setPreviewPageError(
           err instanceof ApiError
             ? err.message || `Không thể tải trang ${newPage}. Vui lòng thử lại.`
@@ -307,7 +390,7 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
   }
 
   async function handleRetryPage() {
-    await handlePageChange(previewPage);
+    await handlePageChange(failedPage ?? previewPage);
   }
 
   async function handleDownloadWithTicket(doc: MyGrantedDoc) {
@@ -326,9 +409,17 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
 
     let downloadSessionId: string | null = null;
     try {
-      const sessionPayload: { action: 'DOWNLOAD'; grantId?: string } = { action: 'DOWNLOAD' };
+      const deviceFingerprint = getOrCreateDeviceFingerprint();
+      const sessionPayload: {
+        action: 'DOWNLOAD';
+        grantId?: string;
+        deviceFingerprint?: string;
+      } = { action: 'DOWNLOAD' };
       if (UUID_RE.test(doc.id)) {
         sessionPayload.grantId = doc.id;
+      }
+      if (deviceFingerprint) {
+        sessionPayload.deviceFingerprint = deviceFingerprint;
       }
 
       const sessionResult = await apiClient<{ sessionId: string }>(
@@ -351,7 +442,7 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
         endAccessSessionFireAndForget(downloadSessionId);
       }
       if (err instanceof ApiError) {
-        if (err.errorCode === 'STEP_UP_MFA_REQUIRED') {
+        if (shouldOfferMfaActionForError(err.errorCode, err.response?.details)) {
           setMfaActionRequired(true);
         }
         setErrorMessage(err.message || 'Không thể tải tài liệu.');
@@ -369,11 +460,15 @@ export function useReaderViewer({ setMessage, setErrorMessage }: UseReaderViewer
 
   return {
     previewOpen,
+    openingDocId,
     previewDoc,
     previewSessionId,
     previewVersionNo,
+    previewAllowDownload,
+    previewObligations,
     previewPdfBytes,
     previewPage,
+    failedPage,
     previewTotalPages,
     previewPageError,
     isLoadingPreview,

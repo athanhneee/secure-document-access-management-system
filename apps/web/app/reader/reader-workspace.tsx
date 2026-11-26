@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -16,10 +16,13 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { useSessionPosture } from '@/lib/use-session-posture';
+import { useWorkspaceTabSync } from '@/lib/use-workspace-tab-sync';
 import { AppLayout } from '@/components/navigation/app-layout';
 import { WORKSPACE_TAB_EVENT } from '@/components/navigation/notification-bell-dialog';
 import { AuthGuard } from '@/components/auth-guard';
 import { ClassificationBadge } from '@/components/classification-badge';
+import { SessionPostureBanner } from '@/components/documents/session-posture-banner';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DialogErrorProvider } from '@/components/ui/dialog';
@@ -27,6 +30,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent } from '@/components/ui/card';
+import { rankFromCode } from './helpers';
 import { useReaderCatalog } from './hooks/use-reader-catalog';
 import { useReaderViewer } from './hooks/use-reader-viewer';
 import { DocumentViewerModal } from './modals/document-viewer-modal';
@@ -35,11 +39,13 @@ import { CatalogTab } from './tabs/catalog-tab';
 import { GrantedDocumentsTab } from './tabs/granted-documents-tab';
 import { MyRequestsTab } from './tabs/my-requests-tab';
 
+type ReaderTab = 'discover' | 'my-docs' | 'my-requests';
+
 /**
- * Thuật toán: Không Gian Người Đọc Cô Lập Sau `AuthGuard`, Lọc Tab Theo Quyền Thực & Phản Hồi MFA (`ReaderWorkspace`)
+ * Thuật toán: Không Gian Người Đọc Cô Lập Sau `AuthGuard`, Đồng Bộ URL `?tab=` & Tách Lỗi Hộp Thoại (`ReaderWorkspace`, BUG-090, BUG-102, BUG-103)
  * Mục đích:
- *   - Đảm bảo `useReaderCatalog()` chỉ gọi API sau khi `AuthGuard` xác nhận quyền phân hệ `DOCUMENT_READER` và chỉ bật tab theo đúng quyền hạt mịn (`V-17`, `V-18`, `V-19`).
- *   - Hiển thị rõ cấp thẩm quyền bảo mật & phòng ban trực thuộc (`V-30`), hỗ trợ lối tắt kích hoạt/xác thực MFA ngay khi bị chặn `STEP_UP_MFA_REQUIRED` (`V-09`), lưới tab di động động (`V-60`) và triệt tiêu lỗi lặp đôi trong hộp thoại (`V-44`).
+ *   - Đảm bảo `useReaderCatalog()` chỉ gọi API sau khi `AuthGuard` xác nhận quyền phân hệ `DOCUMENT_READER` và đồng bộ hai chiều `?tab=` qua `useWorkspaceTabSync` (`BUG-090`).
+ *   - Tách riêng `dialogError` của modal khỏi `errorMessage` trang nền (`BUG-102`) và truyền trạng thái tải riêng biệt theo từng tab (`BUG-103`).
  */
 export function ReaderWorkspace() {
   return (
@@ -53,8 +59,6 @@ export function ReaderWorkspace() {
   );
 }
 
-const VALID_READER_TABS = new Set(['discover', 'my-docs', 'my-requests']);
-
 function ReaderWorkspaceContent() {
   const { user, hasPermission } = useAuth();
   const searchParams = useSearchParams();
@@ -63,78 +67,79 @@ function ReaderWorkspaceContent() {
   const canDownloadDocument = hasPermission('DOCUMENT:DOWNLOAD');
   const canRequestAccess = hasPermission('ACCESS_REQUEST:CREATE');
   const canCancelRequest = hasPermission('ACCESS_REQUEST:CANCEL');
-  // CONFLICT-RESOLVED: Chỉ hiển thị tab Yêu cầu của tôi khi tài khoản có quyền ACCESS_REQUEST:VIEW_OWN khớp yêu cầu API GET /access-requests?scope=my (V-19).
   const canViewRequests = hasPermission('ACCESS_REQUEST:VIEW_OWN');
 
-  const permittedTabs = [
-    canDiscover ? 'discover' : null,
-    canViewDocument ? 'my-docs' : null,
-    canViewRequests ? 'my-requests' : null,
-  ].filter((t): t is string => t !== null);
-
-  const requestedTabParam = searchParams.get('tab');
-  const [selectedTab, setSelectedTab] = useState(() =>
-    requestedTabParam && VALID_READER_TABS.has(requestedTabParam) ? requestedTabParam : 'discover',
+  const permittedTabs = useMemo<readonly ReaderTab[]>(
+    () =>
+      [
+        canDiscover ? 'discover' : null,
+        canViewDocument ? 'my-docs' : null,
+        canViewRequests ? 'my-requests' : null,
+      ].filter((t): t is ReaderTab => t !== null),
+    [canDiscover, canViewDocument, canViewRequests],
   );
 
-  // Đồng bộ tham số `?tab=` và sự kiện chuyển tab tức thì từ chuông thông báo nội bộ ngay cả khi đang ở sẵn `/reader` (`V-53`)
-  useEffect(() => {
-    if (requestedTabParam && VALID_READER_TABS.has(requestedTabParam)) {
-      // oxlint-disable-next-line react/set-state-in-effect
-      setSelectedTab(requestedTabParam);
-    }
-  }, [requestedTabParam]);
+  const [activeTab, setActiveTab] = useWorkspaceTabSync<ReaderTab>(permittedTabs, 'discover');
 
   useEffect(() => {
     function handleTabSync(event: Event) {
       const detail = (event as CustomEvent<{ path?: string; tab?: string }>).detail;
-      if (detail?.path === '/reader' && detail.tab && VALID_READER_TABS.has(detail.tab)) {
-        setSelectedTab(detail.tab);
+      if (
+        detail?.path === '/reader' &&
+        detail.tab &&
+        permittedTabs.includes(detail.tab as ReaderTab)
+      ) {
+        setActiveTab(detail.tab as ReaderTab);
       }
     }
     window.addEventListener(WORKSPACE_TAB_EVENT, handleTabSync);
     return () => window.removeEventListener(WORKSPACE_TAB_EVENT, handleTabSync);
-  }, []);
-
-  const activeTab = permittedTabs.includes(selectedTab)
-    ? selectedTab
-    : (permittedTabs[0] ?? 'discover');
+  }, [permittedTabs, setActiveTab]);
 
   const catalog = useReaderCatalog();
+  const { posture, refreshPosture } = useSessionPosture(Boolean(user));
   const viewer = useReaderViewer({
     setMessage: catalog.setMessage,
     setErrorMessage: catalog.setErrorMessage,
   });
 
-  const isAnyModalOpen =
-    catalog.requestModalOpen || viewer.previewOpen || catalog.pendingCancelRequestId !== null;
   const mobileTabGridClass =
     permittedTabs.length === 1
       ? 'grid-cols-1'
       : permittedTabs.length === 2
         ? 'grid-cols-2'
         : 'grid-cols-3';
-  const mfaActionHref = user?.mfaEnabled
-    ? '/mfa?redirect=%2Freader'
-    : '/mfa?enroll=1&method=totp&redirect=%2Freader';
+  const effectiveMfaEnabled = posture?.mfaEnabled ?? user?.mfaEnabled;
+  const currentTabQuery = searchParams.get('tab');
+  const redirectTarget = encodeURIComponent(
+    currentTabQuery ? `/reader?tab=${currentTabQuery}` : '/reader',
+  );
+  const mfaActionHref = effectiveMfaEnabled
+    ? `/mfa?redirect=${redirectTarget}`
+    : `/mfa?enroll=1&method=totp&redirect=${redirectTarget}`;
+  const hasTopSecretDocs =
+    catalog.myDocs.some((d) => d.classificationCode === 'TOP_SECRET') ||
+    [...catalog.activeGrantsByDocId.values()].some((d) => d.classificationCode === 'TOP_SECRET') ||
+    catalog.discoverDocs.some((d) => d.classificationCode === 'TOP_SECRET');
 
   return (
     <DialogErrorProvider
-      errorMessage={catalog.errorMessage}
+      errorMessage={catalog.dialogError}
       onDismiss={() => {
-        catalog.setErrorMessage(null);
-        viewer.clearMfaActionRequired();
+        catalog.setDialogError(null);
       }}
     >
-      <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+      <div className="space-y-3.5 sm:space-y-4">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
-            <Badge variant="info">Người đọc tài liệu</Badge>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#222222]">
+            <Badge variant="info" className="hidden sm:inline-flex">
+              Người đọc tài liệu
+            </Badge>
+            <h1 className="text-lg sm:text-2xl font-bold tracking-tight text-[#222222] leading-snug">
               Tra cứu và đọc tài liệu mật
             </h1>
-            {user && (
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#717171]">
+            {user && (user.clearanceCode || user.departmentName) && (
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-x-2 gap-y-1 text-xs text-[#717171]">
                 {user.clearanceCode && (
                   <ClassificationBadge
                     level={user.clearanceCode}
@@ -144,41 +149,76 @@ function ReaderWorkspaceContent() {
                     size="sm"
                   />
                 )}
+                {user.clearanceCode && user.departmentName && (
+                  <span className="hidden sm:inline text-[#dddddd]" aria-hidden="true">
+                    ·
+                  </span>
+                )}
                 {user.departmentName && (
-                  <span className="inline-flex items-center gap-1 text-[#222222] font-medium">
+                  <span className="inline-flex min-w-0 items-center gap-1 text-[#717171] font-medium">
                     <Building2
                       size={16}
                       strokeWidth={1.75}
                       className="text-[#717171] shrink-0"
                       aria-hidden="true"
                     />
-                    <span>{user.departmentName}</span>
+                    <span className="truncate">{user.departmentName}</span>
                   </span>
                 )}
               </div>
             )}
           </div>
 
-          <InteractiveHoverButton
-            variant="secondary"
-            size="sm"
-            text="Làm mới"
-            icon={
-              <RefreshCw
-                size={16}
-                strokeWidth={1.75}
-                className={catalog.isLoading ? 'animate-spin' : ''}
-                aria-hidden="true"
-              />
-            }
+          <button
+            type="button"
             onClick={() => {
               viewer.clearMfaActionRequired();
-              return catalog.refreshData();
+              void refreshPosture();
+              void catalog.refreshData();
             }}
             disabled={catalog.isLoading}
-            className="shrink-0 self-start sm:self-auto"
-          />
+            aria-label="Làm mới"
+            title="Làm mới dữ liệu"
+            className="flex sm:hidden h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[#ebebeb] bg-[#ffffff] text-[#222222] hover:bg-[#f7f7f7] transition-colors cursor-pointer shadow-2xs disabled:opacity-50"
+          >
+            <RefreshCw
+              size={16}
+              strokeWidth={1.75}
+              className={catalog.isLoading ? 'animate-spin' : ''}
+              aria-hidden="true"
+            />
+          </button>
+
+          <span className="hidden sm:inline-flex shrink-0">
+            <InteractiveHoverButton
+              variant="secondary"
+              size="sm"
+              text="Làm mới"
+              icon={
+                <RefreshCw
+                  size={16}
+                  strokeWidth={1.75}
+                  className={catalog.isLoading ? 'animate-spin' : ''}
+                  aria-hidden="true"
+                />
+              }
+              onClick={() => {
+                viewer.clearMfaActionRequired();
+                void refreshPosture();
+                return catalog.refreshData();
+              }}
+              disabled={catalog.isLoading}
+            />
+          </span>
         </div>
+
+        <SessionPostureBanner
+          posture={posture}
+          mfaActionHref={mfaActionHref}
+          userClearanceRank={user?.clearanceRank}
+          hasTopSecretDocuments={hasTopSecretDocs}
+          suppressProactiveAlert={Boolean(catalog.errorMessage)}
+        />
 
         {catalog.message && (
           <Alert variant="success" className="text-xs">
@@ -194,7 +234,7 @@ function ReaderWorkspaceContent() {
                 type="button"
                 onClick={() => catalog.setMessage(null)}
                 aria-label="Đóng thông báo thành công"
-                className="shrink-0 flex min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 items-center justify-center rounded-full text-[#008A05] hover:bg-[#008A05]/10 cursor-pointer"
+                className="shrink-0 flex min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 items-center justify-center rounded-full text-[#008A05] hover:bg-[#f7f7f7] cursor-pointer"
               >
                 <X size={16} strokeWidth={2} aria-hidden="true" />
               </button>
@@ -202,7 +242,7 @@ function ReaderWorkspaceContent() {
           </Alert>
         )}
 
-        {catalog.errorMessage && !isAnyModalOpen && (
+        {catalog.errorMessage && (
           <Alert variant="destructive" className="text-xs">
             <AlertTriangle
               size={16}
@@ -220,7 +260,7 @@ function ReaderWorkspaceContent() {
                     viewer.clearMfaActionRequired();
                   }}
                   aria-label="Đóng thông báo lỗi"
-                  className="shrink-0 flex min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 items-center justify-center rounded-full text-[#C13515] hover:bg-[#C13515]/10 cursor-pointer"
+                  className="shrink-0 flex min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 items-center justify-center rounded-full text-[#C13515] hover:bg-[#f7f7f7] cursor-pointer"
                 >
                   <X size={16} strokeWidth={2} aria-hidden="true" />
                 </button>
@@ -233,7 +273,7 @@ function ReaderWorkspaceContent() {
                   >
                     <ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />
                     <span>
-                      {user?.mfaEnabled ? 'Xác thực MFA ngay' : 'Thiết lập MFA (TOTP / Passkey)'}
+                      {effectiveMfaEnabled ? 'Xác thực MFA ngay' : 'Thiết lập MFA (TOTP / Passkey)'}
                     </span>
                   </Link>
                 </div>
@@ -258,24 +298,28 @@ function ReaderWorkspaceContent() {
             </CardContent>
           </Card>
         ) : (
-          <Tabs value={activeTab} onValueChange={setSelectedTab} className="space-y-3.5">
+          <Tabs
+            value={activeTab}
+            onValueChange={(next) => setActiveTab(next as ReaderTab)}
+            className="space-y-3"
+          >
             <TabsList
-              className={`grid w-full ${mobileTabGridClass} sm:inline-flex sm:w-auto h-auto min-h-10 rounded-[18px] sm:rounded-full p-1 gap-1 bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]`}
+              className={`grid w-full ${mobileTabGridClass} sm:inline-flex sm:w-auto h-auto min-h-11 sm:min-h-10 rounded-[14px] sm:rounded-full p-1 gap-1 bg-[#ebebeb]/70 sm:bg-[#f7f7f7] border border-[#ebebeb] text-[#717171]`}
             >
               {canDiscover && (
                 <TabsTrigger
                   value="discover"
-                  className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-1.5 px-1.5 sm:px-2.5"
+                  className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-2 sm:py-1.5 px-2 sm:px-3"
                 >
                   <FileSearch
                     size={16}
                     strokeWidth={1.75}
-                    className="shrink-0"
+                    className="hidden sm:inline-block shrink-0"
                     aria-hidden="true"
                   />
                   <span className="hidden sm:inline">Tra cứu tài liệu</span>
                   <span className="sm:hidden">Tra cứu</span>
-                  <span className="text-xs opacity-80">
+                  <span className="text-xs opacity-75 tabular-nums">
                     ({catalog.discoverDocs.length}
                     {catalog.discoverHasMore ? '+' : ''})
                   </span>
@@ -284,12 +328,17 @@ function ReaderWorkspaceContent() {
               {canViewDocument && (
                 <TabsTrigger
                   value="my-docs"
-                  className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-1.5 px-1.5 sm:px-2.5"
+                  className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-2 sm:py-1.5 px-2 sm:px-3"
                 >
-                  <BookOpen size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                  <BookOpen
+                    size={16}
+                    strokeWidth={1.75}
+                    className="hidden sm:inline-block shrink-0"
+                    aria-hidden="true"
+                  />
                   <span className="hidden sm:inline">Tài liệu được cấp quyền</span>
                   <span className="sm:hidden">Được cấp</span>
-                  <span className="text-xs opacity-80">
+                  <span className="text-xs opacity-75 tabular-nums">
                     ({catalog.myDocs.length}
                     {catalog.grantsHasMore ? '+' : ''})
                   </span>
@@ -298,12 +347,17 @@ function ReaderWorkspaceContent() {
               {canViewRequests && (
                 <TabsTrigger
                   value="my-requests"
-                  className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-1.5 px-1.5 sm:px-2.5"
+                  className="flex items-center justify-center gap-1 sm:gap-1.5 text-xs py-2 sm:py-1.5 px-2 sm:px-3"
                 >
-                  <Clock size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                  <Clock
+                    size={16}
+                    strokeWidth={1.75}
+                    className="hidden sm:inline-block shrink-0"
+                    aria-hidden="true"
+                  />
                   <span className="hidden sm:inline">Yêu cầu của tôi</span>
                   <span className="sm:hidden">Yêu cầu</span>
-                  <span className="text-xs opacity-80">({catalog.requestsTotal})</span>
+                  <span className="text-xs opacity-75 tabular-nums">({catalog.requestsTotal})</span>
                 </TabsTrigger>
               )}
             </TabsList>
@@ -313,8 +367,10 @@ function ReaderWorkspaceContent() {
                 <CatalogTab
                   documents={catalog.discoverDocs}
                   myDocs={catalog.myDocs}
+                  activeGrantsByDocId={catalog.activeGrantsByDocId}
                   myRequests={catalog.myRequests}
-                  isLoading={catalog.isLoading}
+                  pendingRequestDocIds={catalog.pendingRequestDocIds}
+                  isLoading={catalog.isLoadingCatalog}
                   page={catalog.discoverPage}
                   hasMore={catalog.discoverHasMore}
                   onPageChange={catalog.setDiscoverPage}
@@ -326,6 +382,9 @@ function ReaderWorkspaceContent() {
                   canViewDocument={canViewDocument}
                   canDownloadDocument={canDownloadDocument}
                   canRequestAccess={canRequestAccess}
+                  openingDocId={viewer.openingDocId}
+                  sessionPosture={posture}
+                  mfaActionHref={mfaActionHref}
                   onOpenPreview={(doc) => viewer.handleOpenPreview(doc)}
                   onOpenRequestModal={catalog.openRequestModal}
                 />
@@ -337,27 +396,37 @@ function ReaderWorkspaceContent() {
                 <GrantedDocumentsTab
                   myDocs={catalog.myDocs}
                   myRequests={catalog.myRequests}
-                  isLoading={catalog.isLoading}
+                  pendingRequestDocIds={catalog.pendingRequestDocIds}
+                  isLoading={catalog.isLoadingGrants}
                   page={catalog.grantsPage}
                   hasMore={catalog.grantsHasMore}
                   onPageChange={catalog.setGrantsPage}
+                  openingDocId={viewer.openingDocId}
                   downloadingDocIds={viewer.downloadingDocIds}
+                  sessionPosture={posture}
+                  mfaActionHref={mfaActionHref}
                   canViewDocument={canViewDocument}
                   canDownloadDocument={canDownloadDocument}
                   canRequestAccess={canRequestAccess}
                   onOpenPreview={(doc) => viewer.handleOpenPreview(doc)}
                   onDownload={(doc) => viewer.handleDownloadWithTicket(doc)}
-                  onRequestUpgrade={(doc, action) =>
+                  onRequestUpgrade={(doc, action, intent) =>
                     catalog.openRequestModal(
                       {
                         id: doc.documentId,
                         title: doc.title,
                         documentCode: doc.documentCode,
                         classificationCode: doc.classificationCode,
-                        classificationRank: 1,
+                        classificationRank: rankFromCode(doc.classificationCode),
                         allowDownload: doc.allowDownload,
+                        retentionUntil: doc.retentionUntil,
+                        defaultViewDays: doc.defaultViewDays,
                       },
                       action,
+                      {
+                        existingGrantValidUntil: doc.validUntil,
+                        intent: intent ?? (action === 'DOWNLOAD' ? 'UPGRADE_DOWNLOAD' : 'RENEW'),
+                      },
                     )
                   }
                 />
@@ -369,7 +438,7 @@ function ReaderWorkspaceContent() {
                 <MyRequestsTab
                   myRequests={catalog.myRequests}
                   totalCount={catalog.requestsTotal}
-                  isLoading={catalog.isLoading}
+                  isLoading={catalog.isLoadingRequests}
                   page={catalog.requestsPage}
                   hasMore={catalog.requestsHasMore}
                   onPageChange={catalog.setRequestsPage}
@@ -392,7 +461,9 @@ function ReaderWorkspaceContent() {
         <ConfirmDialog
           open={catalog.pendingCancelRequestId !== null}
           onOpenChange={(open) => {
-            if (!open) catalog.setPendingCancelRequestId(null);
+            if (!open && !catalog.cancellingRequestId) {
+              catalog.setPendingCancelRequestId(null);
+            }
           }}
           title="Xác nhận hủy yêu cầu truy cập"
           description={

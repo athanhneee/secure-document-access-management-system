@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { AuditorWorkspace } from './auditor-workspace';
 
@@ -9,5 +10,9 @@ export const metadata: Metadata = {
 };
 
 export default function AuditorPage() {
-  return <AuditorWorkspace />;
+  return (
+    <Suspense fallback={null}>
+      <AuditorWorkspace />
+    </Suspense>
+  );
 }

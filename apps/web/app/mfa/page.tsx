@@ -33,7 +33,14 @@ function MfaContent() {
   const enrollParam = rawEnrollParam === '1';
   const mfaEnrollBlocked = rawEnrollParam === '0';
   const defaultEnrollMethod = searchParams.get('method') === 'totp' ? 'totp' : 'webauthn';
-  const { user, isAuthenticated, isLoading: isAuthLoading, hydrateUser, refreshUser } = useAuth();
+  const {
+    user,
+    isAuthenticated,
+    mfaPending,
+    isLoading: isAuthLoading,
+    hydrateUser,
+    refreshUser,
+  } = useAuth();
   const canShowFirstTimeEnroll = !mfaEnrollBlocked && !user?.mfaEnabled;
 
   const [isEnrollMode, setIsEnrollMode] = useState(enrollParam && !mfaEnrollBlocked);
@@ -45,7 +52,8 @@ function MfaContent() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const hasSessionCookie = typeof document !== 'undefined' ? Boolean(getCsrfToken()) : true;
-  const isUnauthenticatedVisitor = !isAuthLoading && !isAuthenticated && !hasSessionCookie;
+  const isUnauthenticatedVisitor =
+    !isAuthLoading && !isAuthenticated && !mfaPending && !hasSessionCookie;
   const backHref = isAuthenticated && user ? resolveDefaultPortalForRoles(user) : '/login';
   const backLabel =
     isAuthenticated && user ? 'Quay về phân hệ làm việc' : 'Quay về trang đăng nhập';
@@ -86,15 +94,18 @@ function MfaContent() {
       return;
     }
 
-    if (isRecoveryMode && (!recoveryCode || recoveryCode.trim().length < 16)) {
-      setErrorMessage('Mã khôi phục phải có độ dài ít nhất 16 ký tự.');
+    const trimmedRecoveryCode = recoveryCode.trim();
+    if (isRecoveryMode && (trimmedRecoveryCode.length < 16 || trimmedRecoveryCode.length > 64)) {
+      setErrorMessage(
+        'Mã khôi phục phải có độ dài từ 16 đến 64 ký tự và phân biệt chữ HOA/thường.',
+      );
       return;
     }
 
     setIsLoading(true);
     try {
       const payload = isRecoveryMode
-        ? { recoveryCode: recoveryCode.trim() }
+        ? { recoveryCode: trimmedRecoveryCode }
         : { code: totpCode.trim() };
 
       const res = await apiClient<{ authenticated: true; user?: AuthUser }>('/auth/mfa/verify', {

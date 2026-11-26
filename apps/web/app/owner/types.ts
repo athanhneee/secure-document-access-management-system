@@ -3,6 +3,7 @@ import type { ClassificationCode } from '@/components/classification-badge';
 export interface DocumentItem {
   id: string;
   title: string;
+  description?: string | null | undefined;
   documentCode?: string | undefined;
   classificationCode: ClassificationCode;
   classificationRank?: number | undefined;
@@ -14,6 +15,9 @@ export interface DocumentItem {
   departmentId?: number | undefined;
   departmentName?: string | undefined;
   allowDownload: boolean;
+  retentionUntil?: string | null | undefined;
+  defaultViewDays?: number | null | undefined;
+  currentVersionNo?: number | null | undefined;
   versionCount?: number | undefined;
   createdAt: string;
 }
@@ -21,6 +25,7 @@ export interface DocumentItem {
 export interface DocumentApiDto {
   id: string;
   title?: string;
+  description?: string | null;
   documentCode?: string;
   document_code?: string;
   // CONFLICT-RESOLVED: Bổ sung trường phẳng classificationLevelCode, classificationLevelName, departmentName từ GET /api/v1/documents.
@@ -59,6 +64,12 @@ export interface DocumentApiDto {
   department?: { id?: string | number; name?: string };
   departments?: { id?: string | number; name?: string };
   allowDownload?: boolean;
+  retentionUntil?: string | null;
+  retention_until?: string | null;
+  defaultViewDays?: number | null;
+  currentVersionNo?: number | null;
+  versionCount?: number | null;
+  currentVersion?: { versionNo?: number } | null;
   versions?: unknown[];
   createdAt?: string;
   created_at?: string;
@@ -87,10 +98,23 @@ export interface GrantLookupMaps {
   rolesById?: ReadonlyMap<string, Pick<RoleLookupItem, 'name' | 'code'>>;
 }
 
+export interface AccessRequestExistingGrant {
+  grantId: string;
+  permissions: Array<'VIEW' | 'DOWNLOAD'>;
+  validFrom: string;
+  validUntil: string;
+}
+
 export interface AccessRequestItem {
   id: string;
   documentId: string;
   documentTitle: string;
+  documentCode?: string | null | undefined;
+  documentClassificationCode?: ClassificationCode | null | undefined;
+  documentRetentionUntil?: string | null | undefined;
+  documentDefaultViewDays?: number | null | undefined;
+  documentAllowDownload?: boolean | undefined;
+  existingActiveGrant?: AccessRequestExistingGrant | null | undefined;
   requestorName: string;
   requestorDepartment: string;
   requestedAction: 'VIEW' | 'DOWNLOAD';
@@ -101,7 +125,7 @@ export interface AccessRequestItem {
   createdAt: string;
 }
 
-export type GrantStatusFilter = 'ALL' | 'ACTIVE' | 'REVOKED' | 'EXPIRED';
+export type GrantStatusFilter = 'ALL' | 'ACTIVE' | 'SUSPENDED' | 'REVOKED' | 'EXPIRED';
 
 export interface AccessGrantItem {
   id: string;
@@ -120,6 +144,7 @@ export interface DepartmentLookupItem {
   id: number | string;
   code: string;
   name: string;
+  parentId?: number | string | null | undefined;
 }
 
 export interface BusinessCategoryLookupItem {

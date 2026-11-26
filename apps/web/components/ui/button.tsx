@@ -153,7 +153,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         aria-busy={effectiveLoading || undefined}
         onClick={onClick ? handleInstantClick : undefined}
         className={cn(
-          'inline-flex items-center justify-center whitespace-nowrap rounded-[40px] transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FF385C] focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50 cursor-pointer select-none',
+          'inline-flex items-center justify-center whitespace-nowrap rounded-[40px] transition-all duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#222222] focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50 cursor-pointer select-none',
           variants[variant],
           sizes[size],
           className,

@@ -1,4 +1,5 @@
 import type { DownloadBlob } from '@/lib/api-client';
+import { AUDIT_PARTITIONS } from '@/app/security/helpers';
 import { formatAuditPartitionLabel, formatAuditViolationMessage } from '@/lib/ui-labels';
 import type {
   AuditLogApiDto,
@@ -16,17 +17,9 @@ import type {
 const ISO_DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const OPTIMISTIC_JOB_GRACE_MS = 15_000;
 
-export const AUDIT_PARTITION_OPTIONS = [
-  'ALL',
-  'GLOBAL',
-  'AUTH',
-  'DOCUMENT',
-  'ACCESS_SESSION',
-  'RBAC',
-  'AUDIT',
-  'SECURITY',
-  'SECURITY_OPERATIONS',
-] as const;
+export { AUDIT_PARTITIONS };
+
+export const AUDIT_PARTITION_OPTIONS = ['ALL', ...AUDIT_PARTITIONS] as const;
 
 /**
  * Thuật toán: Chuyển Đổi Ngày Cục Bộ `YYYY-MM-DD` Sang Mốc ISO-8601 UTC Đầu/Cuối Ngày (`toLocalDayBoundaryIso`)

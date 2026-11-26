@@ -79,7 +79,7 @@ export function MfaWebAuthnEnrollPanel({
           value={deviceLabel}
           onChange={(e) => onChangeLabel(e.target.value)}
           placeholder="VD: Windows Hello Laptop, khóa USB văn phòng…"
-          className="bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20"
+          className="bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#717171]"
         />
       </div>
 

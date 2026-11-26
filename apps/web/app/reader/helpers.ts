@@ -1,9 +1,20 @@
-import { ClassificationRank, resolveClassificationRank } from '@sda/contracts';
+import {
+  ACCESS_DURATION_DAY_MS,
+  ClassificationRank,
+  DEFAULT_GRANT_MAX_DURATION_DAYS,
+  computeEffectiveAccessCeiling,
+  formatRetentionDateIso,
+  formatRetentionDateVi,
+  resolveClassificationDefaultViewDays,
+  resolveClassificationRank,
+  resolveRetentionCeilingSafeLocal,
+} from '@sda/contracts';
 import type { ClassificationCode } from '@/components/classification-badge';
 import type { DownloadBlob } from '@/lib/api-client';
 import type {
   DiscoverableDoc,
   MyGrantedDoc,
+  MyRequestItem,
   ReaderDocumentApiDto,
   ReaderGrantApiDto,
 } from './types';
@@ -80,6 +91,8 @@ export function mapReaderDocumentDto(d: ReaderDocumentApiDto): DiscoverableDoc {
     classificationRank: clsRank,
     departmentName: d.departmentName || d.department?.name || '—',
     allowDownload: d.allowDownload ?? d.classification?.allowDownload ?? clsRank <= 2,
+    retentionUntil: formatRetentionDateIso(d.retentionUntil ?? d.retention_until),
+    defaultViewDays: resolveClassificationDefaultViewDays(clsCode, d.defaultViewDays),
   };
 }
 
@@ -146,6 +159,198 @@ export function mapReaderGrantDto(g: ReaderGrantApiDto, index = 0): MyGrantedDoc
     validUntil: g.validUntil || '—',
     grantedAt: g.grantedAt,
     allowDownload: g.document?.allowDownload ?? g.allowDownload ?? clsRank <= 2,
+    retentionUntil: formatRetentionDateIso(g.document?.retentionUntil),
+    defaultViewDays: resolveClassificationDefaultViewDays(clsCode, g.document?.defaultViewDays),
+  };
+}
+
+/**
+ * Thuật toán: Hợp Nhất Hai Bản Ghi Giấy Phép Cùng Tài Liệu Theo Phép Hợp Quyền & Hạn Hiệu Lực Xa Nhất (`mergeGrantedDocPair`, BUG-119)
+ * Mục đích:
+ *   - Hợp nhất quyền `VIEW` / `DOWNLOAD` giữa giấy phép trực tiếp (`USER`) và giấy phép theo vai trò (`ROLE`) trên cùng `documentId`.
+ *   - Ưu tiên giữ `id` của bản ghi có quyền `DOWNLOAD` (nếu có) và hạn xa hơn để phiên `POST /documents/:id/sessions` dùng đúng `grantId` đầy đủ quyền nhất.
+ *   - Chọn `validUntil` muộn nhất, `validFrom` sớm nhất và đánh dấu `hasDirectAndRoleGrant` khi tồn tại đồng thời cả hai nguồn cấp.
+ */
+function mergeGrantedDocPair(existing: MyGrantedDoc, incoming: MyGrantedDoc): MyGrantedDoc {
+  const existingHasDownload = existing.permissions.includes('DOWNLOAD');
+  const incomingHasDownload = incoming.permissions.includes('DOWNLOAD');
+  const mergedPermissions: Array<'VIEW' | 'DOWNLOAD'> =
+    existingHasDownload || incomingHasDownload ? ['VIEW', 'DOWNLOAD'] : ['VIEW'];
+
+  const existingUntilMs = Date.parse(existing.validUntil);
+  const incomingUntilMs = Date.parse(incoming.validUntil);
+  const incomingHasLaterUntil =
+    !Number.isNaN(incomingUntilMs) &&
+    (Number.isNaN(existingUntilMs) || incomingUntilMs > existingUntilMs);
+  const validUntil = incomingHasLaterUntil
+    ? incoming.validUntil
+    : existing.validUntil !== '—'
+      ? existing.validUntil
+      : incoming.validUntil;
+
+  const existingFromMs = existing.validFrom ? Date.parse(existing.validFrom) : Number.NaN;
+  const incomingFromMs = incoming.validFrom ? Date.parse(incoming.validFrom) : Number.NaN;
+  const validFrom =
+    !Number.isNaN(incomingFromMs) &&
+    (Number.isNaN(existingFromMs) || incomingFromMs < existingFromMs)
+      ? incoming.validFrom
+      : (existing.validFrom ?? incoming.validFrom);
+
+  const preferIncomingGrantId =
+    (incomingHasDownload && !existingHasDownload) ||
+    (incomingHasDownload === existingHasDownload && incomingHasLaterUntil);
+
+  const sawDirect =
+    existing.principalType === 'USER' ||
+    incoming.principalType === 'USER' ||
+    Boolean(existing.hasDirectAndRoleGrant) ||
+    Boolean(incoming.hasDirectAndRoleGrant);
+  const sawRole =
+    existing.principalType === 'ROLE' ||
+    incoming.principalType === 'ROLE' ||
+    Boolean(existing.hasDirectAndRoleGrant) ||
+    Boolean(incoming.hasDirectAndRoleGrant);
+  const hasDirectAndRoleGrant = sawDirect && sawRole;
+
+  return {
+    ...existing,
+    id: preferIncomingGrantId ? incoming.id : existing.id,
+    permissions: mergedPermissions,
+    principalType: hasDirectAndRoleGrant ? 'USER' : sawRole ? 'ROLE' : 'USER',
+    roleName: existing.roleName || incoming.roleName || null,
+    hasDirectAndRoleGrant,
+    validFrom,
+    validUntil,
+    allowDownload: existing.allowDownload || incoming.allowDownload,
+    retentionUntil: existing.retentionUntil ?? incoming.retentionUntil,
+    defaultViewDays: existing.defaultViewDays ?? incoming.defaultViewDays,
+  };
+}
+
+/**
+ * Thuật toán: Hợp Nhất Quyền Hiệu Lực Theo `documentId` Chống Trùng Khóa Bảng Người Đọc (`mergeActiveReaderGrants`, BUG-119)
+ * Mục đích:
+ *   - Gom nhóm toàn bộ giấy phép đang hiệu lực (`USER` + `ROLE`) theo `documentId` trong `O(N)`, loại bỏ triệt để dòng trùng `key={doc.documentId}` trên `GrantedDocumentsTab`.
+ *   - Cho phép bổ sung nguồn phụ `supplementaryGrants` (từ các trang khác của `my-grants`) để hoàn thiện phép hợp quyền cho các tài liệu đang hiển thị ở trang hiện hành mà không làm tràn số dòng của trang.
+ */
+export function mergeActiveReaderGrants(
+  primaryGrants: ReadonlyArray<ReaderGrantApiDto>,
+  nowMs: number = Date.now(),
+  supplementaryGrants?: ReadonlyArray<ReaderGrantApiDto>,
+): MyGrantedDoc[] {
+  const byDocId = new Map<string, MyGrantedDoc>();
+  primaryGrants.forEach((raw, idx) => {
+    if (!isActiveReaderGrant(raw, nowMs)) return;
+    const mapped = mapReaderGrantDto(raw, idx);
+    if (!mapped.documentId) return;
+    const existing = byDocId.get(mapped.documentId);
+    byDocId.set(mapped.documentId, existing ? mergeGrantedDocPair(existing, mapped) : mapped);
+  });
+
+  if (supplementaryGrants && supplementaryGrants.length > 0 && byDocId.size > 0) {
+    supplementaryGrants.forEach((raw, idx) => {
+      if (!isActiveReaderGrant(raw, nowMs)) return;
+      const mapped = mapReaderGrantDto(raw, primaryGrants.length + idx);
+      if (!mapped.documentId) return;
+      const existing = byDocId.get(mapped.documentId);
+      if (existing && existing.id !== mapped.id) {
+        byDocId.set(mapped.documentId, mergeGrantedDocPair(existing, mapped));
+      }
+    });
+  }
+
+  return Array.from(byDocId.values());
+}
+
+/**
+ * Thuật toán: Tạo Bảng Tra Cứu Quyền Truy Cập Hiệu Lực Độc Lập Phân Trang (`buildActiveGrantsByDocId`, BUG-028, BUG-119)
+ * Ánh xạ danh sách giấy phép đang hiệu lực sang `Map<documentId, MyGrantedDoc>` đã hợp nhất quyền `VIEW`/`DOWNLOAD` và hạn hiệu lực xa nhất theo từng tài liệu.
+ */
+export function buildActiveGrantsByDocId(
+  grants: ReadonlyArray<ReaderGrantApiDto>,
+  nowMs: number = Date.now(),
+): Map<string, MyGrantedDoc> {
+  const byDocId = new Map<string, MyGrantedDoc>();
+  for (const merged of mergeActiveReaderGrants(grants, nowMs)) {
+    byDocId.set(merged.documentId, merged);
+  }
+  return byDocId;
+}
+
+/**
+ * Thuật toán: Trích Xuất Tập Định Danh Tài Liệu Đang Có Yêu Cầu Chờ Duyệt (`extractPendingRequestDocIds`, BUG-028)
+ */
+export function extractPendingRequestDocIds(
+  requests: ReadonlyArray<Pick<MyRequestItem, 'documentId' | 'status'>>,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const req of requests) {
+    if (req.status === 'PENDING' && req.documentId) {
+      ids.add(req.documentId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Thuật toán: Cập Nhật Bảng Yêu Cầu Phân Trang Có Điều Kiện Theo Bộ Lọc Khi Gửi Yêu Cầu Mới (`applyCreatedRequestToFilteredPage`, BUG-028)
+ * Chỉ chèn vào mảng hiển thị khi bộ lọc là `'ALL'` hoặc `'PENDING'` ở trang 1, tránh làm bẩn danh sách đang lọc `'REJECTED'`/`'APPROVED'`.
+ */
+export function applyCreatedRequestToFilteredPage(params: {
+  currentRequests: ReadonlyArray<MyRequestItem>;
+  currentTotal: number;
+  created: MyRequestItem;
+  statusFilter: string;
+  page: number;
+  pageSize?: number;
+}): { nextRequests: MyRequestItem[]; nextTotal: number } {
+  const { currentRequests, currentTotal, created, statusFilter, page, pageSize = 20 } = params;
+  const matchesFilter = statusFilter === 'ALL' || statusFilter === 'PENDING';
+  if (!matchesFilter) {
+    return {
+      nextRequests: [...currentRequests],
+      nextTotal: currentTotal,
+    };
+  }
+  const nextTotal = currentTotal + 1;
+  if (page !== 1) {
+    return {
+      nextRequests: [...currentRequests],
+      nextTotal,
+    };
+  }
+  return {
+    nextRequests: [created, ...currentRequests.filter((r) => r.id !== created.id)].slice(
+      0,
+      pageSize,
+    ),
+    nextTotal,
+  };
+}
+
+/**
+ * Thuật toán: Cập Nhật Bảng Yêu Cầu Phân Trang Theo Bộ Lọc Khi Hủy Yêu Cầu Chờ Duyệt (`applyCancelledRequestToFilteredPage`, BUG-028)
+ * Loại bỏ dòng khỏi mảng và giảm `total` khi đang lọc `'PENDING'`; đổi trạng thái sang `'CANCELLED'` và giữ nguyên `total` khi đang xem `'ALL'`.
+ */
+export function applyCancelledRequestToFilteredPage(params: {
+  currentRequests: ReadonlyArray<MyRequestItem>;
+  currentTotal: number;
+  requestId: string;
+  statusFilter: string;
+}): { nextRequests: MyRequestItem[]; nextTotal: number } {
+  const { currentRequests, currentTotal, requestId, statusFilter } = params;
+  if (statusFilter === 'PENDING') {
+    const existed = currentRequests.some((r) => r.id === requestId);
+    return {
+      nextRequests: currentRequests.filter((r) => r.id !== requestId),
+      nextTotal: existed ? Math.max(0, currentTotal - 1) : currentTotal,
+    };
+  }
+  return {
+    nextRequests: currentRequests.map((r) =>
+      r.id === requestId ? { ...r, status: 'CANCELLED' as const } : r,
+    ),
+    nextTotal: currentTotal,
   };
 }
 
@@ -245,12 +450,14 @@ export function formatRequestDurationLabel(
 
 /**
  * Thuật toán: Kiểm Định Khoảng Thời Gian Tùy Chọn Trước Khi Gửi Yêu Cầu (`validateCustomRequestWindow`, V-39)
+ * Đồng bộ trần `GRANT_MAX_DURATION_DAYS` (mặc định 30 ngày) và cưỡng chế không vượt quá ngày lưu trữ bảo mật `retentionUntil` của tài liệu.
  */
 export function validateCustomRequestWindow(
   isCustomDuration: boolean,
   customRequestedFrom: string,
   customRequestedUntil: string,
   nowMs: number = Date.now(),
+  options?: { maxDurationDays?: number | undefined; retentionUntil?: string | null | undefined },
 ): string | null {
   if (!isCustomDuration) return null;
   if (!customRequestedFrom.trim() || !customRequestedUntil.trim()) {
@@ -268,26 +475,54 @@ export function validateCustomRequestWindow(
   if (untilDate.getTime() <= fromDate.getTime()) {
     return 'Thời điểm kết thúc phải lớn hơn thời điểm bắt đầu.';
   }
-  if (untilDate.getTime() - fromDate.getTime() > 365 * 86_400_000) {
-    return 'Khoảng thời gian đề nghị truy cập không được vượt quá 365 ngày.';
+  const maxDays =
+    typeof options?.maxDurationDays === 'number' && options.maxDurationDays >= 1
+      ? Math.floor(options.maxDurationDays)
+      : DEFAULT_GRANT_MAX_DURATION_DAYS;
+  if (untilDate.getTime() - fromDate.getTime() > maxDays * ACCESS_DURATION_DAY_MS) {
+    return `Khoảng thời gian đề nghị truy cập không được vượt quá ${maxDays} ngày.`;
+  }
+  const retentionCeiling = resolveRetentionCeilingSafeLocal(options?.retentionUntil);
+  if (retentionCeiling) {
+    const retentionLabel = formatRetentionDateVi(options?.retentionUntil);
+    if (retentionCeiling.getTime() <= nowMs) {
+      return `Tài liệu đã quá thời hạn lưu trữ bảo mật (${retentionLabel}) nên không thể gửi yêu cầu truy cập mới.`;
+    }
+    if (untilDate.getTime() > retentionCeiling.getTime()) {
+      return `Thời điểm kết thúc không được vượt quá thời hạn lưu trữ bảo mật của tài liệu (${retentionLabel}).`;
+    }
   }
   return null;
 }
 
 /**
- * Thuật toán: Dựng Khung Thời gian Hiệu lực ISO-8601 An Toàn Chống `RangeError` (`buildRequestWindowIso`, V-39)
+ * Thuật toán: Dựng Khung Thời gian Hiệu lực ISO-8601 An Toàn Chống `RangeError` & Cưỡng Chế Trần Lưu Trữ (`buildRequestWindowIso`, V-39)
  */
 export function buildRequestWindowIso(
   isCustomDuration: boolean,
   customRequestedFrom: string,
   customRequestedUntil: string,
   requestDurationDays: number,
+  options?: {
+    maxDurationDays?: number | undefined;
+    retentionUntil?: string | null | undefined;
+    explicitUntilIso?: string | null | undefined;
+    now?: Date | undefined;
+  },
 ): { fromIso: string; untilIso: string } {
+  const now = options?.now ?? new Date();
+  const maxDays =
+    typeof options?.maxDurationDays === 'number' && options.maxDurationDays >= 1
+      ? Math.floor(options.maxDurationDays)
+      : DEFAULT_GRANT_MAX_DURATION_DAYS;
+
   if (isCustomDuration) {
     const validationErr = validateCustomRequestWindow(
       true,
       customRequestedFrom,
       customRequestedUntil,
+      now.getTime(),
+      { maxDurationDays: maxDays, retentionUntil: options?.retentionUntil },
     );
     if (validationErr) {
       throw new Error(validationErr);
@@ -297,11 +532,49 @@ export function buildRequestWindowIso(
       untilIso: new Date(customRequestedUntil).toISOString(),
     };
   }
-  const now = new Date();
-  const safeDays = Math.min(365, Math.max(1, Math.round(requestDurationDays || 7)));
+
+  const ceiling = computeEffectiveAccessCeiling({
+    fromDate: now,
+    maxDurationDays: maxDays,
+    retentionUntil: options?.retentionUntil,
+    timezoneMode: 'safe-local',
+  });
+  if (ceiling.isRetentionExpired) {
+    throw new Error(
+      `Tài liệu đã quá thời hạn lưu trữ bảo mật (${formatRetentionDateVi(ceiling.retentionIso)}) nên không thể gửi yêu cầu truy cập mới.`,
+    );
+  }
+
+  if (options?.explicitUntilIso) {
+    const explicitDate = new Date(options.explicitUntilIso);
+    if (Number.isNaN(explicitDate.getTime()) || explicitDate.getTime() <= now.getTime()) {
+      throw new Error('Thời điểm kết thúc đề nghị phải nằm trong tương lai.');
+    }
+    if (explicitDate.getTime() > ceiling.maxUntil.getTime()) {
+      throw new Error(
+        ceiling.cappedByRetention && ceiling.retentionIso
+          ? `Thời điểm kết thúc không được vượt quá thời hạn lưu trữ bảo mật của tài liệu (${formatRetentionDateVi(ceiling.retentionIso)}).`
+          : `Khoảng thời gian đề nghị truy cập không được vượt quá ${maxDays} ngày.`,
+      );
+    }
+    return {
+      fromIso: now.toISOString(),
+      untilIso: explicitDate.toISOString(),
+    };
+  }
+
+  const safeDays = Math.min(maxDays, Math.max(1, Math.round(requestDurationDays || 7)));
+  const rawUntil = new Date(now.getTime() + safeDays * ACCESS_DURATION_DAY_MS);
+  if (rawUntil.getTime() > ceiling.maxUntil.getTime()) {
+    throw new Error(
+      ceiling.cappedByRetention && ceiling.retentionIso
+        ? `Thời hạn đề nghị vượt quá hạn lưu trữ bảo mật của tài liệu (${formatRetentionDateVi(ceiling.retentionIso)}).`
+        : `Khoảng thời gian đề nghị truy cập không được vượt quá ${maxDays} ngày.`,
+    );
+  }
   return {
     fromIso: now.toISOString(),
-    untilIso: new Date(now.getTime() + safeDays * 86_400_000).toISOString(),
+    untilIso: rawUntil.toISOString(),
   };
 }
 

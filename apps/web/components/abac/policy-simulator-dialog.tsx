@@ -279,7 +279,7 @@ export function PolicySimulatorDialog({
                     setSelectedTarget(e.target.value);
                     setResult(null);
                   }}
-                  className="w-full sm:flex-1 min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+                  className="w-full sm:flex-1 min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
                 >
                   {activeRule && (
                     <option value={TARGET_DRAFT_RULE}>
@@ -309,7 +309,7 @@ export function PolicySimulatorDialog({
                   variant="outline"
                   size="sm"
                   onClick={() => applyPreset('trusted_employee')}
-                  className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
+                  className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#222222]"
                 >
                   Nhân sự tin cậy (mạng nội bộ, có MFA)
                 </Button>
@@ -318,7 +318,7 @@ export function PolicySimulatorDialog({
                   variant="outline"
                   size="sm"
                   onClick={() => applyPreset('remote_suspicious')}
-                  className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
+                  className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#222222]"
                 >
                   Truy cập rủi ro cao từ xa
                 </Button>
@@ -327,7 +327,7 @@ export function PolicySimulatorDialog({
                   variant="outline"
                   size="sm"
                   onClick={() => applyPreset('cross_dept')}
-                  className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#FF385C]"
+                  className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] hover:border-[#222222]"
                 >
                   Yêu cầu chéo phòng ban
                 </Button>

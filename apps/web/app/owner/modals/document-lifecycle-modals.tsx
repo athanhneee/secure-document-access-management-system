@@ -2,28 +2,75 @@
 
 import type { useDocumentHistory } from '../hooks/use-document-history';
 import type { useDocumentLifecycle } from '../hooks/use-document-lifecycle';
-import type { BusinessCategoryLookupItem, ClassificationLevelLookupItem } from '../types';
+import type {
+  BusinessCategoryLookupItem,
+  ClassificationLevelLookupItem,
+  DepartmentLookupItem,
+  UserLookupItem,
+} from '../types';
 import { ArchiveDocumentModal } from './archive-document-modal';
 import { ClassificationHistoryModal } from './classification-history-modal';
+import { EditDocumentModal } from './edit-document-modal';
 import { ReclassifyModal } from './reclassify-modal';
+import { TransferOwnerModal } from './transfer-owner-modal';
 import { UploadVersionModal } from './upload-version-modal';
 import { VersionHistoryModal } from './version-history-modal';
 
 interface DocumentLifecycleModalsProps {
   lifecycle: ReturnType<typeof useDocumentLifecycle>;
   history: ReturnType<typeof useDocumentHistory>;
+  departments?: DepartmentLookupItem[] | undefined;
+  eligibleTransferUsers?: UserLookupItem[] | undefined;
+  canSetCurrentVersion?: boolean | undefined;
   classificationLevels: ClassificationLevelLookupItem[];
   businessCategories: BusinessCategoryLookupItem[];
+  userClearanceRank?: number | null | undefined;
 }
 
 export function DocumentLifecycleModals({
   lifecycle,
   history,
+  departments = [],
+  eligibleTransferUsers = [],
+  canSetCurrentVersion = false,
   classificationLevels,
   businessCategories,
+  userClearanceRank,
 }: DocumentLifecycleModalsProps) {
   return (
     <>
+      <EditDocumentModal
+        open={lifecycle.editMetaOpen}
+        onOpenChange={lifecycle.setEditMetaOpen}
+        document={lifecycle.docForEditMeta}
+        departments={departments}
+        title={lifecycle.editTitle}
+        onTitleChange={lifecycle.setEditTitle}
+        description={lifecycle.editDescription}
+        onDescriptionChange={lifecycle.setEditDescription}
+        departmentId={lifecycle.editDepartmentId}
+        onDepartmentIdChange={lifecycle.setEditDepartmentId}
+        retentionDate={lifecycle.editRetentionDate}
+        onRetentionDateChange={lifecycle.setEditRetentionDate}
+        isLoadingDetail={lifecycle.isLoadingEditMeta}
+        isSaving={lifecycle.isSavingMetadata}
+        onSubmit={lifecycle.handleConfirmEditMetadata}
+      />
+
+      <TransferOwnerModal
+        open={lifecycle.transferOwnerOpen}
+        onOpenChange={lifecycle.setTransferOwnerOpen}
+        document={lifecycle.docForTransfer}
+        eligibleUsers={eligibleTransferUsers}
+        isLoadingUsers={lifecycle.isLoadingTransferUsers}
+        newOwnerId={lifecycle.transferNewOwnerId}
+        onNewOwnerIdChange={lifecycle.setTransferNewOwnerId}
+        reason={lifecycle.transferReason}
+        onReasonChange={lifecycle.setTransferReason}
+        isTransferring={lifecycle.isTransferringOwner}
+        onSubmit={lifecycle.handleConfirmTransferOwner}
+      />
+
       <ReclassifyModal
         open={lifecycle.reclassifyOpen}
         onOpenChange={lifecycle.setReclassifyOpen}
@@ -38,6 +85,7 @@ export function DocumentLifecycleModals({
         onSubmit={lifecycle.handleConfirmReclassify}
         classificationLevels={classificationLevels}
         businessCategories={businessCategories}
+        userClearanceRank={userClearanceRank}
       />
 
       <UploadVersionModal
@@ -68,6 +116,9 @@ export function DocumentLifecycleModals({
         document={history.docForVersions}
         versions={history.docVersions}
         isLoading={history.isLoadingVersions}
+        canSetCurrentVersion={canSetCurrentVersion}
+        settingVersionNo={lifecycle.settingVersionNo}
+        onSetCurrentVersion={(doc, versionNo) => lifecycle.handleSetCurrentVersion(doc, versionNo)}
         onOpenClassHistory={(doc) => void history.handleOpenClassHistory(doc)}
       />
 

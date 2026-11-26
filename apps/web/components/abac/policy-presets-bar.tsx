@@ -56,7 +56,9 @@ export function PolicyPresetsBar({
             <h2 className="text-sm sm:text-base font-bold text-[#222222]">
               Trình biên tập chính sách truy cập
             </h2>
-            <Badge variant="info">Biên tập trực quan</Badge>
+            <Badge variant="info">
+              {viewMode === 'json' ? 'JSON nâng cao' : 'Biên tập trực quan'}
+            </Badge>
           </div>
         </div>
 
@@ -66,7 +68,7 @@ export function PolicyPresetsBar({
             variant="outline"
             size="sm"
             onClick={() => onTemplateDialogChange(true)}
-            className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd] hover:border-[#FF385C] flex items-center gap-1.5"
+            className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd] hover:border-[#222222] flex items-center gap-1.5"
           >
             <Sparkles size={16} strokeWidth={1.75} className="text-[#E31C5F]" aria-hidden="true" />
             <span>Mẫu dựng sẵn</span>
@@ -141,7 +143,7 @@ export function PolicyPresetsBar({
         </div>
       </div>
 
-      <PolicyMetaCard rule={rule} onUpdateRule={onUpdateRule} />
+      {viewMode === 'visual' && <PolicyMetaCard rule={rule} onUpdateRule={onUpdateRule} />}
 
       <Dialog open={templateDialogOpen} onOpenChange={onTemplateDialogChange}>
         <DialogContent className="max-w-3xl bg-[#ffffff] border-[#ebebeb] p-6 text-[#222222]">
@@ -166,7 +168,7 @@ export function PolicyPresetsBar({
             {PRESET_POLICY_TEMPLATES.map((tpl) => (
               <div
                 key={tpl.id}
-                className="p-3.5 rounded-[16px] border border-[#ebebeb] hover:border-[#FF385C] bg-[#ffffff] transition-all space-y-2"
+                className="p-3.5 rounded-[16px] border border-[#ebebeb] hover:border-[#dddddd] bg-[#ffffff] hover:bg-[#f7f7f7] transition-all space-y-2"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">

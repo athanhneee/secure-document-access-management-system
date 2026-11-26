@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import type { TargetAction, VisualPolicyRule } from './abac-models';
 
@@ -10,9 +11,11 @@ interface PolicyMetaCardProps {
 
 /**
  * Thuật toán: Biểu Mẫu Siêu Dữ Liệu & Chọn Hiệu Lực Quy Tắc ABAC Chuẩn Pill (`PolicyMetaCard`)
- * Mục đích: Chuẩn hóa nhập liệu mã quy tắc in hoa, mức ưu tiên `1..100`, hành động mục tiêu và hiệu lực `PERMIT` / `DENY` bằng nút pill đặc chuẩn hệ thống thiết kế (không dùng hộp nền màu nhạt).
+ * Mục đích: Chuẩn hóa nhập liệu mã quy tắc in hoa, mức ưu tiên `1..100000`, hành động mục tiêu và hiệu lực `PERMIT` / `DENY` bằng nút pill đặc chuẩn hệ thống thiết kế (không dùng hộp nền màu nhạt).
  */
 export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
+  const [priorityDraft, setPriorityDraft] = useState<string | null>(null);
+  const priorityInputValue = priorityDraft ?? String(rule.priority);
   return (
     <div className="p-4 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] space-y-4 shadow-xs">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
@@ -95,7 +98,7 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             onChange={(e) =>
               onUpdateRule({ ...rule, targetAction: e.target.value as TargetAction })
             }
-            className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] font-semibold text-[#222222]"
+            className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] font-semibold text-[#222222] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
           >
             <option value="ALL">Tất cả thao tác</option>
             <option value="VIEW">Chỉ xem trực tuyến</option>
@@ -117,9 +120,25 @@ export function PolicyMetaCard({ rule, onUpdateRule }: PolicyMetaCardProps) {
             id="abac-rule-priority"
             type="number"
             min="1"
-            max="100"
-            value={rule.priority}
-            onChange={(e) => onUpdateRule({ ...rule, priority: Number(e.target.value) })}
+            max="100000"
+            value={priorityInputValue}
+            onChange={(e) => {
+              const raw = e.target.value;
+              setPriorityDraft(raw);
+              if (raw.trim() === '') return;
+              const parsed = Number(raw);
+              if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 100_000) {
+                onUpdateRule({ ...rule, priority: parsed });
+              }
+            }}
+            onBlur={() => {
+              if (priorityDraft === null) return;
+              const parsed = Number(priorityDraft.trim());
+              if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 100_000) {
+                onUpdateRule({ ...rule, priority: parsed });
+              }
+              setPriorityDraft(null);
+            }}
             className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] text-[#222222]"
           />
         </div>

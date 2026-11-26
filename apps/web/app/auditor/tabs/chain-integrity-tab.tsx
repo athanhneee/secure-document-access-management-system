@@ -4,6 +4,7 @@ import { AlertTriangle, Anchor, CheckCircle2, Download, Hash, Shield } from 'luc
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -63,12 +64,11 @@ export function ChainIntegrityTab({
               <label htmlFor="auditor-verify-partition" className="font-medium text-[#222222]">
                 Phạm vi phân vùng đối soát
               </label>
-              <select
+              <Select
                 id="auditor-verify-partition"
                 value={verifyPartition}
                 onChange={(e) => onVerifyPartitionChange(e.target.value)}
                 disabled={isVerifyingChain}
-                className="min-h-11 sm:h-9 w-full rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer disabled:opacity-60"
               >
                 <option value="ALL">Tất cả phân vùng kiểm toán</option>
                 {AUDIT_PARTITION_OPTIONS.filter((p) => p !== 'ALL').map((partition) => (
@@ -76,7 +76,7 @@ export function ChainIntegrityTab({
                     {formatAuditPartitionLabel(partition)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="rounded-[20px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 space-y-2 text-[#222222]">
@@ -110,7 +110,7 @@ export function ChainIntegrityTab({
         </Card>
 
         <Card className="flex flex-col justify-between">
-          <CardHeader className="pb-3 flex flex-row items-center justify-between gap-2">
+          <CardHeader className="pb-3 flex flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-sm sm:text-base text-[#222222]">
               Kết quả kiểm tra toàn vẹn
             </CardTitle>
@@ -169,8 +169,8 @@ export function ChainIntegrityTab({
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3 rounded-[20px] border border-[#C13515]/30 bg-[#C13515]/5 p-4">
-                  <div className="flex items-center gap-2 text-[#C13515] font-semibold border-b border-[#C13515]/20 pb-2">
+                <div className="space-y-3 rounded-[20px] border border-[#dddddd] bg-[#f7f7f7] p-4">
+                  <div className="flex items-center gap-2 text-[#C13515] font-semibold border-b border-[#ebebeb] pb-2">
                     <AlertTriangle
                       size={16}
                       strokeWidth={1.75}
@@ -211,7 +211,7 @@ export function ChainIntegrityTab({
                       </span>
                     </div>
                     {verificationReport.brokenSequences.length > 0 && (
-                      <ol className="mt-2 max-h-36 overflow-y-auto space-y-1 border-t border-[#C13515]/15 pt-2 text-xs text-[#C13515] list-decimal list-inside">
+                      <ol className="mt-2 max-h-36 overflow-y-auto space-y-1 border-t border-[#ebebeb] pt-2 text-xs text-[#C13515] list-decimal list-inside">
                         {verificationReport.brokenSequences.map((violation, idx) => (
                           <li key={idx}>{violation}</li>
                         ))}

@@ -7,16 +7,14 @@ import type { SecurityAlertItem } from '../types';
 export const VALID_TRANSITIONS: Record<SecurityAlertItem['status'], SecurityAlertItem['status'][]> =
   {
     OPEN: ['INVESTIGATING', 'RESOLVED', 'FALSE_POSITIVE'],
-    INVESTIGATING: ['RESOLVED', 'FALSE_POSITIVE'],
-    ESCALATED: ['RESOLVED'],
-    RESOLVED: [],
-    FALSE_POSITIVE: [],
+    INVESTIGATING: ['RESOLVED', 'FALSE_POSITIVE', 'OPEN'],
+    RESOLVED: ['INVESTIGATING'],
+    FALSE_POSITIVE: ['INVESTIGATING'],
   };
 
 export const STATUS_LABELS: Record<SecurityAlertItem['status'], string> = {
   OPEN: 'Chờ xử lý',
   INVESTIGATING: 'Đang điều tra',
-  ESCALATED: 'Đã chuyển cấp xử lý',
   RESOLVED: 'Đã xử lý',
   FALSE_POSITIVE: 'Báo động giả',
 };

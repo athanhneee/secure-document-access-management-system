@@ -39,16 +39,17 @@ interface GrantsTabProps {
 const GRANT_STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: GrantStatusFilter; label: string }> = [
   { value: 'ALL', label: 'Tất cả' },
   { value: 'ACTIVE', label: 'Đang hiệu lực' },
+  { value: 'SUSPENDED', label: 'Tạm ngưng' },
   { value: 'REVOKED', label: 'Đã thu hồi' },
   { value: 'EXPIRED', label: 'Đã hết hạn' },
 ];
 
 /**
- * Thuật toán: Bảng Quản Lý Quyền Truy Cập Có Lọc Trạng Thái, Phân Trang Máy Chủ & Hiển Thị Thời Hạn Chi Tiết (`GrantsTab`)
+ * Thuật toán: Bảng Quản Lý Quyền Truy Cập Có Lọc Trạng Thái, Phân Trang Máy Chủ & Thẻ Di Động `375px` (`GrantsTab`)
  * Mục đích:
  *   - Hiển thị rõ số quyền đang hiệu lực đồng bộ với nhãn Tab và tổng số bản ghi đang xem.
  *   - Hợp nhất nhãn quyền hạn đơn nhất (`Chỉ xem` hoặc `Xem & Tải về`), hiển thị đầy đủ ngày giờ hiệu lực và thứ bậc chữ chuẩn.
- *   - Hỗ trợ lọc trạng thái (`ALL`/`ACTIVE`/`REVOKED`/`EXPIRED`), phân trang máy chủ và cuộn ngang an toàn trên màn hình di động.
+ *   - Hỗ trợ lọc trạng thái (`ALL`/`ACTIVE`/`REVOKED`/`EXPIRED`), phân trang máy chủ và giao diện thẻ gọn gàng trên di động `375px`.
  */
 export function GrantsTab({
   grants,
@@ -78,7 +79,7 @@ export function GrantsTab({
 
   return (
     <Card>
-      <CardHeader className="pb-3 space-y-3">
+      <CardHeader className="p-4 sm:p-5 pb-3.5 border-b border-[#ebebeb] space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="min-w-0">
             <CardTitle className="text-sm sm:text-base text-[#222222]">
@@ -95,14 +96,14 @@ export function GrantsTab({
               text="Cấp quyền trực tiếp"
               icon={<Plus size={16} strokeWidth={2} aria-hidden="true" />}
               onClick={onOpenDirectGrant}
-              className="shrink-0"
+              className="w-full sm:w-auto shrink-0"
             />
           )}
         </div>
 
         <fieldset
           aria-label="Lọc trạng thái quyền truy cập"
-          className="border-0 p-0 m-0 min-w-0 flex flex-wrap items-center gap-1.5"
+          className="border-0 p-0 m-0 min-w-0 flex overflow-x-auto no-scrollbar sm:flex-wrap items-center gap-1.5"
         >
           {GRANT_STATUS_FILTER_OPTIONS.map((option) => {
             const isSelected = grantsStatusFilter === option.value;
@@ -113,9 +114,9 @@ export function GrantsTab({
                 aria-pressed={isSelected}
                 disabled={isLoadingGrants}
                 onClick={() => onChangeStatusFilter(option.value)}
-                className={`min-h-9 px-3.5 py-1.5 rounded-full border text-xs font-semibold transition-colors cursor-pointer disabled:opacity-60 ${
+                className={`shrink-0 min-h-11 sm:min-h-9 px-3.5 py-1.5 rounded-full border text-xs font-semibold transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap ${
                   isSelected
-                    ? 'border-[#FF385C] bg-[#FF385C] text-[#ffffff]'
+                    ? 'border-transparent bg-[#FF385C] text-[#ffffff]'
                     : 'border-[#dddddd] bg-[#ffffff] text-[#222222] hover:border-[#222222]'
                 }`}
               >
@@ -127,104 +128,167 @@ export function GrantsTab({
       </CardHeader>
 
       <CardContent className="p-0">
-        <Table containerRef={tableScrollRef} className="min-w-[760px]">
-          <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
-            <TableRow>
-              <TableHead className="text-xs text-[#717171]">Đối tượng được cấp</TableHead>
-              <TableHead className="text-xs text-[#717171]">Tài liệu</TableHead>
-              <TableHead className="text-xs text-[#717171]">Quyền hạn</TableHead>
-              <TableHead className="text-xs text-[#717171]">Thời hạn hiệu lực</TableHead>
-              <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
-              <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoadingGrants ? (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-[#717171] text-xs">
-                  <RefreshCw
-                    size={20}
-                    strokeWidth={1.75}
-                    className="animate-spin mx-auto mb-2 text-[#FF385C]"
-                    aria-hidden="true"
-                  />
-                  Đang tải danh sách quyền truy cập…
-                </TableCell>
-              </TableRow>
-            ) : grants.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-[#717171] text-xs">
-                  {grantsStatusFilter === 'ALL'
-                    ? 'Chưa có quyền truy cập nào được cấp.'
-                    : 'Không có quyền truy cập nào phù hợp với trạng thái đang lọc.'}
-                </TableCell>
-              </TableRow>
-            ) : (
-              grants.map((grant) => {
+        {isLoadingGrants ? (
+          <div className="py-10 flex flex-col items-center justify-center gap-2 text-xs text-[#717171]">
+            <RefreshCw
+              size={20}
+              strokeWidth={1.75}
+              className="animate-spin text-[#FF385C]"
+              aria-hidden="true"
+            />
+            <span>Đang tải danh sách quyền truy cập…</span>
+          </div>
+        ) : grants.length === 0 ? (
+          <div className="py-10 px-4 text-center text-xs text-[#717171]">
+            {grantsStatusFilter === 'ALL'
+              ? 'Chưa có quyền truy cập nào được cấp.'
+              : 'Không có quyền truy cập nào phù hợp với trạng thái đang lọc.'}
+          </div>
+        ) : (
+          <>
+            <div className="md:hidden divide-y divide-[#ebebeb]">
+              {grants.map((grant) => {
                 const permissionSummary = formatGrantPermissionSummary(grant.permissions);
                 return (
-                  <TableRow
-                    key={grant.id}
-                    className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
-                  >
-                    <TableCell>
-                      <div className="text-xs font-semibold text-[#222222]">
-                        {grant.principalName}
-                      </div>
-                      <div className="text-[11px] font-medium text-[#717171] mt-0.5">
-                        {formatPrincipalTypeLabel(grant.principalType)}
-                      </div>
-                    </TableCell>
-                    <TableCell
-                      title={grant.documentTitle}
-                      className="text-xs text-[#222222] max-w-xs truncate"
-                    >
-                      {grant.documentTitle}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
+                  <article key={grant.id} className="px-4 py-4 space-y-3 bg-[#ffffff]">
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge variant={resolveStatusBadgeVariant(grant.status)} className="text-xs">
+                        {formatGrantStatusLabel(grant.status)}
+                      </Badge>
                       <Badge
                         variant={permissionSummary.includesDownload ? 'info' : 'secondary'}
                         className="text-xs"
                       >
                         {permissionSummary.label}
                       </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs whitespace-nowrap tabular-nums">
-                      <div className="text-[#222222]">
-                        <span className="font-medium text-[#717171]">Từ: </span>
-                        <span className="font-semibold">
+                    </div>
+
+                    <div className="space-y-0.5 min-w-0">
+                      <h3 className="text-sm font-semibold text-[#222222] leading-snug break-words">
+                        {grant.documentTitle}
+                      </h3>
+                      <p className="text-xs text-[#717171]">
+                        {grant.principalName} · {formatPrincipalTypeLabel(grant.principalType)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-[12px] bg-[#f7f7f7] px-3 py-2 space-y-1.5 text-xs tabular-nums">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#717171] shrink-0">Hiệu lực từ</span>
+                        <span className="font-medium text-[#222222]">
                           {formatSafeDateVi(grant.validFrom, { includeTime: true })}
                         </span>
                       </div>
-                      <div className="text-[#717171] mt-0.5">
-                        <span className="font-medium">Đến: </span>
-                        <span className="font-semibold">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#717171] shrink-0">Hiệu lực đến</span>
+                        <span className="font-semibold text-[#222222]">
                           {formatSafeDateVi(grant.validUntil, { includeTime: true })}
                         </span>
                       </div>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      <Badge variant={resolveStatusBadgeVariant(grant.status)} className="text-xs">
-                        {formatGrantStatusLabel(grant.status)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right whitespace-nowrap">
-                      {grant.status === 'ACTIVE' && canRevokeGrant && (
-                        <InteractiveHoverButton
-                          size="sm"
-                          variant="danger"
-                          text="Thu hồi"
-                          icon={<AlertOctagon size={16} strokeWidth={2} aria-hidden="true" />}
-                          onClick={() => onOpenRevoke(grant)}
-                        />
+                    </div>
+
+                    {(grant.status === 'ACTIVE' || grant.status === 'SUSPENDED') &&
+                      canRevokeGrant && (
+                        <div className="pt-0.5">
+                          <InteractiveHoverButton
+                            size="sm"
+                            variant="danger"
+                            text="Thu hồi"
+                            icon={<AlertOctagon size={16} strokeWidth={2} aria-hidden="true" />}
+                            onClick={() => onOpenRevoke(grant)}
+                            className="w-full"
+                          />
+                        </div>
                       )}
-                    </TableCell>
-                  </TableRow>
+                  </article>
                 );
-              })
-            )}
-          </TableBody>
-        </Table>
+              })}
+            </div>
+
+            <div className="hidden md:block">
+              <Table containerRef={tableScrollRef} className="min-w-[760px]">
+                <TableHeader className="bg-[#f7f7f7] border-b border-[#ebebeb]">
+                  <TableRow>
+                    <TableHead className="text-xs text-[#717171]">Đối tượng được cấp</TableHead>
+                    <TableHead className="text-xs text-[#717171]">Tài liệu</TableHead>
+                    <TableHead className="text-xs text-[#717171]">Quyền hạn</TableHead>
+                    <TableHead className="text-xs text-[#717171]">Thời hạn hiệu lực</TableHead>
+                    <TableHead className="text-xs text-[#717171]">Trạng thái</TableHead>
+                    <TableHead className="text-xs text-[#717171] text-right">Thao tác</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {grants.map((grant) => {
+                    const permissionSummary = formatGrantPermissionSummary(grant.permissions);
+                    return (
+                      <TableRow
+                        key={grant.id}
+                        className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
+                      >
+                        <TableCell>
+                          <div className="text-xs font-semibold text-[#222222]">
+                            {grant.principalName}
+                          </div>
+                          <div className="text-[11px] font-medium text-[#717171] mt-0.5">
+                            {formatPrincipalTypeLabel(grant.principalType)}
+                          </div>
+                        </TableCell>
+                        <TableCell
+                          title={grant.documentTitle}
+                          className="text-xs text-[#222222] max-w-xs truncate"
+                        >
+                          {grant.documentTitle}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Badge
+                            variant={permissionSummary.includesDownload ? 'info' : 'secondary'}
+                            className="text-xs"
+                          >
+                            {permissionSummary.label}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap tabular-nums">
+                          <div className="text-[#222222]">
+                            <span className="font-medium text-[#717171]">Từ: </span>
+                            <span className="font-semibold">
+                              {formatSafeDateVi(grant.validFrom, { includeTime: true })}
+                            </span>
+                          </div>
+                          <div className="text-[#717171] mt-0.5">
+                            <span className="font-medium">Đến: </span>
+                            <span className="font-semibold">
+                              {formatSafeDateVi(grant.validUntil, { includeTime: true })}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Badge
+                            variant={resolveStatusBadgeVariant(grant.status)}
+                            className="text-xs"
+                          >
+                            {formatGrantStatusLabel(grant.status)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
+                          {(grant.status === 'ACTIVE' || grant.status === 'SUSPENDED') &&
+                            canRevokeGrant && (
+                              <InteractiveHoverButton
+                                size="sm"
+                                variant="danger"
+                                text="Thu hồi"
+                                icon={<AlertOctagon size={16} strokeWidth={2} aria-hidden="true" />}
+                                onClick={() => onOpenRevoke(grant)}
+                              />
+                            )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
 
         <div className="px-4 py-2.5 border-t border-[#ebebeb] bg-[#f7f7f7]/60 flex flex-wrap items-center justify-between gap-2 text-xs text-[#717171]">
           <span>

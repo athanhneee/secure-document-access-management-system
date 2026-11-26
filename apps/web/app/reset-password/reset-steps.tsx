@@ -43,7 +43,7 @@ export function ForgotPasswordStepForm({
             value={identifier}
             onChange={(e) => onChangeIdentifier(e.target.value)}
             placeholder="nguyenvana hoặc email nội bộ"
-            className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+            className="pl-10 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] shadow-2xs"
           />
         </div>
       </div>
@@ -112,14 +112,14 @@ export function ConfirmResetStepForm({
             value={newPassword}
             onChange={(e) => onChangeNewPassword(e.target.value)}
             placeholder="•••••••••••••••"
-            className="pl-10 pr-11 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+            className="pl-10 pr-11 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] shadow-2xs"
           />
           <button
             type="button"
             disabled={disabled}
             onClick={() => setShowNewPassword((prev) => !prev)}
             aria-label={showNewPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:opacity-50 cursor-pointer"
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#222222] disabled:opacity-50 cursor-pointer"
           >
             {showNewPassword ? (
               <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -178,14 +178,14 @@ export function ConfirmResetStepForm({
             value={confirmPassword}
             onChange={(e) => onChangeConfirmPassword(e.target.value)}
             placeholder="•••••••••••••••"
-            className="pl-10 pr-11 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C] focus-visible:ring-2 focus-visible:ring-[#FF385C]/20 shadow-2xs"
+            className="pl-10 pr-11 bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] shadow-2xs"
           />
           <button
             type="button"
             disabled={disabled}
             onClick={() => setShowConfirmPassword((prev) => !prev)}
             aria-label={showConfirmPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] disabled:opacity-50 cursor-pointer"
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-full text-[#717171] hover:text-[#222222] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#222222] disabled:opacity-50 cursor-pointer"
           >
             {showConfirmPassword ? (
               <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" />

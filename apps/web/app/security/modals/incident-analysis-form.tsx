@@ -25,7 +25,7 @@ interface IncidentAnalysisFormProps {
 
 /**
  * Thuật toán: Biểu mẫu phân tích nguyên nhân gốc & đánh giá tác động hồ sơ sự cố (`IncidentAnalysisForm`)
- * Mục đích: Tách riêng vùng chỉnh sửa nội dung phân tích sự cố SOC, báo hiệu bản nháp chưa lưu và khóa khi hồ sơ đã `CLOSED` hoặc không có quyền `MANAGE`.
+ * Mục đích: Tách riêng vùng chỉnh sửa nội dung phân tích sự cố SOC, báo hiệu bản nháp chưa lưu sẽ tự động được lưu trước khi chuyển trạng thái.
  */
 export function IncidentAnalysisForm({
   title,
@@ -50,6 +50,7 @@ export function IncidentAnalysisForm({
         </label>
         <Input
           id="inc-detail-title"
+          maxLength={200}
           disabled={isClosed}
           value={title}
           onChange={(e) => onTitleChange(e.target.value)}
@@ -63,6 +64,7 @@ export function IncidentAnalysisForm({
         <Textarea
           id="inc-detail-summary"
           rows={2}
+          maxLength={2000}
           disabled={isClosed}
           value={summary}
           onChange={(e) => onSummaryChange(e.target.value)}
@@ -77,6 +79,7 @@ export function IncidentAnalysisForm({
           <Textarea
             id="inc-detail-findings"
             rows={3}
+            maxLength={2000}
             disabled={isClosed}
             value={findings}
             onChange={(e) => onFindingsChange(e.target.value)}
@@ -91,6 +94,7 @@ export function IncidentAnalysisForm({
           <Textarea
             id="inc-detail-impact"
             rows={3}
+            maxLength={2000}
             disabled={isClosed}
             value={impactAssessment}
             onChange={(e) => onImpactChange(e.target.value)}
@@ -102,7 +106,9 @@ export function IncidentAnalysisForm({
       {!isClosed && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs text-[#717171]">
-            {isDraftDirty ? 'Bạn có thay đổi phân tích chưa lưu.' : ''}
+            {isDraftDirty
+              ? 'Có thay đổi phân tích chưa lưu (sẽ tự động lưu trước khi gửi hoặc đóng hồ sơ).'
+              : ''}
           </span>
           <InteractiveHoverButton
             type="submit"
@@ -153,35 +159,41 @@ export function IncidentLifecycleFooter({
   onClosingNoteChange: (value: string) => void;
   onForceCloseChange: (value: boolean) => void;
   onCloseDialog: () => void;
-  onTransition: (mode: 'submit' | 'review' | 'close') => void;
+  onTransition: (mode: 'submit' | 'review' | 'close') => void | Promise<void>;
 }) {
   return (
-    <>
+    <form onSubmit={(e) => e.preventDefault()} className="space-y-3" noValidate>
       {canSubmit && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3">
-          <div className="space-y-1">
-            <label htmlFor="inc-submit-owner" className="font-medium text-[#222222]">
-              ID Chủ sở hữu nhận báo cáo (tùy chọn)
-            </label>
-            <Input
-              id="inc-submit-owner"
-              value={submittedToOwner}
-              onChange={(e) => onSubmittedToOwnerChange(e.target.value)}
-              placeholder="VD: 9"
-              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] placeholder:text-[#717171]"
-            />
-          </div>
-          <div className="space-y-1">
-            <label htmlFor="inc-submit-admin" className="font-medium text-[#222222]">
-              ID Quản trị viên nhận báo cáo (tùy chọn)
-            </label>
-            <Input
-              id="inc-submit-admin"
-              value={submittedToAdmin}
-              onChange={(e) => onSubmittedToAdminChange(e.target.value)}
-              placeholder="VD: 8"
-              className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] placeholder:text-[#717171]"
-            />
+        <div className="space-y-2 rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3">
+          <p className="text-xs text-[#717171]">
+            Nhập ít nhất một người nhận báo cáo (Chủ sở hữu tài liệu hoặc Quản trị viên đang hoạt
+            động) trước khi gửi phê duyệt <span className="text-[#C13515]">*</span>
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label htmlFor="inc-submit-owner" className="font-medium text-[#222222]">
+                ID Chủ sở hữu nhận báo cáo
+              </label>
+              <Input
+                id="inc-submit-owner"
+                value={submittedToOwner}
+                onChange={(e) => onSubmittedToOwnerChange(e.target.value)}
+                placeholder="VD: 9"
+                className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] placeholder:text-[#717171]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="inc-submit-admin" className="font-medium text-[#222222]">
+                ID Quản trị viên nhận báo cáo
+              </label>
+              <Input
+                id="inc-submit-admin"
+                value={submittedToAdmin}
+                onChange={(e) => onSubmittedToAdminChange(e.target.value)}
+                placeholder="VD: 8"
+                className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] placeholder:text-[#717171]"
+              />
+            </div>
           </div>
         </div>
       )}
@@ -195,6 +207,7 @@ export function IncidentLifecycleFooter({
             </label>
             <Input
               id="inc-closing-note"
+              maxLength={1000}
               value={closingNote}
               onChange={(e) => onClosingNoteChange(e.target.value)}
               placeholder="Nhập kết luận nghiệm thu (tối thiểu 5 ký tự khi nhập)…"
@@ -267,6 +280,6 @@ export function IncidentLifecycleFooter({
           />
         )}
       </DialogFooter>
-    </>
+    </form>
   );
 }

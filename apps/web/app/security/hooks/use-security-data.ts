@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
-import { applyOptimisticStatusById } from '@/lib/optimistic-state';
+import { applyOptimisticStatusById, removeOptimisticById } from '@/lib/optimistic-state';
 import { subscribeRealtimeEvent } from '@/lib/realtime-events';
 import { mapAlertDto, mapIncidentDto } from '../helpers';
 import type {
@@ -18,42 +18,27 @@ import type {
   SecurityPaginatedResponse,
   SecurityTabErrors,
 } from '../types';
+import {
+  abortAllSectionControllers,
+  DEFAULT_DLP_STATUS,
+  EMPTY_TAB_ERRORS,
+  formatSecuritySectionError,
+  isRequestAborted,
+  nextSectionAbortController,
+  type SecuritySectionKey,
+} from './security-fetch-helpers';
 
 export interface OptimisticAlertPatch {
   status?: SecurityAlertItem['status'] | undefined;
-  resolutionNote?: string | undefined;
+  resolutionNote?: string | null | undefined;
   addedNote?: AlertNoteItem | undefined;
 }
 
-const DEFAULT_DLP_STATUS: NetworkDlpStatus = {
-  gatewayHealth: 'OFFLINE',
-  workerReachable: false,
-  icapEnabled: false,
-  icapListening: false,
-  enforcementMode: 'OFFLINE',
-  totalDlpAlerts: 0,
-  openDlpAlerts: 0,
-  checkedAt: '',
-};
-
-const EMPTY_TAB_ERRORS: SecurityTabErrors = {
-  alerts: null,
-  incidents: null,
-  sessions: null,
-  rules: null,
-  dlp: null,
-};
-
-function formatTabError(err: unknown, fallback: string): string {
-  return err instanceof ApiError ? err.message || fallback : fallback;
-}
-
 /**
- * Thuật toán: Đồng Bộ Đa Phân Hệ SOC Cô Lập Lỗi Từng Tab (`Promise.allSettled`), Phân Trang Máy Chủ & Sức Khỏe DLP Thực (`useSecurityData`)
+ * Thuật toán: Đồng Bộ 5 Phân Khu SOC Độc Lập Có Giảm Chấn 300ms, `AbortController` Riêng & Kênh SSE Ổn Định (`useSecurityData`)
  * Mục đích:
- *   - Đọc quyền trực tiếp từ `useAuth()` để chỉ gọi API các phân hệ được cấp phép, cô lập lỗi từng tab bằng `Promise.allSettled` mà không làm trắng xóa cả 6 tab (#10).
- *   - Truy vấn phân trang & lọc phía máy chủ cho Cảnh báo, Sự cố, Phiên đọc (`ACTIVE`/`ALL`/`ENDED`/`TERMINATED`) và DLP độc lập (`alertType=NETWORK_DLP_VIOLATION`) kèm `/security-operations/dlp-status` (#06, #12, #13, #29, #33).
- *   - Đăng ký đầy đủ 4 kênh SSE thời gian thực (`SECURITY_ALERT_UPDATED`, `INCIDENT_REPORT_UPDATED`, `DETECTION_RULE_UPDATED`, `ACCESS_SESSION_UPDATED`) (#31).
+ *   - Tách thành 5 hàm nạp độc lập (`fetchAlerts`, `fetchIncidents`, `fetchSessions`, `fetchDetectionRules`, `fetchDlpOverview`) để gõ tìm kiếm ở 1 phân khu không bao giờ kích hoạt lại thăm dò DLP 1,5s hay 4 API còn lại.
+ *   - Giữ ổn định kết nối SSE qua `useRef` để không ngắt/nối lại SSE theo từng phím gõ và loại trừ lẫn nhau giữa `message` xanh với `errorMessage` đỏ.
  */
 export function useSecurityData() {
   const { hasPermission } = useAuth();
@@ -72,9 +57,11 @@ export function useSecurityData() {
   const [alertsSeverity, setAlertsSeverity] = useState('ALL');
   const [alertsStatus, setAlertsStatus] = useState('ALL');
   const [alertsSearch, setAlertsSearch] = useState('');
+  const [debouncedAlertsSearch, setDebouncedAlertsSearch] = useState('');
 
   const [dlpAlerts, setDlpAlerts] = useState<SecurityAlertItem[]>([]);
   const [dlpAlertsTotal, setDlpAlertsTotal] = useState(0);
+  const [dlpPage, setDlpPage] = useState(1);
   const [dlpStatus, setDlpStatus] = useState<NetworkDlpStatus>(DEFAULT_DLP_STATUS);
 
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
@@ -82,219 +69,373 @@ export function useSecurityData() {
   const [incidentsPage, setIncidentsPage] = useState(1);
   const [incidentsStatus, setIncidentsStatus] = useState('ALL');
   const [incidentsSearch, setIncidentsSearch] = useState('');
+  const [debouncedIncidentsSearch, setDebouncedIncidentsSearch] = useState('');
 
   const [detectionRules, setDetectionRules] = useState<DetectionRuleItem[]>([]);
   const [isRunningDetection, setIsRunningDetection] = useState(false);
 
   const [documentSessions, setDocumentSessions] = useState<DocumentSessionItem[]>([]);
-  const [sessionsTotal, setSessionsTotal] = useState(0);
+  const [sessionsAllTotal, setSessionsAllTotal] = useState(0);
+  const [sessionsFilteredTotal, setSessionsFilteredTotal] = useState(0);
   const [activeSessionsCount, setActiveSessionsCount] = useState(0);
   const [sessionsPage, setSessionsPage] = useState(1);
   const [sessionsStatus, setSessionsStatus] = useState<'ACTIVE' | 'ALL' | 'ENDED' | 'TERMINATED'>(
     'ACTIVE',
   );
   const [sessionsSearch, setSessionsSearch] = useState('');
+  const [debouncedSessionsSearch, setDebouncedSessionsSearch] = useState('');
+
+  useEffect(() => {
+    if (alertsSearch === debouncedAlertsSearch) return;
+    const timer = setTimeout(() => {
+      setDebouncedAlertsSearch(alertsSearch);
+      setAlertsPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [alertsSearch, debouncedAlertsSearch]);
+
+  useEffect(() => {
+    if (incidentsSearch === debouncedIncidentsSearch) return;
+    const timer = setTimeout(() => {
+      setDebouncedIncidentsSearch(incidentsSearch);
+      setIncidentsPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [incidentsSearch, debouncedIncidentsSearch]);
+
+  useEffect(() => {
+    if (sessionsSearch === debouncedSessionsSearch) return;
+    const timer = setTimeout(() => {
+      setDebouncedSessionsSearch(sessionsSearch);
+      setSessionsPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [sessionsSearch, debouncedSessionsSearch]);
 
   const [terminatingSessionId, setTerminatingSessionId] = useState<string | null>(null);
   const [pendingTerminateSessionId, setPendingTerminateSessionId] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
-  const [message, setMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [message, setMessageState] = useState<string | null>(null);
+  const [errorMessage, setErrorMessageState] = useState<string | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
   const [tabErrors, setTabErrors] = useState<SecurityTabErrors>(EMPTY_TAB_ERRORS);
 
-  const buildAlertsQuery = useCallback(() => {
+  const sectionAbortRef = useRef<Partial<Record<SecuritySectionKey, AbortController>>>({});
+  const hasHydratedRef = useRef(false);
+
+  const setMessage = useCallback((nextMsg: string | null) => {
+    setMessageState(nextMsg);
+    if (nextMsg) setErrorMessageState(null);
+  }, []);
+
+  const setErrorMessage = useCallback((nextErr: string | null) => {
+    setErrorMessageState(nextErr);
+    if (nextErr) setMessageState(null);
+  }, []);
+
+  const fetchAlerts = useCallback(async () => {
+    if (!canViewAlerts) return;
+    const ctrl = nextSectionAbortController(sectionAbortRef, 'alerts');
     const params = new URLSearchParams({ page: String(alertsPage), pageSize: '20' });
     if (alertsSeverity !== 'ALL') params.set('severity', alertsSeverity);
     if (alertsStatus !== 'ALL') params.set('status', alertsStatus);
-    if (alertsSearch.trim()) params.set('search', alertsSearch.trim());
-    return `/security-alerts?${params.toString()}`;
-  }, [alertsPage, alertsSeverity, alertsStatus, alertsSearch]);
+    if (debouncedAlertsSearch.trim()) params.set('search', debouncedAlertsSearch.trim());
 
-  const buildIncidentsQuery = useCallback(() => {
+    try {
+      const res = await apiClient<SecurityPaginatedResponse<AlertApiDto>>(
+        `/security-alerts?${params.toString()}`,
+        { signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted) return;
+      const mapped = (res.data || []).map(mapAlertDto);
+      const total = res.meta?.total ?? res.total ?? mapped.length;
+      const maxPage = Math.max(1, Math.ceil(total / 20));
+      if (alertsPage > maxPage) {
+        setAlertsPage(maxPage);
+        return;
+      }
+      setAlerts(mapped);
+      setAlertsTotal(total);
+      setTabErrors((prev) => (prev.alerts === null ? prev : { ...prev, alerts: null }));
+    } catch (err) {
+      if (isRequestAborted(err, ctrl.signal)) return;
+      setTabErrors((prev) => ({
+        ...prev,
+        alerts: formatSecuritySectionError(err, 'Không thể tải danh sách cảnh báo an ninh.'),
+      }));
+    }
+  }, [canViewAlerts, alertsPage, alertsSeverity, alertsStatus, debouncedAlertsSearch]);
+
+  const fetchIncidents = useCallback(async () => {
+    if (!canViewIncidents) return;
+    const ctrl = nextSectionAbortController(sectionAbortRef, 'incidents');
     const params = new URLSearchParams({ page: String(incidentsPage), pageSize: '20' });
     if (incidentsStatus !== 'ALL') params.set('status', incidentsStatus);
-    if (incidentsSearch.trim()) params.set('search', incidentsSearch.trim());
-    return `/incidents?${params.toString()}`;
-  }, [incidentsPage, incidentsStatus, incidentsSearch]);
+    if (debouncedIncidentsSearch.trim()) params.set('search', debouncedIncidentsSearch.trim());
 
-  const buildSessionsQuery = useCallback(() => {
+    try {
+      const res = await apiClient<SecurityPaginatedResponse<IncidentApiDto>>(
+        `/incidents?${params.toString()}`,
+        { signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted) return;
+      const mapped = (res.data || []).map(mapIncidentDto);
+      const total = res.meta?.total ?? res.total ?? mapped.length;
+      const maxPage = Math.max(1, Math.ceil(total / 20));
+      if (incidentsPage > maxPage) {
+        setIncidentsPage(maxPage);
+        return;
+      }
+      setIncidents(mapped);
+      setIncidentsTotal(total);
+      setTabErrors((prev) => (prev.incidents === null ? prev : { ...prev, incidents: null }));
+    } catch (err) {
+      if (isRequestAborted(err, ctrl.signal)) return;
+      setTabErrors((prev) => ({
+        ...prev,
+        incidents: formatSecuritySectionError(err, 'Không thể tải danh sách hồ sơ sự cố an ninh.'),
+      }));
+    }
+  }, [canViewIncidents, incidentsPage, incidentsStatus, debouncedIncidentsSearch]);
+
+  const fetchSessions = useCallback(async () => {
+    if (!canTerminateSession) return;
+    const ctrl = nextSectionAbortController(sectionAbortRef, 'sessions');
     const params = new URLSearchParams({
       status: sessionsStatus,
       page: String(sessionsPage),
       limit: '20',
     });
-    if (sessionsSearch.trim()) params.set('search', sessionsSearch.trim());
-    return `/access-sessions?${params.toString()}`;
-  }, [sessionsStatus, sessionsPage, sessionsSearch]);
+    if (debouncedSessionsSearch.trim()) params.set('search', debouncedSessionsSearch.trim());
 
-  const refreshData = useCallback(
-    async (options?: { silent?: boolean; signal?: AbortSignal }) => {
-      if (!options?.silent) setIsLoading(true);
-      setErrorMessage(null);
-      const reqOpts = options?.signal ? { signal: options.signal } : undefined;
-
-      const [alertsRes, incRes, rulesRes, sessionsRes, dlpAlertsRes, dlpStatusRes] =
-        await Promise.allSettled([
-          canViewAlerts
-            ? apiClient<SecurityPaginatedResponse<AlertApiDto>>(buildAlertsQuery(), reqOpts)
-            : Promise.resolve(null),
-          canViewIncidents
-            ? apiClient<SecurityPaginatedResponse<IncidentApiDto>>(buildIncidentsQuery(), reqOpts)
-            : Promise.resolve(null),
-          canViewRules
-            ? apiClient<DetectionRuleItem[] | { data?: DetectionRuleItem[] }>(
-                '/security-detection/rules',
-                reqOpts,
-              )
-            : Promise.resolve(null),
-          canTerminateSession
-            ? apiClient<SecurityPaginatedResponse<DocumentSessionItem>>(
-                buildSessionsQuery(),
-                reqOpts,
-              )
-            : Promise.resolve(null),
-          canViewAlerts
-            ? apiClient<SecurityPaginatedResponse<AlertApiDto>>(
-                '/security-alerts?alertType=NETWORK_DLP_VIOLATION&pageSize=20',
-                reqOpts,
-              )
-            : Promise.resolve(null),
-          canViewAlerts
-            ? apiClient<NetworkDlpStatus>('/security-operations/dlp-status', reqOpts)
-            : Promise.resolve(null),
-        ]);
-
-      if (options?.signal?.aborted) return;
-
-      const nextErrors: SecurityTabErrors = { ...EMPTY_TAB_ERRORS };
-
-      if (alertsRes.status === 'fulfilled' && alertsRes.value) {
-        const mapped = (alertsRes.value.data || []).map(mapAlertDto);
-        setAlerts(mapped);
-        setAlertsTotal(alertsRes.value.meta?.total ?? alertsRes.value.total ?? mapped.length);
-      } else if (alertsRes.status === 'rejected') {
-        nextErrors.alerts = formatTabError(
-          alertsRes.reason,
-          'Không thể tải danh sách cảnh báo an ninh.',
-        );
+    try {
+      const res = await apiClient<SecurityPaginatedResponse<DocumentSessionItem>>(
+        `/access-sessions?${params.toString()}`,
+        { signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted) return;
+      const rows = res.data || [];
+      const filteredTotal = res.meta?.total ?? res.total ?? rows.length;
+      const allTotal = res.total ?? filteredTotal;
+      const maxPage = Math.max(1, Math.ceil(filteredTotal / 20));
+      if (sessionsPage > maxPage) {
+        setSessionsPage(maxPage);
+        return;
       }
+      setDocumentSessions(rows);
+      setSessionsAllTotal(allTotal);
+      setSessionsFilteredTotal(filteredTotal);
+      setActiveSessionsCount(res.activeCount ?? rows.filter((s) => s.status === 'ACTIVE').length);
+      setTabErrors((prev) => (prev.sessions === null ? prev : { ...prev, sessions: null }));
+    } catch (err) {
+      if (isRequestAborted(err, ctrl.signal)) return;
+      setTabErrors((prev) => ({
+        ...prev,
+        sessions: formatSecuritySectionError(err, 'Không thể tải danh sách phiên đọc tài liệu.'),
+      }));
+    }
+  }, [canTerminateSession, sessionsStatus, sessionsPage, debouncedSessionsSearch]);
 
-      if (incRes.status === 'fulfilled' && incRes.value) {
-        const mapped = (incRes.value.data || []).map(mapIncidentDto);
-        setIncidents(mapped);
-        setIncidentsTotal(incRes.value.meta?.total ?? incRes.value.total ?? mapped.length);
-      } else if (incRes.status === 'rejected') {
-        nextErrors.incidents = formatTabError(
-          incRes.reason,
-          'Không thể tải danh sách hồ sơ sự cố an ninh.',
-        );
-      }
-
-      if (rulesRes.status === 'fulfilled' && rulesRes.value) {
-        const list = Array.isArray(rulesRes.value)
-          ? rulesRes.value
-          : Array.isArray(rulesRes.value.data)
-            ? rulesRes.value.data
-            : [];
-        setDetectionRules(list);
-      } else if (rulesRes.status === 'rejected') {
-        nextErrors.rules = formatTabError(
-          rulesRes.reason,
+  const fetchDetectionRules = useCallback(async () => {
+    if (!canViewRules) return;
+    const ctrl = nextSectionAbortController(sectionAbortRef, 'rules');
+    try {
+      const res = await apiClient<DetectionRuleItem[] | { data?: DetectionRuleItem[] }>(
+        '/security-detection/rules',
+        { signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted) return;
+      const list = Array.isArray(res) ? res : Array.isArray(res.data) ? res.data : [];
+      setDetectionRules(list);
+      setTabErrors((prev) => (prev.rules === null ? prev : { ...prev, rules: null }));
+    } catch (err) {
+      if (isRequestAborted(err, ctrl.signal)) return;
+      setTabErrors((prev) => ({
+        ...prev,
+        rules: formatSecuritySectionError(
+          err,
           'Không thể tải cấu hình quy tắc phát hiện bất thường.',
-        );
-      }
+        ),
+      }));
+    }
+  }, [canViewRules]);
 
-      if (sessionsRes.status === 'fulfilled' && sessionsRes.value) {
-        const rows = sessionsRes.value.data || [];
-        setDocumentSessions(rows);
-        setSessionsTotal(sessionsRes.value.total ?? sessionsRes.value.meta?.total ?? rows.length);
-        setActiveSessionsCount(
-          sessionsRes.value.activeCount ?? rows.filter((s) => s.status === 'ACTIVE').length,
-        );
-      } else if (sessionsRes.status === 'rejected') {
-        nextErrors.sessions = formatTabError(
-          sessionsRes.reason,
-          'Không thể tải danh sách phiên đọc tài liệu.',
-        );
-      }
+  const didInitialDlpProbeRef = useRef(false);
 
+  const fetchDlpOverview = useCallback(
+    async (opts?: { includeProbe?: boolean }) => {
+      if (!canViewAlerts) return;
+      const includeProbe = opts?.includeProbe ?? true;
+      const ctrl = nextSectionAbortController(sectionAbortRef, 'dlp');
+      const [dlpAlertsRes, dlpStatusRes] = await Promise.allSettled([
+        apiClient<SecurityPaginatedResponse<AlertApiDto>>(
+          `/security-alerts?alertType=NETWORK_DLP_VIOLATION&page=${dlpPage}&pageSize=20`,
+          { signal: ctrl.signal },
+        ),
+        includeProbe
+          ? apiClient<NetworkDlpStatus>('/security-operations/dlp-status', { signal: ctrl.signal })
+          : Promise.resolve(null),
+      ]);
+      if (ctrl.signal.aborted) return;
+
+      let dlpErr: string | null = null;
       if (dlpAlertsRes.status === 'fulfilled' && dlpAlertsRes.value) {
         const mappedDlp = (dlpAlertsRes.value.data || []).map(mapAlertDto);
+        const totalDlp =
+          dlpAlertsRes.value.meta?.total ?? dlpAlertsRes.value.total ?? mappedDlp.length;
+        const maxDlpPage = Math.max(1, Math.ceil(totalDlp / 20));
+        if (dlpPage > maxDlpPage) {
+          setDlpPage(maxDlpPage);
+          return;
+        }
         setDlpAlerts(mappedDlp);
-        setDlpAlertsTotal(
-          dlpAlertsRes.value.meta?.total ?? dlpAlertsRes.value.total ?? mappedDlp.length,
-        );
-      } else if (dlpAlertsRes.status === 'rejected') {
-        nextErrors.dlp = formatTabError(
+        setDlpAlertsTotal(totalDlp);
+      } else if (
+        dlpAlertsRes.status === 'rejected' &&
+        !isRequestAborted(dlpAlertsRes.reason, ctrl.signal)
+      ) {
+        dlpErr = formatSecuritySectionError(
           dlpAlertsRes.reason,
           'Không thể tải danh sách cảnh báo DLP mạng.',
         );
       }
 
-      if (dlpStatusRes.status === 'fulfilled' && dlpStatusRes.value) {
-        setDlpStatus(dlpStatusRes.value);
-      } else if (dlpStatusRes.status === 'rejected') {
-        setDlpStatus({ ...DEFAULT_DLP_STATUS, checkedAt: new Date().toISOString() });
-        nextErrors.dlp =
-          nextErrors.dlp ??
-          formatTabError(dlpStatusRes.reason, 'Không thể kiểm tra trạng thái cổng DLP mạng.');
+      if (includeProbe) {
+        if (dlpStatusRes.status === 'fulfilled' && dlpStatusRes.value) {
+          didInitialDlpProbeRef.current = true;
+          setDlpStatus(dlpStatusRes.value);
+        } else if (
+          dlpStatusRes.status === 'rejected' &&
+          !isRequestAborted(dlpStatusRes.reason, ctrl.signal)
+        ) {
+          didInitialDlpProbeRef.current = true;
+          setDlpStatus({ ...DEFAULT_DLP_STATUS, checkedAt: new Date().toISOString() });
+          dlpErr =
+            dlpErr ??
+            formatSecuritySectionError(
+              dlpStatusRes.reason,
+              'Không thể kiểm tra trạng thái cổng DLP mạng.',
+            );
+        }
       }
+      setTabErrors((prev) => (prev.dlp === dlpErr ? prev : { ...prev, dlp: dlpErr }));
+    },
+    [canViewAlerts, dlpPage],
+  );
 
-      setTabErrors(nextErrors);
+  const refreshData = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!options?.silent) setIsLoading(true);
+      setErrorMessageState(null);
+      await Promise.allSettled([
+        fetchAlerts(),
+        fetchIncidents(),
+        fetchDetectionRules(),
+        fetchSessions(),
+        fetchDlpOverview({ includeProbe: true }),
+      ]);
+      hasHydratedRef.current = true;
       if (!options?.silent) setIsLoading(false);
     },
-    [
-      canViewAlerts,
-      canViewIncidents,
-      canViewRules,
-      canTerminateSession,
-      buildAlertsQuery,
-      buildIncidentsQuery,
-      buildSessionsQuery,
-    ],
+    [fetchAlerts, fetchIncidents, fetchDetectionRules, fetchSessions, fetchDlpOverview],
   );
 
   useEffect(() => {
-    let ignore = false;
-    const controller = new AbortController();
-    void Promise.resolve().then(() => {
-      if (!ignore) void refreshData({ signal: controller.signal });
+    void fetchAlerts().finally(() => {
+      if (!hasHydratedRef.current) {
+        hasHydratedRef.current = true;
+        setIsLoading(false);
+      }
     });
-    return () => {
-      ignore = true;
-      controller.abort();
-    };
-  }, [refreshData]);
+  }, [fetchAlerts]);
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleSilentRefresh = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        void refreshData({ silent: true });
+    void fetchIncidents().finally(() => {
+      if (!hasHydratedRef.current) {
+        hasHydratedRef.current = true;
+        setIsLoading(false);
+      }
+    });
+  }, [fetchIncidents]);
+
+  useEffect(() => {
+    void fetchSessions().finally(() => {
+      if (!hasHydratedRef.current) {
+        hasHydratedRef.current = true;
+        setIsLoading(false);
+      }
+    });
+  }, [fetchSessions]);
+
+  useEffect(() => {
+    void fetchDetectionRules();
+  }, [fetchDetectionRules]);
+
+  useEffect(() => {
+    const includeProbe = !didInitialDlpProbeRef.current;
+    void fetchDlpOverview({ includeProbe });
+  }, [fetchDlpOverview]);
+
+  useEffect(() => () => abortAllSectionControllers(sectionAbortRef), []);
+
+  const sseHandlersRef = useRef({
+    fetchAlerts,
+    fetchIncidents,
+    fetchDetectionRules,
+    fetchSessions,
+    fetchDlpOverview,
+  });
+  useEffect(() => {
+    sseHandlersRef.current = {
+      fetchAlerts,
+      fetchIncidents,
+      fetchDetectionRules,
+      fetchSessions,
+      fetchDlpOverview,
+    };
+  }, [fetchAlerts, fetchIncidents, fetchDetectionRules, fetchSessions, fetchDlpOverview]);
+
+  useEffect(() => {
+    const timers: Partial<Record<string, ReturnType<typeof setTimeout>>> = {};
+    const schedule = (key: string, fn: () => void) => {
+      if (timers[key]) clearTimeout(timers[key]);
+      timers[key] = setTimeout(() => {
+        delete timers[key];
+        fn();
       }, 200);
     };
 
     const unsubs = [
-      subscribeRealtimeEvent('SECURITY_ALERT_UPDATED', scheduleSilentRefresh),
-      subscribeRealtimeEvent('INCIDENT_REPORT_UPDATED', scheduleSilentRefresh),
-      subscribeRealtimeEvent('DETECTION_RULE_UPDATED', scheduleSilentRefresh),
-      subscribeRealtimeEvent('ACCESS_SESSION_UPDATED', scheduleSilentRefresh),
+      subscribeRealtimeEvent('SECURITY_ALERT_UPDATED', () =>
+        schedule('alerts', () => {
+          void sseHandlersRef.current.fetchAlerts();
+          void sseHandlersRef.current.fetchDlpOverview({ includeProbe: false });
+        }),
+      ),
+      subscribeRealtimeEvent('INCIDENT_REPORT_UPDATED', () =>
+        schedule('incidents', () => void sseHandlersRef.current.fetchIncidents()),
+      ),
+      subscribeRealtimeEvent('DETECTION_RULE_UPDATED', () =>
+        schedule('rules', () => void sseHandlersRef.current.fetchDetectionRules()),
+      ),
+      subscribeRealtimeEvent('ACCESS_SESSION_UPDATED', () =>
+        schedule('sessions', () => void sseHandlersRef.current.fetchSessions()),
+      ),
     ];
 
     return () => {
       for (const unsub of unsubs) unsub();
-      if (timer) clearTimeout(timer);
+      for (const timer of Object.values(timers)) {
+        if (timer) clearTimeout(timer);
+      }
     };
-  }, [refreshData]);
+  }, []);
 
   async function runDetection(ruleCodes?: string[]) {
     setErrorMessage(null);
     setIsRunningDetection(true);
     try {
-      // CONFLICT-RESOLVED: Không gửi cứng windowMinutes: 60 ghi đè cửa sổ cấu hình riêng của từng quy tắc (#17, N08).
       const payload = ruleCodes && ruleCodes.length > 0 ? { ruleCodes } : {};
       const results = await apiClient<Array<{ isNewAlert?: boolean }>>('/security-detection/run', {
         method: 'POST',
@@ -306,7 +447,7 @@ export function useSecurityData() {
           ? `Đã hoàn tất quét bất thường theo cấu hình từng quy tắc · Phát hiện ${createdCount} cảnh báo mới.`
           : 'Đã hoàn tất quét bất thường theo cấu hình từng quy tắc · Không ghi nhận cảnh báo mới.',
       );
-      await refreshData({ silent: true });
+      await Promise.allSettled([fetchAlerts(), fetchDlpOverview({ includeProbe: false })]);
     } catch (err) {
       setErrorMessage(
         err instanceof ApiError ? err.message : 'Không thể thực hiện quét phát hiện bất thường.',
@@ -317,7 +458,8 @@ export function useSecurityData() {
   }
 
   function applyOptimisticAlertUpdate(alertId: string, patch: OptimisticAlertPatch): () => void {
-    const previousAlerts = alerts;
+    const prevAlertItem = alerts.find((item) => item.id === alertId);
+    const prevDlpItem = dlpAlerts.find((item) => item.id === alertId);
     const applyPatch = (list: SecurityAlertItem[]) =>
       list.map((item) => {
         if (item.id !== alertId) return item;
@@ -332,7 +474,12 @@ export function useSecurityData() {
     setAlerts(applyPatch);
     setDlpAlerts(applyPatch);
     return () => {
-      setAlerts(previousAlerts);
+      if (prevAlertItem) {
+        setAlerts((list) => list.map((item) => (item.id === alertId ? prevAlertItem : item)));
+      }
+      if (prevDlpItem) {
+        setDlpAlerts((list) => list.map((item) => (item.id === alertId ? prevDlpItem : item)));
+      }
     };
   }
 
@@ -341,27 +488,45 @@ export function useSecurityData() {
     if (!sessionId) return false;
 
     setTerminatingSessionId(sessionId);
-    setErrorMessage(null);
+    setDialogError(null);
 
     try {
       await apiClient(`/access-sessions/${sessionId}/terminate`, {
         method: 'POST',
         body: JSON.stringify({ reason }),
       });
-      setDocumentSessions((prev) => applyOptimisticStatusById(prev, sessionId, 'TERMINATED'));
+      setActiveSessionsCount((prev) => Math.max(0, prev - 1));
+      if (sessionsStatus === 'ACTIVE') {
+        const remainingCount = documentSessions.filter((item) => item.id !== sessionId).length;
+        setDocumentSessions((prev) => removeOptimisticById(prev, sessionId));
+        setSessionsFilteredTotal((prev) => Math.max(0, prev - 1));
+        if (sessionsPage > 1 && remainingCount === 0) {
+          setSessionsPage(sessionsPage - 1);
+        }
+      } else {
+        setDocumentSessions((prev) =>
+          applyOptimisticStatusById(prev, sessionId, 'TERMINATED').map((item) =>
+            item.id === sessionId ? { ...item, terminatedReason: reason } : item,
+          ),
+        );
+      }
       setPendingTerminateSessionId(null);
       setMessage(
         sessionsStatus === 'ACTIVE'
-          ? 'Đã ngắt phiên đọc tài liệu thành công. Chuyển bộ lọc sang "Đã ngắt" hoặc "Tất cả" để xem lịch sử.'
+          ? 'Đã ngắt phiên đọc tài liệu thành công. Chuyển bộ lọc sang "Đã ngắt cưỡng bức" hoặc "Tất cả" để xem lịch sử.'
           : 'Đã ngắt phiên đọc tài liệu khẩn cấp thành công.',
       );
       return true;
     } catch (err) {
-      setErrorMessage(
+      const errMsg =
         err instanceof ApiError
           ? err.message || 'Không thể ngắt phiên truy cập.'
-          : 'Không thể ngắt phiên truy cập.',
-      );
+          : 'Không thể ngắt phiên truy cập.';
+      if (pendingTerminateSessionId) {
+        setDialogError(errMsg);
+      } else {
+        setErrorMessage(errMsg);
+      }
       return false;
     } finally {
       setTerminatingSessionId(null);
@@ -384,12 +549,11 @@ export function useSecurityData() {
       setAlertsPage(1);
     },
     alertsSearch,
-    setAlertsSearch: (v: string) => {
-      setAlertsSearch(v);
-      setAlertsPage(1);
-    },
+    setAlertsSearch,
     dlpAlerts,
     dlpAlertsTotal,
+    dlpPage,
+    setDlpPage,
     dlpStatus,
     incidents,
     incidentsTotal,
@@ -401,14 +565,13 @@ export function useSecurityData() {
       setIncidentsPage(1);
     },
     incidentsSearch,
-    setIncidentsSearch: (v: string) => {
-      setIncidentsSearch(v);
-      setIncidentsPage(1);
-    },
+    setIncidentsSearch,
     detectionRules,
     isRunningDetection,
     documentSessions,
-    sessionsTotal,
+    sessionsTotal: sessionsAllTotal,
+    sessionsAllTotal,
+    sessionsFilteredTotal,
     activeSessionsCount,
     sessionsPage,
     setSessionsPage,
@@ -418,10 +581,7 @@ export function useSecurityData() {
       setSessionsPage(1);
     },
     sessionsSearch,
-    setSessionsSearch: (v: string) => {
-      setSessionsSearch(v);
-      setSessionsPage(1);
-    },
+    setSessionsSearch,
     terminatingSessionId,
     pendingTerminateSessionId,
     setPendingTerminateSessionId,
@@ -430,7 +590,14 @@ export function useSecurityData() {
     setMessage,
     errorMessage,
     setErrorMessage,
+    dialogError,
+    setDialogError,
     tabErrors,
+    fetchAlerts,
+    fetchIncidents,
+    fetchSessions,
+    fetchDetectionRules,
+    fetchDlpOverview,
     refreshData,
     runDetection,
     applyOptimisticAlertUpdate,

@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { AdminWorkspace } from './workspace';
 
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function AdminPage() {
-  return <AdminWorkspace />;
+  return (
+    <Suspense fallback={null}>
+      <AdminWorkspace />
+    </Suspense>
+  );
 }

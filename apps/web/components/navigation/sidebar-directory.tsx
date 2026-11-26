@@ -162,7 +162,7 @@ export function SidebarDirectory({
                 title={item.description}
                 className={`group flex min-h-11 sm:min-h-9 items-center justify-between gap-2 rounded-full px-3 py-2 text-xs transition-colors ${
                   isActive
-                    ? 'border border-[#E31C5F]/35 bg-[#FF385C]/10 font-semibold text-[#E31C5F]'
+                    ? 'border border-[#dddddd] bg-[#f7f7f7] font-semibold text-[#222222]'
                     : 'border border-transparent font-medium text-[#222222] hover:bg-[#f7f7f7]'
                 }`}
                 aria-current={isActive ? 'page' : undefined}
@@ -191,11 +191,16 @@ export function SidebarDirectory({
           aria-current={isSessionsActive ? 'page' : undefined}
           className={`flex min-h-11 sm:min-h-9 items-center gap-2.5 rounded-full px-3 py-1.5 text-xs transition-colors ${
             isSessionsActive
-              ? 'border border-[#E31C5F]/35 bg-[#FF385C]/10 font-semibold text-[#E31C5F]'
+              ? 'border border-[#dddddd] bg-[#f7f7f7] font-semibold text-[#222222]'
               : 'border border-transparent font-medium text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222]'
           }`}
         >
-          <Laptop size={16} strokeWidth={1.75} aria-hidden="true" />
+          <Laptop
+            size={16}
+            strokeWidth={1.75}
+            className={isSessionsActive ? 'text-[#E31C5F]' : undefined}
+            aria-hidden="true"
+          />
           <span className="truncate">Phiên &amp; thiết bị</span>
         </Link>
 

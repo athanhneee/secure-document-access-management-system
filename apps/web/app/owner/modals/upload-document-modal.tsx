@@ -44,6 +44,8 @@ export function UploadDocumentModal({
     docFile,
     docTitle,
     docClassificationId,
+    fileValidationError,
+    docCodeError,
     retentionDateError,
     subjectReadiness,
     isSubmittingDoc,
@@ -64,12 +66,21 @@ export function UploadDocumentModal({
       (l) => !isClassificationAllowedForClearance(l.rank, userClearanceRank),
     );
   const isSubjectBlocked = !subjectReadiness.ready;
+  const hasStepOneErrors =
+    !docTitle.trim() ||
+    !docFile ||
+    Boolean(fileValidationError) ||
+    Boolean(docCodeError) ||
+    departments.length === 0;
 
   return (
     <Dialog open={uploadWizardOpen} onOpenChange={setUploadWizardOpen}>
-      <DialogContent className="max-w-xl border-[#ebebeb] bg-[#ffffff] text-[#222222]">
+      <DialogContent
+        showClose={!isSubmittingDoc}
+        className="max-w-xl border-[#ebebeb] bg-[#ffffff] text-[#222222]"
+      >
         <DialogHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between pr-8">
             <DialogTitle className="text-base font-semibold text-[#222222]">
               Tải lên tài liệu mới (Bước {wizardStep}/3)
             </DialogTitle>
@@ -90,7 +101,7 @@ export function UploadDocumentModal({
           </div>
           <DialogDescription className="text-xs text-[#717171]">
             {wizardStep === 1 &&
-              'Chọn tệp tài liệu, phòng ban, danh mục nghiệp vụ và mức độ mật áp dụng.'}
+              'Chọn tệp tài liệu (tối đa 50 MB), phòng ban, danh mục nghiệp vụ và mức độ mật áp dụng.'}
             {wizardStep === 2 &&
               'Xem lại chính sách tải về theo mức độ mật và thiết lập thời hạn lưu trữ.'}
             {wizardStep === 3 && 'Kiểm tra lại toàn bộ thông tin trước khi xác nhận tải lên.'}
@@ -125,6 +136,7 @@ export function UploadDocumentModal({
               variant="secondary"
               size="sm"
               text="Quay lại"
+              disabled={isSubmittingDoc}
               onClick={() => setWizardStep((prev) => (prev - 1) as 1 | 2)}
             />
           ) : (
@@ -133,6 +145,7 @@ export function UploadDocumentModal({
               variant="ghost"
               size="sm"
               text="Hủy"
+              disabled={isSubmittingDoc}
               onClick={() => setUploadWizardOpen(false)}
             />
           )}
@@ -144,8 +157,7 @@ export function UploadDocumentModal({
               size="sm"
               text="Tiếp theo"
               disabled={
-                !docTitle.trim() ||
-                !docFile ||
+                hasStepOneErrors ||
                 isSubjectBlocked ||
                 hasNoUploadClearance ||
                 isSelectedAboveClearance ||
@@ -161,7 +173,7 @@ export function UploadDocumentModal({
               text={isSubmittingDoc ? 'Đang tải lên…' : 'Xác nhận tải lên'}
               disabled={
                 isSubmittingDoc ||
-                !docFile ||
+                hasStepOneErrors ||
                 isSubjectBlocked ||
                 hasNoUploadClearance ||
                 isSelectedAboveClearance ||

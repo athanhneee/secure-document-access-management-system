@@ -70,7 +70,7 @@ export function ActiveSessionsList({
         ) : fetchError && sessions.length === 0 ? (
           <div
             role="alert"
-            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[16px] border border-[#C13515]/30 bg-[#C13515]/10 p-3.5 text-xs text-[#C13515]"
+            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[16px] border border-[#dddddd] bg-[#f7f7f7] p-3.5 text-xs text-[#C13515]"
           >
             <div className="flex items-start gap-2 min-w-0">
               <AlertTriangle
@@ -97,89 +97,91 @@ export function ActiveSessionsList({
             />
           </div>
         ) : sessions.length === 0 ? (
-          <div className="rounded-[16px] border border-[#ebebeb] bg-[#f7f7f7] p-3.5 text-xs text-[#717171]">
+          <p className="text-xs text-[#717171] leading-relaxed">
             Hiện chưa ghi nhận phiên hoạt động nào khả dụng để hiển thị.
-          </div>
+          </p>
         ) : (
-          sessions.map((session) => {
-            const { label, isMobile } = summarizeUserAgent(session.userAgent);
-            const isRevokingThis = revokingId === session.id;
-            const isMfaVerified = Boolean(session.mfaVerified);
-            return (
-              <div
-                key={session.id}
-                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-[16px] border border-[#ebebeb] bg-[#ffffff] p-3.5 text-xs"
-              >
-                <div className="space-y-1.5 min-w-0">
-                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-                    {isMobile ? (
-                      <Smartphone
-                        size={20}
-                        strokeWidth={1.75}
-                        className={session.isCurrent ? 'text-[#008A05]' : 'text-[#222222]'}
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      <Laptop
-                        size={20}
-                        strokeWidth={1.75}
-                        className={session.isCurrent ? 'text-[#008A05]' : 'text-[#222222]'}
-                        aria-hidden="true"
-                      />
-                    )}
-                    <span
-                      className="font-bold text-sm text-[#222222]"
-                      title={session.userAgent ?? undefined}
-                    >
-                      {label}
-                    </span>
-                    <Badge variant={session.isCurrent ? 'success' : 'info'}>
-                      {session.isCurrent ? 'Thiết bị này' : 'Phiên từ xa'}
-                    </Badge>
-                    <Badge variant={isMfaVerified ? 'success' : 'warning'}>
-                      {isMfaVerified ? 'Đã xác thực MFA' : 'Chưa xác thực MFA'}
-                    </Badge>
+          <div className="divide-y divide-[#ebebeb]">
+            {sessions.map((session) => {
+              const { label, isMobile } = summarizeUserAgent(session.userAgent);
+              const isRevokingThis = revokingId === session.id;
+              const isMfaVerified = Boolean(session.mfaVerified);
+              return (
+                <div
+                  key={session.id}
+                  className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-3 first:pt-1 last:pb-0 text-xs"
+                >
+                  <div className="space-y-1.5 min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                      {isMobile ? (
+                        <Smartphone
+                          size={20}
+                          strokeWidth={1.75}
+                          className={session.isCurrent ? 'text-[#008A05]' : 'text-[#222222]'}
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Laptop
+                          size={20}
+                          strokeWidth={1.75}
+                          className={session.isCurrent ? 'text-[#008A05]' : 'text-[#222222]'}
+                          aria-hidden="true"
+                        />
+                      )}
+                      <span
+                        className="font-bold text-sm text-[#222222]"
+                        title={session.userAgent ?? undefined}
+                      >
+                        {label}
+                      </span>
+                      <Badge variant={session.isCurrent ? 'success' : 'info'}>
+                        {session.isCurrent ? 'Thiết bị này' : 'Phiên từ xa'}
+                      </Badge>
+                      <Badge variant={isMfaVerified ? 'success' : 'warning'}>
+                        {isMfaVerified ? 'Đã xác thực MFA' : 'Chưa xác thực MFA'}
+                      </Badge>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#717171]">
+                      <span className="inline-flex items-center gap-1 font-medium text-[#222222] min-w-0 break-all">
+                        <Globe
+                          size={16}
+                          strokeWidth={1.75}
+                          className="text-[#717171] shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>IP: {session.ipAddress || '—'}</span>
+                      </span>
+                      <span>Đăng nhập: {formatSessionTimestamp(session.createdAt)}</span>
+                      <span>
+                        Hoạt động cuối:{' '}
+                        {formatSessionTimestamp(session.lastSeenAt || session.createdAt)}
+                      </span>
+                      {session.expiresAt && (
+                        <span>Hết hạn: {formatSessionTimestamp(session.expiresAt)}</span>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#717171]">
-                    <span className="inline-flex items-center gap-1 font-medium text-[#222222] min-w-0 break-all">
-                      <Globe
-                        size={16}
-                        strokeWidth={1.75}
-                        className="text-[#717171] shrink-0"
-                        aria-hidden="true"
+                  {!session.isCurrent && (
+                    <div className="shrink-0 w-full sm:w-auto">
+                      <InteractiveHoverButton
+                        type="button"
+                        variant="danger"
+                        size="sm"
+                        isLoading={isRevokingThis}
+                        disabled={Boolean(revokingId)}
+                        icon={<Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        text="Thu hồi"
+                        onClick={() => onRequestRevokeSession(session)}
+                        className="w-full sm:w-auto min-h-11 sm:min-h-0"
                       />
-                      <span>IP: {session.ipAddress || '—'}</span>
-                    </span>
-                    <span>Đăng nhập: {formatSessionTimestamp(session.createdAt)}</span>
-                    <span>
-                      Hoạt động cuối:{' '}
-                      {formatSessionTimestamp(session.lastSeenAt || session.createdAt)}
-                    </span>
-                    {session.expiresAt && (
-                      <span>Hết hạn: {formatSessionTimestamp(session.expiresAt)}</span>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
-
-                {!session.isCurrent && (
-                  <div className="shrink-0 w-full sm:w-auto">
-                    <InteractiveHoverButton
-                      type="button"
-                      variant="danger"
-                      size="sm"
-                      isLoading={isRevokingThis}
-                      disabled={Boolean(revokingId)}
-                      icon={<Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />}
-                      text="Thu hồi"
-                      onClick={() => onRequestRevokeSession(session)}
-                      className="w-full sm:w-auto min-h-11 sm:min-h-0"
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
       </CardContent>
     </Card>

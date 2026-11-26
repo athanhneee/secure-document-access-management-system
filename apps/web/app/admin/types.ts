@@ -39,6 +39,7 @@ export interface DepartmentLookupRow {
   id: string;
   code: string;
   name: string;
+  parentId?: string | null | undefined;
 }
 
 export interface BusinessCategoryOptionRow {
@@ -110,6 +111,10 @@ export interface AbacPolicyApiDto {
   target_resource?: string;
   targetAction?: string;
   target_action?: string;
+  validFrom?: string;
+  valid_from?: string;
+  validTo?: string | null;
+  valid_to?: string | null;
   isActive?: boolean;
   is_active?: boolean;
   obligations?: unknown;
@@ -125,6 +130,8 @@ export interface AbacPolicyRow {
   effect: 'PERMIT' | 'DENY';
   priority?: number | undefined;
   targetAction?: TargetAction | undefined;
+  validFrom?: string | undefined;
+  validTo?: string | null | undefined;
   isActive: boolean;
   obligations?: VisualObligation[] | undefined;
   groups?: VisualConditionGroup[] | undefined;

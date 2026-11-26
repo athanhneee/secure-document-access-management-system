@@ -1,3 +1,4 @@
+import { normalizeWatermarkTokenInput } from '@/app/security/helpers';
 import { formatClassificationLabel } from '@/lib/ui-labels';
 import type {
   AuditorAlertApiDto,
@@ -41,37 +42,13 @@ export function mapAuditorAlertDto(a: AuditorAlertApiDto): AuditorAlertItem {
 }
 
 /**
- * Thuật toán: Chuẩn Hóa Token Watermark Từ Dải Chữ PDF Hoặc JSON Mã QR (`normalizeAuditorWatermarkInput`)
+ * Thuật toán: Chuẩn Hóa Token Watermark Không Phân Biệt Hoa Thường Dùng Chung Với SOC (`normalizeAuditorWatermarkInput`)
+ * Mục đích: Chấp nhận cả tiền tố `WM-` và `wm-` (`/\bWM-([0-9a-fA-F]{12,64})\b/iu`), chuỗi hex trần 12–64 ký tự hoặc JSON mã QR, chuẩn hóa về `'WM-' + hex.toLowerCase()`.
  */
 export function normalizeAuditorWatermarkInput(
   raw: string,
 ): { valid: true; token: string } | { valid: false; error: string } {
-  let candidate = raw.trim();
-  if (!candidate) {
-    return { valid: false, error: 'Vui lòng nhập mã watermark cần đối soát.' };
-  }
-  if (candidate.startsWith('{') && candidate.endsWith('}')) {
-    try {
-      const parsed = JSON.parse(candidate) as Record<string, unknown>;
-      if (typeof parsed['token'] === 'string' && parsed['token'].trim()) {
-        candidate = parsed['token'].trim();
-      }
-    } catch {
-      // Thử trích xuất bằng regex bên dưới
-    }
-  }
-  const embeddedMatch = /\bWM-([0-9a-fA-F]{12,64})\b/u.exec(candidate);
-  if (embeddedMatch?.[1]) {
-    return { valid: true, token: `WM-${embeddedMatch[1].toLowerCase()}` };
-  }
-  if (/^[0-9a-fA-F]{12,64}$/u.test(candidate)) {
-    return { valid: true, token: `WM-${candidate.toLowerCase()}` };
-  }
-  return {
-    valid: false,
-    error:
-      'Mã watermark không đúng định dạng. Vui lòng nhập mã WM- (12–64 ký tự hex) hoặc dán chuỗi JSON quét từ mã QR.',
-  };
+  return normalizeWatermarkTokenInput(raw);
 }
 
 /**

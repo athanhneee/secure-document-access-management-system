@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Eye, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -347,16 +348,17 @@ export function AuditTrailTab({
               <label htmlFor="auditor-page-size" className="sr-only">
                 Số bản ghi mỗi trang nhật ký
               </label>
-              <select
+              <Select
                 id="auditor-page-size"
                 value={pageSize}
                 onChange={(e) => onPageSizeChange(Number(e.target.value))}
-                className="min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs font-medium text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer"
+                wrapperClassName="w-44"
+                className="min-h-11 sm:h-9 font-medium"
               >
                 <option value={10}>10 bản ghi / trang</option>
                 <option value={20}>20 bản ghi / trang</option>
                 <option value={50}>50 bản ghi / trang</option>
-              </select>
+              </Select>
             </div>
           </div>
           <div className="flex items-center justify-between sm:justify-end gap-2">

@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { SecurityWorkspace } from './security-workspace';
 
@@ -9,5 +10,9 @@ export const metadata: Metadata = {
 };
 
 export default function SecurityPage() {
-  return <SecurityWorkspace />;
+  return (
+    <Suspense fallback={null}>
+      <SecurityWorkspace />
+    </Suspense>
+  );
 }

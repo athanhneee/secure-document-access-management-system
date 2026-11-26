@@ -25,6 +25,8 @@ interface WatermarkPreviewCardProps {
   previewUsername?: string | null | undefined;
   previewFullName?: string | null | undefined;
   classificationLabel?: string | null | undefined;
+  classificationCode?: string | null | undefined;
+  classificationRank?: number | null | undefined;
 }
 
 /**
@@ -43,6 +45,8 @@ export function WatermarkPreviewCard({
   previewUsername,
   previewFullName,
   classificationLabel,
+  classificationCode,
+  classificationRank,
 }: WatermarkPreviewCardProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const safeColorHex = normalizeHexColor(colorHex);
@@ -56,8 +60,19 @@ export function WatermarkPreviewCard({
         username: previewUsername,
         fullName: previewFullName,
         classificationLabel,
+        classificationCode,
+        classificationRank,
+        includeQrCode: showQr,
       }),
-    [templateText, previewUsername, previewFullName, classificationLabel],
+    [
+      templateText,
+      previewUsername,
+      previewFullName,
+      classificationLabel,
+      classificationCode,
+      classificationRank,
+      showQr,
+    ],
   );
   const pdfSafeText = useMemo(
     () => toWatermarkPdfSafePreviewText(renderedRawText),
@@ -207,10 +222,19 @@ export function WatermarkPreviewCard({
             <Badge variant="outline">Góc: {clampedRotation}°</Badge>
             <Badge variant="outline">Cỡ chữ: {clampedFontSize}px</Badge>
             <Badge variant="outline">Độ mờ: {clampedOpacity}%</Badge>
-            <Badge variant={showQr ? 'success' : 'secondary'}>
-              <QrCode size={16} strokeWidth={1.75} className="mr-1" aria-hidden="true" />
-              {showQr ? 'Có QR góc phải' : 'Không gắn QR'}
-            </Badge>
+            {showQr ? (
+              <Badge variant="info" showDot={false}>
+                <QrCode
+                  size={16}
+                  strokeWidth={1.75}
+                  className="mr-1 inline-block"
+                  aria-hidden="true"
+                />
+                Có QR góc phải
+              </Badge>
+            ) : (
+              <Badge variant="secondary">Không gắn QR</Badge>
+            )}
           </div>
           <div className="space-y-0.5">
             <span className="font-semibold text-[#222222] block">
@@ -218,7 +242,7 @@ export function WatermarkPreviewCard({
             </span>
             <p className="font-mono text-[#717171] break-all">{pdfSafeText}</p>
             {hasAsciiFolding && (
-              <p className="text-[#E07912]">
+              <p className="text-[#717171]">
                 Lưu ý: Dấu tiếng Việt và ký hiệu đặc biệt (như <code>·</code>, <code>—</code>) tự
                 động chuyển sang ký tự ASCII an toàn để tương thích phông Helvetica chuẩn của PDF.
               </p>

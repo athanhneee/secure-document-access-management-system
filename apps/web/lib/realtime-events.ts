@@ -56,6 +56,7 @@ class RealtimeEventsClient {
   private retryDelayMs = INITIAL_RETRY_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private onlineBound = false;
+  private refreshAttemptedSinceOpen = false;
 
   private readonly eventListeners = new Map<RealtimeEventType, Set<RealtimeEventHandler>>();
   private readonly statusListeners = new Set<ConnectionStatusHandler>();
@@ -111,6 +112,7 @@ class RealtimeEventsClient {
   disconnect(): void {
     this.clearReconnectTimer();
     this.retryDelayMs = INITIAL_RETRY_MS;
+    this.refreshAttemptedSinceOpen = false;
     if (this.source) {
       try {
         this.source.close();
@@ -174,6 +176,7 @@ class RealtimeEventsClient {
 
       es.onopen = () => {
         if (this.source !== es) return;
+        this.refreshAttemptedSinceOpen = false;
         this.retryDelayMs = INITIAL_RETRY_MS;
         this.setConnected(true);
       };
@@ -198,7 +201,15 @@ class RealtimeEventsClient {
         }
         this.source = null;
         this.setConnected(false);
-        // Thuật toán: Tự động thử làm mới Access Token một lần khi SSE gặp lỗi (401 hết hạn TTL) trước khi lùi theo backoff mũ để tránh lặp 401 vô hạn (V-15).
+
+        // BUG-035: Chỉ thử refresh tối đa 1 lần cho mỗi chu kỳ kết nối chưa mở thành công (es.onopen);
+        // nếu lỗi tiếp diễn (500/503/403), bỏ qua refresh và đi thẳng vào scheduleReconnect() có backoff mũ.
+        if (this.refreshAttemptedSinceOpen) {
+          this.scheduleReconnect();
+          return;
+        }
+        this.refreshAttemptedSinceOpen = true;
+
         void attemptSessionRefresh(
           (endpoint) => `${API_BASE_URL.replace(/\/+$/u, '')}${endpoint}`,
           getCsrfToken,

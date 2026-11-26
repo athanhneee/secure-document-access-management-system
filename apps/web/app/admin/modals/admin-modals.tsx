@@ -20,7 +20,7 @@ import { UpdateClearanceModal } from './update-clearance-modal';
 
 /**
  * Thuật toán: Quản Lý Vòng Đời Trạng Thái Hộp Thoại Quản Trị Kèm Xóa Lỗi Tồn Đọng (`useAdminModalState`)
- * Mục đích: Đảm bảo mỗi khi mở bất kỳ hộp thoại `<dialog>` mới nào đều xóa sạch thông báo lỗi cũ từ trang hoặc hộp thoại trước đó.
+ * Mục đích: Đảm bảo mỗi khi mở hoặc đóng bất kỳ hộp thoại `<dialog>` nào đều xóa sạch thông báo lỗi hộp thoại cũ.
  */
 export function useAdminModalState(onClearError?: () => void) {
   const [createUserOpen, setCreateUserOpen] = useState(false);
@@ -118,10 +118,14 @@ export type AdminModalState = ReturnType<typeof useAdminModalState>;
 interface AdminModalsProps {
   modals: AdminModalState;
   currentUserId?: string | undefined;
+  hasGlobalUserManage?: boolean | undefined;
+  userManageDepartmentIds?: readonly string[] | undefined;
   departments: DepartmentRow[];
   clearanceOptions: ClearanceOptionRow[];
   roles: RoleRow[];
   permissions: PermissionRow[];
+  permissionsLoaded?: boolean | undefined;
+  onRetryLoadPermissions?: (() => void) | undefined;
   onClearError: () => void;
   onSuccess: (message: string, targetTab?: AdminTab) => Promise<void>;
   onError: (errorMessage: string) => void;
@@ -130,10 +134,14 @@ interface AdminModalsProps {
 export function AdminModals({
   modals,
   currentUserId,
+  hasGlobalUserManage,
+  userManageDepartmentIds,
   departments,
   clearanceOptions,
   roles,
   permissions,
+  permissionsLoaded = false,
+  onRetryLoadPermissions,
   onClearError,
   onSuccess,
   onError,
@@ -142,7 +150,10 @@ export function AdminModals({
     <>
       <CreateUserModal
         open={modals.createUserOpen}
-        onOpenChange={modals.setCreateUserOpen}
+        onOpenChange={(open) => {
+          modals.setCreateUserOpen(open);
+          if (!open) onClearError();
+        }}
         departments={departments}
         clearanceOptions={clearanceOptions}
         onClearError={onClearError}
@@ -154,7 +165,10 @@ export function AdminModals({
         open={modals.editUserOpen}
         onOpenChange={(open) => {
           modals.setEditUserOpen(open);
-          if (!open) modals.setSelectedUserForEdit(null);
+          if (!open) {
+            modals.setSelectedUserForEdit(null);
+            onClearError();
+          }
         }}
         user={modals.selectedUserForEdit}
         departments={departments}
@@ -168,7 +182,10 @@ export function AdminModals({
         open={modals.clearanceModalOpen}
         onOpenChange={(open) => {
           modals.setClearanceModalOpen(open);
-          if (!open) modals.setSelectedUserForClearance(null);
+          if (!open) {
+            modals.setSelectedUserForClearance(null);
+            onClearError();
+          }
         }}
         user={modals.selectedUserForClearance}
         clearanceOptions={clearanceOptions}
@@ -181,7 +198,10 @@ export function AdminModals({
         open={modals.departmentModalOpen}
         onOpenChange={(open) => {
           modals.setDepartmentModalOpen(open);
-          if (!open) modals.setSelectedDepartment(null);
+          if (!open) {
+            modals.setSelectedDepartment(null);
+            onClearError();
+          }
         }}
         department={modals.selectedDepartment}
         departments={departments}
@@ -192,7 +212,10 @@ export function AdminModals({
 
       <CreateRoleModal
         open={modals.createRoleOpen}
-        onOpenChange={modals.setCreateRoleOpen}
+        onOpenChange={(open) => {
+          modals.setCreateRoleOpen(open);
+          if (!open) onClearError();
+        }}
         onClearError={onClearError}
         onSuccess={(msg) => onSuccess(msg, 'rbac')}
         onError={onError}
@@ -202,7 +225,10 @@ export function AdminModals({
         open={modals.editRoleOpen}
         onOpenChange={(open) => {
           modals.setEditRoleOpen(open);
-          if (!open) modals.setSelectedRoleForEdit(null);
+          if (!open) {
+            modals.setSelectedRoleForEdit(null);
+            onClearError();
+          }
         }}
         role={modals.selectedRoleForEdit}
         onClearError={onClearError}
@@ -214,10 +240,15 @@ export function AdminModals({
         open={modals.permsModalOpen}
         onOpenChange={(open) => {
           modals.setPermsModalOpen(open);
-          if (!open) modals.setSelectedRoleForPerms(null);
+          if (!open) {
+            modals.setSelectedRoleForPerms(null);
+            onClearError();
+          }
         }}
         role={modals.selectedRoleForPerms}
         permissions={permissions}
+        permissionsLoaded={permissionsLoaded}
+        onRetryLoadPermissions={onRetryLoadPermissions}
         onClearError={onClearError}
         onSuccess={(msg) => onSuccess(msg, 'rbac')}
         onError={onError}
@@ -227,10 +258,16 @@ export function AdminModals({
         open={modals.assignRoleOpen}
         onOpenChange={(open) => {
           modals.setAssignRoleOpen(open);
-          if (!open) modals.setSelectedUserForRole(null);
+          if (!open) {
+            modals.setSelectedUserForRole(null);
+            onClearError();
+          }
         }}
         targetUser={modals.selectedUserForRole}
         currentUserId={currentUserId}
+        hasGlobalUserManage={hasGlobalUserManage}
+        userManageDepartmentIds={userManageDepartmentIds}
+        departments={departments}
         roles={roles}
         onClearError={onClearError}
         onSuccess={(msg) => onSuccess(msg, 'users')}

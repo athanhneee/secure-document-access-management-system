@@ -9,6 +9,7 @@ import {
 } from '@/lib/optimistic-state';
 import { formatServiceHealthLabel } from '@/lib/ui-labels';
 import type { VisualPolicyRule } from '@/components/abac/abac-models';
+import { validateVisualPolicyRule } from '@/components/abac/policy-ast-helpers';
 import { normalizeAbacPolicyRow } from '../helpers';
 import type {
   AbacPolicyApiDto,
@@ -144,6 +145,11 @@ export function useAdminMutations({
 
   async function saveDraftPolicy(savedRule: VisualPolicyRule): Promise<boolean> {
     setErrorMessage(null);
+    const validationError = validateVisualPolicyRule(savedRule);
+    if (validationError) {
+      setErrorMessage(validationError);
+      return false;
+    }
     const payload = {
       code: savedRule.code,
       name: savedRule.name,
@@ -154,6 +160,8 @@ export function useAdminMutations({
       targetAction: savedRule.targetAction,
       obligations: savedRule.obligations,
       groups: savedRule.groups,
+      ...(savedRule.validFrom ? { validFrom: savedRule.validFrom } : {}),
+      ...(savedRule.validTo !== undefined ? { validTo: savedRule.validTo } : {}),
     };
 
     const isExistingDbPolicy =

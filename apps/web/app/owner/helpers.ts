@@ -1,6 +1,9 @@
 import {
   ClassificationRank,
+  DEFAULT_GRANT_MAX_DURATION_DAYS,
+  formatRetentionDateIso,
   isValidIsoCalendarDate,
+  resolveClassificationDefaultViewDays,
   resolveClassificationRank,
 } from '@sda/contracts';
 import type { ClassificationCode } from '@/components/classification-badge';
@@ -16,6 +19,14 @@ import type {
   RoleLookupItem,
   UserLookupItem,
 } from './types';
+
+export {
+  DOCUMENT_CODE_REGEX,
+  filterDepartmentsByUploadScope,
+  MAX_UPLOAD_FILE_SIZE_BYTES,
+  validateDocumentCodeInput,
+  validateUploadFileInput,
+} from './upload-validation';
 
 /**
  * Thuật toán: Định dạng Mốc Thời gian Cục bộ Tương thích `datetime-local` (`toLocalISO`)
@@ -84,10 +95,36 @@ export function rankFromCode(code?: string | null): number {
   return resolveClassificationRank(upper) ?? ClassificationRank.CONFIDENTIAL;
 }
 
+const DOWNLOAD_PERMITTED_CLASSIFICATION_CODES = new Set([
+  'UNCLASSIFIED',
+  'PUBLIC',
+  'INTERNAL',
+  'RESTRICTED',
+  'CONFIDENTIAL',
+  'CFD',
+]);
+
+/**
+ * Thuật toán: Suy diễn quyền cho phép tải xuống theo cơ chế Fail-Closed từ mã độ mật (`inferAllowDownloadFromClassificationCode`)
+ * Trả về `false` mặc định khi thiếu mã phân loại hoặc thuộc cấp `SECRET` / `TOP_SECRET`.
+ */
+export function inferAllowDownloadFromClassificationCode(
+  classificationCode?: string | null,
+): boolean {
+  if (!classificationCode) return false;
+  return DOWNLOAD_PERMITTED_CLASSIFICATION_CODES.has(classificationCode.trim().toUpperCase());
+}
+
 function toOptionalPositiveInt(raw: string | number | null | undefined): number | undefined {
   if (raw === null || raw === undefined || raw === '') return undefined;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
+function toOptionalNonNegativeInt(raw: string | number | null | undefined): number | undefined {
+  if (raw === null || raw === undefined || raw === '') return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : undefined;
 }
 
 /**
@@ -154,6 +191,7 @@ export function mapDocumentDtoToItem(
   return {
     id: d.id,
     title: d.title || 'Tài liệu chưa có tiêu đề',
+    description: d.description ?? null,
     documentCode: d.documentCode || d.document_code,
     classificationCode: clsCode,
     classificationRank: clsRank,
@@ -167,7 +205,20 @@ export function mapDocumentDtoToItem(
     ),
     departmentName: d.departmentName || d.department?.name || d.departments?.name || '—',
     allowDownload: d.allowDownload ?? clsAllowDownload,
-    versionCount: d.versions?.length ?? 1,
+    retentionUntil: formatRetentionDateIso(d.retentionUntil ?? d.retention_until),
+    defaultViewDays: resolveClassificationDefaultViewDays(
+      clsCode,
+      d.defaultViewDays ?? matchedLevel?.defaultViewDays,
+    ),
+    currentVersionNo:
+      toOptionalPositiveInt(d.currentVersionNo ?? d.currentVersion?.versionNo) ??
+      toOptionalPositiveInt(d.versionCount) ??
+      (Array.isArray(d.versions) && d.versions.length > 0 ? d.versions.length : 1),
+    versionCount:
+      toOptionalNonNegativeInt(d.versionCount) ??
+      (Array.isArray(d.versions) ? d.versions.length : undefined) ??
+      toOptionalPositiveInt(d.currentVersionNo ?? d.currentVersion?.versionNo) ??
+      1,
     createdAt: d.createdAt || d.created_at || new Date().toISOString(),
   };
 }
@@ -418,7 +469,8 @@ export function filterOwnerDocuments(
   documents: DocumentItem[],
   searchQuery: string,
 ): DocumentItem[] {
-  const q = searchQuery.toLowerCase();
+  const q = searchQuery.trim().toLowerCase();
+  if (!q) return documents;
   return documents.filter(
     (d) =>
       d.title.toLowerCase().includes(q) ||
@@ -427,14 +479,17 @@ export function filterOwnerDocuments(
 }
 
 /**
- * Thuật toán: Tính Khoảng Ngày Hiệu lực Yêu cầu Truy cập (`calculateRequestedDays`)
+ * Thuật toán: Tính Khoảng Ngày Hiệu lực Yêu cầu Truy cập Đồng Bộ Trần Tối Đa (`calculateRequestedDays`)
  */
-export function calculateRequestedDays(requestedFrom?: string, requestedUntil?: string): number {
-  if (!requestedFrom || !requestedUntil) return 7;
-  return Math.max(
-    1,
-    Math.round((new Date(requestedUntil).getTime() - new Date(requestedFrom).getTime()) / 86400000),
-  );
+export function calculateRequestedDays(
+  requestedFrom?: string,
+  requestedUntil?: string,
+  maxDays: number = DEFAULT_GRANT_MAX_DURATION_DAYS,
+): number {
+  if (!requestedFrom || !requestedUntil) return Math.min(7, maxDays);
+  const diffMs = new Date(requestedUntil).getTime() - new Date(requestedFrom).getTime();
+  if (!Number.isFinite(diffMs) || diffMs <= 0) return 1;
+  return Math.min(maxDays, Math.max(1, Math.round(diffMs / 86400000)));
 }
 
 /**
@@ -448,5 +503,7 @@ export function triggerBlobDownload(blob: Blob, filename: string): void {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  window.URL.revokeObjectURL(downloadUrl);
+  setTimeout(() => {
+    window.URL.revokeObjectURL(downloadUrl);
+  }, 15_000);
 }

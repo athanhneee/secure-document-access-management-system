@@ -6,11 +6,12 @@ import {
   ArrowUp,
   ArrowUpDown,
   Ban,
+  ChevronLeft,
+  ChevronRight,
   Key,
   Lock,
   Pencil,
   RotateCcw,
-  Search,
   ShieldAlert,
   ShieldCheck,
   Unlock,
@@ -18,9 +19,8 @@ import {
 import { ClassificationBadge } from '@/components/classification-badge';
 import { Badge } from '@/components/ui/badge';
 import { formatUserStatusLabel } from '@/lib/ui-labels';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import {
   Table,
@@ -35,23 +35,27 @@ import {
   computeUserFilterFacets,
   DEFAULT_USER_LIST_QUERY,
   filterAndSortUsers,
-  formatUserSortOption,
   hasActiveUserFilters,
   isNonDefaultUserQuery,
-  parseUserSortOption,
   resolveUserDepartmentName,
   toggleUserSort,
   UNASSIGNED_DEPARTMENT_LABEL,
-  USER_SORT_OPTIONS,
-  type UserActionFilter,
   type UserListQueryState,
   type UserSortField,
-  type UserStatusFilter,
 } from '../users-query';
 import type { DepartmentRow, UserRow, UserStatusAction } from '../types';
+import { UsersFilterBar } from './users-filter-bar';
+
+const USERS_PAGE_SIZE = 20;
 
 interface UsersTabProps {
   users: UserRow[];
+  usersPage?: number | undefined;
+  usersTotalPages?: number | undefined;
+  usersTotal?: number | null | undefined;
+  usersTruncated?: boolean | undefined;
+  isLoadingUsers?: boolean | undefined;
+  onUsersPageChange?: ((page: number) => void) | undefined;
   departments: DepartmentRow[];
   currentUserId?: string | undefined;
   query: UserListQueryState;
@@ -63,15 +67,20 @@ interface UsersTabProps {
   onClearError: () => void;
 }
 
-const SELECT_BASE_CLASS =
-  'min-h-11 sm:h-9 w-full sm:w-auto min-w-0 max-w-full rounded-full border bg-[#ffffff] px-3.5 text-xs text-[#222222] focus:border-[#FF385C] focus:outline-none cursor-pointer transition-colors';
-
 /**
- * Thuật toán: Bảng Quản Lý Danh Tính Có Bộ Lọc Đa Chiều & Sắp Xếp Cột (`UsersTab`)
- * Mục đích: Kết hợp lọc tức thời theo trạng thái, phòng ban, thao tác khả dụng và tìm kiếm đa trường; ẩn nút tự khóa/tự vô hiệu trên tài khoản hiện tại và tự co gọn cột thao tác tránh tràn ngang trên máy tính.
+ * Thuật toán: Bảng Quản Lý Danh Tính Có Phân Trang Máy Chủ `375px`, Đồng Bộ Máy Trạng Thái Vòng Đời & Chống Tự Khóa (`UsersTab`, BUG-098, BUG-105)
+ * Mục đích:
+ *   - Đồng bộ nút thao tác với máy trạng thái máy chủ (`LOCK` chỉ cho `ACTIVE`, `UNLOCK` cho `LOCKED`, `REACTIVATE` cho `DISABLED` hoặc `PENDING`, `DISABLE` cho `status !== 'DISABLED'`).
+ *   - Hỗ trợ phân trang máy chủ (`20` tài khoản/trang) cho phép tìm kiếm và duyệt toàn bộ nhân sự vượt quá 200 bản ghi mà không làm mất tiêu điểm ô nhập tiếng Việt.
  */
 export function UsersTab({
   users,
+  usersPage,
+  usersTotalPages,
+  usersTotal,
+  usersTruncated = false,
+  isLoadingUsers = false,
+  onUsersPageChange,
   departments,
   currentUserId,
   query,
@@ -88,8 +97,10 @@ export function UsersTab({
   } | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [unlockingUserId, setUnlockingUserId] = useState<string | null>(null);
+  const [localPage, setLocalPage] = useState(1);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
+  const isServerPaged = typeof onUsersPageChange === 'function' && typeof usersPage === 'number';
   const departmentNamesById = useMemo(() => buildDepartmentNameMap(departments), [departments]);
   const facets = useMemo(() => computeUserFilterFacets(users, departments), [users, departments]);
   const displayedUsers = useMemo(
@@ -97,31 +108,57 @@ export function UsersTab({
     [users, departments, query],
   );
 
+  const totalPages = isServerPaged
+    ? Math.max(1, usersTotalPages ?? 1)
+    : Math.max(1, Math.ceil(displayedUsers.length / USERS_PAGE_SIZE));
+  const safePage = isServerPaged
+    ? Math.min(Math.max(1, usersPage), totalPages)
+    : Math.min(localPage, totalPages);
+  const startIdx = (safePage - 1) * USERS_PAGE_SIZE;
+  const paginatedUsers = useMemo(
+    () =>
+      isServerPaged ? displayedUsers : displayedUsers.slice(startIdx, startIdx + USERS_PAGE_SIZE),
+    [isServerPaged, displayedUsers, startIdx],
+  );
+
   const filtersActive = hasActiveUserFilters(query);
   const canResetQuery = isNonDefaultUserQuery(query);
-  const sortSelectValue = formatUserSortOption(query.sortField, query.sortDirection);
+  const showTruncationNotice =
+    !isServerPaged &&
+    (usersTruncated || (typeof usersTotal === 'number' && usersTotal > users.length));
+
+  const handlePageChange = (nextPage: number) => {
+    const clamped = Math.min(totalPages, Math.max(1, nextPage));
+    if (isServerPaged) {
+      onUsersPageChange(clamped);
+    } else {
+      setLocalPage(clamped);
+    }
+  };
 
   useEffect(() => {
     tableScrollRef.current?.scrollTo({ top: 0 });
-  }, [
-    query.searchQuery,
-    query.statusFilter,
-    query.departmentFilter,
-    query.actionFilter,
-    query.sortField,
-    query.sortDirection,
-  ]);
+  }, [safePage, query]);
 
   function updateQuery(patch: Partial<UserListQueryState>) {
+    if (isServerPaged) {
+      onUsersPageChange(1);
+    } else {
+      setLocalPage(1);
+    }
     onQueryChange({ ...query, ...patch });
   }
 
   function handleHeaderSort(field: UserSortField) {
-    const nextSort = toggleUserSort(query.sortField, query.sortDirection, field);
-    updateQuery(nextSort);
+    updateQuery(toggleUserSort(query.sortField, query.sortDirection, field));
   }
 
   function handleResetQuery() {
+    if (isServerPaged) {
+      onUsersPageChange(1);
+    } else {
+      setLocalPage(1);
+    }
     onQueryChange({ ...DEFAULT_USER_LIST_QUERY });
   }
 
@@ -141,20 +178,9 @@ export function UsersTab({
         />
       );
     }
-    return query.sortDirection === 'asc' ? (
-      <ArrowUp
-        size={16}
-        strokeWidth={1.75}
-        className="shrink-0 text-[#FF385C]"
-        aria-hidden="true"
-      />
-    ) : (
-      <ArrowDown
-        size={16}
-        strokeWidth={1.75}
-        className="shrink-0 text-[#FF385C]"
-        aria-hidden="true"
-      />
+    const Icon = query.sortDirection === 'asc' ? ArrowUp : ArrowDown;
+    return (
+      <Icon size={16} strokeWidth={1.75} className="shrink-0 text-[#FF385C]" aria-hidden="true" />
     );
   }
 
@@ -167,303 +193,150 @@ export function UsersTab({
     }
   }
 
+  function getUserStatusVariant(status: UserRow['status']) {
+    if (status === 'ACTIVE') return 'success' as const;
+    if (status === 'LOCKED') return 'warning' as const;
+    if (status === 'PENDING') return 'info' as const;
+    return 'destructive' as const;
+  }
+
+  function renderUserActions(u: UserRow, isMobile: boolean) {
+    const isSelf = Boolean(currentUserId && u.id === currentUserId);
+    const normalizedStatus = u.status.trim().toUpperCase();
+    const canLock = !isSelf && normalizedStatus === 'ACTIVE';
+    const canUnlock = normalizedStatus === 'LOCKED';
+    const canReactivate = normalizedStatus === 'DISABLED' || normalizedStatus === 'PENDING';
+    const canDisable = !isSelf && normalizedStatus !== 'DISABLED';
+    const btnVariant = isMobile ? ('secondary' as const) : ('ghost' as const);
+
+    return (
+      <>
+        <InteractiveHoverButton
+          variant={btnVariant}
+          size="sm"
+          text="Sửa"
+          icon={<Pencil size={16} strokeWidth={1.75} aria-hidden="true" />}
+          onClick={() => onOpenEditUser(u)}
+          className={isMobile ? 'w-full' : undefined}
+        />
+        <InteractiveHoverButton
+          variant="secondary"
+          size="sm"
+          text="Thẩm quyền"
+          icon={<ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
+          onClick={() => onOpenUpdateClearance(u)}
+          className={isMobile ? 'w-full' : undefined}
+        />
+        <InteractiveHoverButton
+          variant="secondary"
+          size="sm"
+          text="Vai trò"
+          icon={<Key size={16} strokeWidth={1.75} aria-hidden="true" />}
+          onClick={() => onOpenAssignRole(u)}
+          className={isMobile ? 'w-full' : undefined}
+        />
+        {canLock && (
+          <InteractiveHoverButton
+            variant={btnVariant}
+            size="sm"
+            text="Khóa"
+            icon={<Lock size={16} strokeWidth={1.75} aria-hidden="true" />}
+            onClick={() => {
+              onClearError();
+              setPendingAction({ user: u, action: 'lock' });
+            }}
+            className={isMobile ? 'w-full' : undefined}
+          />
+        )}
+        {canUnlock && (
+          <InteractiveHoverButton
+            variant="secondary"
+            size="sm"
+            text="Mở khóa"
+            icon={<Unlock size={16} strokeWidth={1.75} aria-hidden="true" />}
+            isLoading={unlockingUserId === u.id}
+            disabled={unlockingUserId === u.id}
+            onClick={() => void handleDirectUnlock(u)}
+            className={isMobile ? 'w-full' : undefined}
+          />
+        )}
+        {canReactivate && (
+          <InteractiveHoverButton
+            variant="secondary"
+            size="sm"
+            text="Kích hoạt"
+            icon={<Unlock size={16} strokeWidth={1.75} aria-hidden="true" />}
+            onClick={() => {
+              onClearError();
+              setPendingAction({ user: u, action: 'reactivate' });
+            }}
+            className={isMobile ? 'w-full' : undefined}
+          />
+        )}
+        {canDisable && (
+          <InteractiveHoverButton
+            variant="danger"
+            size="sm"
+            text="Vô hiệu hóa"
+            icon={<Ban size={16} strokeWidth={1.75} aria-hidden="true" />}
+            onClick={() => {
+              onClearError();
+              setPendingAction({ user: u, action: 'disable' });
+            }}
+            className={isMobile ? 'col-span-2 w-full' : undefined}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <>
       <Card>
-        <CardHeader className="pb-3 space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <CardTitle className="text-sm sm:text-base text-[#222222]">
-              Danh sách tài khoản (
-              {filtersActive ? `${displayedUsers.length} / ${users.length}` : displayedUsers.length}
-              )
-            </CardTitle>
+        <UsersFilterBar
+          totalLoadedCount={users.length}
+          serverTotalCount={usersTotal}
+          displayedCount={displayedUsers.length}
+          filtersActive={filtersActive}
+          canResetQuery={canResetQuery}
+          facets={facets}
+          query={query}
+          onUpdateQuery={updateQuery}
+          onResetQuery={handleResetQuery}
+        />
 
-            <div className="relative w-full sm:w-72 shrink-0">
-              <label htmlFor="admin-users-search" className="sr-only">
-                Tìm kiếm tài khoản người dùng
-              </label>
-              <Search
-                size={16}
-                strokeWidth={1.75}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#717171]"
-                aria-hidden="true"
-              />
-              <Input
-                id="admin-users-search"
-                type="text"
-                placeholder="Tìm theo họ tên, tên đăng nhập, email, mã nhân viên…"
-                value={query.searchQuery}
-                onChange={(e) => updateQuery({ searchQuery: e.target.value })}
-                className="pl-9 min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#222222] placeholder:text-[#b0b0b0] focus-visible:border-[#FF385C]"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 pt-2.5 border-t border-[#ebebeb]">
-            <div className="w-full sm:w-auto min-w-0">
-              <label htmlFor="admin-users-status-filter" className="sr-only">
-                Lọc theo trạng thái tài khoản
-              </label>
-              <select
-                id="admin-users-status-filter"
-                value={query.statusFilter}
-                onChange={(e) => updateQuery({ statusFilter: e.target.value as UserStatusFilter })}
-                className={`${SELECT_BASE_CLASS} ${
-                  query.statusFilter !== 'ALL'
-                    ? 'border-[#222222] font-semibold'
-                    : 'border-[#dddddd]'
-                }`}
-              >
-                <option value="ALL">Tất cả trạng thái ({users.length})</option>
-                <option value="ACTIVE">Đang hoạt động ({facets.statusCounts.ACTIVE})</option>
-                <option value="LOCKED">Tạm khóa ({facets.statusCounts.LOCKED})</option>
-                <option value="DISABLED">Vô hiệu hóa ({facets.statusCounts.DISABLED})</option>
-                {(facets.statusCounts.PENDING > 0 || query.statusFilter === 'PENDING') && (
-                  <option value="PENDING">Chờ kích hoạt ({facets.statusCounts.PENDING})</option>
-                )}
-              </select>
-            </div>
-
-            <div className="w-full sm:w-auto min-w-0">
-              <label htmlFor="admin-users-department-filter" className="sr-only">
-                Lọc theo phòng ban
-              </label>
-              <select
-                id="admin-users-department-filter"
-                value={query.departmentFilter}
-                onChange={(e) => updateQuery({ departmentFilter: e.target.value })}
-                className={`${SELECT_BASE_CLASS} ${
-                  query.departmentFilter !== 'ALL'
-                    ? 'border-[#222222] font-semibold'
-                    : 'border-[#dddddd]'
-                }`}
-              >
-                <option value="ALL">Tất cả phòng ban</option>
-                {facets.departmentOptions.map((dept) => (
-                  <option key={dept.id} value={dept.id}>
-                    {dept.name} ({dept.count})
-                  </option>
-                ))}
-                <option value="UNASSIGNED">
-                  {UNASSIGNED_DEPARTMENT_LABEL} ({facets.unassignedDepartmentCount})
-                </option>
-              </select>
-            </div>
-
-            <div className="w-full sm:w-auto min-w-0">
-              <label htmlFor="admin-users-action-filter" className="sr-only">
-                Lọc theo thao tác khả dụng
-              </label>
-              <select
-                id="admin-users-action-filter"
-                value={query.actionFilter}
-                onChange={(e) => updateQuery({ actionFilter: e.target.value as UserActionFilter })}
-                className={`${SELECT_BASE_CLASS} ${
-                  query.actionFilter !== 'ALL'
-                    ? 'border-[#222222] font-semibold'
-                    : 'border-[#dddddd]'
-                }`}
-              >
-                <option value="ALL">Tất cả thao tác</option>
-                <option value="DISABLE">
-                  Thao tác: Vô hiệu hóa ({facets.actionCounts.DISABLE})
-                </option>
-                <option value="LOCK">Thao tác: Khóa ({facets.actionCounts.LOCK})</option>
-                <option value="UNLOCK">Thao tác: Mở khóa ({facets.actionCounts.UNLOCK})</option>
-                <option value="REACTIVATE">
-                  Thao tác: Kích hoạt ({facets.actionCounts.REACTIVATE})
-                </option>
-              </select>
-            </div>
-
-            <div className="w-full sm:w-auto sm:ml-auto min-w-0">
-              <label htmlFor="admin-users-sort" className="sr-only">
-                Sắp xếp danh sách tài khoản
-              </label>
-              <select
-                id="admin-users-sort"
-                value={sortSelectValue}
-                onChange={(e) => updateQuery(parseUserSortOption(e.target.value))}
-                className={`${SELECT_BASE_CLASS} border-[#dddddd]`}
-              >
-                {USER_SORT_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    Sắp xếp · {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {canResetQuery && (
-              <button
-                type="button"
-                onClick={handleResetQuery}
-                className="inline-flex min-h-11 sm:h-9 w-full sm:w-auto items-center justify-center gap-1.5 rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs font-medium text-[#717171] hover:border-[#222222] hover:text-[#222222] transition-colors cursor-pointer shrink-0"
-              >
-                <RotateCcw size={16} strokeWidth={1.75} aria-hidden="true" />
-                <span>Đặt lại</span>
-              </button>
-            )}
-          </div>
-        </CardHeader>
         <CardContent className="p-0">
-          <Table containerRef={tableScrollRef}>
-            <TableHeader>
-              <TableRow>
-                <TableHead aria-sort={getAriaSort('fullName')}>
+          {displayedUsers.length === 0 ? (
+            <div className="py-10 px-4 text-center text-xs text-[#717171]">
+              <div className="flex flex-col items-center gap-2.5">
+                <span>
+                  {filtersActive
+                    ? 'Không tìm thấy tài khoản nào khớp với bộ lọc hiện tại.'
+                    : 'Chưa có tài khoản nào trong hệ thống.'}
+                </span>
+                {filtersActive && (
                   <button
                     type="button"
-                    onClick={() => handleHeaderSort('fullName')}
-                    title="Sắp xếp theo tên tài khoản"
-                    className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
-                      query.sortField === 'fullName'
-                        ? 'text-[#222222]'
-                        : 'text-[#717171] hover:text-[#222222]'
-                    }`}
+                    onClick={handleResetQuery}
+                    className="inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 rounded-full border border-[#dddddd] bg-[#ffffff] px-4 text-xs font-medium text-[#222222] hover:border-[#222222] transition-colors cursor-pointer"
                   >
-                    <span>Tài khoản</span>
-                    {renderSortIcon('fullName')}
+                    <RotateCcw size={16} strokeWidth={1.75} aria-hidden="true" />
+                    <span>Đặt lại bộ lọc</span>
                   </button>
-                </TableHead>
-                <TableHead aria-sort={getAriaSort('email')}>
-                  <button
-                    type="button"
-                    onClick={() => handleHeaderSort('email')}
-                    title="Sắp xếp theo địa chỉ email"
-                    className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
-                      query.sortField === 'email'
-                        ? 'text-[#222222]'
-                        : 'text-[#717171] hover:text-[#222222]'
-                    }`}
-                  >
-                    <span>Email</span>
-                    {renderSortIcon('email')}
-                  </button>
-                </TableHead>
-                <TableHead aria-sort={getAriaSort('department')}>
-                  <button
-                    type="button"
-                    onClick={() => handleHeaderSort('department')}
-                    title="Sắp xếp theo phòng ban"
-                    className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
-                      query.sortField === 'department'
-                        ? 'text-[#222222]'
-                        : 'text-[#717171] hover:text-[#222222]'
-                    }`}
-                  >
-                    <span>Phòng ban</span>
-                    {renderSortIcon('department')}
-                  </button>
-                </TableHead>
-                <TableHead aria-sort={getAriaSort('clearance')}>
-                  <button
-                    type="button"
-                    onClick={() => handleHeaderSort('clearance')}
-                    title="Sắp xếp theo cấp thẩm quyền bảo mật"
-                    className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
-                      query.sortField === 'clearance'
-                        ? 'text-[#222222]'
-                        : 'text-[#717171] hover:text-[#222222]'
-                    }`}
-                  >
-                    <span>Cấp thẩm quyền</span>
-                    {renderSortIcon('clearance')}
-                  </button>
-                </TableHead>
-                <TableHead aria-sort={getAriaSort('status')}>
-                  <button
-                    type="button"
-                    onClick={() => handleHeaderSort('status')}
-                    title="Sắp xếp theo trạng thái tài khoản"
-                    className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
-                      query.sortField === 'status'
-                        ? 'text-[#222222]'
-                        : 'text-[#717171] hover:text-[#222222]'
-                    }`}
-                  >
-                    <span>Trạng thái</span>
-                    {renderSortIcon('status')}
-                  </button>
-                </TableHead>
-                <TableHead className="text-right" aria-sort={getAriaSort('action')}>
-                  <button
-                    type="button"
-                    onClick={() => handleHeaderSort('action')}
-                    title="Sắp xếp theo nhóm thao tác (Vô hiệu hóa / Kích hoạt)"
-                    className={`ml-auto inline-flex items-center justify-end gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
-                      query.sortField === 'action'
-                        ? 'text-[#222222]'
-                        : 'text-[#717171] hover:text-[#222222]'
-                    }`}
-                  >
-                    <span>Thao tác</span>
-                    {renderSortIcon('action')}
-                  </button>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {displayedUsers.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-xs text-[#717171]">
-                    <div className="flex flex-col items-center gap-2.5">
-                      <span>
-                        {filtersActive
-                          ? 'Không tìm thấy tài khoản nào khớp với bộ lọc hiện tại.'
-                          : 'Chưa có tài khoản nào trong hệ thống.'}
-                      </span>
-                      {filtersActive && (
-                        <button
-                          type="button"
-                          onClick={handleResetQuery}
-                          className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[#dddddd] bg-[#ffffff] px-3.5 text-xs font-medium text-[#222222] hover:border-[#222222] transition-colors cursor-pointer"
-                        >
-                          <RotateCcw size={16} strokeWidth={1.75} aria-hidden="true" />
-                          <span>Đặt lại bộ lọc</span>
-                        </button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                displayedUsers.map((u) => {
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Bố cục thẻ di động tối ưu 375px */}
+              <div className="md:hidden divide-y divide-[#ebebeb]">
+                {paginatedUsers.map((u) => {
                   const deptName =
                     resolveUserDepartmentName(u, departmentNamesById) ??
                     UNASSIGNED_DEPARTMENT_LABEL;
-                  const canReactivateDisabled = u.status === 'DISABLED';
-                  const isSelf = Boolean(currentUserId && u.id === currentUserId);
-
                   return (
-                    <TableRow key={u.id}>
-                      <TableCell className="min-w-[160px] max-w-[210px]">
-                        <div
-                          className="font-semibold text-xs text-[#222222] truncate"
-                          title={`${u.fullName} (@${u.username})`}
-                        >
-                          {u.fullName}
-                        </div>
-                        {u.employeeCode && (
-                          <div
-                            className="text-[11px] text-[#717171] truncate tabular-nums"
-                            title={`Mã nhân viên: ${u.employeeCode}`}
-                          >
-                            {u.employeeCode}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell
-                        className="text-xs text-[#717171] max-w-[180px] truncate"
-                        title={u.email}
-                      >
-                        {u.email}
-                      </TableCell>
-                      <TableCell
-                        className="text-xs text-[#222222] max-w-[165px] truncate"
-                        title={deptName}
-                      >
-                        {deptName}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
+                    <article key={u.id} className="px-4 py-4 space-y-3 bg-[#ffffff]">
+                      <div className="flex items-center justify-between gap-2">
                         {u.clearanceCode ? (
                           <ClassificationBadge
                             code={u.clearanceCode}
@@ -473,108 +346,210 @@ export function UsersTab({
                             size="sm"
                           />
                         ) : (
-                          <span
-                            className="staff-badge bg-transparent border-0 p-0 inline-flex items-center gap-1 text-xs font-semibold text-[#C13515]"
-                            title="Chưa gán cấp thẩm quyền bảo mật (Cấp 0)"
-                          >
+                          <span className="staff-badge bg-transparent border-0 p-0 inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-xs font-semibold text-[#C13515]">
                             <ShieldAlert size={16} strokeWidth={1.75} aria-hidden="true" />
                             <span>CHƯA CẤP · Cấp 0</span>
                           </span>
                         )}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        <Badge
-                          variant={
-                            u.status === 'ACTIVE'
-                              ? 'success'
-                              : u.status === 'LOCKED'
-                                ? 'warning'
-                                : u.status === 'PENDING'
-                                  ? 'info'
-                                  : 'destructive'
-                          }
-                        >
+                        <Badge variant={getUserStatusVariant(u.status)}>
                           {formatUserStatusLabel(u.status)}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="ml-auto flex flex-wrap items-center justify-end gap-1 min-w-[215px] max-w-[300px] 2xl:max-w-none">
-                          <InteractiveHoverButton
-                            variant="ghost"
-                            size="sm"
-                            text="Sửa"
-                            icon={<Pencil size={16} strokeWidth={1.75} aria-hidden="true" />}
-                            onClick={() => onOpenEditUser(u)}
-                          />
-                          <InteractiveHoverButton
-                            variant="secondary"
-                            size="sm"
-                            text="Thẩm quyền"
-                            icon={<ShieldCheck size={16} strokeWidth={1.75} aria-hidden="true" />}
-                            onClick={() => onOpenUpdateClearance(u)}
-                          />
-                          <InteractiveHoverButton
-                            variant="secondary"
-                            size="sm"
-                            text="Vai trò"
-                            icon={<Key size={16} strokeWidth={1.75} aria-hidden="true" />}
-                            onClick={() => onOpenAssignRole(u)}
-                          />
-                          {!isSelf && u.status === 'ACTIVE' && (
-                            <InteractiveHoverButton
-                              variant="ghost"
-                              size="sm"
-                              text="Khóa"
-                              icon={<Lock size={16} strokeWidth={1.75} aria-hidden="true" />}
-                              onClick={() => {
-                                onClearError();
-                                setPendingAction({ user: u, action: 'lock' });
-                              }}
-                            />
-                          )}
-                          {u.status === 'LOCKED' && (
-                            <InteractiveHoverButton
-                              variant="secondary"
-                              size="sm"
-                              text="Mở khóa"
-                              icon={<Unlock size={16} strokeWidth={1.75} aria-hidden="true" />}
-                              isLoading={unlockingUserId === u.id}
-                              disabled={unlockingUserId === u.id}
-                              onClick={() => void handleDirectUnlock(u)}
-                            />
-                          )}
-                          {canReactivateDisabled && (
-                            <InteractiveHoverButton
-                              variant="secondary"
-                              size="sm"
-                              text="Kích hoạt"
-                              icon={<Unlock size={16} strokeWidth={1.75} aria-hidden="true" />}
-                              onClick={() => {
-                                onClearError();
-                                setPendingAction({ user: u, action: 'reactivate' });
-                              }}
-                            />
-                          )}
-                          {!isSelf && u.status !== 'DISABLED' && (
-                            <InteractiveHoverButton
-                              variant="danger"
-                              size="sm"
-                              text="Vô hiệu hóa"
-                              icon={<Ban size={16} strokeWidth={1.75} aria-hidden="true" />}
-                              onClick={() => {
-                                onClearError();
-                                setPendingAction({ user: u, action: 'disable' });
-                              }}
-                            />
-                          )}
+                      </div>
+                      <div className="space-y-0.5 min-w-0">
+                        <h3 className="text-sm font-semibold text-[#222222] leading-snug break-words">
+                          {u.fullName}
+                        </h3>
+                        <p className="text-xs text-[#717171] truncate">
+                          @{u.username}
+                          {u.employeeCode ? ` · ${u.employeeCode}` : ''}
+                        </p>
+                      </div>
+                      <div className="rounded-[12px] bg-[#f7f7f7] px-3 py-2 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[#717171] shrink-0">Email</span>
+                          <span className="text-[#222222] text-right truncate">{u.email}</span>
                         </div>
-                      </TableCell>
-                    </TableRow>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[#717171] shrink-0">Phòng ban</span>
+                          <span className="font-medium text-[#222222] text-right truncate">
+                            {deptName}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-0.5">
+                        {renderUserActions(u, true)}
+                      </div>
+                    </article>
                   );
-                })
+                })}
+              </div>
+
+              {/* Bảng dữ liệu máy tính */}
+              <div className="hidden md:block">
+                <Table containerRef={tableScrollRef}>
+                  <TableHeader>
+                    <TableRow>
+                      {(
+                        [
+                          ['fullName', 'Tài khoản', 'Sắp xếp theo tên tài khoản'],
+                          ['email', 'Email', 'Sắp xếp theo địa chỉ email'],
+                          ['department', 'Phòng ban', 'Sắp xếp theo phòng ban'],
+                          ['clearance', 'Cấp thẩm quyền', 'Sắp xếp theo cấp thẩm quyền bảo mật'],
+                          ['status', 'Trạng thái', 'Sắp xếp theo trạng thái tài khoản'],
+                        ] as const
+                      ).map(([field, label, title]) => (
+                        <TableHead key={field} aria-sort={getAriaSort(field)}>
+                          <button
+                            type="button"
+                            onClick={() => handleHeaderSort(field)}
+                            title={title}
+                            className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
+                              query.sortField === field
+                                ? 'text-[#222222]'
+                                : 'text-[#717171] hover:text-[#222222]'
+                            }`}
+                          >
+                            <span>{label}</span>
+                            {renderSortIcon(field)}
+                          </button>
+                        </TableHead>
+                      ))}
+                      <TableHead className="text-right" aria-sort={getAriaSort('action')}>
+                        <button
+                          type="button"
+                          onClick={() => handleHeaderSort('action')}
+                          title="Sắp xếp theo nhóm thao tác (Vô hiệu hóa / Kích hoạt)"
+                          className={`ml-auto inline-flex items-center justify-end gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
+                            query.sortField === 'action'
+                              ? 'text-[#222222]'
+                              : 'text-[#717171] hover:text-[#222222]'
+                          }`}
+                        >
+                          <span>Thao tác</span>
+                          {renderSortIcon('action')}
+                        </button>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedUsers.map((u) => {
+                      const deptName =
+                        resolveUserDepartmentName(u, departmentNamesById) ??
+                        UNASSIGNED_DEPARTMENT_LABEL;
+                      return (
+                        <TableRow key={u.id}>
+                          <TableCell className="min-w-[160px] max-w-[210px]">
+                            <div
+                              className="font-semibold text-xs text-[#222222] truncate"
+                              title={`${u.fullName} (@${u.username})`}
+                            >
+                              {u.fullName}
+                            </div>
+                            {u.employeeCode && (
+                              <div className="text-[11px] text-[#717171] truncate tabular-nums">
+                                {u.employeeCode}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell
+                            className="text-xs text-[#717171] max-w-[180px] truncate"
+                            title={u.email}
+                          >
+                            {u.email}
+                          </TableCell>
+                          <TableCell
+                            className="text-xs text-[#222222] max-w-[165px] truncate"
+                            title={deptName}
+                          >
+                            {deptName}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {u.clearanceCode ? (
+                              <ClassificationBadge
+                                code={u.clearanceCode}
+                                rank={u.clearanceRank ?? 0}
+                                showRank
+                                subject="user"
+                                size="sm"
+                              />
+                            ) : (
+                              <span className="staff-badge bg-transparent border-0 p-0 inline-flex items-center gap-1 text-xs font-semibold text-[#C13515]">
+                                <ShieldAlert size={16} strokeWidth={1.75} aria-hidden="true" />
+                                <span>CHƯA CẤP · Cấp 0</span>
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <Badge variant={getUserStatusVariant(u.status)}>
+                              {formatUserStatusLabel(u.status)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="ml-auto flex flex-wrap items-center justify-end gap-1 min-w-[215px] max-w-[300px] 2xl:max-w-none">
+                              {renderUserActions(u, false)}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {(totalPages > 1 || showTruncationNotice) && (
+                <div className="px-4 py-2.5 border-t border-[#ebebeb] bg-[#f7f7f7]/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-[#717171]">
+                  <div className="space-y-0.5">
+                    <span className="tabular-nums">
+                      Hiển thị{' '}
+                      <strong className="text-[#222222]">
+                        {paginatedUsers.length === 0
+                          ? '0'
+                          : `${startIdx + 1}–${startIdx + paginatedUsers.length}`}
+                      </strong>{' '}
+                      /{' '}
+                      <strong className="text-[#222222]">
+                        {isServerPaged
+                          ? (usersTotal ?? paginatedUsers.length)
+                          : displayedUsers.length}
+                      </strong>{' '}
+                      tài khoản
+                    </span>
+                    {showTruncationNotice && (
+                      <p className="text-[11px] text-[#717171]">
+                        Đang nạp {users.length} / {usersTotal ?? users.length} tài khoản trên máy
+                        chủ.
+                      </p>
+                    )}
+                  </div>
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between sm:justify-end gap-2">
+                      <InteractiveHoverButton
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        text="Trang trước"
+                        icon={<ChevronLeft size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        disabled={safePage <= 1 || isLoadingUsers}
+                        onClick={() => handlePageChange(safePage - 1)}
+                      />
+                      <span className="font-semibold text-[#222222] whitespace-nowrap tabular-nums">
+                        Trang {safePage} / {totalPages}
+                      </span>
+                      <InteractiveHoverButton
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        text="Trang sau"
+                        icon={<ChevronRight size={16} strokeWidth={1.75} aria-hidden="true" />}
+                        disabled={safePage >= totalPages || isLoadingUsers}
+                        onClick={() => handlePageChange(safePage + 1)}
+                      />
+                    </div>
+                  )}
+                </div>
               )}
-            </TableBody>
-          </Table>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -587,14 +562,14 @@ export function UsersTab({
           pendingAction?.action === 'disable'
             ? 'Xác nhận vô hiệu hóa tài khoản'
             : pendingAction?.action === 'reactivate'
-              ? 'Xác nhận kích hoạt lại tài khoản'
+              ? 'Xác nhận kích hoạt tài khoản'
               : 'Xác nhận khóa tạm thời tài khoản'
         }
         description={
           pendingAction?.action === 'disable'
             ? `Tài khoản @${pendingAction.user.username} (${pendingAction.user.fullName}) sẽ bị vô hiệu hóa và thu hồi tức thì mọi phiên hoạt động.`
             : pendingAction?.action === 'reactivate'
-              ? `Tài khoản @${pendingAction.user.username} (${pendingAction.user.fullName}) sẽ được chuyển từ trạng thái Vô hiệu hóa sang Đang hoạt động và có thể đăng nhập trở lại.`
+              ? `Tài khoản @${pendingAction.user.username} (${pendingAction.user.fullName}) sẽ được chuyển từ trạng thái ${formatUserStatusLabel(pendingAction.user.status)} sang Đang hoạt động và có thể đăng nhập hệ thống.`
               : `Tài khoản @${pendingAction?.user.username ?? ''} (${pendingAction?.user.fullName ?? ''}) sẽ bị khóa đăng nhập tạm thời và thu hồi tức thì mọi phiên đang mở.`
         }
         confirmLabel={

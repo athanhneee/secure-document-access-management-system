@@ -8,6 +8,7 @@ import { AuditDetailModal } from './audit-detail-modal';
 import { CreateGrantModal } from './create-grant-modal';
 import { DecideRequestModal } from './decide-request-modal';
 import { ForensicPreviewModal } from './forensic-preview-modal';
+import { RejectRequestModal } from './reject-request-modal';
 import { RevokeGrantModal } from './revoke-grant-modal';
 
 interface AccessAndAuditModalsProps {
@@ -45,12 +46,26 @@ export function AccessAndAuditModals({
         open={requestsControl.approveOpen}
         onOpenChange={requestsControl.setApproveOpen}
         request={requestsControl.selectedRequest}
+        docMeta={requestsControl.selectedRequestDocMeta}
         grantAction={requestsControl.grantAction}
         onActionChange={requestsControl.setGrantAction}
         grantValidDays={requestsControl.grantValidDays}
         onValidDaysChange={requestsControl.setGrantValidDays}
+        grantValidUntilOverride={requestsControl.grantValidUntilOverride}
+        onValidUntilOverrideChange={requestsControl.setGrantValidUntilOverride}
+        approveNote={requestsControl.approveNote}
+        onApproveNoteChange={requestsControl.setApproveNote}
         isApproving={requestsControl.isApproving}
         onConfirmApprove={() => void requestsControl.handleConfirmApprove()}
+      />
+      <RejectRequestModal
+        open={requestsControl.rejectOpen}
+        onOpenChange={requestsControl.setRejectOpen}
+        request={requestsControl.requestToReject}
+        decisionNote={requestsControl.rejectDecisionNote}
+        onDecisionNoteChange={requestsControl.setRejectDecisionNote}
+        isRejecting={requestsControl.isRejecting}
+        onSubmit={requestsControl.handleConfirmReject}
       />
       <AuditDetailModal
         open={auditDetailOpen}
@@ -63,6 +78,8 @@ export function AccessAndAuditModals({
         document={delivery.previewDoc}
         sessionId={delivery.previewSessionId}
         versionNo={delivery.previewVersionNo}
+        allowDownload={delivery.previewAllowDownload}
+        obligations={delivery.previewObligations}
         pdfBytes={delivery.previewPdfBytes}
         pdfUrl={delivery.previewPdfUrl}
         page={delivery.previewPage}

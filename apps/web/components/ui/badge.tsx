@@ -47,7 +47,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        'staff-badge bg-transparent border-0 p-0 inline-flex items-center gap-1.5 text-xs font-semibold select-none',
+        'staff-badge bg-transparent border-0 p-0 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs font-semibold select-none',
         currentStyle.text,
         className,
       )}

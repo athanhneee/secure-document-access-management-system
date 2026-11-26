@@ -1,6 +1,7 @@
 'use client';
 
-import { ChevronLeft, ChevronRight, Download, Eye, Loader2, Send } from 'lucide-react';
+import Link from 'next/link';
+import { ChevronLeft, ChevronRight, Download, Eye, Loader2, Send, ShieldCheck } from 'lucide-react';
 import { ClassificationBadge } from '@/components/classification-badge';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -14,24 +15,57 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { formatSafeDateVi } from '@/lib/ui-labels';
-import { formatReaderGrantPermissionSummary, resolveGrantExpiryUrgency } from '../helpers';
+import {
+  resolveDocumentAccessPrecheck,
+  type SessionSecurityPosture,
+} from '@/lib/use-session-posture';
+import {
+  formatReaderGrantPermissionSummary,
+  rankFromCode,
+  resolveGrantExpiryUrgency,
+} from '../helpers';
 import type { MyGrantedDoc, MyRequestItem } from '../types';
 
 interface GrantedDocumentsTabProps {
   myDocs: MyGrantedDoc[];
   myRequests?: MyRequestItem[] | undefined;
+  pendingRequestDocIds?: ReadonlySet<string> | undefined;
   isLoading?: boolean | undefined;
   page?: number | undefined;
   hasMore?: boolean | undefined;
   onPageChange?: ((page: number) => void) | undefined;
+  openingDocId?: string | null | undefined;
   downloadingDocIds?: ReadonlySet<string> | undefined;
   downloadingDocId?: string | null | undefined;
+  sessionPosture?: SessionSecurityPosture | null | undefined;
+  mfaActionHref?: string | undefined;
   canViewDocument?: boolean;
   canDownloadDocument?: boolean;
   canRequestAccess?: boolean;
   onOpenPreview: (doc: MyGrantedDoc) => void;
   onDownload: (doc: MyGrantedDoc) => void;
-  onRequestUpgrade?: ((doc: MyGrantedDoc, action: 'VIEW' | 'DOWNLOAD') => void) | undefined;
+  onRequestUpgrade?:
+    | ((
+        doc: MyGrantedDoc,
+        action: 'VIEW' | 'DOWNLOAD',
+        intent?: 'UPGRADE_DOWNLOAD' | 'RENEW',
+      ) => void)
+    | undefined;
+}
+
+/**
+ * Thuật toán: Định Dạng Nhãn Nguồn Cấp Quyền Đã Hợp Nhất (`formatGrantSourceLabel`, BUG-119)
+ */
+function formatGrantSourceLabel(doc: MyGrantedDoc): string {
+  if (doc.hasDirectAndRoleGrant) {
+    return doc.roleName
+      ? `Cấp trực tiếp & Theo vai trò: ${doc.roleName}`
+      : 'Cấp trực tiếp & Theo vai trò';
+  }
+  if (doc.principalType === 'ROLE') {
+    return `Theo vai trò${doc.roleName ? `: ${doc.roleName}` : ''}`;
+  }
+  return 'Cấp trực tiếp';
 }
 
 /**
@@ -43,12 +77,16 @@ interface GrantedDocumentsTabProps {
 export function GrantedDocumentsTab({
   myDocs,
   myRequests = [],
+  pendingRequestDocIds,
   isLoading = false,
   page = 1,
   hasMore = false,
   onPageChange,
+  openingDocId = null,
   downloadingDocIds,
   downloadingDocId,
+  sessionPosture = null,
+  mfaActionHref = '/mfa?redirect=%2Freader',
   canViewDocument = true,
   canDownloadDocument = true,
   canRequestAccess = false,
@@ -65,11 +103,12 @@ export function GrantedDocumentsTab({
     doc: MyGrantedDoc,
     canDownload: boolean,
     expiryUrgency: 'danger' | 'warning' | 'success',
+    mobileLayout = false,
   ) {
     const isDownloading = isDocDownloading(doc.documentId);
-    const hasPendingRequest = myRequests.some(
-      (r) => r.status === 'PENDING' && r.documentId === doc.documentId,
-    );
+    const hasPendingRequest = pendingRequestDocIds
+      ? pendingRequestDocIds.has(doc.documentId)
+      : myRequests.some((r) => r.status === 'PENDING' && r.documentId === doc.documentId);
     const showUpgradeDownload =
       Boolean(onRequestUpgrade) &&
       canRequestAccess &&
@@ -83,18 +122,56 @@ export function GrantedDocumentsTab({
       !hasPendingRequest &&
       !showUpgradeDownload &&
       expiryUrgency !== 'success';
+    const precheck = resolveDocumentAccessPrecheck(
+      sessionPosture,
+      rankFromCode(doc.classificationCode),
+    );
+    const isOpening = openingDocId === doc.documentId;
+
+    const buttonCount =
+      Number(canViewDocument) +
+      Number(canDownload) +
+      Number(showUpgradeDownload) +
+      Number(showRenew);
 
     return (
-      <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
-        {canViewDocument && (
-          <InteractiveHoverButton
-            size="sm"
-            variant="primary"
-            text="Xem tài liệu"
-            icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
-            onClick={() => onOpenPreview(doc)}
-          />
-        )}
+      <div
+        className={
+          mobileLayout
+            ? buttonCount >= 2
+              ? 'grid grid-cols-2 gap-2 w-full'
+              : 'flex flex-col gap-2 w-full'
+            : 'inline-flex flex-wrap items-center justify-end gap-1.5'
+        }
+      >
+        {canViewDocument &&
+          (precheck.blocked && precheck.requiresMfa ? (
+            <Link
+              href={mfaActionHref}
+              title={precheck.reason ?? undefined}
+              className={`inline-flex min-h-11 sm:min-h-8 items-center justify-center gap-1.5 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 py-1.5 text-xs font-semibold text-[#222222] hover:bg-[#f7f7f7] transition-colors ${mobileLayout ? 'w-full' : ''}`}
+            >
+              <ShieldCheck
+                size={16}
+                strokeWidth={1.75}
+                className="text-[#E07912]"
+                aria-hidden="true"
+              />
+              <span>Cần xác thực MFA</span>
+            </Link>
+          ) : (
+            <InteractiveHoverButton
+              size="sm"
+              variant="primary"
+              text="Xem tài liệu"
+              icon={<Eye size={16} strokeWidth={1.75} aria-hidden="true" />}
+              isLoading={isOpening}
+              disabled={Boolean(openingDocId) || precheck.blocked}
+              title={precheck.reason ?? undefined}
+              onClick={() => onOpenPreview(doc)}
+              className={mobileLayout ? 'w-full' : undefined}
+            />
+          ))}
 
         {canDownload && (
           <InteractiveHoverButton
@@ -102,10 +179,11 @@ export function GrantedDocumentsTab({
             variant="secondary"
             text="Tải bản sao"
             icon={<Download size={16} strokeWidth={1.75} aria-hidden="true" />}
-            disabled={isDownloading}
+            disabled={isDownloading || precheck.blocked}
             isLoading={isDownloading}
             onClick={() => onDownload(doc)}
-            title="Tải bản sao có watermark bảo mật"
+            title={precheck.reason ?? 'Tải bản sao có watermark bảo mật'}
+            className={mobileLayout ? 'w-full' : undefined}
           />
         )}
 
@@ -115,7 +193,8 @@ export function GrantedDocumentsTab({
             variant="secondary"
             text="Xin quyền tải"
             icon={<Send size={16} strokeWidth={1.75} aria-hidden="true" />}
-            onClick={() => onRequestUpgrade(doc, 'DOWNLOAD')}
+            onClick={() => onRequestUpgrade(doc, 'DOWNLOAD', 'UPGRADE_DOWNLOAD')}
+            className={mobileLayout ? 'w-full' : undefined}
           />
         )}
 
@@ -125,7 +204,8 @@ export function GrantedDocumentsTab({
             variant="secondary"
             text="Xin gia hạn"
             icon={<Send size={16} strokeWidth={1.75} aria-hidden="true" />}
-            onClick={() => onRequestUpgrade(doc, canDownload ? 'DOWNLOAD' : 'VIEW')}
+            onClick={() => onRequestUpgrade(doc, canDownload ? 'DOWNLOAD' : 'VIEW', 'RENEW')}
+            className={mobileLayout ? 'w-full' : undefined}
           />
         )}
       </div>
@@ -134,7 +214,7 @@ export function GrantedDocumentsTab({
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader className="p-4 sm:p-5 pb-3.5 border-b border-[#ebebeb]">
         <CardTitle className="text-sm sm:text-base text-[#222222]">
           Tài liệu được cấp quyền ({myDocs.length}
           {hasMore ? '+' : ''})
@@ -173,35 +253,50 @@ export function GrantedDocumentsTab({
                       ? 'dot-warning'
                       : 'dot-success';
                 return (
-                  <article key={doc.id} className="p-3.5 space-y-2.5 text-xs bg-[#ffffff]">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <h3 className="font-semibold text-[#222222] break-words">{doc.title}</h3>
-                        <div className="text-xs font-bold text-[#717171]">
-                          {doc.documentCode || 'Chưa cấp mã'}
-                        </div>
-                      </div>
+                  <article key={doc.documentId} className="px-4 py-4 space-y-3 bg-[#ffffff]">
+                    <div className="flex items-center justify-between gap-2">
                       <ClassificationBadge level={doc.classificationCode} size="sm" />
-                    </div>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <Badge variant={permSummary.canDownload ? 'info' : 'secondary'}>
-                        {permSummary.label}
-                      </Badge>
-                      <span className="text-xs text-[#717171]">
-                        {doc.principalType === 'ROLE'
-                          ? `Theo vai trò${doc.roleName ? `: ${doc.roleName}` : ''}`
-                          : 'Cấp trực tiếp'}
+                      <span className="font-mono text-xs text-[#717171] truncate">
+                        {doc.documentCode || 'Chưa cấp mã'}
                       </span>
                     </div>
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#717171]">
-                      <span>Từ: {formatSafeDateVi(doc.validFrom, { includeTime: true })}</span>
-                      <span className="inline-flex items-center gap-1.5 font-semibold text-[#222222]">
-                        <span className={`dot ${dotClass}`} aria-hidden="true" />
-                        <span>Đến: {formatSafeDateVi(doc.validUntil, { includeTime: true })}</span>
-                      </span>
+
+                    <h3 className="text-sm font-semibold text-[#222222] leading-snug break-words">
+                      {doc.title}
+                    </h3>
+
+                    <div className="rounded-[12px] bg-[#f7f7f7] px-3 py-2 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#717171] shrink-0">Quyền hạn</span>
+                        <Badge variant={permSummary.canDownload ? 'info' : 'secondary'}>
+                          {permSummary.label}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#717171] shrink-0">Nguồn cấp</span>
+                        <span className="font-medium text-[#222222] text-right truncate">
+                          {formatGrantSourceLabel(doc)}
+                        </span>
+                      </div>
+                      {doc.validFrom && (
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[#717171] shrink-0">Hiệu lực từ</span>
+                          <span className="text-[#717171] tabular-nums">
+                            {formatSafeDateVi(doc.validFrom, { includeTime: true })}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#717171] shrink-0">Hiệu lực đến</span>
+                        <span className="inline-flex items-center gap-1.5 font-semibold text-[#222222] tabular-nums whitespace-nowrap">
+                          <span className={`dot ${dotClass}`} aria-hidden="true" />
+                          <span>{formatSafeDateVi(doc.validUntil, { includeTime: true })}</span>
+                        </span>
+                      </div>
                     </div>
-                    <div className="pt-1 flex flex-wrap gap-2">
-                      {renderGrantActions(doc, permSummary.canDownload, urgency)}
+
+                    <div className="pt-0.5">
+                      {renderGrantActions(doc, permSummary.canDownload, urgency, true)}
                     </div>
                   </article>
                 );
@@ -237,7 +332,7 @@ export function GrantedDocumentsTab({
 
                     return (
                       <TableRow
-                        key={doc.id}
+                        key={doc.documentId}
                         className="border-b border-[#ebebeb] hover:bg-[#f7f7f7]/60"
                       >
                         <TableCell>
@@ -255,9 +350,7 @@ export function GrantedDocumentsTab({
                               {permSummary.label}
                             </Badge>
                             <span className="text-xs text-[#717171]">
-                              {doc.principalType === 'ROLE'
-                                ? `Theo vai trò${doc.roleName ? `: ${doc.roleName}` : ''}`
-                                : 'Cấp trực tiếp'}
+                              {formatGrantSourceLabel(doc)}
                             </span>
                           </div>
                         </TableCell>
@@ -288,7 +381,7 @@ export function GrantedDocumentsTab({
 
         {onPageChange && (page > 1 || hasMore) && (
           <div className="flex items-center justify-between gap-2 border-t border-[#ebebeb] px-4 py-3 text-xs">
-            <span className="text-[#717171] font-medium">Trang {page}</span>
+            <span className="text-[#717171] font-medium tabular-nums">Trang {page}</span>
             <div className="flex items-center gap-2">
               <InteractiveHoverButton
                 type="button"

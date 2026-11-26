@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { resolveDefaultPortalForRoles, useAuth, type RoleType } from '@/lib/auth-context';
+import { lockBodyScroll } from '@/components/ui/body-scroll-lock';
 import { getVisibleFocusables } from '@/components/ui/dialog-focus';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 
@@ -77,12 +78,13 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const skipRestoreFocusRef = useRef(false);
+  const unlockBodyScrollRef = useRef<(() => void) | null>(null);
   const onCloseRef = useRef(onClose);
   const titleId = useId();
 
   /**
    * Thuật toán: Cuộn Tới Neo Nội Dung Sau Khi Giải Phóng Top-Layer `<dialog>` & Khóa Cuộn Nền (`handleAnchorNavigate`)
-   * Mục đích: Đóng `<dialog>` và khôi phục `document.body.style.overflow` trước khi gọi `scrollIntoView`, tránh trình duyệt di động nuốt thao tác nhảy neo `#vai-tro` / `#kien-truc` / `#tieu-chuan` khi nền đang ở trạng thái `inert` + `overflow: hidden`.
+   * Mục đích: Đóng `<dialog>` và giải phóng khóa cuộn tham chiếu trước khi gọi `scrollIntoView`, tránh trình duyệt di động nuốt thao tác nhảy neo `#vai-tro` / `#kien-truc` / `#tieu-chuan` khi nền đang ở trạng thái `inert` + `overflow: hidden`.
    */
   function handleAnchorNavigate(event: ReactMouseEvent<HTMLAnchorElement>, targetId: string) {
     event.preventDefault();
@@ -95,7 +97,7 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
         // Bỏ qua nếu hộp thoại đã đóng
       }
     }
-    document.body.style.overflow = '';
+    unlockBodyScrollRef.current?.();
     onClose();
     window.requestAnimationFrame(() => {
       const targetEl = document.getElementById(targetId);
@@ -121,10 +123,20 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
   }, [onClose]);
 
   useEffect(() => {
+    const tabletMedia =
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(min-width: 768px)')
+        : null;
+    if (tabletMedia?.matches) {
+      onCloseRef.current();
+      return;
+    }
+
     const dialogEl = dialogRef.current;
     previousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    document.body.style.overflow = 'hidden';
+    const unlockBodyScroll = lockBodyScroll();
+    unlockBodyScrollRef.current = unlockBodyScroll;
 
     if (dialogEl && !dialogEl.open && typeof dialogEl.showModal === 'function') {
       try {
@@ -141,6 +153,12 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
         candidates[0] ??
         dialogEl;
       preferred.focus();
+    }
+
+    function handleViewportChange(event: MediaQueryListEvent) {
+      if (event.matches) {
+        onCloseRef.current();
+      }
     }
 
     function handleKeyDown(e: KeyboardEvent) {
@@ -179,13 +197,16 @@ export function HomeMobileDrawer({ onClose }: HomeMobileDrawerProps) {
       }
     }
 
+    tabletMedia?.addEventListener('change', handleViewportChange);
     dialogEl?.addEventListener('keydown', handleKeyDown);
     dialogEl?.addEventListener('click', handleBackdropClick);
 
     return () => {
+      tabletMedia?.removeEventListener('change', handleViewportChange);
       dialogEl?.removeEventListener('keydown', handleKeyDown);
       dialogEl?.removeEventListener('click', handleBackdropClick);
-      document.body.style.overflow = '';
+      unlockBodyScroll();
+      unlockBodyScrollRef.current = null;
       if (dialogEl?.open && typeof dialogEl.close === 'function') {
         try {
           dialogEl.close();

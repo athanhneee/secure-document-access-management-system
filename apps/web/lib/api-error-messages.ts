@@ -25,6 +25,135 @@ const ABAC_ATTRIBUTE_LABELS: Readonly<Record<string, string>> = {
   RESOURCE_CATEGORY: 'danh mục nghiệp vụ tài liệu',
 };
 
+const SESSION_RISK_FACTOR_LABELS: Readonly<Record<string, string>> = {
+  UNTRUSTED_NETWORK: 'mạng ngoài dải tin cậy',
+  SESSION_IP_DRIFT: 'địa chỉ IP thay đổi so với lúc đăng nhập',
+  SESSION_UA_DRIFT: 'trình duyệt hoặc thiết bị thay đổi so với lúc đăng nhập',
+  NO_MFA: 'phiên chưa xác thực đa yếu tố (MFA)',
+  SENSITIVE_NO_MFA: 'tài liệu độ mật cao chưa xác thực MFA',
+  UNTRUSTED_DEVICE: 'thiết bị chưa được xác nhận tin cậy',
+  OFF_HOURS_ACCESS: 'truy cập ngoài khung giờ hành chính (07:00–20:00)',
+  REPEATED_FAILED_LOGINS: 'nhiều lần đăng nhập sai gần đây',
+  RECENT_FAILED_LOGINS: 'có nhiều lần đăng nhập sai gần đây',
+  ACTIVE_CRITICAL_SECURITY_ALERT: 'tài khoản đang có cảnh báo an ninh mức Nghiêm trọng chưa đóng',
+  MULTIPLE_HIGH_SECURITY_ALERTS: 'tài khoản đang có nhiều cảnh báo an ninh mức Cao chưa đóng',
+  ACTIVE_HIGH_SECURITY_ALERT: 'tài khoản đang có cảnh báo an ninh mức Cao chưa đóng',
+};
+
+const MFA_REMEDIABLE_RISK_FACTORS = new Set(['NO_MFA', 'SENSITIVE_NO_MFA']);
+
+/**
+ * Thuật toán: Ánh Xạ Danh Sách Mã Yếu Tố Rủi Ro Phiên Sang Nhãn Tiếng Việt Gọn Rõ Không Lặp (`formatSessionRiskFactorLabels`)
+ */
+export function formatSessionRiskFactorLabels(factors: readonly string[]): string[] {
+  const normalized = [...new Set(factors.map((f) => f.trim().toUpperCase()).filter(Boolean))];
+  const hasNoMfa = normalized.includes('NO_MFA');
+  const labels: string[] = [];
+  for (const key of normalized) {
+    if (key === 'SENSITIVE_NO_MFA' && hasNoMfa) continue;
+    const label = SESSION_RISK_FACTOR_LABELS[key];
+    if (label && !labels.includes(label)) {
+      labels.push(label);
+    }
+  }
+  return labels;
+}
+
+export interface SessionSecurityPosture {
+  mfaVerified: boolean;
+  mfaEnabled: boolean;
+  trustedNetwork: boolean;
+  deviceTrust: boolean;
+  riskScore: number;
+  sensitiveRiskScore: number;
+  riskThreshold: number;
+  highRiskBlocked: boolean;
+  sensitiveHighRiskBlocked: boolean;
+  topSecretRequiresMfa: boolean;
+  riskFactors: string[];
+  evaluatedAt: string;
+}
+
+export interface DocumentAccessPrecheckResult {
+  blocked: boolean;
+  requiresMfa: boolean;
+  reason: string | null;
+}
+
+/**
+ * Thuật toán: Tiền Kiểm Điều Kiện Phiên Theo Cấp Độ Mật Tài Liệu (`resolveDocumentAccessPrecheck`)
+ * Mục đích: Xác định trước khi người dùng bấm nút Xem/Tải liệu tài liệu có chắc chắn bị chặn bởi
+ * ngưỡng rủi ro phiên (`POL-DENY-HIGH-RISK-SESSION`) hoặc thiếu MFA trên tài liệu Tuyệt mật
+ * (`POL-DENY-TOP-SECRET-WITHOUT-MFA`) hay không để cảnh báo/khóa sớm trên giao diện.
+ * Lưu ý: Chỉ đóng vai trò tối ưu UX phía trình duyệt; cổng PEP máy chủ luôn là chốt chặn quyết định cuối cùng.
+ */
+export function resolveDocumentAccessPrecheck(
+  posture: SessionSecurityPosture | null | undefined,
+  classificationRank: number,
+): DocumentAccessPrecheckResult {
+  if (!posture) {
+    return { blocked: false, requiresMfa: false, reason: null };
+  }
+
+  const effectiveScore =
+    classificationRank >= 3
+      ? typeof posture.sensitiveRiskScore === 'number'
+        ? posture.sensitiveRiskScore
+        : posture.riskScore
+      : posture.riskScore;
+  const isRiskBlocked =
+    posture.highRiskBlocked ||
+    (classificationRank >= 3 && Boolean(posture.sensitiveHighRiskBlocked)) ||
+    effectiveScore >= posture.riskThreshold;
+
+  if (isRiskBlocked) {
+    const labels = formatSessionRiskFactorLabels(posture.riskFactors);
+    const factorSummary = labels.length > 0 ? `: ${labels.join(', ')}` : '';
+    const canLowerRiskWithMfa = !posture.mfaVerified;
+    return {
+      blocked: true,
+      requiresMfa: canLowerRiskWithMfa,
+      reason: `Phiên đang ở mức rủi ro cao (${effectiveScore}/${posture.riskThreshold})${factorSummary}.`,
+    };
+  }
+
+  if (classificationRank >= 4 && !posture.mfaVerified) {
+    return {
+      blocked: true,
+      requiresMfa: true,
+      reason: 'Tài liệu Tuyệt mật yêu cầu phiên đã xác thực đa yếu tố (MFA) trước khi truy cập.',
+    };
+  }
+
+  return { blocked: false, requiresMfa: false, reason: null };
+}
+
+/**
+ * Thuật toán: Xác Định Lỗi Từ Chối Có Thể Khắc Phục Hoặc Hạ Điểm Rủi Ro Bằng Xác Thực MFA Hay Không (`shouldOfferMfaActionForError`)
+ * Mục đích: Bật nút lối tắt "Xác thực MFA ngay" cho cả `STEP_UP_MFA_REQUIRED` lẫn `POLICY_DENIED` khi
+ * `details.riskFactors` ghi nhận yếu tố chưa xác thực MFA (`NO_MFA` / `SENSITIVE_NO_MFA`).
+ */
+export function shouldOfferMfaActionForError(
+  errorCode: string | undefined,
+  details?: unknown,
+): boolean {
+  const normalizedCode = (errorCode ?? '').trim().toUpperCase();
+  if (normalizedCode === 'STEP_UP_MFA_REQUIRED') {
+    return true;
+  }
+  if (normalizedCode !== 'POLICY_DENIED') {
+    return false;
+  }
+  if (!details || typeof details !== 'object' || Array.isArray(details)) {
+    return false;
+  }
+  const detailObj = details as Record<string, unknown>;
+  const rawFactors = Array.isArray(detailObj['riskFactors'])
+    ? detailObj['riskFactors'].filter((item): item is string => typeof item === 'string')
+    : [];
+  return rawFactors.some((factor) => MFA_REMEDIABLE_RISK_FACTORS.has(factor.trim().toUpperCase()));
+}
+
 const KNOWN_ABAC_REASONS = [
   'MISSING_REQUIRED_ATTRIBUTE',
   'INSUFFICIENT_CLEARANCE',
@@ -97,9 +226,33 @@ function resolveAbacPolicyDenialMessage(
   }
 
   if (reasonCode === 'EXPLICIT_DENY') {
-    return isGrantContext
-      ? 'Chính sách bảo mật hiện hành từ chối cấp quyền truy cập tài liệu này do khớp quy tắc chặn.'
-      : 'Chính sách bảo mật hiện hành từ chối truy cập tài liệu này (ví dụ: tài liệu Tuyệt mật yêu cầu xác thực đa yếu tố MFA hoặc phiên có mức rủi ro cao).';
+    if (isGrantContext) {
+      return 'Chính sách bảo mật hiện hành từ chối cấp quyền truy cập tài liệu này do khớp quy tắc chặn.';
+    }
+    const riskScore =
+      typeof detailObj?.['riskScore'] === 'number' && Number.isFinite(detailObj['riskScore'])
+        ? detailObj['riskScore']
+        : null;
+    const rawRiskFactors = Array.isArray(detailObj?.['riskFactors'])
+      ? detailObj['riskFactors'].filter((item): item is string => typeof item === 'string')
+      : [];
+    const riskFactorLabels = formatSessionRiskFactorLabels(rawRiskFactors);
+
+    if (riskScore !== null && riskScore >= 80) {
+      return riskFactorLabels.length > 0
+        ? `Phiên truy cập bị từ chối do điểm rủi ro cao (${riskScore}/100): ${riskFactorLabels.join(', ')}.`
+        : `Phiên truy cập bị từ chối do điểm rủi ro vượt ngưỡng an toàn (${riskScore}/100).`;
+    }
+
+    if (riskScore !== null) {
+      const normalizedFactors = rawRiskFactors.map((f) => f.trim().toUpperCase());
+      if (normalizedFactors.includes('UNTRUSTED_NETWORK')) {
+        return 'Chính sách bảo mật hiện hành từ chối truy cập tài liệu này theo quy tắc kiểm soát phạm vi hoặc ngữ cảnh mạng (mạng ngoài dải tin cậy).';
+      }
+      return 'Chính sách bảo mật hiện hành từ chối truy cập tài liệu này do khớp quy tắc chặn theo phạm vi phòng ban, thời gian hoặc ngữ cảnh truy cập.';
+    }
+
+    return 'Chính sách bảo mật hiện hành từ chối truy cập tài liệu này do khớp quy tắc chặn (như yêu cầu MFA, mức rủi ro phiên cao hoặc giới hạn phạm vi truy cập).';
   }
 
   if (reasonCode === 'DEFAULT_DENY') {
@@ -229,12 +382,24 @@ const EXACT_MESSAGE_MAP: Readonly<Record<string, string>> = {
     'Tài khoản này đã kích hoạt sẵn ứng dụng xác thực TOTP (6 số). Bạn có thể chuyển sang nhập mã xác thực hoặc quản lý nhân tố tại trang Phiên & thiết bị.',
   'cannot remove the last active mfa factor for a privileged role.':
     'Không thể gỡ nhân tố MFA cuối cùng đối với vai trò đặc quyền bắt buộc bảo mật 2 lớp.',
+  'privileged roles (system_admin, security_officer, auditor, or custom privileged roles) must keep mfa enabled.':
+    'Vai trò đặc quyền bắt buộc duy trì xác thực đa yếu tố (MFA) và không thể tắt toàn bộ MFA.',
+  'privileged roles (system_admin, security_officer, auditor) must keep mfa enabled.':
+    'Vai trò đặc quyền bắt buộc duy trì xác thực đa yếu tố (MFA) và không thể tắt toàn bộ MFA.',
+  'active mfa method was not found.':
+    'Không tìm thấy phương thức xác thực MFA đang hoạt động tương ứng.',
   'requestedfrom cannot be in the past.': 'Thời điểm bắt đầu đề nghị không được nằm trong quá khứ.',
   'requesteduntil must be in the future.': 'Thời điểm kết thúc đề nghị phải nằm trong tương lai.',
   'requesteduntil must be after requestedfrom.':
     'Thời điểm kết thúc đề nghị phải lớn hơn thời điểm bắt đầu.',
+  'requesteduntil must be in the future and after requestedfrom.':
+    'Thời điểm kết thúc đề nghị phải nằm trong tương lai và lớn hơn thời điểm bắt đầu.',
+  'validuntil must be a valid future iso timestamp.':
+    'Thời điểm kết thúc hiệu lực phải nằm trong tương lai.',
+  'requested access duration cannot exceed 30 days.':
+    'Khoảng thời gian đề nghị truy cập không được vượt quá 30 ngày.',
   'requested access duration cannot exceed 365 days.':
-    'Khoảng thời gian đề nghị truy cập không được vượt quá 365 ngày.',
+    'Khoảng thời gian đề nghị truy cập vượt quá giới hạn tối đa cho phép.',
   'password and live mfa verification are required.':
     'Vui lòng cung cấp mật khẩu hiện tại và mã MFA trực tiếp để xác nhận.',
   'reset request is invalid or expired.': 'Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.',
@@ -372,6 +537,26 @@ export function localizeApiErrorMessage(
   );
   if (specificAbacMessage) {
     return specificAbacMessage;
+  }
+
+  if (normalizedCode === 'GRANT_DURATION_EXCEEDED' && rawText.toLowerCase().includes('retention')) {
+    const detailObj =
+      response.details && typeof response.details === 'object' && !Array.isArray(response.details)
+        ? (response.details as Record<string, unknown>)
+        : null;
+    const rawDate =
+      typeof detailObj?.['retentionUntil'] === 'string' ? detailObj['retentionUntil'] : '';
+    const dateVi = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+      ? rawDate.split('-').reverse().join('/')
+      : rawDate;
+    if (rawText.toLowerCase().includes('expired')) {
+      return dateVi
+        ? `Tài liệu đã quá thời hạn lưu trữ bảo mật (${dateVi}) nên không thể tạo yêu cầu hoặc cấp quyền mới.`
+        : 'Tài liệu đã quá thời hạn lưu trữ bảo mật nên không thể tạo yêu cầu hoặc cấp quyền mới.';
+    }
+    return dateVi
+      ? `Thời điểm kết thúc truy cập không được vượt quá thời hạn lưu trữ bảo mật của tài liệu (${dateVi}).`
+      : 'Thời điểm kết thúc truy cập không được vượt quá thời hạn lưu trữ bảo mật của tài liệu.';
   }
 
   if (

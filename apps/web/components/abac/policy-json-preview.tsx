@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Code2, Check, Copy, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -19,6 +19,26 @@ export function PolicyJsonPreview({
   onApplyJson,
 }: PolicyJsonPreviewProps) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
+  async function handleCopyJson() {
+    setCopyError(null);
+    try {
+      await navigator.clipboard.writeText(jsonText);
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopyError('Không thể sao chép tự động. Vui lòng chọn và sao chép thủ công.');
+    }
+  }
 
   return (
     <Card className="border-[#ebebeb] bg-[#ffffff] shadow-xs flex-1">
@@ -37,11 +57,7 @@ export function PolicyJsonPreview({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => {
-              navigator.clipboard.writeText(jsonText);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            }}
+            onClick={() => void handleCopyJson()}
             className="rounded-full text-xs min-h-11 sm:h-9 border-[#dddddd] flex items-center gap-1.5"
           >
             {copied ? (
@@ -62,10 +78,10 @@ export function PolicyJsonPreview({
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        {jsonError && (
-          <div className="p-3 rounded-[12px] bg-[#C13515]/10 border border-[#C13515]/30 text-xs text-[#C13515] flex items-center gap-2">
+        {(jsonError || copyError) && (
+          <div className="p-3 rounded-[12px] bg-[#C13515]/10 border border-[#dddddd] text-xs text-[#C13515] flex items-center gap-2">
             <AlertTriangle size={16} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-            <span>{jsonError}</span>
+            <span>{jsonError || copyError}</span>
           </div>
         )}
         <textarea
@@ -73,7 +89,7 @@ export function PolicyJsonPreview({
           value={jsonText}
           onChange={(e) => onChangeJsonText(e.target.value)}
           rows={20}
-          className="w-full font-mono text-xs p-4 rounded-[16px] bg-[#222222] text-[#f7f7f7] border border-[#dddddd] focus:outline-none focus:border-[#FF385C]"
+          className="w-full font-mono text-xs p-4 rounded-[16px] bg-[#222222] text-[#f7f7f7] border border-[#dddddd] focus-visible:outline-none focus-visible:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/25"
           spellCheck={false}
         />
       </CardContent>

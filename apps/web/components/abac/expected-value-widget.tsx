@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Tag, X } from 'lucide-react';
+import { Network, Tag, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { PolicyOperator } from './abac-models';
+import { isValidCidr } from './cidr-matcher';
 import { BetweenBoundsInput, TimeBetweenInput } from './expected-range-widgets';
 
 export interface ExpectedValueWidgetProps {
@@ -21,10 +22,27 @@ export interface ExpectedValueWidgetProps {
 }
 
 /**
+ * Thuật toán: Chuẩn Hóa Danh Sách Dải Mạng `CIDR_MATCH` Sang Mảng `string[]` Đạt Chuẩn `policy-validator.ts` (`normalizeCidrExpectedList`)
+ * Mục đích: Tách chuỗi phân cách bởi dấu phẩy/chấm phẩy/khoảng trắng hoặc mảng chuỗi sẵn có thành danh sách CIDR độc lập, ngăn nối thành 1 chuỗi duy nhất gây lỗi 400 trên Backend.
+ */
+export function normalizeCidrExpectedList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return value
+      .split(/[\s,;]+/u)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+/**
  * Thuật toán: Điều Khiển Nhập Liệu Giá Trị Kỳ Vọng Đa Hình (`ExpectedValueWidget`)
  * Mục đích:
- *   - Tự động chọn giao diện nhập chuẩn kiểu cho `(attributeMeta, operator)` bao gồm `EXISTS` (Boolean nghiêm ngặt), `TIME_BETWEEN`, `BETWEEN`, `IN`/`NOT_IN` (hỗ trợ chọn trực tiếp từ danh mục động CSDL), và `EQ`/`NEQ`.
- *   - Hiển thị tập hợp giá trị `IN` / `NOT_IN` theo mẫu phẳng `staff-001` (nền trong suốt, không đóng khung viên thuốc).
+ *   - Tự động chọn giao diện nhập chuẩn kiểu cho `(attributeMeta, operator)` bao gồm `EXISTS` (Boolean nghiêm ngặt), `TIME_BETWEEN`, `BETWEEN`, `CIDR_MATCH` (danh sách thẻ CIDR `string[]` có kiểm tra cú pháp), `IN`/`NOT_IN`, và `EQ`/`NEQ`.
+ *   - Hiển thị tập hợp giá trị `CIDR_MATCH` / `IN` / `NOT_IN` theo mẫu phẳng `staff-001` (nền trong suốt, không đóng khung viên thuốc).
  */
 export function ExpectedValueWidget({
   attributeMeta,
@@ -33,6 +51,7 @@ export function ExpectedValueWidget({
   onChange,
 }: ExpectedValueWidgetProps) {
   const [tagInput, setTagInput] = useState('');
+  const [cidrError, setCidrError] = useState<string | null>(null);
   const resolvedType = attributeMeta?.valueType ?? attributeMeta?.type ?? 'STRING';
   const isNumeric = resolvedType === 'NUMBER';
 
@@ -58,11 +77,106 @@ export function ExpectedValueWidget({
         aria-label="Điều kiện tồn tại thuộc tính"
         value={boolVal}
         onChange={(e) => onChange(e.target.value === 'true')}
-        className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+        className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222] focus-visible:outline-none focus-visible:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
       >
         <option value="true">Phải có giá trị (Tồn tại)</option>
         <option value="false">Không có giá trị (Rỗng)</option>
       </select>
+    );
+  }
+
+  if (operator === 'CIDR_MATCH') {
+    const cidrList = normalizeCidrExpectedList(value);
+
+    const commitCidrTokens = (rawText: string) => {
+      const candidates = rawText
+        .split(/[\s,;]+/u)
+        .map((token) => token.trim())
+        .filter(Boolean);
+      if (candidates.length === 0) return;
+
+      const invalidToken = candidates.find((token) => !isValidCidr(token));
+      if (invalidToken) {
+        setCidrError(
+          `Dải mạng "${invalidToken}" không đúng định dạng CIDR/IP (VD: 192.168.1.0/24, 10.0.0.0/8, fc00::/7).`,
+        );
+        return;
+      }
+
+      setCidrError(null);
+      const merged = [...cidrList];
+      for (const token of candidates) {
+        if (!merged.includes(token)) {
+          merged.push(token);
+        }
+      }
+      onChange(merged);
+      setTagInput('');
+    };
+
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <Input
+            type="text"
+            aria-label="Nhập dải IP CIDR thêm vào danh sách"
+            value={tagInput}
+            onChange={(e) => {
+              setTagInput(e.target.value);
+              if (cidrError) setCidrError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ',') {
+                e.preventDefault();
+                commitCidrTokens(tagInput);
+              }
+            }}
+            onBlur={() => {
+              if (tagInput.trim()) {
+                commitCidrTokens(tagInput);
+              }
+            }}
+            placeholder="VD: 192.168.1.0/24, 10.0.0.0/8 rồi Enter…"
+            className="min-h-11 sm:h-9 text-xs rounded-full border-[#dddddd] bg-[#ffffff] font-mono"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => commitCidrTokens(tagInput)}
+            className="rounded-full border-[#dddddd] px-3 text-xs shrink-0 min-h-11 sm:h-9"
+          >
+            Thêm
+          </Button>
+        </div>
+        {cidrError && <p className="text-xs font-medium text-[#C13515]">{cidrError}</p>}
+        {cidrList.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3 pt-0.5">
+            {cidrList.map((cidr, idx) => (
+              <span
+                key={`${cidr}-${idx}`}
+                className="staff-badge inline-flex items-center gap-1 bg-transparent border-0 p-0 text-xs font-mono font-semibold text-[#008489]"
+              >
+                <Network
+                  size={16}
+                  strokeWidth={1.75}
+                  className="text-[#008489] shrink-0"
+                  aria-hidden="true"
+                />
+                <span>{cidr}</span>
+                <button
+                  type="button"
+                  aria-label={`Xóa dải CIDR ${cidr}`}
+                  onClick={() => onChange(cidrList.filter((_, i) => i !== idx))}
+                  className="inline-flex min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 items-center justify-center rounded-full text-[#717171] hover:bg-[#f7f7f7] hover:text-[#C13515] cursor-pointer"
+                >
+                  <X size={16} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -79,7 +193,7 @@ export function ExpectedValueWidget({
         aria-label="Giá trị đúng hoặc sai kỳ vọng"
         value={String(value)}
         onChange={(e) => onChange(e.target.value === 'true')}
-        className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+        className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222] focus-visible:outline-none focus-visible:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
       >
         {booleanOptions.map((opt) => (
           <option key={String(opt.value)} value={String(opt.value)}>
@@ -127,7 +241,7 @@ export function ExpectedValueWidget({
               if (!e.target.value) return;
               addValue(isNumeric ? Number(e.target.value) : e.target.value);
             }}
-            className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+            className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222] focus-visible:outline-none focus-visible:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
           >
             <option value="">Chọn để thêm vào danh sách…</option>
             {options.map((opt) => (
@@ -157,7 +271,7 @@ export function ExpectedValueWidget({
               variant="outline"
               size="sm"
               onClick={handleAddTag}
-              className="rounded-full border-[#dddddd] px-3 text-xs shrink-0"
+              className="rounded-full border-[#dddddd] px-3 text-xs shrink-0 min-h-11 sm:h-9"
             >
               Thêm
             </Button>
@@ -181,7 +295,7 @@ export function ExpectedValueWidget({
                   type="button"
                   aria-label={`Xóa giá trị ${String(item)}`}
                   onClick={() => onChange(arr.filter((_, i) => i !== idx))}
-                  className="inline-flex min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 items-center justify-center rounded-full text-[#717171] hover:bg-[#C13515]/10 hover:text-[#C13515] cursor-pointer"
+                  className="inline-flex min-h-11 min-w-11 sm:min-h-7 sm:min-w-7 items-center justify-center rounded-full text-[#717171] hover:bg-[#f7f7f7] hover:text-[#C13515] cursor-pointer"
                 >
                   <X size={16} strokeWidth={1.75} aria-hidden="true" />
                 </button>
@@ -201,7 +315,7 @@ export function ExpectedValueWidget({
         aria-label="Giá trị kỳ vọng"
         value={stringVal}
         onChange={(e) => onChange(isNumeric ? Number(e.target.value) : e.target.value)}
-        className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+        className="w-full min-h-11 sm:h-9 text-xs rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222] focus-visible:outline-none focus-visible:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
       >
         {!hasMatch && stringVal && (
           <option value={stringVal}>{stringVal} (Giá trị hiện lưu)</option>

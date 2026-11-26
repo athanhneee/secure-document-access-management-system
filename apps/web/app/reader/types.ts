@@ -10,6 +10,8 @@ export interface DiscoverableDoc {
   classificationRank: number;
   departmentName?: string | undefined;
   allowDownload: boolean;
+  retentionUntil?: string | null | undefined;
+  defaultViewDays?: number | null | undefined;
 }
 
 export interface MyGrantedDoc {
@@ -21,10 +23,13 @@ export interface MyGrantedDoc {
   permissions: Array<'VIEW' | 'DOWNLOAD'>;
   principalType: 'USER' | 'ROLE';
   roleName?: string | null | undefined;
+  hasDirectAndRoleGrant?: boolean | undefined;
   validFrom?: string | undefined;
   validUntil: string;
   grantedAt?: string | undefined;
   allowDownload: boolean;
+  retentionUntil?: string | null | undefined;
+  defaultViewDays?: number | null | undefined;
 }
 
 export interface MyRequestItem {
@@ -57,6 +62,9 @@ export interface ReaderDocumentApiDto {
   departmentName?: string | null;
   department?: { name?: string };
   allowDownload?: boolean;
+  retentionUntil?: string | null;
+  retention_until?: string | null;
+  defaultViewDays?: number | null;
 }
 
 export interface ReaderGrantApiDto {
@@ -86,5 +94,7 @@ export interface ReaderGrantApiDto {
     classificationLevelCode?: ClassificationCode | null;
     classificationCode?: ClassificationCode;
     allowDownload?: boolean;
+    retentionUntil?: string | null;
+    defaultViewDays?: number | null;
   };
 }

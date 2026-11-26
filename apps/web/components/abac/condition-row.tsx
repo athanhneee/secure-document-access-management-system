@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Copy, GripVertical, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   ATTRIBUTE_REGISTRY,
+  COMPATIBLE_OPERATORS_BY_TYPE,
   OPERATOR_LABELS,
   type AttributeMetadata,
   type PolicyOperator,
@@ -29,6 +30,10 @@ interface ConditionRowProps {
   onRemove: (groupId: number, conditionId: string) => void;
 }
 
+/**
+ * Thuật toán: Dòng Vị Từ Chính Sách ABAC Có Bảo Toàn Toán Tử/Thuộc Tính Hiện Lưu (`ConditionRow`)
+ * Mục đích: Đồng bộ danh sách toán tử với `COMPATIBLE_OPERATORS_BY_TYPE` và luôn chèn `<option>` dự phòng nếu quy tắc đã lưu dùng toán tử ngoài danh sách mặc định để tránh nhảy giá trị ngầm khi mở sửa.
+ */
 export function ConditionRow({
   groupId,
   condition,
@@ -42,6 +47,12 @@ export function ConditionRow({
   onRemove,
 }: ConditionRowProps) {
   const meta = attributeRegistry[condition.attribute] ?? ATTRIBUTE_REGISTRY[condition.attribute];
+  const hasAttributeOption = Boolean(attributeRegistry[condition.attribute]);
+  const supportedOperators: readonly PolicyOperator[] =
+    meta?.supportedOperators && meta.supportedOperators.length > 0
+      ? meta.supportedOperators
+      : (COMPATIBLE_OPERATORS_BY_TYPE[meta?.type ?? 'STRING'] ?? ['EQ']);
+  const hasCurrentOperator = supportedOperators.includes(condition.operator);
 
   return (
     <div
@@ -78,8 +89,11 @@ export function ConditionRow({
           aria-label="Thuộc tính điều kiện"
           value={condition.attribute}
           onChange={(e) => onChangeField(groupId, condition.id, 'attribute', e.target.value)}
-          className="w-full min-h-11 sm:h-9 text-xs font-medium rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222]"
+          className="w-full min-h-11 sm:h-9 text-xs font-medium rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#222222] focus-visible:outline-none focus-visible:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
         >
+          {!hasAttributeOption && condition.attribute && (
+            <option value={condition.attribute}>{condition.attribute} (Thuộc tính hiện lưu)</option>
+          )}
           {Object.values(attributeRegistry).map((a) => (
             <option key={a.key} value={a.key}>
               {a.label}
@@ -95,9 +109,14 @@ export function ConditionRow({
           onChange={(e) =>
             onChangeField(groupId, condition.id, 'operator', e.target.value as PolicyOperator)
           }
-          className="w-full min-h-11 sm:h-9 text-xs font-semibold rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#E31C5F]"
+          className="w-full min-h-11 sm:h-9 text-xs font-semibold rounded-full border border-[#dddddd] px-3 bg-[#ffffff] text-[#E31C5F] focus-visible:outline-none focus-visible:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
         >
-          {(meta?.supportedOperators || ['EQ']).map((op) => (
+          {!hasCurrentOperator && condition.operator && (
+            <option value={condition.operator}>
+              {OPERATOR_LABELS[condition.operator] || `${condition.operator} (Hiện lưu)`}
+            </option>
+          )}
+          {supportedOperators.map((op) => (
             <option key={op} value={op}>
               {OPERATOR_LABELS[op] || op}
             </option>
@@ -133,7 +152,7 @@ export function ConditionRow({
           onClick={() => onRemove(groupId, condition.id)}
           title="Xóa điều kiện"
           aria-label="Xóa điều kiện"
-          className="min-h-11 min-w-11 sm:h-9 sm:w-9 p-0 rounded-full hover:bg-[#C13515]/10 text-[#C13515]"
+          className="min-h-11 min-w-11 sm:h-9 sm:w-9 p-0 rounded-full hover:bg-[#f7f7f7] text-[#C13515]"
         >
           <Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />
         </Button>

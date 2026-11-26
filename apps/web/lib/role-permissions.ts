@@ -25,6 +25,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<SystemRoleType, readonly string[]>
     'WATERMARK_CONFIG:MANAGE',
     'SYSTEM_HEALTH:VIEW',
     'SYSTEM_HEALTH:MANAGE',
+    'NOTIFICATION:VIEW',
   ],
   SECURITY_OFFICER: [
     'AUDIT_LOG:VIEW',
@@ -35,6 +36,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<SystemRoleType, readonly string[]>
     'INCIDENT_REPORT:MANAGE',
     'ACCESS_SESSION:TERMINATE',
     'POLICY:SIMULATE',
+    'NOTIFICATION:VIEW',
   ],
   AUDITOR: [
     'AUDIT_LOG:VIEW',
@@ -42,6 +44,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<SystemRoleType, readonly string[]>
     'SECURITY_ALERT:VIEW',
     'WATERMARK_INSTANCE:TRACE',
     'SYSTEM_REPORT:EXPORT',
+    'NOTIFICATION:VIEW',
   ],
   DOCUMENT_OWNER: [
     'DOCUMENT:UPLOAD',
@@ -196,6 +199,12 @@ export function canAccessPortal(
 
     case 'SECURITY_OFFICER':
       if (hasSecurityCore) return true;
+      if (
+        checkEffectivePermission(user, 'POLICY:SIMULATE') &&
+        user.roles.includes('SECURITY_OFFICER')
+      ) {
+        return true;
+      }
       if (!hasAnyPermission(user, SECURITY_SHARED_PERMISSIONS)) return false;
       return (
         (!hasAuditorCore && !user.roles.includes('AUDITOR')) ||

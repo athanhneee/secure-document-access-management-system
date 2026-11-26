@@ -1,6 +1,6 @@
 'use client';
 
-import type { Dispatch, SetStateAction } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import { FileCheck2, KeyRound, Network } from 'lucide-react';
 import {
   CATEGORY_OPTIONS,
@@ -29,8 +29,19 @@ interface SimulatorContextFormProps {
   categoryOptions?: readonly AttributeOption[] | undefined;
 }
 
+function parseProjectsInput(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((val, idx) => val === right[idx]);
+}
+
 /**
- * Thuật toán: Biểu Mẫu Ngữ Cảnh Giả Lập ABAC Đồng Bộ Phòng Ban & Danh Mục Động Từ CSDL (`SimulatorContextForm`)
+ * Thuật toán: Biểu Mẫu Ngữ Cảnh Giả Lập ABAC Đồng Bộ Phòng Ban, Dự Án, Thiết Bị Tin Cậy & Danh Mục Động Từ CSDL (`SimulatorContextForm`)
  */
 export function SimulatorContextForm({
   action,
@@ -44,8 +55,13 @@ export function SimulatorContextForm({
   departmentOptions = DEPARTMENT_OPTIONS,
   categoryOptions = CATEGORY_OPTIONS,
 }: SimulatorContextFormProps) {
+  const [projectsDraft, setProjectsDraft] = useState(() => subject.projects.join(', '));
+  const displayedProjectsText = arraysEqual(parseProjectsInput(projectsDraft), subject.projects)
+    ? projectsDraft
+    : subject.projects.join(', ');
+
   const selectCls =
-    'w-full text-xs min-h-11 sm:h-9 rounded-full border border-[#dddddd] px-3 bg-[#ffffff] focus:border-[#FF385C]';
+    'w-full text-xs min-h-11 sm:h-9 rounded-full border border-[#dddddd] px-3 bg-[#ffffff] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15';
   const labelCls = 'block text-xs font-medium text-[#717171] mb-1';
 
   return (
@@ -108,6 +124,24 @@ export function SimulatorContextForm({
               </option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label htmlFor="sim-subject-projects" className={labelCls}>
+            Dự án tham gia (cách nhau dấu phẩy)
+          </label>
+          <input
+            id="sim-subject-projects"
+            type="text"
+            value={displayedProjectsText}
+            onChange={(e) => {
+              const raw = e.target.value;
+              setProjectsDraft(raw);
+              setSubject((s) => ({ ...s, projects: parseProjectsInput(raw) }));
+            }}
+            placeholder="VD: PROJECT_ALPHA, HR_REVAMP"
+            className={`${selectCls} font-mono text-xs`}
+          />
         </div>
       </div>
 
@@ -181,7 +215,7 @@ export function SimulatorContextForm({
             id="sim-resource-action"
             value={action}
             onChange={(e) => setAction(e.target.value as TargetAction)}
-            className="w-full text-xs min-h-11 sm:h-9 rounded-full border border-[#dddddd] px-3 bg-[#ffffff] font-semibold text-[#E31C5F]"
+            className="w-full text-xs min-h-11 sm:h-9 rounded-full border border-[#dddddd] px-3 bg-[#ffffff] font-semibold text-[#E31C5F] focus:outline-none focus:border-[#222222] focus-visible:ring-2 focus-visible:ring-[#222222]/15"
           >
             <option value="VIEW">Chỉ xem trực tuyến</option>
             <option value="DOWNLOAD">Tải về bản sao</option>
@@ -217,6 +251,25 @@ export function SimulatorContextForm({
           </div>
 
           <div>
+            <label htmlFor="sim-env-device-trust" className={labelCls}>
+              Thiết bị tin cậy
+            </label>
+            <select
+              id="sim-env-device-trust"
+              value={environment.deviceTrust ? 'true' : 'false'}
+              onChange={(e) =>
+                setEnvironment((env) => ({ ...env, deviceTrust: e.target.value === 'true' }))
+              }
+              className={selectCls}
+            >
+              <option value="true">Thiết bị đạt chuẩn</option>
+              <option value="false">Thiết bị lạ</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div>
             <label htmlFor="sim-env-mfa" className={labelCls}>
               Xác thực MFA
             </label>
@@ -232,9 +285,7 @@ export function SimulatorContextForm({
               <option value="false">Chưa bật</option>
             </select>
           </div>
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label htmlFor="sim-env-time" className={labelCls}>
               Giờ truy cập
@@ -247,7 +298,9 @@ export function SimulatorContextForm({
               className={selectCls}
             />
           </div>
+        </div>
 
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label htmlFor="sim-env-risk" className={labelCls}>
               Điểm rủi ro (0–100)
@@ -264,19 +317,19 @@ export function SimulatorContextForm({
               className={selectCls}
             />
           </div>
-        </div>
 
-        <div>
-          <label htmlFor="sim-env-ip" className={labelCls}>
-            Địa chỉ IP nguồn
-          </label>
-          <input
-            id="sim-env-ip"
-            type="text"
-            value={environment.ip}
-            onChange={(e) => setEnvironment((env) => ({ ...env, ip: e.target.value }))}
-            className={`${selectCls} font-mono text-xs`}
-          />
+          <div>
+            <label htmlFor="sim-env-ip" className={labelCls}>
+              Địa chỉ IP nguồn
+            </label>
+            <input
+              id="sim-env-ip"
+              type="text"
+              value={environment.ip}
+              onChange={(e) => setEnvironment((env) => ({ ...env, ip: e.target.value }))}
+              className={`${selectCls} font-mono text-xs`}
+            />
+          </div>
         </div>
       </div>
     </div>

@@ -25,7 +25,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <main
           id="main-content"
           tabIndex={-1}
-          className="min-h-0 flex-1 min-w-0 overflow-x-hidden lg:overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:px-7 focus:outline-none"
+          className="min-h-0 flex-1 min-w-0 overflow-x-hidden lg:overflow-y-auto px-3.5 py-3.5 sm:px-6 sm:py-5 lg:px-7 focus:outline-none"
         >
           <div className="mx-auto max-w-7xl min-w-0 page-enter">{children}</div>
         </main>

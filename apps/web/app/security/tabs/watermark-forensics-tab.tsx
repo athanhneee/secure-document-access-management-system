@@ -108,7 +108,7 @@ export function WatermarkForensicsTab({
                 }}
                 placeholder="VD: WM-2e59958fa6c7 hoặc dán chuỗi JSON quét từ mã QR"
                 aria-invalid={Boolean(validationError)}
-                className="min-h-11 sm:h-9 font-mono text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#717171] focus-visible:border-[#FF385C]"
+                className="min-h-11 sm:h-9 font-mono text-xs rounded-full bg-[#ffffff] border-[#dddddd] text-[#008A05] placeholder:text-[#717171]"
               />
               {validationError && (
                 <p role="alert" className="text-xs font-medium text-[#C13515] pt-0.5">
@@ -246,24 +246,26 @@ export function WatermarkForensicsTab({
                 <div className="min-w-0 sm:col-span-2 space-y-1.5 pt-1 border-t border-[#008A05]/15">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[#717171]">SHA-256 tệp đầu ra (có watermark)</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyValue(wmTraceResult.outputSha256Hash, 'out')}
-                      aria-label="Sao chép mã băm SHA-256 tệp có watermark"
-                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-[#222222] hover:bg-[#ffffff] cursor-pointer"
-                    >
-                      {copiedKey === 'out' ? (
-                        <Check
-                          size={16}
-                          strokeWidth={2}
-                          className="text-[#008A05]"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
-                      )}
-                      <span>{copiedKey === 'out' ? 'Đã chép' : 'Sao chép'}</span>
-                    </button>
+                    {wmTraceResult.outputSha256Hash && wmTraceResult.outputSha256Hash !== '—' && (
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyValue(wmTraceResult.outputSha256Hash, 'out')}
+                        aria-label="Sao chép mã băm SHA-256 tệp có watermark"
+                        className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-[#222222] hover:bg-[#ffffff] cursor-pointer"
+                      >
+                        {copiedKey === 'out' ? (
+                          <Check
+                            size={16}
+                            strokeWidth={2}
+                            className="text-[#008A05]"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
+                        )}
+                        <span>{copiedKey === 'out' ? 'Đã chép' : 'Sao chép'}</span>
+                      </button>
+                    )}
                   </div>
                   <div className="font-mono text-[#222222] break-all">
                     {wmTraceResult.outputSha256Hash}

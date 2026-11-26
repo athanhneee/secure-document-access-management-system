@@ -1,24 +1,31 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { Calendar, Check, Plus } from 'lucide-react';
+import { Calendar, Check, Plus, User } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { Select } from '@/components/ui/select';
 import { formatIncidentActionTypeLabel, formatSafeDateVi } from '@/lib/ui-labels';
+import { isValidPositiveBigIntId } from '../helpers';
 import type { IncidentActionItem } from '../types';
 
 interface IncidentActionsPanelProps {
   actions: IncidentActionItem[];
   isClosed: boolean;
-  onAddAction: (actionType: string, recommendation: string, dueAt?: string) => Promise<boolean>;
+  onAddAction: (
+    actionType: string,
+    recommendation: string,
+    dueAt?: string,
+    assignedTo?: string,
+  ) => Promise<boolean>;
   onCompleteAction: (actionId: string, completionNote: string) => Promise<boolean>;
   onError: (msg: string) => void;
 }
 
 /**
- * Thuật toán: Quản Lý Danh Sách Hành Động Khắc Phục Sự Cố Kèm Hạn Chót (`dueAt`) & Ghi Chú Nghiệm Thu (`IncidentActionsPanel`)
- * Mục đích: Hỗ trợ thêm biện pháp khắc phục có hạn chót (`#25`) và nghiệm thu hoàn thành tối thiểu 5 ký tự.
+ * Thuật toán: Quản Lý Danh Sách Hành Động Khắc Phục Sự Cố Kèm Người Phụ Trách (`assignedTo` PositiveBigInt), Hạn Chót (`dueAt`) & Nghiệm Thu (`IncidentActionsPanel`)
+ * Mục đích: Hỗ trợ thêm biện pháp khắc phục có kiểm định `assignedTo` thuộc `[1, 9223372036854775807]` (từ chối `"0"` và tràn 64-bit) cùng `noValidate`.
  */
 export function IncidentActionsPanel({
   actions,
@@ -29,6 +36,7 @@ export function IncidentActionsPanel({
 }: IncidentActionsPanelProps) {
   const [actionType, setActionType] = useState('REVOKE_ACCESS');
   const [recommendation, setRecommendation] = useState('');
+  const [assignedTo, setAssignedTo] = useState('');
   const [dueAt, setDueAt] = useState('');
   const [isAdding, setIsAdding] = useState(false);
 
@@ -45,11 +53,24 @@ export function IncidentActionsPanel({
       onError('Khuyến nghị khắc phục phải có ít nhất 5 ký tự.');
       return;
     }
+    const trimmedAssignedTo = assignedTo.trim();
+    if (trimmedAssignedTo && !isValidPositiveBigIntId(trimmedAssignedTo)) {
+      onError(
+        'ID người phụ trách hành động phải là số nguyên dương hợp lệ (từ 1 đến 9223372036854775807).',
+      );
+      return;
+    }
     setIsAdding(true);
     try {
-      const ok = await onAddAction(actionType.trim(), recommendation.trim(), dueAt || undefined);
+      const ok = await onAddAction(
+        actionType.trim(),
+        recommendation.trim(),
+        dueAt || undefined,
+        trimmedAssignedTo || undefined,
+      );
       if (ok) {
         setRecommendation('');
+        setAssignedTo('');
         setDueAt('');
       }
     } finally {
@@ -99,7 +120,13 @@ export function IncidentActionsPanel({
                   <span className="font-semibold text-[#222222]">
                     {formatIncidentActionTypeLabel(act.actionType)}
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {act.assignedTo && (
+                      <span className="inline-flex items-center gap-1 text-xs text-[#717171]">
+                        <User size={16} strokeWidth={1.75} aria-hidden="true" />
+                        <span>Phụ trách: #{act.assignedTo}</span>
+                      </span>
+                    )}
                     {act.dueAt && (
                       <span className="inline-flex items-center gap-1 text-xs text-[#717171]">
                         <Calendar size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -126,6 +153,7 @@ export function IncidentActionsPanel({
                         </label>
                         <Input
                           id={`complete-note-${act.id}`}
+                          maxLength={1000}
                           value={completionNotes[act.id] ?? ''}
                           onChange={(e) =>
                             setCompletionNotes((prev) => ({ ...prev, [act.id]: e.target.value }))
@@ -141,7 +169,7 @@ export function IncidentActionsPanel({
                           icon={<Check size={16} strokeWidth={2} aria-hidden="true" />}
                           isLoading={completingActionId === act.id}
                           disabled={completingActionId === act.id}
-                          onClick={() => void handleFinishAction(act.id)}
+                          onClick={() => handleFinishAction(act.id)}
                         />
                       </div>
                     )}
@@ -165,17 +193,31 @@ export function IncidentActionsPanel({
               >
                 Loại hành động
               </label>
-              <select
+              <Select
                 id="incident-action-type"
                 value={actionType}
                 onChange={(e) => setActionType(e.target.value)}
-                className="w-full min-h-11 sm:h-9 rounded-full border border-[#dddddd] bg-[#ffffff] px-3 text-xs text-[#222222] cursor-pointer"
               >
                 <option value="REVOKE_ACCESS">Thu hồi quyền truy cập</option>
                 <option value="LOCK_ACCOUNT">Tạm khóa tài khoản</option>
                 <option value="ROTATE_POLICY">Cập nhật chính sách bảo mật</option>
                 <option value="FORENSIC_AUDIT">Kiểm tra chuyên sâu</option>
-              </select>
+              </Select>
+            </div>
+            <div>
+              <label
+                htmlFor="incident-action-assignee"
+                className="block font-medium text-[#222222] mb-1"
+              >
+                ID người phụ trách (tùy chọn)
+              </label>
+              <Input
+                id="incident-action-assignee"
+                value={assignedTo}
+                onChange={(e) => setAssignedTo(e.target.value)}
+                placeholder="VD: 8"
+                className="min-h-11 sm:h-9 text-xs rounded-full bg-[#ffffff] border-[#dddddd] placeholder:text-[#717171]"
+              />
             </div>
             <div>
               <label
@@ -202,6 +244,7 @@ export function IncidentActionsPanel({
               <div className="flex flex-col sm:flex-row gap-2">
                 <Input
                   id="incident-action-rec"
+                  maxLength={1000}
                   value={recommendation}
                   onChange={(e) => setRecommendation(e.target.value)}
                   placeholder="Mô tả biện pháp xử lý (tối thiểu 5 ký tự)…"

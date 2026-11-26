@@ -4,6 +4,7 @@ import * as React from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription } from './alert';
+import { lockBodyScroll } from './body-scroll-lock';
 import {
   DialogErrorContext,
   DialogErrorProvider,
@@ -57,7 +58,7 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
     const dialogEl = dialogRef.current;
     previousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    document.body.style.overflow = 'hidden';
+    const unlockBodyScroll = lockBodyScroll();
 
     if (dialogEl && !dialogEl.open && typeof dialogEl.showModal === 'function') {
       try {
@@ -118,7 +119,7 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
     return () => {
       dialogEl?.removeEventListener('keydown', handleKeyDown);
       dialogEl?.removeEventListener('click', handleBackdropClick);
-      document.body.style.overflow = '';
+      unlockBodyScroll();
       if (dialogEl?.open && typeof dialogEl.close === 'function') {
         try {
           dialogEl.close();
@@ -182,7 +183,7 @@ export function DialogContent({
           type="button"
           data-dialog-close="true"
           onClick={() => onOpenChange(false)}
-          className="absolute right-3 top-3 z-20 flex h-11 w-11 sm:h-9 sm:w-9 items-center justify-center rounded-full text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C] cursor-pointer"
+          className="absolute right-3 top-3 z-20 flex h-11 w-11 sm:h-9 sm:w-9 items-center justify-center rounded-full text-[#717171] hover:bg-[#f7f7f7] hover:text-[#222222] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#222222] cursor-pointer"
           aria-label="Đóng hộp thoại"
         >
           <X size={16} strokeWidth={2} aria-hidden="true" />
@@ -197,7 +198,7 @@ export function DialogContent({
               <button
                 type="button"
                 onClick={onDismiss}
-                className="shrink-0 flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 items-center justify-center rounded-full text-[#C13515] hover:bg-[#C13515]/10 cursor-pointer"
+                className="shrink-0 flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 items-center justify-center rounded-full text-[#C13515] hover:bg-[#f7f7f7] cursor-pointer"
                 aria-label="Đóng thông báo lỗi"
               >
                 <X size={16} strokeWidth={2} aria-hidden="true" />

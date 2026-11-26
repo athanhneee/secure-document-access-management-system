@@ -32,6 +32,12 @@ interface AuditorLogDetailModalProps {
  * Thuật toán: Hiển Thị Đầy Đủ Hồ Sơ Pháp Chứng Bản Ghi Kiểm Toán Chế Độ Chỉ Đọc Kèm Nút Sao Chép Nhanh (`AuditorLogDetailModal`)
  * Mục đích: Trình bày đầy đủ thông tin nghiệp vụ & kỹ thuật (`userAgent`, `actorUserId`, `documentId`, `accessSessionId`, `hmacKeyVersion`, mã hành động gốc, mã băm liền trước/hiện tại phân biệt chính xác Genesis `#1` vs lỗi thiếu liên kết).
  */
+function isCopyableAuditValue(value: string | null | undefined): value is string {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed !== '—';
+}
+
 export function AuditorLogDetailModal({
   open,
   onOpenChange,
@@ -126,12 +132,12 @@ export function AuditorLogDetailModal({
               <div className="min-w-0 sm:col-span-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[#717171]">Mã truy vết</span>
-                  {auditLog.correlationId && auditLog.correlationId !== '—' && (
+                  {isCopyableAuditValue(auditLog.correlationId) && (
                     <button
                       type="button"
                       onClick={() => void handleCopy(auditLog.correlationId, 'corr')}
                       aria-label="Sao chép mã truy vết"
-                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-[#222222] hover:bg-[#ebebeb] cursor-pointer"
+                      className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-[#222222] hover:bg-[#ebebeb] cursor-pointer"
                     >
                       {copiedKey === 'corr' ? (
                         <Check
@@ -218,12 +224,12 @@ export function AuditorLogDetailModal({
                 <div className="space-y-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium text-[#717171]">Mã băm bản ghi liền trước</span>
-                    {auditLog.previousHash && (
+                    {isCopyableAuditValue(auditLog.previousHash) && (
                       <button
                         type="button"
                         onClick={() => void handleCopy(auditLog.previousHash!, 'prevHash')}
                         aria-label="Sao chép mã băm bản ghi liền trước"
-                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-[#222222] hover:bg-[#f7f7f7] cursor-pointer"
+                        className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-[#222222] hover:bg-[#f7f7f7] cursor-pointer"
                       >
                         {copiedKey === 'prevHash' ? (
                           <Check
@@ -259,12 +265,12 @@ export function AuditorLogDetailModal({
                     <span className="font-medium text-[#717171]">
                       Mã băm bản ghi hiện tại ({auditLog.chainAlgorithm || 'HMAC-SHA-256'})
                     </span>
-                    {auditLog.entryHash && (
+                    {isCopyableAuditValue(auditLog.entryHash) && (
                       <button
                         type="button"
                         onClick={() => void handleCopy(auditLog.entryHash!, 'entryHash')}
                         aria-label="Sao chép mã băm bản ghi hiện tại"
-                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-[#222222] hover:bg-[#f7f7f7] cursor-pointer"
+                        className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 rounded-full px-3 py-1 text-xs font-medium text-[#222222] hover:bg-[#f7f7f7] cursor-pointer"
                       >
                         {copiedKey === 'entryHash' ? (
                           <Check

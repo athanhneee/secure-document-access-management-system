@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { OwnerWorkspace } from './owner-workspace';
 
@@ -9,5 +10,9 @@ export const metadata: Metadata = {
 };
 
 export default function OwnerPage() {
-  return <OwnerWorkspace />;
+  return (
+    <Suspense fallback={null}>
+      <OwnerWorkspace />
+    </Suspense>
+  );
 }

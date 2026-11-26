@@ -32,6 +32,23 @@ export function cidrMatch(ip: string, cidr: string): boolean {
 }
 
 /**
+ * Algorithm / Thuật toán: Chuẩn hóa địa chỉ IPv4 / IPv6 (bao gồm ánh xạ kép IPv4-mapped IPv6 `::ffff:a.b.c.d`)
+ * về biểu diễn khóa chuẩn tắc duy nhất để đối sánh bằng/tập hợp (`EQ`, `NEQ`, `IN`, `NOT_IN`, BUG-104).
+ */
+export function canonicalizeIpAddress(value: string): string | null {
+  if (!value.includes('.') && !value.includes(':')) return null;
+  const parsed = parseAddress(value);
+  if (!parsed) return null;
+  if (parsed.bits === 32) {
+    return `ipv4:${parsed.value.toString(16).padStart(8, '0')}`;
+  }
+  if (parsed.value >> 32n === 0xffffn) {
+    return `ipv4:${(parsed.value & 0xffffffffn).toString(16).padStart(8, '0')}`;
+  }
+  return `ipv6:${parsed.value.toString(16).padStart(32, '0')}`;
+}
+
+/**
  * Algorithm / Thuật toán: Xác thực cú pháp nghiêm ngặt chuỗi mạng con IPv4/IPv6 CIDR khi biên dịch chính sách ABAC (HIGH-11).
  */
 export function isValidCidr(cidr: string): boolean {

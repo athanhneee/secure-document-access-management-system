@@ -21,6 +21,8 @@ import {
   computeBoundedSessionPolicyTtlMs,
   resolvePepTrustedNetwork,
   type ActiveSessionPolicy,
+  type SessionResourcePolicySnapshot,
+  type SessionSubjectPolicySnapshot,
 } from './pep-context-builder.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -36,6 +38,9 @@ export interface PepPolicyObligationOutcome {
   riskScore: number;
   riskFactors: string[];
   trustedNetwork: boolean;
+  policyVersion?: string | null | undefined;
+  subjectSnapshot?: SessionSubjectPolicySnapshot | undefined;
+  resourceSnapshot?: SessionResourcePolicySnapshot | undefined;
 }
 
 /**
@@ -56,7 +61,7 @@ export async function evaluatePepPolicyAndObligations(params: {
   ownerId: bigint;
   categoryCode: string | null;
   classRequireWatermark: boolean;
-  effectiveGrantId: string;
+  effectiveGrantId: string | null;
   deny: (grantId: string | null, reasonCode: string, reasonMessage: string) => Promise<void>;
 }): Promise<PepPolicyObligationOutcome> {
   const {
@@ -200,6 +205,18 @@ export async function evaluatePepPolicyAndObligations(params: {
     riskScore: riskAssessment.riskScore,
     riskFactors: riskAssessment.factors,
     trustedNetwork,
+    policyVersion: abacResult.policyVersion ?? null,
+    subjectSnapshot: {
+      employmentStatus: subjectAttributes.employmentStatus,
+      clearanceRank: subjectAttributes.clearanceRank,
+      departmentId: subjectAttributes.departmentId,
+    },
+    resourceSnapshot: {
+      classificationRank: documentRank,
+      category: categoryCode,
+      departmentId: departmentId?.toString() ?? null,
+      status: documentStatus,
+    },
   };
 }
 
@@ -256,13 +273,27 @@ export async function finalizePermittedAccessSession(params: {
     },
   });
 
+  const [abacEpoch, userEpoch] =
+    typeof stateStore?.getNamespaceEpoch === 'function'
+      ? await Promise.all([
+          stateStore.getNamespaceEpoch('abac-policy').catch(() => 0),
+          stateStore.getNamespaceEpoch(`rbac-user:${principal.userId.toString()}`).catch(() => 0),
+        ])
+      : [0, 0];
+
   const policyRecord: ActiveSessionPolicy = {
     grantedAction: action,
     forbidDownload: policyOutcome.forbidDownloadObligation,
+    watermarkRequired: policyOutcome.watermarkRequired,
     expiresAtMs: policyOutcome.expiresAtMs,
     maxSessionMinutes: policyOutcome.maxSessionMinutes,
     ipAddress: normalizedIp,
     userAgent: normalizedUa,
+    policyVersion: policyOutcome.policyVersion ?? null,
+    abacEpoch,
+    userEpoch,
+    ...(policyOutcome.subjectSnapshot ? { subjectSnapshot: policyOutcome.subjectSnapshot } : {}),
+    ...(policyOutcome.resourceSnapshot ? { resourceSnapshot: policyOutcome.resourceSnapshot } : {}),
   };
   const ttlMs = computeBoundedSessionPolicyTtlMs(policyOutcome.maxSessionMinutes);
   await stateStore.putEphemeral(SESSION_POLICY_NAMESPACE, sessionId, policyRecord, ttlMs);

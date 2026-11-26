@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { getDatabaseClient } from '@sda/database';
+import { getDatabaseClient, Prisma } from '@sda/database';
 import { cidrMatch } from './policy-engine.js';
 import type { PolicyEvaluationInput } from './abac.types.js';
 import type { StoredDefinition, StoredRule } from './policy-compiler.js';
@@ -23,11 +23,51 @@ export class AbacRepository {
    * Algorithm / Thuật toán: Truy vấn phiên bản tuần tự đơn điệu chính sách ABAC có xét cờ `is_called` (PostgreSQL Sequence State Normalization).
    * Trả về `0` khi `abac_policy_version_seq` chưa từng được gọi `nextval()` (`is_called = false`), tránh va chạm `1n === 1n` ở lần kích hoạt luật đầu tiên.
    */
-  async currentPolicyVersion(): Promise<bigint> {
-    const rows = await this.database.$queryRawUnsafe<Array<{ version: bigint | number | string }>>(
+  async currentPolicyVersion(
+    client?: Pick<ReturnType<typeof getDatabaseClient>, '$queryRawUnsafe'>,
+  ): Promise<bigint> {
+    const db = client ?? this.database;
+    const rows = await db.$queryRawUnsafe<Array<{ version: bigint | number | string }>>(
       'SELECT CASE WHEN is_called THEN last_value ELSE 0 END AS version FROM abac_policy_version_seq',
     );
     return BigInt(rows[0]?.version ?? 0);
+  }
+
+  /**
+   * Thuật toán: Chụp nguyên tử bộ ba `(version, definitions, rules)` trong cùng một giao dịch chỉ đọc `REPEATABLE READ` (`BUG-051`)
+   * để đảm bảo tập luật và từ điển thuộc tính luôn nhất quán tại một snapshot MVCC duy nhất.
+   */
+  async loadConsistentPolicySnapshot(): Promise<{
+    version: bigint;
+    definitions: StoredDefinition[];
+    rules: StoredRule[];
+  }> {
+    const hasCustomMethodOverride =
+      this.currentPolicyVersion !== AbacRepository.prototype.currentPolicyVersion ||
+      this.loadPolicySource !== AbacRepository.prototype.loadPolicySource;
+
+    if (!hasCustomMethodOverride && typeof this.database?.$transaction === 'function') {
+      return this.database.$transaction(
+        async (tx) => {
+          const version = await this.currentPolicyVersion(tx);
+          const source = await this.loadPolicySource({ client: tx });
+          return {
+            version,
+            definitions: source.definitions,
+            rules: source.rules,
+          };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      );
+    }
+
+    const version = await this.currentPolicyVersion();
+    const source = await this.loadPolicySource();
+    return {
+      version,
+      definitions: source.definitions,
+      rules: source.rules,
+    };
   }
 
   async loadPolicySource(
@@ -268,8 +308,9 @@ export class AbacRepository {
       subject: {
         clearanceRank: highestClearanceRank,
         departmentId: user.department_id?.toString() ?? null,
-        // CONFLICT-RESOLVED: Ưu tiên thuộc tính từ điển ABAC EMPLOYMENT_STATUS đang hiệu lực, giữ fallback user.status để tương thích ngược.
-        employmentStatus: explicitEmploymentStatus ?? user.status,
+        // BUG-037: Nếu tài khoản bị khóa/vô hiệu (user.status !== 'ACTIVE'), luôn ưu tiên user.status thay vì thuộc tính EMPLOYMENT_STATUS cũ.
+        employmentStatus:
+          user.status !== 'ACTIVE' ? user.status : (explicitEmploymentStatus ?? user.status),
         projects,
       },
       resource: {

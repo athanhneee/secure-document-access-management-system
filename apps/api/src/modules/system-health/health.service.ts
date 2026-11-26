@@ -1,12 +1,18 @@
 /**
  * Module: HealthService — Tổng hợp trạng thái sẵn sàng đa thành phần hạ tầng (PostgreSQL, Redis, S3/MinIO) và ảnh chụp sức khỏe vận hành.
  */
+import * as path from 'node:path';
 import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import type { LivenessResponse, ReadinessResponse } from '@sda/contracts';
 import { AppConfigService } from '../../config/config.service.js';
 import { resolveWorkspaceExportDir } from '../reports/export-access-policy.helper.js';
 import { unlinkContainedExportArtifact } from '../reports/export-disk-cipher.helper.js';
+import {
+  deleteEncryptedExportFromS3,
+  isValidExportS3UriForJob,
+  resolveApiExportS3Config,
+} from '../reports/export-s3-storage.helper.js';
 import {
   probeDatabaseEndpoint,
   probeRedisEndpoint,
@@ -160,7 +166,9 @@ export class HealthService {
   }
 
   /**
-   * Thuật toán: Thu dọn có giới hạn thời gian lưu trữ các ảnh chụp sức khỏe cũ và công việc xuất báo cáo hết hạn (bao gồm xóa tệp vật lý `.dat` trên đĩa).
+   * Thuật toán: Thu dọn có giới hạn thời gian lưu trữ các ảnh chụp sức khỏe cũ và công việc xuất báo cáo hết hạn (`BUG-067`).
+   * Xóa đối tượng `exports/<jobId>.dat` trên S3/R2 (kể cả khi `file_path === null` do tiến trình đổ vỡ giữa chừng) và tệp `.dat` cục bộ
+   * TRƯỚC KHI xóa dòng `async_export_jobs`; chỉ xóa các dòng CSDL đã thu dọn S3 thành công để tránh mồ côi bản mã trên Object Storage.
    */
   async runRetentionCleanup(retentionDays = 90) {
     const db = this.getDb();
@@ -172,17 +180,67 @@ export class HealthService {
     const exportBaseDir = resolveWorkspaceExportDir();
     let deletedExportFiles = 0;
 
-    // CONFLICT-RESOLVED: Thu hồi tệp `.dat` vật lý trên đĩa trước khi xóa bản ghi `asyncExportJob` trong CSDL (HIGH-07).
+    // CONFLICT-RESOLVED: Thu hồi đồng bộ đối tượng S3/R2 (`exports/<safeId>.dat`) và tệp `.dat` cục bộ trước khi xóa CSDL, giữ lại bản ghi nếu S3 lỗi để chu kỳ sau thử lại (BUG-067 / HIGH-07).
     if (typeof db.asyncExportJob.findMany === 'function') {
       const expiredJobs = await db.asyncExportJob.findMany({
         where: { expires_at: { lt: now } },
         select: { id: true, file_path: true },
       });
+      const s3Enabled = resolveApiExportS3Config() !== null;
+      const deletableJobIds: string[] = [];
+
       for (const job of expiredJobs) {
-        if (job.file_path && unlinkContainedExportArtifact(exportBaseDir, job.file_path)) {
+        const safeId = job.id.replace(/[^a-zA-Z0-9_-]/gu, '');
+        if (!safeId) {
+          continue;
+        }
+        if (
+          job.file_path?.startsWith('s3://') &&
+          !isValidExportS3UriForJob(job.file_path, safeId)
+        ) {
+          continue;
+        }
+
+        let removedAnyArtifact = false;
+        if (s3Enabled) {
+          try {
+            if (await deleteEncryptedExportFromS3(safeId)) {
+              removedAnyArtifact = true;
+            }
+          } catch {
+            // Preserve DB row so subsequent retention cycle retries S3 object deletion
+            continue;
+          }
+        }
+
+        if (job.file_path && !job.file_path.startsWith('s3://')) {
+          if (unlinkContainedExportArtifact(exportBaseDir, job.file_path)) {
+            removedAnyArtifact = true;
+          }
+        } else {
+          const mirrorLocalPath = path.resolve(exportBaseDir, `${safeId}.dat`);
+          if (unlinkContainedExportArtifact(exportBaseDir, mirrorLocalPath)) {
+            removedAnyArtifact = true;
+          }
+        }
+
+        if (removedAnyArtifact) {
           deletedExportFiles++;
         }
+        deletableJobIds.push(job.id);
       }
+
+      const [snapshots, exports] = await Promise.all([
+        db.systemHealthSnapshot.deleteMany({ where: { captured_at: { lt: cutoff } } }),
+        deletableJobIds.length > 0
+          ? db.asyncExportJob.deleteMany({ where: { id: { in: deletableJobIds } } })
+          : Promise.resolve({ count: 0 }),
+      ]);
+      return {
+        deletedSnapshots: snapshots.count,
+        deletedExpiredExports: exports.count,
+        deletedExportFiles,
+      };
     }
 
     const [snapshots, exports] = await Promise.all([

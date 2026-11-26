@@ -78,6 +78,17 @@ export async function stageAndScanQuarantineUpload(params: {
     }
   } catch (err: unknown) {
     await compensation.compensate(session);
+    await audit.record(
+      {
+        action: 'DOCUMENT_UPLOAD_FAILED',
+        outcome: 'FAILED',
+        actorUserId: input.principal.userId,
+        actorUsername: input.principal.username,
+        documentId: targetDocId,
+        reasonCode: 'QUARANTINE_STORAGE_FAILED',
+      },
+      input.context,
+    );
     throw err;
   } finally {
     quarantineStream.destroy();
@@ -145,6 +156,19 @@ export async function stageAndScanQuarantineUpload(params: {
       },
       input.context,
     );
+    let resolvedQuarantineDeptId =
+      input.departmentId ?? (input.principal as { departmentId?: bigint }).departmentId;
+    if (
+      resolvedQuarantineDeptId === undefined &&
+      typeof database?.user?.findUnique === 'function'
+    ) {
+      const uploaderRow = await database.user
+        .findUnique({ where: { id: input.principal.userId }, select: { department_id: true } })
+        .catch(() => null);
+      if (uploaderRow?.department_id != null) {
+        resolvedQuarantineDeptId = uploaderRow.department_id;
+      }
+    }
     await recordQuarantinedInfectedVersion({
       database,
       logger,
@@ -155,7 +179,7 @@ export async function stageAndScanQuarantineUpload(params: {
       fileSizeBytes: totalBytes,
       sha256Hash,
       userId: input.principal.userId,
-      departmentId: input.departmentId ?? 1n,
+      departmentId: resolvedQuarantineDeptId ?? 1n,
       title: input.title,
     });
     throw new BadRequestException({

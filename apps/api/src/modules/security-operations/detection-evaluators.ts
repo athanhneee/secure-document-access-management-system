@@ -43,6 +43,7 @@ export async function evaluateSlidingWindowRule(
 ): Promise<DetectionResult[]> {
   const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000);
   const results: DetectionResult[] = [];
+  const MAX_EVALUATION_WINDOW_ROWS = 5000;
 
   // CONFLICT-RESOLVED: Đồng bộ hoàn toàn tập sự kiện audit_logs.action và logic gom nhóm/ngưỡng giữa API và Worker qua SECURITY_DETECTION_ACTIONS trong @sda/contracts.
   switch (rule.ruleCode) {
@@ -57,7 +58,7 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, document_id: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
-        take: 1000,
+        take: MAX_EVALUATION_WINDOW_ROWS,
       });
       for (const [uid, userLogs] of groupAuditLogsByActor(logs).entries()) {
         if (userLogs.length >= rule.threshold) {
@@ -86,7 +87,7 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
-        take: 1000,
+        take: MAX_EVALUATION_WINDOW_ROWS,
       });
       for (const [uid, userLogs] of groupAuditLogsByActor(logs).entries()) {
         if (userLogs.length >= rule.threshold) {
@@ -105,17 +106,20 @@ export async function evaluateSlidingWindowRule(
     }
 
     case 'OFF_HOURS_ACCESS': {
-      // Thuật toán 3/6 (Off-Hours Temporal & Sensitivity Anomaly Detection): Lọc lượt truy cập tài liệu nhạy cảm (rank >= minClassificationRank) rơi ngoài khung giờ làm việc chuẩn theo múi giờ Việt Nam (`isOffHoursTimestampUtc`) (N10).
+      // Thuật toán 3/6 (Off-Hours Temporal & Sensitivity Anomaly Detection): Lọc lượt truy cập THÀNH CÔNG tài liệu nhạy cảm (rank >= minClassificationRank) rơi ngoài khung giờ làm việc chuẩn theo múi giờ Việt Nam (`isOffHoursTimestampUtc`) (BUG-069 / N10).
       const minRank = resolveMinClassificationRank(rule.parameters);
       const logs = await database.auditLog.findMany({
         where: {
           action: { in: [...SECURITY_DETECTION_ACTIONS.OFF_HOURS_ACCESS] },
+          outcome: 'SUCCESS',
+          document_id: { not: null },
           occurred_at: { gte: windowStart },
           actor_user_id: { not: null },
         },
         select: {
           id: true,
           actor_user_id: true,
+          outcome: true,
           document_id: true,
           occurred_at: true,
           documents: {
@@ -129,9 +133,16 @@ export async function evaluateSlidingWindowRule(
           },
         },
         orderBy: { occurred_at: 'desc' },
-        take: 1000,
+        take: MAX_EVALUATION_WINDOW_ROWS,
       });
       const offHoursLogs = logs.filter((log) => {
+        if (
+          typeof (log as { outcome?: unknown }).outcome === 'string' &&
+          log.outcome !== 'SUCCESS'
+        ) {
+          return false;
+        }
+        if (!log.document_id) return false;
         if (!isOffHoursTimestampUtc(log.occurred_at, rule.parameters)) return false;
         const docRank = (
           log as {
@@ -142,7 +153,7 @@ export async function evaluateSlidingWindowRule(
             } | null;
           }
         ).documents?.classification_history?.[0]?.classification_levels?.rank;
-        if (typeof docRank === 'number' && docRank < minRank) return false;
+        if (typeof docRank !== 'number' || docRank < minRank) return false;
         return true;
       });
       for (const [uid, userLogs] of groupAuditLogsByActor(offHoursLogs).entries()) {
@@ -163,7 +174,7 @@ export async function evaluateSlidingWindowRule(
     }
 
     case 'UNTRUSTED_CONTEXT': {
-      // Thuật toán 4/6 (Untrusted Network/Device Context & Anonymous Probing): Đẩy vị từ lọc xuống SQL JSONB (`OR`) đồng bộ với Worker để không bị cắt ngưỡng 1000 dòng khi lưu lượng lớn (N03, N09).
+      // Thuật toán 4/6 (Untrusted Network/Device Context & Anonymous Probing): Đẩy vị từ lọc xuống SQL JSONB (`OR`) đồng bộ với Worker để không bị cắt ngưỡng khi lưu lượng lớn (N03, N09).
       const logs = await database.auditLog.findMany({
         where: {
           occurred_at: { gte: windowStart },
@@ -176,7 +187,7 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, action: true, details: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
-        take: 1000,
+        take: MAX_EVALUATION_WINDOW_ROWS,
       });
       const untrustedLogs = logs.filter((log) => isUntrustedAuditEvent(log.action, log.details));
       for (const [uid, userLogs] of groupAuditLogsByActor(untrustedLogs).entries()) {
@@ -215,7 +226,7 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
-        take: 1000,
+        take: MAX_EVALUATION_WINDOW_ROWS,
       });
       for (const [uid, userLogs] of groupAuditLogsByActor(logs).entries()) {
         if (userLogs.length >= rule.threshold) {
@@ -245,7 +256,7 @@ export async function evaluateSlidingWindowRule(
     }
 
     case 'AUDIT_INTEGRITY_COMPROMISED': {
-      // Thuật toán 6/6 (Cryptographic Audit Hash-Chain Tamper Detection): Phát hiện sai lệch chữ ký HMAC hoặc đứt gãy chuỗi băm kiểm toán toàn hệ thống trong cửa sổ trượt.
+      // Thuật toán 6/6 (Cryptographic Audit Hash-Chain Tamper Detection): Phát hiện sai lệch chữ ký HMAC hoặc đứt gãy chuỗi băm kiểm toán toàn hệ thống (`detected_user_id = null` đồng nhất với Worker — BUG-069).
       const logs = await database.auditLog.findMany({
         where: {
           action: { in: [...SECURITY_DETECTION_ACTIONS.AUDIT_INTEGRITY_COMPROMISED] },
@@ -253,13 +264,13 @@ export async function evaluateSlidingWindowRule(
         },
         select: { id: true, actor_user_id: true, occurred_at: true },
         orderBy: { occurred_at: 'desc' },
-        take: 1000,
+        take: MAX_EVALUATION_WINDOW_ROWS,
       });
       if (logs.length >= rule.threshold) {
         results.push(
           await onMatch({
             rule,
-            userId: logs[0]?.actor_user_id ?? undefined,
+            userId: null,
             matchingLogIds: logs.map((l) => l.id),
             title: 'CRITICAL: Tính toàn vẹn của chuỗi kiểm toán bị xâm phạm',
             description: `Hệ thống ghi nhận ${logs.length} sự kiện vi phạm hoặc chỉnh sửa trái phép chuỗi HMAC kiểm toán.`,

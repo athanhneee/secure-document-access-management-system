@@ -1,23 +1,30 @@
 /**
  * Module: Document Ownership Handover Helper
- * Thuật toán: Chuyển Giao Quyền Sở Hữu Tài Liệu Kiểm Định SoD & Độ Mật Bell-LaPadula Kèm Thu Hồi Quyền/Phiên Chủ Cũ.
+ * Thuật toán: Chuyển Giao Quyền Sở Hữu Tài Liệu Nguyên Tử Có Khóa Dòng `FOR UPDATE`, Kiểm Định SoD (Cả Custom Role Đặc Quyền),
+ *   Quyền `DOCUMENT:MANAGE`, Phòng Ban Hoạt Động, Trần Độ Mật Bell-LaPadula & Dọn Dẹp Dây Chuyền (`BUG-052`).
  */
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import type { getDatabaseClient } from '@sda/database';
+import type { getDatabaseClient, Prisma } from '@sda/database';
 import { AppErrorCode, type TransferDocumentOwnerInput } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { NotificationsService } from '../notifications/notifications.service.js';
 import type { AuthorizationCache } from '../rbac/authorization-cache.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
-import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
+import {
+  isPrivilegedSeparationRoleOrCapability,
+  systemRoleAllows,
+} from '../rbac/permission-matrix.js';
+import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import type { DocumentAuditService } from './document-audit.service.js';
 import { assertDocumentMutationPermission } from './document-access-guard.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Algorithm: Clearance-Verified Document Ownership Handover
- * Validates active target user, SoD role exclusions, and `userRank >= documentRank`, then revokes former owner grants/sessions.
+ * Thuật toán: Bàn giao quyền sở hữu tài liệu nguyên tử trong một giao dịch `$transaction` có `FOR UPDATE`,
+ * chặn tự chuyển cho chính mình (`400`), kiểm tra `targetUser` `ACTIVE` + phòng ban `ACTIVE` + không vướng Custom/System Role đặc quyền SoD
+ * + có quyền `DOCUMENT:MANAGE` hiệu lực + đủ `clearanceRank >= documentRank`, thu hồi grant dư thừa, đóng `AccessSession` chủ cũ,
+ * hủy `AccessRequest PENDING` của chủ mới, `await` xóa cache và phát SSE (`BUG-052`).
  */
 export async function executeTransferDocumentOwner(params: {
   database: PrismaClient;
@@ -25,6 +32,7 @@ export async function executeTransferDocumentOwner(params: {
   cache: AuthorizationCache;
   audit: DocumentAuditService;
   notifications?: NotificationsService | undefined;
+  realtime?: RealtimeEventsService | undefined;
   documentId: string;
   input: TransferDocumentOwnerInput;
   principal: AuthPrincipal;
@@ -36,154 +44,387 @@ export async function executeTransferDocumentOwner(params: {
     cache,
     audit,
     notifications,
+    realtime,
     documentId,
     input,
     principal,
     context,
   } = params;
 
-  const doc = await database.document.findUnique({ where: { id: documentId } });
-  if (!doc || doc.status === 'DELETED') {
-    throw new NotFoundException({
-      errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
-      message: 'Document not found.',
-    });
-  }
+  const runTransfer = async (tx: PrismaClient) => {
+    if (typeof tx.$queryRawUnsafe === 'function') {
+      await tx.$queryRawUnsafe(
+        'SELECT id FROM documents WHERE id = $1::uuid FOR UPDATE',
+        documentId,
+      );
+    }
 
-  await assertDocumentMutationPermission(authorization, doc, principal, 'TRANSFER_OWNER', {
-    database,
-  });
-
-  if (doc.status === 'ARCHIVED') {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
-      message: 'Cannot transfer ownership of an archived or deleted document.',
-    });
-  }
-
-  const targetUser = await database.user.findUnique({ where: { id: input.newOwnerId } });
-  if (!targetUser || targetUser.status !== 'ACTIVE') {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.VALIDATION_FAILED,
-      message: 'Target user does not exist or is not active.',
-    });
-  }
-
-  const currentClassification = await database.documentClassificationHistory.findFirst({
-    where: { document_id: documentId, effective_to: null },
-    include: { classification_levels: true },
-  });
-  const documentRank = currentClassification?.classification_levels?.rank ?? 0;
-
-  const now = new Date();
-  if (typeof database.userRole?.findMany === 'function') {
-    const targetUserRoles = await database.userRole.findMany({
-      where: {
-        user_id: input.newOwnerId,
-        valid_from: { lte: now },
-        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-        roles: { is_active: true },
-      },
-      include: { roles: { select: { code: true } } },
-    });
-    const roleCodes = targetUserRoles
-      .map((r) => (r as { roles?: { code?: string } }).roles?.code)
-      .filter((c): c is string => typeof c === 'string');
-    // CONFLICT-RESOLVED: Unconditionally block ownership transfer to PRIVILEGED_SEPARATION_ROLES (including SECURITY_OFFICER) and enforce active CLEARANCE_LEVEL.
-    if (roleCodes.some((code) => PRIVILEGED_SEPARATION_ROLES.has(code))) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
-        message:
-          'Separation of duties: cannot transfer document ownership to privileged administrative, security, or auditor accounts.',
+    const doc = await tx.document.findUnique({ where: { id: documentId } });
+    if (!doc || doc.status === 'DELETED') {
+      throw new NotFoundException({
+        errorCode: AppErrorCode.DOCUMENT_NOT_FOUND,
+        message: 'Document not found.',
       });
     }
-  }
 
-  const clearanceAssignment = await database.userAttributeAssignment.findFirst({
-    where: {
-      user_id: input.newOwnerId,
-      attribute_definitions: { code: 'CLEARANCE_LEVEL', is_active: true },
-      attribute_options: { is_active: true },
-      valid_from: { lte: now },
-      OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-    },
-    include: {
-      attribute_definitions: { select: { is_active: true } },
-      attribute_options: true,
-    },
-    orderBy: { attribute_options: { numeric_rank: 'desc' } },
-  });
-  const userRank =
-    (clearanceAssignment as { attribute_definitions?: { is_active?: boolean } } | null)
-      ?.attribute_definitions?.is_active === false ||
-    clearanceAssignment?.attribute_options?.is_active === false
-      ? 0
-      : (clearanceAssignment?.attribute_options?.numeric_rank ?? 0);
-  if (userRank < documentRank) {
-    throw new ForbiddenException({
-      errorCode: AppErrorCode.GRANT_CLEARANCE_INSUFFICIENT,
-      message: 'New owner clearance level is insufficient for this document classification.',
+    await assertDocumentMutationPermission(authorization, doc, principal, 'TRANSFER_OWNER', {
+      database: tx,
     });
-  }
 
-  const previousOwnerId = doc.owner_id;
-  await database.document.update({
-    where: { id: documentId },
-    data: { owner_id: input.newOwnerId, version: { increment: 1 } },
-  });
+    if (doc.status === 'ARCHIVED') {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.DOCUMENT_ARCHIVED,
+        message: 'Cannot transfer ownership of an archived or deleted document.',
+      });
+    }
 
-  if (
-    previousOwnerId !== input.newOwnerId &&
-    typeof database.accessGrant?.findMany === 'function' &&
-    typeof database.accessGrant?.update === 'function'
-  ) {
-    const activeGrants = await database.accessGrant.findMany({
-      where: { document_id: documentId, status: 'ACTIVE' },
-    });
-    for (const grant of activeGrants) {
-      if (grant.principal_type === 'USER' && grant.principal_user_id === previousOwnerId) {
-        await database.accessGrant.update({
-          where: { id: grant.id },
-          data: {
-            status: 'REVOKED',
-            revoked_by: principal.userId,
-            revoked_at: now,
-            revoke_reason: 'Document ownership transferred',
-            version: { increment: 1 },
-          },
+    if (doc.owner_id === input.newOwnerId) {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: 'Cannot transfer document ownership to the current owner.',
+      });
+    }
+
+    const now = new Date();
+    const targetUser = await tx.user.findUnique({ where: { id: input.newOwnerId } });
+    const targetLocked =
+      (targetUser as { locked_until?: Date | null } | null)?.locked_until &&
+      new Date((targetUser as { locked_until: Date }).locked_until) > now;
+    if (!targetUser || targetUser.status !== 'ACTIVE' || targetLocked) {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: 'Target user does not exist or is not active.',
+      });
+    }
+
+    if ('department_id' in targetUser) {
+      if (targetUser.department_id === null || targetUser.department_id === undefined) {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.VALIDATION_FAILED,
+          message: 'Target user must belong to an active department to own business documents.',
         });
-        if (typeof database.accessSession?.updateMany === 'function') {
-          await database.accessSession.updateMany({
-            where: { access_grant_id: grant.id, status: 'ACTIVE' },
-            data: {
-              status: 'TERMINATED',
-              ended_at: now,
-              terminated_reason: 'Document ownership transferred',
-            },
+      }
+      if (typeof tx.department?.findFirst === 'function') {
+        const activeDepartment = await tx.department.findFirst({
+          where: { id: targetUser.department_id, is_active: true },
+          select: { id: true },
+        });
+        if (!activeDepartment) {
+          throw new BadRequestException({
+            errorCode: AppErrorCode.VALIDATION_FAILED,
+            message: 'Target user department is inactive or does not exist.',
           });
         }
       }
     }
-  }
 
-  await audit.record(
-    {
-      action: 'DOCUMENT_OWNER_TRANSFERRED',
-      outcome: 'SUCCESS',
-      actorUserId: principal.userId,
-      actorUsername: principal.username,
-      documentId,
-      details: {
-        previousOwnerId: previousOwnerId.toString(),
-        newOwnerId: input.newOwnerId.toString(),
-        reason: input.reason,
+    const targetRoleCodes: string[] = [];
+    let hasRoleBasedManage = false;
+    let inspectedRolePermissions = false;
+
+    if (typeof tx.userRole?.findMany === 'function') {
+      const targetUserRoles = await tx.userRole.findMany({
+        where: {
+          user_id: input.newOwnerId,
+          valid_from: { lte: now },
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          roles: { is_active: true },
+        },
+        include: {
+          roles: {
+            include: {
+              role_permissions: {
+                include: { permissions: true },
+              },
+            },
+          },
+        },
+      });
+
+      for (const rawRole of targetUserRoles) {
+        const roleObj = (
+          rawRole as {
+            roles?: {
+              code?: string;
+              role_permissions?: Array<{
+                permissions?: { code: string; resource_type?: string; action?: string } | null;
+              }>;
+            } | null;
+          }
+        ).roles;
+        if (!roleObj?.code) continue;
+        targetRoleCodes.push(roleObj.code);
+        const perms = Array.isArray(roleObj.role_permissions)
+          ? roleObj.role_permissions
+              .map((rp) => rp.permissions)
+              .filter((p): p is NonNullable<typeof p> => Boolean(p))
+          : [];
+        if (Array.isArray(roleObj.role_permissions)) {
+          inspectedRolePermissions = true;
+        }
+        if (isPrivilegedSeparationRoleOrCapability(roleObj.code, perms)) {
+          throw new ForbiddenException({
+            errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
+            message:
+              'Separation of duties: cannot transfer document ownership to privileged administrative, security, or auditor accounts.',
+          });
+        }
+        if (
+          perms.some(
+            (p) =>
+              p.code === 'DOCUMENT_MANAGE' ||
+              (p.resource_type === 'DOCUMENT' && p.action === 'MANAGE'),
+          )
+        ) {
+          hasRoleBasedManage = true;
+        }
+      }
+    }
+
+    // BUG-052: Khớp 100% với @RequirePermission('DOCUMENT', 'MANAGE') trên DocumentsController để không khóa chết tài liệu khi chuyển sang DOCUMENT_READER.
+    const newOwnerPrincipal: AuthPrincipal = {
+      userId: input.newOwnerId,
+      sessionId: 'ownership-transfer-check',
+      username:
+        (targetUser as { username?: string }).username ?? `user-${input.newOwnerId.toString()}`,
+      roles: targetRoleCodes,
+      mfa: true,
+      ...(targetUser.department_id ? { departmentId: targetUser.department_id } : {}),
+    };
+
+    let targetCanManageDocuments = false;
+    if (typeof authorization?.effectiveGrants === 'function') {
+      const effectiveGrants = await authorization.effectiveGrants(
+        input.newOwnerId,
+        tx as unknown as Prisma.TransactionClient,
+      );
+      const allGrantCapabilities = effectiveGrants.map((g) => ({
+        code: g.code,
+        resource_type: g.resource,
+        action: g.action,
+      }));
+      if (isPrivilegedSeparationRoleOrCapability(undefined, allGrantCapabilities)) {
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
+          message:
+            'Separation of duties: cannot transfer document ownership to privileged administrative, security, or auditor accounts.',
+        });
+      }
+      for (const grant of effectiveGrants) {
+        if (
+          grant.code === 'DOCUMENT_MANAGE' ||
+          (grant.resource === 'DOCUMENT' && grant.action === 'MANAGE')
+        ) {
+          if (grant.scopeDepartmentId === null) {
+            targetCanManageDocuments = true;
+            break;
+          }
+          if (
+            typeof authorization.departmentWithinScope === 'function' &&
+            (await authorization.departmentWithinScope(
+              doc.department_id,
+              grant.scopeDepartmentId,
+              tx as unknown as Prisma.TransactionClient,
+            ))
+          ) {
+            targetCanManageDocuments = true;
+            break;
+          }
+        }
+      }
+    } else if (typeof tx.userRole?.findMany === 'function') {
+      targetCanManageDocuments =
+        targetRoleCodes.length > 0 &&
+        (hasRoleBasedManage ||
+          (!inspectedRolePermissions &&
+            targetRoleCodes.some((code) => systemRoleAllows(code, ['DOCUMENT_MANAGE']))));
+    } else if (typeof authorization?.hasPermission === 'function') {
+      targetCanManageDocuments = await authorization.hasPermission(
+        newOwnerPrincipal,
+        'DOCUMENT',
+        'MANAGE',
+        { targetDepartmentId: doc.department_id },
+        tx as unknown as Prisma.TransactionClient,
+      );
+    }
+
+    if (!targetCanManageDocuments) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message:
+          'Target user does not hold effective DOCUMENT:MANAGE permission required to manage owned documents.',
+      });
+    }
+
+    const currentClassification = await tx.documentClassificationHistory.findFirst({
+      where: { document_id: documentId, effective_to: null },
+      include: { classification_levels: true },
+    });
+    const documentRank = currentClassification?.classification_levels?.rank ?? 0;
+
+    const clearanceAssignment = await tx.userAttributeAssignment.findFirst({
+      where: {
+        user_id: input.newOwnerId,
+        attribute_definitions: { code: 'CLEARANCE_LEVEL', is_active: true },
+        attribute_options: { is_active: true },
+        valid_from: { lte: now },
+        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
       },
-    },
-    context,
-  );
+      include: {
+        attribute_definitions: { select: { is_active: true } },
+        attribute_options: true,
+      },
+      orderBy: { attribute_options: { numeric_rank: 'desc' } },
+    });
+    const userRank =
+      (clearanceAssignment as { attribute_definitions?: { is_active?: boolean } } | null)
+        ?.attribute_definitions?.is_active === false ||
+      clearanceAssignment?.attribute_options?.is_active === false
+        ? 0
+        : (clearanceAssignment?.attribute_options?.numeric_rank ?? 0);
+    if (userRank < documentRank) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.GRANT_CLEARANCE_INSUFFICIENT,
+        message: 'New owner clearance level is insufficient for this document classification.',
+      });
+    }
 
-  cache.invalidateUser(previousOwnerId);
-  cache.invalidateUser(input.newOwnerId);
+    const previousOwnerId = doc.owner_id;
+    await tx.document.update({
+      where: { id: documentId },
+      data: { owner_id: input.newOwnerId, version: { increment: 1 } },
+    });
+
+    const revokedPreviousGrantIds: string[] = [];
+    if (typeof tx.accessGrant?.findMany === 'function') {
+      const activeGrants = await tx.accessGrant.findMany({
+        where: { document_id: documentId, status: 'ACTIVE' },
+      });
+      for (const grant of activeGrants) {
+        const isFormerOwnerGrant =
+          grant.principal_type === 'USER' && grant.principal_user_id === previousOwnerId;
+        const isRedundantNewOwnerGrant =
+          grant.principal_type === 'USER' && grant.principal_user_id === input.newOwnerId;
+        if (
+          (isFormerOwnerGrant || isRedundantNewOwnerGrant) &&
+          typeof tx.accessGrant?.update === 'function'
+        ) {
+          await tx.accessGrant.update({
+            where: { id: grant.id },
+            data: {
+              status: 'REVOKED',
+              revoked_by: principal.userId,
+              revoked_at: now,
+              revoke_reason: isFormerOwnerGrant
+                ? 'Document ownership transferred'
+                : 'Superseded by document ownership transfer',
+              version: { increment: 1 },
+            },
+          });
+          if (isFormerOwnerGrant) {
+            revokedPreviousGrantIds.push(grant.id);
+          }
+        }
+      }
+    }
+
+    let terminatedSessionsCount = 0;
+    if (typeof tx.accessSession?.updateMany === 'function') {
+      for (const grantId of revokedPreviousGrantIds) {
+        const res = await tx.accessSession.updateMany({
+          where: { access_grant_id: grantId, status: 'ACTIVE' },
+          data: {
+            status: 'TERMINATED',
+            ended_at: now,
+            terminated_reason: 'Document ownership transferred',
+          },
+        });
+        terminatedSessionsCount += res?.count ?? 0;
+      }
+      const directSessionRes = await tx.accessSession
+        .updateMany({
+          where: {
+            user_id: previousOwnerId,
+            status: 'ACTIVE',
+            document_versions: { document_id: documentId },
+          },
+          data: {
+            status: 'TERMINATED',
+            ended_at: now,
+            terminated_reason: 'Document ownership transferred',
+          },
+        })
+        .catch(() => ({ count: 0 }));
+      terminatedSessionsCount += directSessionRes?.count ?? 0;
+    }
+
+    if (typeof tx.accessRequest?.updateMany === 'function') {
+      await tx.accessRequest.updateMany({
+        where: {
+          document_id: documentId,
+          requester_id: input.newOwnerId,
+          status: 'PENDING',
+        },
+        data: {
+          status: 'CANCELLED',
+          cancelled_at: now,
+        },
+      });
+    }
+
+    await audit.record(
+      {
+        action: 'DOCUMENT_OWNER_TRANSFERRED',
+        outcome: 'SUCCESS',
+        actorUserId: principal.userId,
+        actorUsername: principal.username,
+        documentId,
+        details: {
+          previousOwnerId: previousOwnerId.toString(),
+          newOwnerId: input.newOwnerId.toString(),
+          reason: input.reason,
+        },
+      },
+      context,
+      tx as unknown as Prisma.TransactionClient,
+    );
+
+    return { doc, previousOwnerId, terminatedSessionsCount };
+  };
+
+  const { doc, previousOwnerId, terminatedSessionsCount } =
+    typeof database.$transaction === 'function'
+      ? await database.$transaction(async (tx) => runTransfer(tx as unknown as PrismaClient))
+      : await runTransfer(database);
+
+  await Promise.all([
+    cache.invalidateUser(previousOwnerId),
+    cache.invalidateUser(input.newOwnerId),
+  ]);
+
+  realtime?.publish({
+    type: 'DOCUMENT_UPDATED',
+    targetUserIds: [previousOwnerId.toString(), input.newOwnerId.toString()],
+    payload: {
+      id: documentId,
+      action: 'OWNER_TRANSFERRED',
+      previousOwnerId: previousOwnerId.toString(),
+      newOwnerId: input.newOwnerId.toString(),
+    },
+  });
+  if (terminatedSessionsCount > 0) {
+    realtime?.publish({
+      type: 'ACCESS_SESSION_UPDATED',
+      targetUserIds: [previousOwnerId.toString()],
+      targetRoles: ['SECURITY_OFFICER'],
+      targetDepartmentId: doc.department_id?.toString() ?? null,
+      payload: {
+        documentId,
+        status: 'TERMINATED',
+        action: 'OWNER_TRANSFERRED',
+      },
+    });
+  }
 
   if (notifications && previousOwnerId !== input.newOwnerId) {
     const docLabel = doc.title

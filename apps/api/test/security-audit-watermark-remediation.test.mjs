@@ -229,5 +229,16 @@ test('AuditService hides WATERMARK_TRACE_PERFORMED from DOCUMENT_OWNER & AuditVe
   const verifyRes = await verifier.verifyPartition('P1');
   assert.equal(verifyRes.valid, true);
   assert.equal(queriedGtSequence, 2n, 'Verifier must resume after verified anchor sequence 2n');
-  assert.equal(verifyRes.totalChecked, 3);
+  assert.equal(
+    verifyRes.totalChecked,
+    2,
+    'Incremental verification must only count verified anchor row (1) + post-anchor rows (1), never skipped rows',
+  );
+  assert.equal(verifyRes.skippedBeforeAnchor, 1);
+
+  const fullRes = await verifier.verifyPartition('P1', { fullScan: true });
+  assert.equal(fullRes.valid, true);
+  assert.equal(fullRes.totalChecked, 3);
+  assert.equal(fullRes.skippedBeforeAnchor, 0);
+  assert.equal(fullRes.verificationMode, 'FULL');
 });

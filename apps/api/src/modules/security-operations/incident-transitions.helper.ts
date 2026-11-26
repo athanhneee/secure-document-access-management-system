@@ -30,12 +30,27 @@ async function requireIncidentRow(database: PrismaClient, id: string) {
   return report;
 }
 
+async function resolveIncidentDocumentId(
+  database: PrismaClient,
+  alertId: string | null | undefined,
+): Promise<string | null> {
+  if (!alertId || typeof database.securityAlert?.findUnique !== 'function') {
+    return null;
+  }
+  const alert = await database.securityAlert.findUnique({
+    where: { id: alertId },
+    select: { document_id: true },
+  });
+  return (alert as { document_id?: string | null } | null)?.document_id ?? null;
+}
+
 async function writeIncidentAudit(
   auditWriter: AuditWriterService | undefined,
   actor: AuthPrincipal,
   action: string,
   objectId: string,
   details: Record<string, unknown>,
+  documentId: string | null = null,
 ): Promise<void> {
   if (!auditWriter) return;
   await auditWriter.writeLog({
@@ -44,6 +59,7 @@ async function writeIncidentAudit(
     action,
     objectType: 'INCIDENT_REPORT',
     objectId,
+    documentId,
     outcome: 'SUCCESS',
     chainPartition: 'SECURITY_OPERATIONS',
     details,
@@ -61,6 +77,7 @@ export async function executeCreateIncidentReport(
 ): Promise<string> {
   assertActorCanMutateIncidents(actor);
 
+  let linkedDocumentId: string | null = null;
   if (input.alertId) {
     const alert = await database.securityAlert.findUnique({ where: { id: input.alertId } });
     if (!alert) {
@@ -69,6 +86,7 @@ export async function executeCreateIncidentReport(
         message: `Linked security alert ${input.alertId} was not found.`,
       });
     }
+    linkedDocumentId = (alert as { document_id?: string | null }).document_id ?? null;
   }
 
   const id = randomUUID();
@@ -87,11 +105,18 @@ export async function executeCreateIncidentReport(
     },
   });
 
-  await writeIncidentAudit(auditWriter, actor, 'INCIDENT_REPORT_CREATED', id, {
-    incidentCode,
-    alertId: input.alertId ?? null,
-    title: input.title,
-  });
+  await writeIncidentAudit(
+    auditWriter,
+    actor,
+    'INCIDENT_REPORT_CREATED',
+    id,
+    {
+      incidentCode,
+      alertId: input.alertId ?? null,
+      title: input.title,
+    },
+    linkedDocumentId,
+  );
   return created.id;
 }
 
@@ -123,10 +148,18 @@ export async function executeUpdateIncidentReport(
   }
 
   const updated = await database.incidentReport.update({ where: { id }, data: updateData });
-  await writeIncidentAudit(auditWriter, actor, 'INCIDENT_REPORT_UPDATED', id, {
-    incidentCode: report.incident_code,
-    fieldsUpdated: Object.keys(input),
-  });
+  const linkedDocumentId = await resolveIncidentDocumentId(database, report.alert_id);
+  await writeIncidentAudit(
+    auditWriter,
+    actor,
+    'INCIDENT_REPORT_UPDATED',
+    id,
+    {
+      incidentCode: report.incident_code,
+      fieldsUpdated: Object.keys(input),
+    },
+    linkedDocumentId,
+  );
   return updated.id;
 }
 
@@ -149,12 +182,24 @@ export async function executeSubmitIncidentReport(
     });
   }
 
-  // CONFLICT-RESOLVED: Xác minh tồn tại người nhận trước khi lưu khóa ngoại submitted_to_owner / submitted_to_admin (N13).
+  // BUG-061 (3): Giữ `assertActorCanMutateIncidents(actor)` chạy đầu tiên (bảo toàn bài test SoD), sau đó bắt buộc ít nhất `submittedToOwner` hoặc `submittedToAdmin` và cả hai phải đang ACTIVE.
+  if (
+    (input.submittedToOwner === undefined || input.submittedToOwner === null) &&
+    (input.submittedToAdmin === undefined || input.submittedToAdmin === null)
+  ) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.VALIDATION_FAILED,
+      message:
+        'At least one recipient (submittedToOwner or submittedToAdmin) is required when submitting an incident report.',
+    });
+  }
+
+  // CONFLICT-RESOLVED: Xác minh tồn tại & trạng thái ACTIVE của người nhận trước khi lưu khóa ngoại submitted_to_owner / submitted_to_admin (N13, BUG-061).
   if (typeof database.user?.findUnique === 'function') {
-    if (input.submittedToOwner !== undefined) {
+    if (input.submittedToOwner !== undefined && input.submittedToOwner !== null) {
       const ownerUser = await database.user.findUnique({
         where: { id: input.submittedToOwner },
-        select: { id: true },
+        select: { id: true, status: true },
       });
       if (!ownerUser) {
         throw new NotFoundException({
@@ -162,16 +207,28 @@ export async function executeSubmitIncidentReport(
           message: `Submitted owner user ${input.submittedToOwner.toString()} was not found.`,
         });
       }
+      if ('status' in ownerUser && ownerUser.status !== 'ACTIVE') {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.USER_NOT_ACTIVE,
+          message: `Submitted owner user ${input.submittedToOwner.toString()} is not active.`,
+        });
+      }
     }
-    if (input.submittedToAdmin !== undefined) {
+    if (input.submittedToAdmin !== undefined && input.submittedToAdmin !== null) {
       const adminUser = await database.user.findUnique({
         where: { id: input.submittedToAdmin },
-        select: { id: true },
+        select: { id: true, status: true },
       });
       if (!adminUser) {
         throw new NotFoundException({
           errorCode: AppErrorCode.RESOURCE_NOT_FOUND,
           message: `Submitted admin user ${input.submittedToAdmin.toString()} was not found.`,
+        });
+      }
+      if ('status' in adminUser && adminUser.status !== 'ACTIVE') {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.USER_NOT_ACTIVE,
+          message: `Submitted admin user ${input.submittedToAdmin.toString()} is not active.`,
         });
       }
     }
@@ -186,11 +243,19 @@ export async function executeSubmitIncidentReport(
       submitted_to_admin: input.submittedToAdmin ?? null,
     },
   });
-  await writeIncidentAudit(auditWriter, actor, 'INCIDENT_REPORT_SUBMITTED', id, {
-    incidentCode: report.incident_code,
-    submittedToOwner: input.submittedToOwner?.toString() ?? null,
-    submittedToAdmin: input.submittedToAdmin?.toString() ?? null,
-  });
+  const linkedDocumentId = await resolveIncidentDocumentId(database, report.alert_id);
+  await writeIncidentAudit(
+    auditWriter,
+    actor,
+    'INCIDENT_REPORT_SUBMITTED',
+    id,
+    {
+      incidentCode: report.incident_code,
+      submittedToOwner: input.submittedToOwner?.toString() ?? null,
+      submittedToAdmin: input.submittedToAdmin?.toString() ?? null,
+    },
+    linkedDocumentId,
+  );
   return updated.id;
 }
 
@@ -217,10 +282,18 @@ export async function executeReviewIncidentReport(
     where: { id },
     data: { status: 'IN_REVIEW' },
   });
-  await writeIncidentAudit(auditWriter, actor, 'INCIDENT_REPORT_IN_REVIEW', id, {
-    incidentCode: report.incident_code,
-    previousStatus: report.status,
-  });
+  const linkedDocumentId = await resolveIncidentDocumentId(database, report.alert_id);
+  await writeIncidentAudit(
+    auditWriter,
+    actor,
+    'INCIDENT_REPORT_IN_REVIEW',
+    id,
+    {
+      incidentCode: report.incident_code,
+      previousStatus: report.status,
+    },
+    linkedDocumentId,
+  );
   return updated.id;
 }
 
@@ -271,10 +344,18 @@ export async function executeCloseIncidentReport(
         : report.summary,
     },
   });
-  await writeIncidentAudit(auditWriter, actor, 'INCIDENT_REPORT_CLOSED', id, {
-    incidentCode: report.incident_code,
-    closingNote: input.closingNote ?? null,
-    forceClose: Boolean(input.forceClose),
-  });
+  const linkedDocumentId = await resolveIncidentDocumentId(database, report.alert_id);
+  await writeIncidentAudit(
+    auditWriter,
+    actor,
+    'INCIDENT_REPORT_CLOSED',
+    id,
+    {
+      incidentCode: report.incident_code,
+      closingNote: input.closingNote ?? null,
+      forceClose: Boolean(input.forceClose),
+    },
+    linkedDocumentId,
+  );
   return updated.id;
 }

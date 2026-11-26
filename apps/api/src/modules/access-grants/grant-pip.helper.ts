@@ -113,8 +113,11 @@ export async function buildGrantSubjectAttributes(
   return {
     clearanceRank,
     departmentId: user?.department_id?.toString() ?? null,
-    // CONFLICT-RESOLVED: Đồng bộ subject.employmentStatus giữa PIP cấp phát quyền và Từ điển ABAC, giữ fallback user.status.
-    employmentStatus: explicitEmploymentStatus ?? user?.status ?? null,
+    // BUG-037: Ưu tiên trạng thái tài khoản không hoạt động (LOCKED/DISABLED) trước thuộc tính EMPLOYMENT_STATUS.
+    employmentStatus:
+      user && user.status !== 'ACTIVE'
+        ? user.status
+        : (explicitEmploymentStatus ?? user?.status ?? null),
     projects,
   };
 }
@@ -230,7 +233,10 @@ export async function buildRoleGrantSubjectAttributes(
       return {
         clearanceRank: clearanceByUser.get(key) ?? null,
         departmentId: user?.department_id?.toString() ?? null,
-        employmentStatus: employmentStatusByUser.get(key) ?? user?.status ?? null,
+        employmentStatus:
+          user && user.status !== 'ACTIVE'
+            ? user.status
+            : (employmentStatusByUser.get(key) ?? user?.status ?? null),
         projects: [...(projectsByUser.get(key) ?? [])].sort(),
       };
     });

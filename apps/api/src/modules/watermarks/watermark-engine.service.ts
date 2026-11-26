@@ -12,7 +12,15 @@ import {
   Optional,
 } from '@nestjs/common';
 import crypto, { randomUUID } from 'node:crypto';
-import { degrees, PDFDocument, PDFName, PDFString, rgb, StandardFonts } from 'pdf-lib';
+import {
+  degrees,
+  PDFDocument,
+  PDFHexString,
+  PDFName,
+  PDFString,
+  rgb,
+  StandardFonts,
+} from 'pdf-lib';
 import { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import {
@@ -61,8 +69,9 @@ export class WatermarkEngineService {
     document: WatermarkDocumentData,
     token: string,
     now: Date = new Date(),
+    options?: { includeQrCode?: boolean | undefined },
   ): string {
-    return formatForensicWatermarkText(template, user, document, token, now);
+    return formatForensicWatermarkText(template, user, document, token, now, options);
   }
 
   /**
@@ -94,6 +103,7 @@ export class WatermarkEngineService {
         document,
         watermarkToken,
         now,
+        { includeQrCode: config.include_qr_code },
       );
 
       const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
@@ -198,9 +208,14 @@ export class WatermarkEngineService {
   }
 
   /**
-   * Thuật toán: Trích xuất một trang đơn lẻ theo chỉ số bắt đầu từ `1` thành tài liệu PDF con độc lập phục vụ xem trước từng trang.
+   * Thuật toán: Trích xuất một trang đơn lẻ theo chỉ số bắt đầu từ `1` thành tài liệu PDF con độc lập phục vụ xem trước từng trang,
+   * đồng thời sao chép nguyên vẹn siêu dữ liệu pháp y ICAP DLP (`Keywords`, `Subject`, `Catalog.ForensicWatermark`) và lưu với `useObjectStreams: false`.
    */
-  async extractPdfPage(pdfBuffer: Buffer, pageNumber: number): Promise<Buffer> {
+  async extractPdfPage(
+    pdfBuffer: Buffer,
+    pageNumber: number,
+    fallbackWatermarkToken?: string,
+  ): Promise<Buffer> {
     const srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
     const pageIndex = pageNumber - 1;
     const totalPages = srcDoc.getPageCount();
@@ -215,7 +230,30 @@ export class WatermarkEngineService {
     const subDoc = await PDFDocument.create();
     const [copiedPage] = await subDoc.copyPages(srcDoc, [pageIndex]);
     subDoc.addPage(copiedPage);
-    return Buffer.from(await subDoc.save());
+
+    const srcKeywords = srcDoc.getKeywords();
+    if (srcKeywords && srcKeywords.length > 0) {
+      subDoc.setKeywords([srcKeywords]);
+    } else if (fallbackWatermarkToken) {
+      subDoc.setKeywords([fallbackWatermarkToken]);
+    }
+
+    const srcSubject = srcDoc.getSubject();
+    if (srcSubject && srcSubject.length > 0) {
+      subDoc.setSubject(srcSubject);
+    } else if (fallbackWatermarkToken) {
+      subDoc.setSubject(`ForensicWatermark:${fallbackWatermarkToken}`);
+    }
+
+    const forensicKey = PDFName.of('ForensicWatermark');
+    const rawCatalogEntry = srcDoc.catalog.lookup(forensicKey);
+    if (rawCatalogEntry instanceof PDFString || rawCatalogEntry instanceof PDFHexString) {
+      subDoc.catalog.set(forensicKey, PDFString.of(rawCatalogEntry.decodeText()));
+    } else if (fallbackWatermarkToken) {
+      subDoc.catalog.set(forensicKey, PDFString.of(`ForensicWatermark:${fallbackWatermarkToken}`));
+    }
+
+    return Buffer.from(await subDoc.save({ useObjectStreams: false }));
   }
 
   /**

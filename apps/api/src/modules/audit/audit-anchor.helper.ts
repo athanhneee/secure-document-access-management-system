@@ -3,11 +3,12 @@
  * Algorithm: HMAC-SHA256 Signed Checkpoint Anchor Generation for Audit Chain Partitions.
  */
 import { createHmac } from 'node:crypto';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
-import { formatSignerKeyId } from '@sda/contracts';
-import type { getDatabaseClient } from '@sda/database';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { AppErrorCode, formatSignerKeyId } from '@sda/contracts';
+import { mapDatabaseError, UniqueConstraintError, type getDatabaseClient } from '@sda/database';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
+import { AuditVerifierService } from './audit-verifier.service.js';
 import type { AuditWriterService } from './audit-writer.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -67,13 +68,15 @@ export async function listPartitionAnchors(
  * Cơ chế hoạt động:
  *   1. Cưỡng chế phân quyền độc quyền cho vai trò `SECURITY_OFFICER`.
  *   2. Truy vấn mắt xích mới nhất (`chain_sequence DESC`) của phân vùng cần đóng dấu neo.
- *   3. Ký `HMAC-SHA256` trên bộ ba `partition:sequence:entry_hash` và lưu vào bảng `audit_anchors`.
+ *   3. Kiểm chứng toàn chuỗi từ `sequence = 1` đến `latestLog.chain_sequence` (`fullScan: true`) trước khi cho phép đóng dấu `VALID`.
+ *   4. Ký `HMAC-SHA256` trên bộ ba `partition:sequence:entry_hash` và lưu vào bảng `audit_anchors`.
  */
 export async function createPartitionAnchor(
   database: PrismaClient,
   writerService: AuditWriterService,
   principal: AuthPrincipal,
   partition: string,
+  verifierService?: AuditVerifierService,
 ): Promise<CreatedAuditAnchorDto> {
   const isSecurityOfficer = principal.roles.includes('SECURITY_OFFICER');
   if (!isSecurityOfficer) {
@@ -89,6 +92,40 @@ export async function createPartitionAnchor(
     throw new NotFoundException(`No audit logs found for partition ${partition}`);
   }
 
+  if (typeof database.auditAnchor?.findFirst === 'function') {
+    const existingAnchor = await database.auditAnchor.findFirst({
+      where: {
+        chain_partition: partition,
+        anchor_sequence: latestLog.chain_sequence,
+      },
+      select: { id: true },
+    });
+    if (existingAnchor) {
+      throw new ConflictException({
+        errorCode: AppErrorCode.RESOURCE_CONFLICT,
+        message: `An audit anchor already exists for partition ${partition} at sequence ${latestLog.chain_sequence.toString()}.`,
+      });
+    }
+  }
+
+  // Bắt buộc kiểm chứng toàn chuỗi từ sequence = 1 đến mắt xích cần neo trước khi cấp dấu status = 'VALID'
+  const verifier = verifierService ?? new AuditVerifierService(writerService, database);
+  const verification = await verifier.verifyPartition(partition, {
+    toSequence: latestLog.chain_sequence,
+    fullScan: true,
+  });
+  if (
+    !verification.valid ||
+    verification.violations.length > 0 ||
+    BigInt(verification.totalChecked) !== latestLog.chain_sequence
+  ) {
+    throw new ConflictException({
+      errorCode: AppErrorCode.AUDIT_CHAIN_BROKEN,
+      message: `Cannot create VALID audit anchor for partition ${partition}: full-chain integrity verification failed (${verification.violations.length} violation(s), verified ${verification.totalChecked}/${latestLog.chain_sequence.toString()} rows).`,
+      violationCount: verification.violations.length,
+    });
+  }
+
   // CONFLICT-RESOLVED: Ký điểm neo audit_anchors bằng phiên bản khóa HMAC đang kích hoạt (activeVersion) và ghi đúng định danh signer_key_id thay vì gắn cứng phiên bản 1.
   const activeKeyVersion = writerService.getActiveKeyVersion();
   const anchorKey = writerService.getHmacKey(activeKeyVersion);
@@ -96,16 +133,32 @@ export async function createPartitionAnchor(
     .update(`${partition}:${latestLog.chain_sequence}:${latestLog.entry_hash}`)
     .digest('hex');
 
-  const created = await database.auditAnchor.create({
-    data: {
-      chain_partition: partition,
-      anchor_sequence: latestLog.chain_sequence,
-      entry_hash: latestLog.entry_hash,
-      signature,
-      signer_key_id: formatSignerKeyId(activeKeyVersion),
-      status: 'VALID',
-    },
-  });
+  let created: Awaited<ReturnType<typeof database.auditAnchor.create>>;
+  try {
+    created = await database.auditAnchor.create({
+      data: {
+        chain_partition: partition,
+        anchor_sequence: latestLog.chain_sequence,
+        entry_hash: latestLog.entry_hash,
+        signature,
+        signer_key_id: formatSignerKeyId(activeKeyVersion),
+        status: 'VALID',
+      },
+    });
+  } catch (err: unknown) {
+    const code = (err as { code?: string } | null)?.code;
+    if (
+      code === 'P2002' ||
+      code === '23505' ||
+      mapDatabaseError(err) instanceof UniqueConstraintError
+    ) {
+      throw new ConflictException({
+        errorCode: AppErrorCode.RESOURCE_CONFLICT,
+        message: `An audit anchor already exists for partition ${partition} at sequence ${latestLog.chain_sequence.toString()}.`,
+      });
+    }
+    throw err;
+  }
 
   if (typeof writerService?.writeLog === 'function') {
     await writerService

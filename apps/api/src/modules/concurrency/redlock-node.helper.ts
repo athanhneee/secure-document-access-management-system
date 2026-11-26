@@ -194,23 +194,39 @@ export async function unlockAllRedisInstances(
 }
 
 /**
- * Algorithm / Thuật toán: Thăm dò sức khỏe nhanh 2000ms kiểm tra ít nhất một nút Redis còn phản hồi `PING`.
+ * Algorithm / Thuật toán: Thăm dò sức khỏe đồng thuận đa số 2000ms kiểm tra số nút phản hồi `'PONG'` đạt `>= quorum` kèm dọn `clearTimeout` trong `finally` (`BUG-064`).
  */
-export async function probeAnyRedisHealthy(clients: Redis[]): Promise<boolean> {
+export async function probeQuorumRedisHealthy(clients: Redis[], quorum?: number): Promise<boolean> {
+  if (clients.length === 0) return false;
+  const requiredQuorum = quorum ?? Math.floor(clients.length / 2) + 1;
   try {
     const results = await Promise.allSettled(
-      clients.map((c) =>
-        Promise.race([
-          c.ping(),
-          new Promise<string>((_, reject) => {
-            const t = setTimeout(() => reject(new Error('timeout')), 2_000);
-            t.unref();
-          }),
-        ]),
-      ),
+      clients.map(async (c) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            c.ping(),
+            new Promise<string>((_, reject) => {
+              timer = setTimeout(() => reject(new Error('timeout')), 2_000);
+              timer.unref?.();
+            }),
+          ]);
+        } finally {
+          if (timer !== undefined) {
+            clearTimeout(timer);
+          }
+        }
+      }),
     );
-    return results.some((r) => r.status === 'fulfilled');
+    const healthyCount = results.filter(
+      (r) => r.status === 'fulfilled' && r.value === 'PONG',
+    ).length;
+    return healthyCount >= requiredQuorum;
   } catch {
     return false;
   }
+}
+
+export async function probeAnyRedisHealthy(clients: Redis[]): Promise<boolean> {
+  return probeQuorumRedisHealthy(clients, 1);
 }

@@ -1,14 +1,20 @@
 /**
  * Module: PEP Bell-LaPadula Clearance & Three-Tier Grant Resolution Helper
- * Thuật toán: Kiểm Định Trần Độ Mật Bell-LaPadula & Phân Giải Quyền Cấp Phát Ba Tầng (`USER`, `ROLE`, `OWNER`).
+ * Thuật toán: Kiểm Định Trần Độ Mật Bell-LaPadula Chỉ Đọc & Cấp Phát Hậu-PERMIT Ba Tầng (`USER`, `ROLE`, `OWNER`) (`BUG-054`).
  *   1. Kiểm tra bất biến "No Read Up" (`userClearanceRank >= documentRank`) trên mọi đường dẫn mở phiên (bao gồm cả `grantId` tường minh và chủ sở hữu).
- *   2. Phân giải quyền cấp phát hợp lệ qua Tầng 1 (`USER` grant), Tầng 2 (`ROLE` grant), hoặc Tầng 3 (khởi tạo/gia hạn cho chủ sở hữu khi đủ độ mật).
+ *   2. Tách bước thẩm định điều kiện đủ của Owner thành bước chỉ đọc trước khi đánh giá ABAC PDP + nghĩa vụ, tránh ghi rác CSDL khi bị PDP từ chối.
+ *   3. Chỉ khi ABAC PERMIT mới cấp phát/cập nhật grant tự động cho Owner (`source: 'SYSTEM'`, kẹp trần `retention_until`, điền đủ `revoked_by`/`revoked_at`/`revoke_reason` thỏa `CHECK 23514`, khóa tư vấn `(documentId, userId)` + `skipDuplicates` chống `P2002`).
  */
 import { ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
 import type { AccessGrantsService } from '../access-grants/access-grants.service.js';
+import {
+  isDocumentDepartmentWithinRoleScope,
+  loadActiveUserRoleScopes,
+} from '../access-grants/grant-role-visibility.helper.js';
+import type { AuthorizationService } from '../rbac/authorization.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -46,28 +52,40 @@ export async function checkUserClearance(
   return rank >= documentRank;
 }
 
+interface ReadOnlyGrantResolution {
+  grantId: string | null;
+  grantPermissions: string[];
+  pendingOwnerGrantProvision: boolean;
+}
+
 /**
- * Thuật toán: Phân giải quyền cấp phát hoạt động ba tầng (`USER` -> `ROLE` -> `OWNER`) có kiểm định độ mật Bell-LaPadula tại mọi tầng.
+ * Thuật toán: Phân giải chỉ đọc quyền cấp phát ba tầng (`USER` -> `ROLE` -> `OWNER` precheck) không ghi CSDL trước khi chạy PDP (`BUG-054`).
  */
-export async function resolveEligibleGrant(params: {
+async function resolveEligibleGrantReadOnly(params: {
   database: PrismaClient;
+  authorization?: AuthorizationService | undefined;
   documentId: string;
+  documentDepartmentId?: bigint | null | undefined;
   userId: bigint;
   action: 'VIEW' | 'DOWNLOAD';
   now: Date;
   documentRank: number;
   isOwner?: boolean;
   classAllowDownload?: boolean;
-}): Promise<string | null> {
+  documentRetentionUntil?: Date | null | undefined;
+}): Promise<ReadOnlyGrantResolution | null> {
   const {
     database,
+    authorization,
     documentId,
+    documentDepartmentId,
     userId,
     action,
     now,
     documentRank,
     isOwner = false,
     classAllowDownload = true,
+    documentRetentionUntil,
   } = params;
 
   const directGrant = await database.accessGrant.findFirst({
@@ -80,44 +98,71 @@ export async function resolveEligibleGrant(params: {
       valid_until: { gt: now },
       access_grant_permissions: { some: { permission: action } },
     },
-    select: { id: true },
+    include: { access_grant_permissions: true },
   });
 
   if (directGrant && (await checkUserClearance(database, userId, documentRank, now))) {
-    return directGrant.id;
+    const grantPermissions = Array.isArray(directGrant.access_grant_permissions)
+      ? directGrant.access_grant_permissions.map((p) => p.permission)
+      : action === 'DOWNLOAD'
+        ? ['VIEW', 'DOWNLOAD']
+        : ['VIEW'];
+    return {
+      grantId: directGrant.id,
+      grantPermissions,
+      pendingOwnerGrantProvision: false,
+    };
   }
 
-  const userRoles = await database.userRole.findMany({
-    where: {
-      user_id: userId,
-      valid_from: { lte: now },
-      OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-      roles: { is_active: true },
-    },
-    select: { role_id: true },
-  });
+  const activeRoleScopes = await loadActiveUserRoleScopes(database, userId, now);
+  const eligibleRoleIds: bigint[] = [];
+  const checkedRoleIds = new Set<bigint>();
+  for (const assignment of activeRoleScopes) {
+    if (checkedRoleIds.has(assignment.roleId)) continue;
+    if (
+      await isDocumentDepartmentWithinRoleScope(
+        database,
+        authorization,
+        documentDepartmentId,
+        assignment.scopeDepartmentId,
+      )
+    ) {
+      checkedRoleIds.add(assignment.roleId);
+      eligibleRoleIds.push(assignment.roleId);
+    }
+  }
 
-  if (userRoles.length > 0) {
+  if (eligibleRoleIds.length > 0) {
     const roleGrant = await database.accessGrant.findFirst({
       where: {
         document_id: documentId,
         principal_type: 'ROLE',
-        principal_role_id: { in: userRoles.map((r) => r.role_id) },
+        principal_role_id: { in: eligibleRoleIds },
         status: 'ACTIVE',
         valid_from: { lte: now },
         valid_until: { gt: now },
         access_grant_permissions: { some: { permission: action } },
       },
-      select: { id: true },
+      include: { access_grant_permissions: true },
     });
     if (roleGrant && (await checkUserClearance(database, userId, documentRank, now))) {
-      return roleGrant.id;
+      const grantPermissions = Array.isArray(roleGrant.access_grant_permissions)
+        ? roleGrant.access_grant_permissions.map((p) => p.permission)
+        : action === 'DOWNLOAD'
+          ? ['VIEW', 'DOWNLOAD']
+          : ['VIEW'];
+      return {
+        grantId: roleGrant.id,
+        grantPermissions,
+        pendingOwnerGrantProvision: false,
+      };
     }
   }
 
   if (isOwner) {
     if (!(await checkUserClearance(database, userId, documentRank, now))) return null;
     if (action === 'DOWNLOAD' && !classAllowDownload) return null;
+    if (documentRetentionUntil && documentRetentionUntil <= now) return null;
 
     const existingOwnerGrant = await database.accessGrant.findFirst({
       where: {
@@ -131,18 +176,127 @@ export async function resolveEligibleGrant(params: {
       include: { access_grant_permissions: true },
     });
 
+    const targetPerms = classAllowDownload ? ['VIEW', 'DOWNLOAD'] : ['VIEW'];
     if (existingOwnerGrant) {
-      const perms = existingOwnerGrant.access_grant_permissions.map((p) => p.permission);
+      const perms = Array.isArray(existingOwnerGrant.access_grant_permissions)
+        ? existingOwnerGrant.access_grant_permissions.map((p) => p.permission)
+        : [];
+      if (perms.includes(action)) {
+        return {
+          grantId: existingOwnerGrant.id,
+          grantPermissions: targetPerms,
+          pendingOwnerGrantProvision: false,
+        };
+      }
+      return {
+        grantId: existingOwnerGrant.id,
+        grantPermissions: targetPerms,
+        pendingOwnerGrantProvision: true,
+      };
+    }
+
+    return {
+      grantId: null,
+      grantPermissions: targetPerms,
+      pendingOwnerGrantProvision: true,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Thuật toán: Cấp phát hoặc nâng cấp nguyên tử `access_grants` tự động (`source: 'SYSTEM'`) cho chủ sở hữu sau khi ABAC PERMIT (`BUG-054`),
+ * có khóa tư vấn `(documentId, userId)` + `skipDuplicates` chống `P2002`, kẹp trần `retention_until`, và điền đủ 3 cột thu hồi thỏa `CHECK 23514`.
+ */
+export async function ensurePermittedOwnerSystemGrant(params: {
+  database: PrismaClient;
+  documentId: string;
+  userId: bigint;
+  action: 'VIEW' | 'DOWNLOAD';
+  now: Date;
+  classAllowDownload: boolean;
+  documentRetentionUntil?: Date | null | undefined;
+}): Promise<string> {
+  const { database, documentId, userId, action, now, classAllowDownload, documentRetentionUntil } =
+    params;
+
+  const runInScope = async (tx: PrismaClient): Promise<string> => {
+    if (typeof tx.$executeRawUnsafe === 'function') {
+      await tx.$executeRawUnsafe(
+        'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+        documentId,
+        `owner-grant:${userId.toString()}`,
+      );
+    }
+
+    const existingOwnerGrant = await tx.accessGrant.findFirst({
+      where: {
+        document_id: documentId,
+        principal_type: 'USER',
+        principal_user_id: userId,
+        status: 'ACTIVE',
+        valid_from: { lte: now },
+        valid_until: { gt: now },
+      },
+      include: { access_grant_permissions: true },
+    });
+
+    if (existingOwnerGrant) {
+      const perms = Array.isArray(existingOwnerGrant.access_grant_permissions)
+        ? existingOwnerGrant.access_grant_permissions.map((p) => p.permission)
+        : [];
       if (!perms.includes(action)) {
-        await database.accessGrantPermission.create({
-          data: { access_grant_id: existingOwnerGrant.id, permission: action },
-        });
+        if (typeof tx.accessGrantPermission?.createMany === 'function') {
+          await tx.accessGrantPermission.createMany({
+            data: [{ access_grant_id: existingOwnerGrant.id, permission: action }],
+            skipDuplicates: true,
+          });
+        } else if (typeof tx.accessGrantPermission?.create === 'function') {
+          try {
+            await tx.accessGrantPermission.create({
+              data: { access_grant_id: existingOwnerGrant.id, permission: action },
+            });
+          } catch (err: unknown) {
+            const code = (err as { code?: string } | null)?.code;
+            if (code !== 'P2002' && code !== '23505') throw err;
+          }
+        }
       }
       return existingOwnerGrant.id;
     }
 
-    if (typeof database.accessGrant.update === 'function') {
-      const staleOwnerGrant = await database.accessGrant.findFirst({
+    if (typeof tx.accessGrant?.findMany === 'function') {
+      const staleGrants = await tx.accessGrant.findMany({
+        where: {
+          document_id: documentId,
+          principal_type: 'USER',
+          principal_user_id: userId,
+          status: 'ACTIVE',
+        },
+        select: { id: true, valid_until: true },
+      });
+      for (const stale of staleGrants) {
+        if (stale.valid_until <= now) {
+          await tx.accessGrant.update({
+            where: { id: stale.id },
+            data: { status: 'EXPIRED', version: { increment: 1 } },
+          });
+        } else {
+          await tx.accessGrant.update({
+            where: { id: stale.id },
+            data: {
+              status: 'REVOKED',
+              revoked_by: userId,
+              revoked_at: now,
+              revoke_reason: 'Superseded by active owner system grant',
+              version: { increment: 1 },
+            },
+          });
+        }
+      }
+    } else if (typeof tx.accessGrant?.update === 'function') {
+      const staleOwnerGrant = await tx.accessGrant.findFirst({
         where: {
           document_id: documentId,
           principal_type: 'USER',
@@ -152,49 +306,116 @@ export async function resolveEligibleGrant(params: {
         select: { id: true, valid_until: true },
       });
       if (staleOwnerGrant) {
-        await database.accessGrant.update({
+        await tx.accessGrant.update({
           where: { id: staleOwnerGrant.id },
-          data: {
-            status: staleOwnerGrant.valid_until <= now ? 'EXPIRED' : 'REVOKED',
-            version: { increment: 1 },
-          },
+          data:
+            staleOwnerGrant.valid_until <= now
+              ? { status: 'EXPIRED', version: { increment: 1 } }
+              : {
+                  status: 'REVOKED',
+                  revoked_by: userId,
+                  revoked_at: now,
+                  revoke_reason: 'Superseded by active owner system grant',
+                  version: { increment: 1 },
+                },
         });
       }
+    }
+
+    const defaultValidUntil = new Date(now.getTime() + 365 * 86_400_000);
+    let resolvedRetentionUntil = documentRetentionUntil;
+    if (resolvedRetentionUntil === undefined && typeof tx.document?.findUnique === 'function') {
+      const docRow = await tx.document.findUnique({
+        where: { id: documentId },
+        select: { retention_until: true },
+      });
+      resolvedRetentionUntil = docRow?.retention_until ?? null;
+    }
+
+    const clampedValidUntil =
+      resolvedRetentionUntil && resolvedRetentionUntil < defaultValidUntil
+        ? resolvedRetentionUntil
+        : defaultValidUntil;
+    if (clampedValidUntil <= now) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Document retention horizon has expired; cannot provision owner access session.',
+      });
     }
 
     const grantId = randomUUID();
     const permissions: ('VIEW' | 'DOWNLOAD')[] = classAllowDownload
       ? ['VIEW', 'DOWNLOAD']
       : ['VIEW'];
-    await database.accessGrant.create({
+    await tx.accessGrant.create({
       data: {
         id: grantId,
         document_id: documentId,
         principal_type: 'USER',
         principal_user_id: userId,
-        source: 'DIRECT',
+        source: 'SYSTEM',
         status: 'ACTIVE',
         valid_from: now,
-        valid_until: new Date(now.getTime() + 365 * 86400000),
+        valid_until: clampedValidUntil,
         granted_by: userId,
         access_grant_permissions: {
-          createMany: { data: permissions.map((p) => ({ permission: p })) },
+          createMany: {
+            data: permissions.map((p) => ({ permission: p })),
+            skipDuplicates: true,
+          },
         },
       },
     });
     return grantId;
-  }
+  };
 
-  return null;
+  if (typeof database?.$transaction === 'function') {
+    return database.$transaction(async (tx) => runInScope(tx as unknown as PrismaClient));
+  }
+  return runInScope(database);
 }
 
 /**
- * Thuật toán: Cổng thẩm định `grantId` tường minh hoặc tự động phân giải kèm kiểm tra độ mật và quyền tải xuống.
+ * Thuật toán: Phân giải quyền cấp phát hoạt động ba tầng (`USER` -> `ROLE` -> `OWNER`) có kiểm định độ mật Bell-LaPadula tại mọi tầng.
+ */
+export async function resolveEligibleGrant(params: {
+  database: PrismaClient;
+  authorization?: AuthorizationService | undefined;
+  documentId: string;
+  documentDepartmentId?: bigint | null | undefined;
+  userId: bigint;
+  action: 'VIEW' | 'DOWNLOAD';
+  now: Date;
+  documentRank: number;
+  isOwner?: boolean;
+  classAllowDownload?: boolean;
+  documentRetentionUntil?: Date | null | undefined;
+}): Promise<string | null> {
+  const resolved = await resolveEligibleGrantReadOnly(params);
+  if (!resolved) return null;
+  if (resolved.pendingOwnerGrantProvision || !resolved.grantId) {
+    return ensurePermittedOwnerSystemGrant({
+      database: params.database,
+      documentId: params.documentId,
+      userId: params.userId,
+      action: params.action,
+      now: params.now,
+      classAllowDownload: params.classAllowDownload ?? true,
+      documentRetentionUntil: params.documentRetentionUntil,
+    });
+  }
+  return resolved.grantId;
+}
+
+/**
+ * Thuật toán: Cổng thẩm định chỉ đọc `grantId` tường minh hoặc tự động phân giải kèm kiểm tra độ mật và quyền tải xuống thực tế của grant (`BUG-054`).
  */
 export async function verifyAndResolveEffectiveGrant(params: {
   database: PrismaClient;
+  authorization?: AuthorizationService | undefined;
   grantsService: AccessGrantsService;
   documentId: string;
+  documentDepartmentId?: bigint | null | undefined;
   requestedGrantId: string | undefined;
   userId: bigint;
   action: 'VIEW' | 'DOWNLOAD';
@@ -202,12 +423,19 @@ export async function verifyAndResolveEffectiveGrant(params: {
   documentRank: number;
   isOwner: boolean;
   classAllowDownload: boolean;
+  documentRetentionUntil?: Date | null | undefined;
   deny: (grantId: string | null, reasonCode: string, reasonMessage: string) => Promise<void>;
-}): Promise<string> {
+}): Promise<{
+  effectiveGrantId: string | null;
+  grantPermitsDownload: boolean;
+  pendingOwnerGrantProvision: boolean;
+}> {
   const {
     database,
+    authorization,
     grantsService,
     documentId,
+    documentDepartmentId,
     requestedGrantId,
     userId,
     action,
@@ -215,10 +443,14 @@ export async function verifyAndResolveEffectiveGrant(params: {
     documentRank,
     isOwner,
     classAllowDownload,
+    documentRetentionUntil,
     deny,
   } = params;
 
   let effectiveGrantId: string | null = requestedGrantId ?? null;
+  let grantPermissions: string[] = [];
+  let pendingOwnerGrantProvision = false;
+
   if (effectiveGrantId) {
     const validated = await grantsService.assertGrantValidForAccess(
       effectiveGrantId,
@@ -253,18 +485,36 @@ export async function verifyAndResolveEffectiveGrant(params: {
         message: 'Caller security clearance is insufficient for this document classification.',
       });
     }
+    if (Array.isArray((validated as { permissions?: string[] } | undefined)?.permissions)) {
+      grantPermissions = (validated as { permissions: string[] }).permissions;
+    } else if (!isOwner && typeof database?.accessGrant?.findUnique === 'function') {
+      const grantRow = await database.accessGrant.findUnique({
+        where: { id: effectiveGrantId },
+        include: { access_grant_permissions: true },
+      });
+      if (Array.isArray(grantRow?.access_grant_permissions)) {
+        grantPermissions = grantRow.access_grant_permissions.map((p) => p.permission);
+      } else if (action === 'DOWNLOAD') {
+        grantPermissions = ['VIEW', 'DOWNLOAD'];
+      }
+    } else if (action === 'DOWNLOAD') {
+      grantPermissions = ['VIEW', 'DOWNLOAD'];
+    }
   } else {
-    effectiveGrantId = await resolveEligibleGrant({
+    const resolved = await resolveEligibleGrantReadOnly({
       database,
+      authorization,
       documentId,
+      documentDepartmentId,
       userId,
       action,
       now,
       documentRank,
       isOwner,
       classAllowDownload,
+      documentRetentionUntil,
     });
-    if (!effectiveGrantId) {
+    if (!resolved) {
       await deny(
         null,
         AppErrorCode.DOCUMENT_ACCESS_DENIED,
@@ -275,6 +525,9 @@ export async function verifyAndResolveEffectiveGrant(params: {
         message: `No active grant found providing ${action} permission for this document.`,
       });
     }
+    effectiveGrantId = resolved.grantId;
+    grantPermissions = resolved.grantPermissions;
+    pendingOwnerGrantProvision = resolved.pendingOwnerGrantProvision;
   }
 
   if (action === 'DOWNLOAD' && !classAllowDownload) {
@@ -289,5 +542,7 @@ export async function verifyAndResolveEffectiveGrant(params: {
     });
   }
 
-  return effectiveGrantId;
+  const grantPermitsDownload = isOwner ? classAllowDownload : grantPermissions.includes('DOWNLOAD');
+
+  return { effectiveGrantId, grantPermitsDownload, pendingOwnerGrantProvision };
 }

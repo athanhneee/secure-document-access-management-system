@@ -103,6 +103,26 @@ export function createDocumentCatalogStores(initialState = {}, nextId) {
         documents.set(where.id, updated);
         return updated;
       },
+      updateMany: async ({ where, data }) => {
+        let count = 0;
+        for (const [id, doc] of documents.entries()) {
+          if (where.id !== undefined && doc.id !== where.id) continue;
+          if (where.status !== undefined && doc.status !== where.status) continue;
+          if (where.version !== undefined && (doc.version ?? 0) !== where.version) continue;
+          const updated = {
+            ...doc,
+            ...data,
+            version:
+              typeof data.version?.increment === 'number'
+                ? (doc.version ?? 0) + data.version.increment
+                : (data.version ?? doc.version),
+            updated_at: new Date(),
+          };
+          documents.set(id, updated);
+          count++;
+        }
+        return { count };
+      },
     },
     documentVersion: {
       findUnique: async ({ where }) => {

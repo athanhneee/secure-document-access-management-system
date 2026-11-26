@@ -21,7 +21,7 @@ import {
   createRedlockClients,
   extendQuorumLocks,
   lockRedisInstance,
-  probeAnyRedisHealthy,
+  probeQuorumRedisHealthy,
   releaseQuorumLocks,
   unlockAllRedisInstances,
   type RedlockAcquireOptions,
@@ -184,7 +184,7 @@ export class RedlockService implements OnModuleDestroy {
   }
 
   checkRedisHealth(): Promise<boolean> {
-    return probeAnyRedisHealthy(this.clients);
+    return probeQuorumRedisHealthy(this.clients, this.quorum);
   }
 
   onModuleDestroy(): void {

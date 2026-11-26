@@ -20,6 +20,11 @@ import {
   fetchUserClearanceRank,
 } from './grant-pip.helper.js';
 import { validateGrantTargetAndSod } from './grant-target-sod.helper.js';
+import {
+  assertWithinDocumentRetention,
+  assertWithinMaxGrantDuration,
+  formatRetentionDateIso,
+} from './grant-retention-bounds.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -46,6 +51,7 @@ export async function validateCreateGrantPreconditions(params: ValidateCreateGra
   validFrom: Date;
   validUntil: Date;
   maxMs: number;
+  retentionUntilIso?: string | null | undefined;
   documentTitle?: string | undefined;
   documentCode?: string | undefined;
 }> {
@@ -78,13 +84,13 @@ export async function validateCreateGrantPreconditions(params: ValidateCreateGra
     });
   }
 
-  const maxMs = maxDurationDays * 24 * 60 * 60 * 1000;
-  if (validUntil.getTime() - validFrom.getTime() > maxMs) {
-    throw new BadRequestException({
-      errorCode: AppErrorCode.GRANT_DURATION_EXCEEDED,
-      message: `Grant duration cannot exceed ${maxDurationDays} days.`,
-    });
-  }
+  const { maxDurationMs: maxMs } = assertWithinMaxGrantDuration({
+    validFrom,
+    validUntil,
+    now,
+    maxDurationDays,
+    mode: 'CREATE',
+  });
 
   const document = await database.document.findUnique({
     where: { id: input.documentId },
@@ -135,6 +141,14 @@ export async function validateCreateGrantPreconditions(params: ValidateCreateGra
       message: 'Document must be in ACTIVE status to grant access.',
     });
   }
+
+  // CONFLICT-RESOLVED: Cưỡng chế thời điểm kết thúc giấy phép không được vượt quá ngày hạn lưu trữ bảo mật (retention_until) của tài liệu.
+  assertWithinDocumentRetention({
+    retentionUntil: document.retention_until,
+    targetUntil: validUntil,
+    now,
+    context: 'GRANT',
+  });
 
   await validateGrantTargetAndSod(database, input, now);
 
@@ -232,6 +246,7 @@ export async function validateCreateGrantPreconditions(params: ValidateCreateGra
     validFrom,
     validUntil,
     maxMs,
+    retentionUntilIso: formatRetentionDateIso(document.retention_until),
     documentTitle: document.title,
     documentCode: document.document_code,
   };

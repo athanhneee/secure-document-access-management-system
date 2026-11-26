@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import { WatermarkEngineService } from '../dist/modules/watermarks/watermark-engine.service.js';
 import { createSamplePdf } from './helpers/zip-builder.mjs';
 
@@ -98,6 +98,63 @@ test('WatermarkEngine — extractPdfPage extracts exact page and rejects out-of-
     },
     (err) => err.getStatus?.() === 400,
   );
+});
+
+test('BUG-011 WatermarkEngine — extractPdfPage preserves Keywords, Subject, Catalog.ForensicWatermark & uncompressed byte stream for ICAP DLP', async () => {
+  const engine = new WatermarkEngineService();
+  const multiPagePdf = await createSamplePdf(3);
+
+  const wmResult = await engine.applyWatermarkToPdf(
+    multiPagePdf,
+    {
+      id: 7n,
+      username: 'reader.dlp',
+      fullName: 'Reader DLP',
+      employeeCode: 'EMP-DLP',
+    },
+    {
+      id: randomUUID(),
+      documentCode: 'DOC-DLP-011',
+      title: 'DLP Protected Multi-Page Report',
+      classificationName: 'CONFIDENTIAL',
+      requireWatermark: true,
+    },
+    {
+      id: 1n,
+      template_text: '{classification} | {fullName} | {shortToken}',
+      opacity_percent: 25,
+      rotation_degrees: -30,
+      font_size: 14,
+      color_hex: '#808080',
+      include_qr_code: true,
+      is_visible: true,
+    },
+  );
+
+  for (const pageNo of [1, 2, 3]) {
+    const pageBuffer = await engine.extractPdfPage(wmResult.watermarkedBuffer, pageNo);
+    const loadedPage = await PDFDocument.load(pageBuffer, { ignoreEncryption: true });
+
+    assert.equal(loadedPage.getPageCount(), 1);
+    assert.equal(loadedPage.getKeywords(), wmResult.watermarkToken);
+    assert.equal(loadedPage.getSubject(), `ForensicWatermark:${wmResult.watermarkToken}`);
+
+    const catalogEntry = loadedPage.catalog.lookup(PDFName.of('ForensicWatermark'));
+    assert.ok(catalogEntry instanceof PDFString);
+    assert.equal(catalogEntry.decodeText(), `ForensicWatermark:${wmResult.watermarkToken}`);
+
+    const rawLatin1 = pageBuffer.toString('latin1');
+    assert.equal(
+      rawLatin1.includes(`ForensicWatermark:${wmResult.watermarkToken}`),
+      true,
+      `Page ${pageNo} raw PDF stream must expose uncompressed ForensicWatermark token for ICAP DLP`,
+    );
+    assert.equal(
+      rawLatin1.includes('/ObjStm'),
+      false,
+      `Page ${pageNo} must be saved with useObjectStreams: false`,
+    );
+  }
 });
 
 test('WatermarkEngine — fail-closed security: watermark failure on required doc throws ForbiddenException', async () => {

@@ -107,8 +107,11 @@ function compileRule(rule: StoredRule): CompiledPolicyRule {
     (left, right) =>
       left.group - right.group || left.sequence - right.sequence || Number(left.id - right.id),
   )) {
-    const attribute =
-      condition.contextKey ?? ATTRIBUTE_CODE_TO_KEY[condition.definitionCode ?? ''] ?? '';
+    const mappedDefCode =
+      condition.definitionCode && Object.hasOwn(ATTRIBUTE_CODE_TO_KEY, condition.definitionCode)
+        ? ATTRIBUTE_CODE_TO_KEY[condition.definitionCode]
+        : undefined;
+    const attribute = condition.contextKey ?? mappedDefCode ?? '';
     const values = groups.get(condition.group) ?? [];
     values.push({
       id: condition.id.toString(),
@@ -143,9 +146,11 @@ function compileRule(rule: StoredRule): CompiledPolicyRule {
 function validateDefinitions(definitions: StoredDefinition[]): void {
   const issues: string[] = [];
   for (const definition of definitions) {
-    const key = ATTRIBUTE_CODE_TO_KEY[definition.code];
+    const key = Object.hasOwn(ATTRIBUTE_CODE_TO_KEY, definition.code)
+      ? ATTRIBUTE_CODE_TO_KEY[definition.code]
+      : undefined;
     if (!key) continue;
-    const descriptor = CONTEXT_ATTRIBUTES[key];
+    const descriptor = Object.hasOwn(CONTEXT_ATTRIBUTES, key) ? CONTEXT_ATTRIBUTES[key] : undefined;
     const expectedScope = key.split('.')[0];
     const scopeMatches =
       (expectedScope === 'subject' && definition.scope === 'USER') ||

@@ -21,6 +21,10 @@ export interface SearchResultItem {
   businessCategoryCode: string | null;
   businessCategoryName: string | null;
   allowDownload: boolean;
+  retentionUntil: string | null;
+  defaultViewDays: number | null;
+  currentVersionNo: number | null;
+  versionCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,6 +53,8 @@ export interface GrantedDocumentItem {
     classificationLevelName: string | null;
     classificationLevelCode: string | null;
     allowDownload: boolean;
+    retentionUntil: string | null;
+    defaultViewDays: number | null;
   };
 }
 
@@ -82,6 +88,14 @@ export function sanitizeSearchQuery(query: string | undefined): string | undefin
     });
   }
   return cleaned;
+}
+
+/**
+ * Thuật toán: Thoát ký tự đại diện SQL `LIKE` / `ILIKE` (`!`, `%`, `_`) với ký tự thoát `'!'` sau bước `sanitizeSearchQuery`
+ * để người dùng tìm kiếm chính xác ký tự `%` hoặc `_` mà không biến thành wildcard quét toàn bảng (BUG-122).
+ */
+export function escapeSqlLikePattern(value: string): string {
+  return value.replace(/[!%_]/gu, '!$&');
 }
 
 export function resolveSortColumn(sort: string): Prisma.Sql {
@@ -172,6 +186,7 @@ export function buildSearchWhereClause(params: {
   hasGlobalDiscover: boolean;
   discoverableDeptIds: bigint[] | null;
   roleIds: bigint[];
+  scopedRoleDepts?: ReadonlyArray<{ roleId: bigint; departmentIds: bigint[] }> | undefined;
   userClearanceRank: number | null;
   input: SearchDocumentsInput;
   sanitizedQuery: string | undefined;
@@ -181,6 +196,7 @@ export function buildSearchWhereClause(params: {
     hasGlobalDiscover,
     discoverableDeptIds,
     roleIds,
+    scopedRoleDepts = [],
     userClearanceRank,
     input,
     sanitizedQuery,
@@ -203,7 +219,7 @@ export function buildSearchWhereClause(params: {
     }
 
     visibility.push(
-      Prisma.sql`(EXISTS (
+      Prisma.sql`(d."status" = 'ACTIVE' AND EXISTS (
         SELECT 1 FROM access_grants ag
         WHERE ag.document_id = d.id AND ag.principal_type = 'USER' AND ag.principal_user_id = ${userId}
           AND ag.status = 'ACTIVE' AND ag.valid_from <= now() AND ag.valid_until > now()
@@ -212,9 +228,20 @@ export function buildSearchWhereClause(params: {
 
     if (roleIds.length > 0) {
       visibility.push(
-        Prisma.sql`(EXISTS (
+        Prisma.sql`(d."status" = 'ACTIVE' AND EXISTS (
           SELECT 1 FROM access_grants ag
           WHERE ag.document_id = d.id AND ag.principal_type = 'ROLE' AND ag.principal_role_id = ANY(${roleIds})
+            AND ag.status = 'ACTIVE' AND ag.valid_from <= now() AND ag.valid_until > now()
+        )${clearanceSql})`,
+      );
+    }
+
+    for (const entry of scopedRoleDepts) {
+      if (entry.departmentIds.length === 0) continue;
+      visibility.push(
+        Prisma.sql`(d."status" = 'ACTIVE' AND d."department_id" = ANY(${entry.departmentIds}) AND EXISTS (
+          SELECT 1 FROM access_grants ag
+          WHERE ag.document_id = d.id AND ag.principal_type = 'ROLE' AND ag.principal_role_id = ${entry.roleId}
             AND ag.status = 'ACTIVE' AND ag.valid_from <= now() AND ag.valid_until > now()
         )${clearanceSql})`,
       );
@@ -245,13 +272,19 @@ export function buildSearchWhereClause(params: {
     conditions.push(Prisma.sql`cl."code" = ANY(${normalizedCodes})`);
   }
   if (sanitizedQuery && sanitizedQuery.length > 0) {
+    const ilikePattern = `%${escapeSqlLikePattern(sanitizedQuery)}%`;
     conditions.push(
       Prisma.sql`(
-        to_tsvector('simple', coalesce(d."title", '') || ' ' || coalesce(d."description", '') || ' ' || coalesce(d."document_code", '') || ' ' || coalesce(dep."name", ''))
+        to_tsvector('simple', coalesce(d."title", '') || ' ' || coalesce(d."description", '') || ' ' || coalesce(d."document_code", ''))
         @@ plainto_tsquery('simple', ${sanitizedQuery})
-        OR similarity(d."title", ${sanitizedQuery}) > 0.15
-        OR d."document_code" ILIKE ${'%' + sanitizedQuery + '%'}
-        OR dep."name" ILIKE ${'%' + sanitizedQuery + '%'}
+        OR d."title" % ${sanitizedQuery}
+        OR d."title" ILIKE ${ilikePattern} ESCAPE '!'
+        OR d."document_code" ILIKE ${ilikePattern} ESCAPE '!'
+        OR d."department_id" IN (
+          SELECT dep_s."id" FROM departments dep_s
+          WHERE dep_s."name" ILIKE ${ilikePattern} ESCAPE '!'
+            OR to_tsvector('simple', coalesce(dep_s."name", '')) @@ plainto_tsquery('simple', ${sanitizedQuery})
+        )
       )`,
     );
   }

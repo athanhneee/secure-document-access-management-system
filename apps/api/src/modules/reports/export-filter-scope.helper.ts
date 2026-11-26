@@ -7,12 +7,15 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import {
   AppErrorCode,
-  MAX_PG_BIGINT,
-  isValidIsoCalendarDate,
+  ExportFilterValidationError,
+  normalizeExportFilters as normalizeSharedExportFilters,
   type ExportType,
+  type NormalizedExportFilters,
 } from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
+
+export type { NormalizedExportFilters };
 
 export {
   buildAuditLogExportWhere,
@@ -20,88 +23,6 @@ export {
   buildSecurityAlertExportWhere,
   buildSystemHealthExportWhere,
 } from './export-where-builders.helper.js';
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ISO_DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
-export interface NormalizedExportFilters {
-  fromDate: Date | null;
-  toDate: Date | null;
-  effectiveDepartmentIds: bigint[] | null;
-  actorUserId: bigint | null;
-  actorUsername: string | null;
-  documentId: string | null;
-  action: string | null;
-  outcome: string | null;
-  chainPartition: string | null;
-  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | null;
-  status: string | null;
-  alertType: string | null;
-  incidentCode: string | null;
-  serviceName: string | null;
-  limit: number | null;
-}
-
-/**
- * Thuật toán: Phân tích chuỗi số nguyên dương 64-bit có trần `MAX_PG_BIGINT` cho bộ lọc báo cáo.
- */
-function parseOptionalBigInt(raw: unknown, fieldName: string): bigint | null {
-  if (raw === undefined || raw === null || raw === '') return null;
-  if (typeof raw === 'bigint') {
-    if (raw <= 0n || raw > MAX_PG_BIGINT) {
-      throw new BadRequestException(`filterParams.${fieldName} exceeds 64-bit BIGINT bounds.`);
-    }
-    return raw;
-  }
-  const str = String(raw).trim();
-  if (!/^\d+$/.test(str)) {
-    throw new BadRequestException(`Invalid numeric identifier in filterParams.${fieldName}.`);
-  }
-  const value = BigInt(str);
-  if (value <= 0n || value > MAX_PG_BIGINT) {
-    throw new BadRequestException(
-      `filterParams.${fieldName} must be a positive 64-bit integer within PostgreSQL BIGINT range.`,
-    );
-  }
-  return value;
-}
-
-/**
- * Thuật toán: Phân tích ngày/giờ ISO-8601 nghiêm ngặt kèm kiểm tra đối xứng lịch UTC (`Date.UTC`) chống ngày giả (như `2026-02-31`).
- */
-function parseOptionalDate(raw: unknown, fieldName: string, endOfDay = false): Date | null {
-  if (raw === undefined || raw === null || raw === '') return null;
-  if (raw instanceof Date) {
-    if (!Number.isFinite(raw.getTime())) {
-      throw new BadRequestException(`Invalid date in filterParams.${fieldName}.`);
-    }
-    return raw;
-  }
-  if (typeof raw !== 'string') {
-    throw new BadRequestException(`Invalid date string in filterParams.${fieldName}.`);
-  }
-  const trimmed = raw.trim();
-  if (ISO_DATE_ONLY_REGEX.test(trimmed) && !isValidIsoCalendarDate(trimmed)) {
-    throw new BadRequestException(`Invalid calendar date in filterParams.${fieldName}.`);
-  }
-  const normalized = ISO_DATE_ONLY_REGEX.test(trimmed)
-    ? `${trimmed}${endOfDay ? 'T23:59:59.999Z' : 'T00:00:00.000Z'}`
-    : trimmed;
-  const ts = Date.parse(normalized);
-  if (!Number.isFinite(ts)) {
-    throw new BadRequestException(`Malformed date in filterParams.${fieldName}.`);
-  }
-  return new Date(ts);
-}
-
-/**
- * Thuật toán: Cắt ngắn và chuẩn hóa chuỗi lọc đầu vào an toàn độ dài tối đa.
- */
-function parseOptionalString(raw: unknown, maxLength = 100): string | null {
-  if (raw === undefined || raw === null) return null;
-  const trimmed = String(raw).trim();
-  return trimmed ? trimmed.slice(0, maxLength) : null;
-}
 
 /**
  * Algorithm / Thuật toán: Thẩm Định Quyền Xuất Báo Cáo Theo Miền & Trích Xuất Phạm Vi Phòng Ban Cho Phép
@@ -202,79 +123,28 @@ export async function resolveExportAuthorizationScope(
 
 /**
  * Algorithm / Thuật toán: Chuẩn Hóa Tham Số Lọc & Giao Với Bao Đóng Phòng Ban Được Cấp Quyền
+ * Ủy quyền hoàn toàn cho bộ chuẩn hóa dùng chung `@sda/contracts` để đảm bảo đồng nhất 100% giữa API và Worker.
  */
 export function normalizeExportFilters(
   rawFilterParams: unknown,
   allowedDepartmentIds: bigint[] | null = null,
+  exportType?: ExportType,
 ): NormalizedExportFilters {
-  const params =
-    rawFilterParams && typeof rawFilterParams === 'object' && !Array.isArray(rawFilterParams)
-      ? (rawFilterParams as Record<string, unknown>)
-      : {};
-
-  const fromDate = parseOptionalDate(params['from'] ?? params['startDate'], 'from', false);
-  const toDate = parseOptionalDate(params['to'] ?? params['endDate'], 'to', true);
-  if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
-    throw new BadRequestException('filterParams.from must not be later than filterParams.to.');
-  }
-
-  const requestedDepartmentId = parseOptionalBigInt(params['departmentId'], 'departmentId');
-  let effectiveDepartmentIds: bigint[] | null = allowedDepartmentIds;
-
-  if (requestedDepartmentId !== null) {
-    if (allowedDepartmentIds !== null && !allowedDepartmentIds.includes(requestedDepartmentId)) {
-      throw new ForbiddenException({
-        errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
-        message: 'Requested departmentId is outside your authorized export scope.',
+  try {
+    return normalizeSharedExportFilters(rawFilterParams, allowedDepartmentIds, exportType);
+  } catch (err) {
+    if (err instanceof ExportFilterValidationError) {
+      if (err.status === 403) {
+        throw new ForbiddenException({
+          errorCode: err.errorCode,
+          message: err.message,
+        });
+      }
+      throw new BadRequestException({
+        errorCode: err.errorCode,
+        message: err.message,
       });
     }
-    effectiveDepartmentIds = [requestedDepartmentId];
+    throw err;
   }
-
-  const actorUserId = parseOptionalBigInt(
-    params['actorUserId'] ?? params['userId'] ?? params['detectedUserId'] ?? params['preparedBy'],
-    'actorUserId',
-  );
-  const actorUsername = parseOptionalString(params['actorUsername'], 80);
-
-  const rawDocId = parseOptionalString(params['documentId'], 64);
-  if (rawDocId && !UUID_REGEX.test(rawDocId)) {
-    throw new BadRequestException('filterParams.documentId must be a valid UUID.');
-  }
-
-  const rawSeverity = parseOptionalString(params['severity'], 20)?.toUpperCase() ?? null;
-  const severity =
-    rawSeverity === 'LOW' ||
-    rawSeverity === 'MEDIUM' ||
-    rawSeverity === 'HIGH' ||
-    rawSeverity === 'CRITICAL'
-      ? rawSeverity
-      : null;
-
-  let limit: number | null = null;
-  if (params['limit'] !== undefined && params['limit'] !== null && params['limit'] !== '') {
-    const parsedLimit = Number(params['limit']);
-    if (!Number.isInteger(parsedLimit) || parsedLimit < 1) {
-      throw new BadRequestException('filterParams.limit must be a positive integer.');
-    }
-    limit = Math.min(parsedLimit, 1000);
-  }
-
-  return {
-    fromDate,
-    toDate,
-    effectiveDepartmentIds,
-    actorUserId,
-    actorUsername,
-    documentId: rawDocId,
-    action: parseOptionalString(params['action'], 100),
-    outcome: parseOptionalString(params['outcome'], 20)?.toUpperCase() ?? null,
-    chainPartition: parseOptionalString(params['chainPartition'], 80),
-    severity,
-    status: parseOptionalString(params['status'], 30)?.toUpperCase() ?? null,
-    alertType: parseOptionalString(params['alertType'] ?? params['ruleCode'], 80),
-    incidentCode: parseOptionalString(params['incidentCode'], 50),
-    serviceName: parseOptionalString(params['serviceName'], 100),
-    limit,
-  };
 }

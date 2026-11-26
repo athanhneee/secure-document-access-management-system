@@ -7,8 +7,13 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 import { withSerializableTransaction, type getDatabaseClient } from '@sda/database';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from './authorization.service.js';
+import { resolveCompatibleSodArchetypes } from './permission-matrix.js';
 import type { RbacAuditService } from './rbac-audit.service.js';
-import { actorHoldsActiveRole } from './rbac-assignments.helper.js';
+import { actorHoldsActiveRole, isGlobalSystemAdminRoleManager } from './rbac-assignments.helper.js';
+import {
+  assertRoleHoldersSodAndGrants,
+  revokeUnverifiedMfaSessionsForUsers,
+} from './rbac-role-permissions.helper.js';
 
 export { executeReplaceRolePermissions } from './rbac-role-permissions.helper.js';
 
@@ -175,7 +180,9 @@ export async function executeDeleteRole(params: {
 }
 
 /**
- * Thuật toán: Kích hoạt lại vai trò tùy chỉnh đang bị vô hiệu hóa bằng Compare-And-Swap (`version`) dưới mức cô lập `SERIALIZABLE`.
+ * Thuật toán: Kích hoạt lại vai trò tùy chỉnh đang bị vô hiệu hóa bằng Compare-And-Swap (`version`) dưới mức cô lập `SERIALIZABLE`,
+ * cưỡng chế đầy đủ trần ủy quyền (`assertCanDelegate`), Phân tách Nhiệm vụ (SoD) chồng lấp thời gian trên toàn bộ người giữ vai trò,
+ * kiểm tra xung đột `AccessGrant` và thu hồi tức thì mọi phiên chưa xác thực MFA nếu vai trò mang đặc quyền.
  */
 export async function executeEnableRole(params: {
   database: PrismaClient;
@@ -189,18 +196,62 @@ export async function executeEnableRole(params: {
   const { database, authorization, audit, principal, id, expectedVersion, context } = params;
   const role = await withSerializableTransaction(
     async (transaction) => {
-      const before = await transaction.role.findUnique({ where: { id } });
+      const bypassDelegationSubset = await isGlobalSystemAdminRoleManager(
+        authorization,
+        principal,
+        transaction,
+      );
+      const before = await transaction.role.findUnique({
+        where: { id },
+        include: { role_permissions: { include: { permissions: true } } },
+      });
       if (!before) throw new NotFoundException('Role not found.');
       if (before.is_system_role) throw new ForbiddenException('System roles cannot be modified.');
       if (await actorHoldsActiveRole(transaction, principal.userId, id)) {
         throw new ForbiddenException('Administrators cannot change a role they hold.');
       }
+      const rolePermissionMappings = before.role_permissions ?? [];
+      const rolePermissionIds = rolePermissionMappings
+        .map((mapping) => mapping.permission_id ?? mapping.permissions?.id)
+        .filter((permissionId): permissionId is bigint => typeof permissionId === 'bigint');
+      const rolePermissions = rolePermissionMappings
+        .map((mapping) => mapping.permissions)
+        .filter((permission): permission is NonNullable<typeof permission> => Boolean(permission));
+      // BUG-005 & BUG-048: Chặn quản trị viên cấp thấp kích hoạt lại vai trò chứa quyền vượt quá trần ủy quyền của chính mình ngay trên kết nối `transaction`.
+      if (!bypassDelegationSubset && rolePermissionIds.length > 0) {
+        await authorization.assertCanDelegate(principal, rolePermissionIds, null, transaction);
+      }
       if (before.is_active) throw new ConflictException('Role is already active.');
+      if (
+        resolveCompatibleSodArchetypes([{ code: before.code, permissions: rolePermissions }])
+          .size === 0
+      ) {
+        throw new ForbiddenException(
+          'Role permissions violate Separation of Duties across incompatible security domains.',
+        );
+      }
+      const now = new Date();
+      // BUG-005 & BUG-047: Kiểm tra lại SoD chồng lấp thời gian, chặn sở hữu tài liệu chưa bàn giao và thu hồi dây chuyền AccessGrant/AccessSession/AccessRequest trước khi bật lại vai trò đặc quyền.
+      const { holderIds, isPrivileged } = await assertRoleHoldersSodAndGrants({
+        transaction,
+        roleId: id,
+        roleCode: before.code,
+        rolePermissions,
+        actorUserId: principal.userId,
+        cascadeReason: `Privileged custom role ${before.code} re-enabled`,
+        now,
+        conflictMessage:
+          'Separation of duties violation: enabling this role conflicts with another active role held by an assigned user.',
+      });
       const changed = await transaction.role.updateMany({
         where: { id, version: expectedVersion },
-        data: { is_active: true, updated_at: new Date(), version: { increment: 1 } },
+        data: { is_active: true, updated_at: now, version: { increment: 1 } },
       });
       if (changed.count !== 1) throw new ConflictException('Role was changed by another request.');
+      // BUG-005: Thu hồi tức thì các phiên chưa xác thực MFA của toàn bộ người đang giữ vai trò đặc quyền vừa được bật lại.
+      if (holderIds.length > 0 && isPrivileged) {
+        await revokeUnverifiedMfaSessionsForUsers(transaction, holderIds, now);
+      }
       const after = await transaction.role.findUniqueOrThrow({ where: { id } });
       await audit.record(
         transaction,

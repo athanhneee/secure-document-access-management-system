@@ -33,56 +33,81 @@ export const SENSITIVE_KEYS = new Set([
 
 /**
  * Thuật toán: Duyệt đệ quy DFS giới hạn độ sâu (Depth-Bounded DFS Object Graph Traversal)
- *   kết hợp chuẩn hóa khóa và đối sánh tập hợp O(1) / mẫu con.
- * Mục đích: Sao chép an toàn cấu trúc dữ liệu bất kỳ và thay thế toàn bộ giá trị nhạy cảm
- *   hoặc vùng nhớ đệm nhị phân bằng nhãn che dấu cố định trước khi tuần tự hóa JSON.
- * Cơ chế hoạt động:
- *   - Chốt chặn độ sâu (Depth / Cycle Guard): Dừng đệ quy ngay khi `depth > 10` hoặc gặp giá trị
- *     nguyên thủy/rỗng để bảo vệ ngăn xếp trước cấu trúc lồng sâu hoặc đồ thị có chu trình tham chiếu.
- *   - Xử lý phân nhánh kiểu dữ liệu: Duyệt ánh xạ từng phần tử với mảng (`depth + 1`), và thay thế
- *     ngay lập tức `Buffer` bằng chuỗi `[REDACTED_BUFFER]` để tránh ghi dữ liệu nhị phân thô.
- *   - Chuẩn hóa và nhận diện khóa nhạy cảm: Chuyển tên thuộc tính về chữ thường, loại bỏ dấu gạch ngang
- *     và gạch dưới (`[-_]`), sau đó tra cứu tập `SENSITIVE_KEYS` trong thời gian O(1) kết hợp kiểm tra
- *     chuỗi con đặc trưng để che dấu thành `[REDACTED]`.
+ *   kết hợp tập tổ tiên chống chu trình (`Ancestor WeakSet Cycle Guard`), chuẩn hóa `BigInt` sang chuỗi thập phân
+ *   và đối sánh khóa nhạy cảm `O(1)`.
+ * Mục đích: Sao chép an toàn cấu trúc dữ liệu bất kỳ, thay thế giá trị nhạy cảm hoặc vùng đệm vượt quá độ sâu `10`
+ *   bằng nhãn che dấu cố định trước khi tuần tự hóa JSON mà không làm hỏng nhánh DAG dùng chung hợp lệ.
  */
-export function redactSensitiveData(data: unknown, depth = 0): unknown {
-  // Thuật toán: Chốt chặn độ sâu đệ quy (Depth/Cycle Guard) và kiểm tra kiểu nguyên thủy
-  if (depth > 10 || data === null || data === undefined) {
+export function redactSensitiveData(
+  data: unknown,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet<object>(),
+): unknown {
+  if (depth > 10) {
+    return '[MAX_DEPTH_REDACTED]';
+  }
+
+  if (data === null || data === undefined) {
     return data;
+  }
+
+  if (typeof data === 'bigint') {
+    return data.toString();
   }
 
   if (typeof data !== 'object') {
     return data;
   }
 
-  if (Array.isArray(data)) {
-    return data.map((item) => redactSensitiveData(item, depth + 1));
-  }
-
   if (Buffer.isBuffer(data)) {
     return '[REDACTED_BUFFER]';
   }
 
-  // Thuật toán: Chuẩn hóa khóa (Key Canonicalization) và đối sánh mẫu nhạy cảm trên từng thuộc tính
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-    const normalizedKey = key.toLowerCase().replace(/[-_]/g, '');
-    const isSensitive =
-      SENSITIVE_KEYS.has(normalizedKey) ||
-      SENSITIVE_KEYS.has(key.toLowerCase()) ||
-      normalizedKey.includes('password') ||
-      normalizedKey.includes('token') ||
-      normalizedKey.includes('secret') ||
-      normalizedKey.includes('encryptionkey');
-
-    if (isSensitive) {
-      result[key] = '[REDACTED]';
-    } else if (typeof value === 'object' && value !== null) {
-      result[key] = redactSensitiveData(value, depth + 1);
-    } else {
-      result[key] = value;
-    }
+  if (data instanceof Date) {
+    return data.toISOString();
   }
 
-  return result;
+  if (seen.has(data)) {
+    return '[CIRCULAR]';
+  }
+
+  seen.add(data);
+  try {
+    if (Array.isArray(data)) {
+      return data.map((item) =>
+        typeof item === 'bigint'
+          ? item.toString()
+          : typeof item === 'object' && item !== null
+            ? redactSensitiveData(item, depth + 1, seen)
+            : item,
+      );
+    }
+
+    // Thuật toán: Chuẩn hóa khóa (Key Canonicalization) và đối sánh mẫu nhạy cảm trên từng thuộc tính
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      const normalizedKey = key.toLowerCase().replace(/[-_]/g, '');
+      const isSensitive =
+        SENSITIVE_KEYS.has(normalizedKey) ||
+        SENSITIVE_KEYS.has(key.toLowerCase()) ||
+        normalizedKey.includes('password') ||
+        normalizedKey.includes('token') ||
+        normalizedKey.includes('secret') ||
+        normalizedKey.includes('encryptionkey');
+
+      if (isSensitive) {
+        result[key] = '[REDACTED]';
+      } else if (typeof value === 'bigint') {
+        result[key] = value.toString();
+      } else if (typeof value === 'object' && value !== null) {
+        result[key] = redactSensitiveData(value, depth + 1, seen);
+      } else {
+        result[key] = value;
+      }
+    }
+
+    return result;
+  } finally {
+    seen.delete(data);
+  }
 }

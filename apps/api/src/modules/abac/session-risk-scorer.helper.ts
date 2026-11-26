@@ -34,11 +34,14 @@ export interface SessionRiskAssessment {
   factors: string[];
 }
 
+import { canonicalizeIpAddress } from './cidr.js';
+
 function normalizeComparableIp(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const trimmed = raw.trim().toLowerCase();
+  const trimmed = raw.trim();
   if (!trimmed) return null;
-  return trimmed.startsWith('::ffff:') ? trimmed.slice(7) : trimmed;
+  const withoutZone = trimmed.includes('%') ? trimmed.slice(0, trimmed.indexOf('%')) : trimmed;
+  return canonicalizeIpAddress(withoutZone) ?? withoutZone.toLowerCase();
 }
 
 function isOffBusinessHours(now: Date): boolean {
@@ -150,7 +153,12 @@ export async function evaluatePepSessionRisk(params: {
       ? database.authSession
           .findUnique({
             where: { id: principal.sessionId },
-            select: { ip_address: true, user_agent: true },
+            select: {
+              login_ip_address: true,
+              login_user_agent: true,
+              ip_address: true,
+              user_agent: true,
+            },
           })
           .catch(() => null)
       : Promise.resolve(null),
@@ -191,13 +199,19 @@ export async function evaluatePepSessionRisk(params: {
       : Promise.resolve(null),
   ]);
 
+  const sessionBaseline = authSession as {
+    login_ip_address?: string | null;
+    login_user_agent?: string | null;
+    ip_address?: string | null;
+    user_agent?: string | null;
+  } | null;
   const authIp = normalizeComparableIp(
-    (authSession as { ip_address?: string | null } | null)?.ip_address,
+    sessionBaseline?.login_ip_address ?? sessionBaseline?.ip_address,
   );
   const currentIp = normalizeComparableIp(context?.ip);
   const ipChangedFromAuthSession = Boolean(authIp && currentIp && authIp !== currentIp);
 
-  const authUa = (authSession as { user_agent?: string | null } | null)?.user_agent?.trim() || null;
+  const authUa = (sessionBaseline?.login_user_agent ?? sessionBaseline?.user_agent)?.trim() || null;
   const currentUa = context?.userAgent?.trim() || null;
   const userAgentChangedFromAuthSession = Boolean(authUa && currentUa && authUa !== currentUa);
 

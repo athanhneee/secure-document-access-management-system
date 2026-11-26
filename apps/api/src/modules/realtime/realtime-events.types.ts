@@ -8,6 +8,7 @@ export type RealtimeEventType =
   | 'EXPORT_JOB_UPDATED'
   | 'ACCESS_REQUEST_UPDATED'
   | 'ACCESS_GRANT_UPDATED'
+  | 'DOCUMENT_UPDATED'
   | 'SECURITY_ALERT_UPDATED'
   | 'INCIDENT_REPORT_UPDATED'
   | 'DETECTION_RULE_UPDATED'
@@ -20,8 +21,10 @@ export interface RealtimeEventEnvelope<T = Record<string, unknown>> {
   occurredAt: string;
   targetUserIds?: string[] | undefined;
   targetRoles?: string[] | undefined;
+  targetDepartmentId?: string | null | undefined;
   targetSessionIds?: string[] | undefined;
   excludeSessionId?: string | undefined;
+  excludeSessionIds?: string[] | undefined;
   payload: T;
 }
 
@@ -29,8 +32,10 @@ export interface PublishRealtimeEventInput<T = Record<string, unknown>> {
   type: RealtimeEventType;
   targetUserIds?: readonly string[] | undefined;
   targetRoles?: readonly string[] | undefined;
+  targetDepartmentId?: string | null | undefined;
   targetSessionIds?: readonly string[] | undefined;
   excludeSessionId?: string | undefined;
+  excludeSessionIds?: readonly string[] | undefined;
   payload: T;
 }
 

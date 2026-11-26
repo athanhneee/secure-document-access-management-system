@@ -1,9 +1,9 @@
 /**
  * Module: Fail-Closed Distributed Session Policy Resolver & Multi-Replica Obligation Re-Hydrator
- * Thuật toán: Thẩm Định Trạng Thái Phiên CSDL Thời Gian Thực & Khôi Phục Nghĩa Vụ ABAC Đa Bản Sao (`resolveAndEnforceSessionPolicy`).
+ * Thuật toán: Thẩm Định Trạng Thái Phiên CSDL Thời Gian Thực, Ràng Buộc IP/UA Một Chiều & Tái Đánh Giá ABAC Khi Đổi Chính Sách/Thuộc Tính (`BUG-057`).
  *   1. Xác nhận trực tiếp trong CSDL rằng `AccessSession.status === 'ACTIVE'` để phiên bị chấm dứt/thu hồi bị từ chối tức thì trên mọi bản sao API.
- *   2. Ràng buộc địa chỉ `ipAddress` và `userAgent` (khi có) giữa phiên gốc và yêu cầu hiện hành nhằm ngăn đánh cắp phiên.
- *   3. Đọc chính sách phiên từ `DistributedStateService`; khi trượt cache thì khôi phục từ `audit_logs` (`ACCESS_PERMITTED`) kết hợp tái đánh giá ABAC PDP và ghi lại với TTL hữu hạn (`<= 60` phút).
+ *   2. Ràng buộc một chiều fail-closed địa chỉ `ipAddress` và `userAgent` khi phiên đã neo (`boundUa && (!callerUa || boundUa !== callerUa)`).
+ *   3. Đối chiếu `policyVersion`, `abacEpoch`, `userEpoch` và ảnh chụp thuộc tính chủ thể (`user.status`, `EMPLOYMENT_STATUS`, `CLEARANCE_LEVEL`) — khi lệch thì tái đánh giá `abac.evaluate()` ngay lập tức nhưng giữ nguyên mốc hết hạn `Math.min` neo theo `session.started_at`.
  */
 import { ForbiddenException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
@@ -17,8 +17,12 @@ import { normalizeDeliveryClientIp } from './delivery-ticket.helper.js';
 import {
   buildPepSubjectAttributes,
   computeBoundedSessionPolicyTtlMs,
+  hasPrivilegedNonBusinessCapability,
+  isRestrictedNonBusinessRole,
   resolvePepTrustedNetwork,
   type ActiveSessionPolicy,
+  type SessionResourcePolicySnapshot,
+  type SessionSubjectPolicySnapshot,
 } from './pep-context-builder.js';
 import { SESSION_POLICY_NAMESPACE } from './pep-obligations.helper.js';
 
@@ -40,7 +44,10 @@ export interface SessionRecordForPolicyCheck {
       status?: string;
       owner_id?: bigint;
       classification_history?: Array<{
-        classification_levels?: { rank?: number | null } | null;
+        classification_levels?: {
+          rank?: number | null;
+          require_watermark?: boolean | null;
+        } | null;
         business_categories?: { code?: string | null } | null;
       }>;
     } | null;
@@ -77,6 +84,8 @@ function parsePersistedSessionPolicy(
     .filter(Boolean);
   const forbidDownload =
     record['forbidDownload'] === true || obligationTokens.includes('FORBID_DOWNLOAD');
+  const watermarkRequired =
+    record['watermarkRequired'] === true || obligationTokens.includes('REQUIRE_WATERMARK');
   const maxSessionMinutes =
     typeof record['maxSessionMinutes'] === 'number' &&
     Number.isFinite(record['maxSessionMinutes']) &&
@@ -91,17 +100,29 @@ function parsePersistedSessionPolicy(
     expiresAtMs = startedAtMs + maxSessionMinutes * 60_000;
   }
 
-  return { grantedAction, forbidDownload, expiresAtMs, maxSessionMinutes };
+  return { grantedAction, forbidDownload, watermarkRequired, expiresAtMs, maxSessionMinutes };
 }
 
 /**
- * Thuật toán: Thẩm Định Trạng Thái `ACTIVE` Trong CSDL, Ràng Buộc IP/UA & Cưỡng Chế Nghĩa Vụ Phiên Fail-Closed
+ * Thuật toán: Thẩm Định Trạng Thái `ACTIVE` Trong CSDL, Ràng Buộc IP/UA Một Chiều & Cưỡng Chế Nghĩa Vụ Phiên Fail-Closed (`BUG-057`)
  */
 export async function resolveAndEnforceSessionPolicy(
   params: ResolveSessionPolicyParams,
 ): Promise<ActiveSessionPolicy> {
   const { session, requiredAction, principal, context, now, database, abac } = params;
   const stateStore = params.stateStore ?? new DistributedStateService(params.config);
+
+  if (
+    isRestrictedNonBusinessRole(principal) ||
+    (await hasPrivilegedNonBusinessCapability(database, principal, now))
+  ) {
+    await stateStore.deleteKey(SESSION_POLICY_NAMESPACE, session.id);
+    throw new ForbiddenException({
+      errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+      message:
+        'Privileged administrative, security, and auditor roles cannot access document sessions.',
+    });
+  }
 
   let liveDbIp: string | null | undefined = session.ip_address;
   let liveDbUa: string | null | undefined = session.user_agent;
@@ -131,7 +152,100 @@ export async function resolveAndEnforceSessionPolicy(
     });
   }
 
-  let policy = await stateStore.getJson<ActiveSessionPolicy>(SESSION_POLICY_NAMESPACE, session.id);
+  const [currentAbacEpoch, currentUserEpoch, currentPolicyVersion] = await Promise.all([
+    typeof stateStore.getNamespaceEpoch === 'function'
+      ? stateStore.getNamespaceEpoch('abac-policy').catch(() => 0)
+      : Promise.resolve(0),
+    typeof stateStore.getNamespaceEpoch === 'function'
+      ? stateStore.getNamespaceEpoch(`rbac-user:${principal.userId.toString()}`).catch(() => 0)
+      : Promise.resolve(0),
+    typeof abac?.getCurrentPolicyVersion === 'function'
+      ? abac.getCurrentPolicyVersion().catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  let liveSubjectAttrs: Awaited<ReturnType<typeof buildPepSubjectAttributes>> | null = null;
+  if (typeof database?.userAttributeAssignment?.findFirst === 'function') {
+    liveSubjectAttrs = await buildPepSubjectAttributes(database, principal.userId, now);
+    if (
+      liveSubjectAttrs.employmentStatus === 'LOCKED' ||
+      liveSubjectAttrs.employmentStatus === 'DISABLED'
+    ) {
+      await stateStore.deleteKey(SESSION_POLICY_NAMESPACE, session.id);
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Subject account status is no longer eligible for document access.',
+      });
+    }
+  } else if (typeof database?.user?.findUnique === 'function') {
+    const liveUser = await database.user.findUnique({
+      where: { id: principal.userId },
+      select: { status: true },
+    });
+    if (liveUser && liveUser.status !== 'ACTIVE') {
+      await stateStore.deleteKey(SESSION_POLICY_NAMESPACE, session.id);
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Subject account is no longer active.',
+      });
+    }
+  }
+
+  const docForSnapshot = session.document_versions?.document;
+  const liveResourceSnapshot: SessionResourcePolicySnapshot | null =
+    docForSnapshot && typeof docForSnapshot.status === 'string'
+      ? {
+          classificationRank:
+            docForSnapshot.classification_history?.[0]?.classification_levels?.rank ?? 0,
+          category: docForSnapshot.classification_history?.[0]?.business_categories?.code ?? null,
+          departmentId: docForSnapshot.department_id?.toString() ?? null,
+          status: docForSnapshot.status,
+        }
+      : null;
+
+  const cachedPolicy = await stateStore.getJson<ActiveSessionPolicy>(
+    SESSION_POLICY_NAMESPACE,
+    session.id,
+  );
+  let policy: ActiveSessionPolicy | null =
+    cachedPolicy && typeof cachedPolicy.watermarkRequired === 'boolean' ? cachedPolicy : null;
+  let cacheWasInvalidated = false;
+
+  if (policy) {
+    const policyEpochChanged =
+      policy.abacEpoch !== undefined && policy.abacEpoch !== currentAbacEpoch;
+    const userEpochChanged =
+      policy.userEpoch !== undefined && policy.userEpoch !== currentUserEpoch;
+    const policyVersionChanged =
+      policy.policyVersion !== undefined &&
+      policy.policyVersion !== null &&
+      currentPolicyVersion !== null &&
+      policy.policyVersion !== currentPolicyVersion;
+    const subjectSnapshotChanged =
+      Boolean(policy.subjectSnapshot) &&
+      Boolean(liveSubjectAttrs) &&
+      (policy.subjectSnapshot!.employmentStatus !== liveSubjectAttrs!.employmentStatus ||
+        policy.subjectSnapshot!.clearanceRank !== liveSubjectAttrs!.clearanceRank ||
+        policy.subjectSnapshot!.departmentId !== liveSubjectAttrs!.departmentId);
+    const resourceSnapshotChanged =
+      Boolean(policy.resourceSnapshot) &&
+      Boolean(liveResourceSnapshot) &&
+      (policy.resourceSnapshot!.classificationRank !== liveResourceSnapshot!.classificationRank ||
+        policy.resourceSnapshot!.category !== liveResourceSnapshot!.category ||
+        policy.resourceSnapshot!.departmentId !== liveResourceSnapshot!.departmentId ||
+        policy.resourceSnapshot!.status !== liveResourceSnapshot!.status);
+
+    if (
+      policyEpochChanged ||
+      userEpochChanged ||
+      policyVersionChanged ||
+      subjectSnapshotChanged ||
+      resourceSnapshotChanged
+    ) {
+      policy = null;
+      cacheWasInvalidated = true;
+    }
+  }
 
   if (!policy) {
     const rawStartMs = session.started_at ? new Date(session.started_at).getTime() : null;
@@ -149,6 +263,15 @@ export async function resolveAndEnforceSessionPolicy(
     }
 
     let livePolicy: ActiveSessionPolicy | null = null;
+    let evaluatedPolicyVersion: string | null = currentPolicyVersion;
+    let evaluatedSubjectSnapshot: SessionSubjectPolicySnapshot | undefined = liveSubjectAttrs
+      ? {
+          employmentStatus: liveSubjectAttrs.employmentStatus,
+          clearanceRank: liveSubjectAttrs.clearanceRank,
+          departmentId: liveSubjectAttrs.departmentId,
+        }
+      : cachedPolicy?.subjectSnapshot;
+
     const doc = session.document_versions?.document;
     if (
       typeof abac?.evaluate === 'function' &&
@@ -161,7 +284,9 @@ export async function resolveAndEnforceSessionPolicy(
       const classificationRank = currentClass?.classification_levels?.rank ?? 0;
       const trustedNetwork = resolvePepTrustedNetwork(params.config, context.ip);
       const [subjectAttributes, riskAssessment] = await Promise.all([
-        buildPepSubjectAttributes(database, principal.userId, now),
+        liveSubjectAttrs
+          ? Promise.resolve(liveSubjectAttrs)
+          : buildPepSubjectAttributes(database, principal.userId, now),
         evaluatePepSessionRisk({
           database,
           principal,
@@ -172,7 +297,13 @@ export async function resolveAndEnforceSessionPolicy(
           now,
         }),
       ]);
-      const evalAction = persistedPolicy ? persistedPolicy.grantedAction : requiredAction;
+      evaluatedSubjectSnapshot = {
+        employmentStatus: subjectAttributes.employmentStatus,
+        clearanceRank: subjectAttributes.clearanceRank,
+        departmentId: subjectAttributes.departmentId,
+      };
+      const evalAction =
+        persistedPolicy?.grantedAction ?? cachedPolicy?.grantedAction ?? requiredAction;
       const abacResult = await abac.evaluate({
         resourceType: 'DOCUMENT',
         action: evalAction,
@@ -193,8 +324,10 @@ export async function resolveAndEnforceSessionPolicy(
           riskScore: riskAssessment.riskScore,
         },
       });
+      evaluatedPolicyVersion = abacResult.policyVersion ?? currentPolicyVersion;
 
       if (abacResult.decision === 'DENY') {
+        await stateStore.deleteKey(SESSION_POLICY_NAMESPACE, session.id);
         if (abacResult.reasonCode === 'STEP_UP_MFA_REQUIRED' && !principal.mfa) {
           throw new ForbiddenException({
             errorCode: AppErrorCode.STEP_UP_MFA_REQUIRED,
@@ -209,6 +342,7 @@ export async function resolveAndEnforceSessionPolicy(
 
       const obligations = abacResult.obligations ?? [];
       if (obligations.some((o) => o.type === 'REQUIRE_MFA') && !principal.mfa) {
+        await stateStore.deleteKey(SESSION_POLICY_NAMESPACE, session.id);
         throw new ForbiddenException({
           errorCode: AppErrorCode.STEP_UP_MFA_REQUIRED,
           message: 'Policy obligation requires multi-factor authentication.',
@@ -226,22 +360,40 @@ export async function resolveAndEnforceSessionPolicy(
       livePolicy = {
         grantedAction: evalAction,
         forbidDownload: obligations.some((o) => o.type === 'FORBID_DOWNLOAD'),
+        watermarkRequired:
+          currentClass?.classification_levels?.require_watermark === true ||
+          obligations.some((o) => o.type === 'REQUIRE_WATERMARK'),
         expiresAtMs: minMinutes !== null ? anchorMs + minMinutes * 60_000 : null,
         maxSessionMinutes: minMinutes,
       };
     }
 
-    if (!persistedPolicy && !livePolicy) {
+    // HIGH-03: Nếu bộ đệm chính sách phiên vừa bị vô hiệu hóa do thay đổi chính sách/chủ thể/tài liệu nhưng không thể tái đánh giá ABAC trực tiếp, bắt buộc từ chối Fail-Closed tuyệt đối không hợp thức hóa lại cachedPolicy cũ.
+    if (cacheWasInvalidated && !livePolicy) {
+      await stateStore.deleteKey(SESSION_POLICY_NAMESPACE, session.id);
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
+        message: 'Session ABAC policy invalidated and could not be re-evaluated; failing closed.',
+      });
+    }
+
+    if (!persistedPolicy && !livePolicy && !cachedPolicy) {
       throw new ForbiddenException({
         errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
         message: 'Unable to verify session ABAC policy obligations; failing closed.',
       });
     }
 
-    const expiryCandidates = [persistedPolicy?.expiresAtMs, livePolicy?.expiresAtMs].filter(
-      (value): value is number => typeof value === 'number' && Number.isFinite(value),
-    );
+    const evaluatedResourceSnapshot: SessionResourcePolicySnapshot | undefined =
+      liveResourceSnapshot ?? cachedPolicy?.resourceSnapshot;
+
+    const expiryCandidates = [
+      cachedPolicy?.expiresAtMs,
+      persistedPolicy?.expiresAtMs,
+      livePolicy?.expiresAtMs,
+    ].filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
     const minuteCandidates = [
+      cachedPolicy?.maxSessionMinutes,
       persistedPolicy?.maxSessionMinutes,
       livePolicy?.maxSessionMinutes,
     ].filter((value): value is number => typeof value === 'number' && value > 0);
@@ -249,12 +401,29 @@ export async function resolveAndEnforceSessionPolicy(
 
     policy = {
       grantedAction:
-        persistedPolicy?.grantedAction ?? livePolicy?.grantedAction ?? ('VIEW' as const),
-      forbidDownload: Boolean(persistedPolicy?.forbidDownload || livePolicy?.forbidDownload),
+        persistedPolicy?.grantedAction ??
+        cachedPolicy?.grantedAction ??
+        livePolicy?.grantedAction ??
+        ('VIEW' as const),
+      forbidDownload: Boolean(
+        cachedPolicy?.forbidDownload ||
+        persistedPolicy?.forbidDownload ||
+        livePolicy?.forbidDownload,
+      ),
+      watermarkRequired: Boolean(
+        cachedPolicy?.watermarkRequired ||
+        persistedPolicy?.watermarkRequired ||
+        livePolicy?.watermarkRequired,
+      ),
       expiresAtMs: expiryCandidates.length > 0 ? Math.min(...expiryCandidates) : null,
       maxSessionMinutes: resolvedMaxMinutes,
-      ipAddress: normalizeDeliveryClientIp(liveDbIp),
-      userAgent: liveDbUa?.trim() || null,
+      ipAddress: normalizeDeliveryClientIp(liveDbIp ?? cachedPolicy?.ipAddress),
+      userAgent: (liveDbUa ?? cachedPolicy?.userAgent)?.trim() || null,
+      policyVersion: evaluatedPolicyVersion,
+      abacEpoch: currentAbacEpoch,
+      userEpoch: currentUserEpoch,
+      ...(evaluatedSubjectSnapshot ? { subjectSnapshot: evaluatedSubjectSnapshot } : {}),
+      ...(evaluatedResourceSnapshot ? { resourceSnapshot: evaluatedResourceSnapshot } : {}),
     };
 
     const cacheTtlMs = computeBoundedSessionPolicyTtlMs(resolvedMaxMinutes);
@@ -263,7 +432,7 @@ export async function resolveAndEnforceSessionPolicy(
 
   const boundIp = normalizeDeliveryClientIp(liveDbIp ?? policy.ipAddress);
   const callerIp = normalizeDeliveryClientIp(context?.ip);
-  if (boundIp && callerIp && boundIp !== callerIp) {
+  if (boundIp && (!callerIp || boundIp !== callerIp)) {
     throw new ForbiddenException({
       errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
       message: 'Client IP does not match bound access session.',
@@ -271,7 +440,7 @@ export async function resolveAndEnforceSessionPolicy(
   }
   const boundUa = (liveDbUa ?? policy.userAgent)?.trim() || null;
   const callerUa = context?.userAgent?.trim() || null;
-  if (boundUa && callerUa && boundUa !== callerUa) {
+  if (boundUa && (!callerUa || boundUa !== callerUa)) {
     throw new ForbiddenException({
       errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
       message: 'Client User-Agent does not match bound access session.',

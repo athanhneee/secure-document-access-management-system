@@ -4,23 +4,25 @@
  * xoay vòng Refresh Token theo chuẩn RFC 9700 kèm phát hiện tái sử dụng cây họ token, quản lý vòng đời phiên
  * thiết bị và xác thực đa nhân tố TOTP / WebAuthn FIDO2.
  */
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-  Optional,
-} from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
+import { getDatabaseClient } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
 import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { AuthAuditService } from './auth-audit.service.js';
 import {
+  evaluateSessionSecurityPosture,
+  type SessionSecurityPosture,
+} from './auth-session-posture.helper.js';
+import {
   executeBeginMfaEnrollment,
   executeDisableMfa,
+  executeRemoveMfaMethod,
   executeVerifyMfa,
   executeVerifyMfaEnrollment,
+  hasMandatoryMfaPrivilegedCapability,
+  type RemoveMfaMethodResult,
 } from './auth-mfa.helper.js';
 import {
   executeChangePassword,
@@ -39,12 +41,7 @@ import {
   executeVerifyWebAuthnEnrollment,
 } from './auth-webauthn.helper.js';
 import { AuthRepository } from './auth.repository.js';
-import {
-  MFA_REQUIRED_ROLES,
-  type AuthPrincipal,
-  type AuthUserProfile,
-  type RequestContext,
-} from './auth.types.js';
+import { type AuthPrincipal, type AuthUserProfile, type RequestContext } from './auth.types.js';
 import { LoginRateLimitService } from './login-rate-limit.service.js';
 import { MfaService } from './mfa.service.js';
 import { PasswordService } from './password.service.js';
@@ -69,6 +66,8 @@ export class AuthService {
   private readonly refreshTtl: number;
   private readonly resetTtl: number;
   private readonly webauthn: WebAuthnService;
+  private readonly config: AppConfigService;
+  private readonly database: ReturnType<typeof getDatabaseClient> | undefined;
 
   constructor(
     private readonly repository: AuthRepository,
@@ -83,6 +82,12 @@ export class AuthService {
     @Optional() stateStore?: DistributedStateService,
     @Optional() private readonly realtime?: RealtimeEventsService,
   ) {
+    this.config = config;
+    try {
+      this.database = getDatabaseClient();
+    } catch {
+      this.database = undefined;
+    }
     this.webauthn = webauthn ?? new WebAuthnService(this.mfa, config, stateStore);
     this.accessTtl = config.get('AUTH_ACCESS_TTL_SECONDS');
     this.refreshTtl = config.get('AUTH_REFRESH_TTL_SECONDS');
@@ -148,6 +153,24 @@ export class AuthService {
   async listSessions(principal: AuthPrincipal): Promise<{ data: ActiveAuthSessionItem[] }> {
     const data = await this.repository.listActiveSessions(principal.userId, principal.sessionId);
     return { data };
+  }
+
+  /**
+   * Thuật toán: Đánh giá chỉ đọc trạng thái bảo mật cấp phiên hiện tại (`mfaVerified`, `trustedNetwork`,
+   * `deviceTrust`, `riskScore`, `riskFactors`) phục vụ cảnh báo sớm trên giao diện trước khi mở tài liệu.
+   */
+  getSessionPosture(
+    principal: AuthPrincipal,
+    context: RequestContext,
+    deviceFingerprint?: string,
+  ): Promise<SessionSecurityPosture> {
+    return evaluateSessionSecurityPosture({
+      database: this.database,
+      config: this.config,
+      principal,
+      context,
+      deviceFingerprint,
+    });
   }
 
   /** Thuật toán: Thu hồi mọi phiên song song khác của người dùng và đóng kênh SSE các thiết bị bị đá ra mà giữ nguyên phiên hiện tại (`LOGOUT_OTHERS`). */
@@ -318,7 +341,7 @@ export class AuthService {
   }
 
   /**
-   * Thuật toán: Liệt Kê Các Nhân Tố MFA Đang Kích Hoạt Của Tài Khoản (Không Trả Bí Mật, V-48).
+   * Thuật toán: Liệt Kê Các Nhân Tố MFA Đang Kích Hoạt Của Tài Khoản (Không Trả Bí Mật, V-48, BUG-003).
    */
   async listMfaMethods(principal: AuthPrincipal): Promise<{
     data: Array<{
@@ -329,8 +352,13 @@ export class AuthService {
     }>;
     canDisableMfa: boolean;
   }> {
-    const methods = await this.repository.getActiveMfaMethods(principal.userId);
-    const requiresMandatoryMfa = principal.roles.some((r) => MFA_REQUIRED_ROLES.has(r));
+    const [methods, liveUser] = await Promise.all([
+      this.repository.getActiveMfaMethods(principal.userId),
+      typeof this.repository.findUserById === 'function'
+        ? this.repository.findUserById(principal.userId).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    const requiresMandatoryMfa = hasMandatoryMfaPrivilegedCapability(liveUser, principal.roles);
     return {
       data: methods.map((m) => ({
         id: m.id,
@@ -345,45 +373,23 @@ export class AuthService {
   }
 
   /**
-   * Thuật toán: Gỡ Một Khóa Bảo Mật / Nhân Tố MFA Đơn Lẻ Có Chốt Chặn Step-Up MFA & Vai Trò Bắt Buộc (`removeMfaMethod`, V-48).
+   * Thuật toán: Gỡ Một Khóa Bảo Mật / Nhân Tố MFA Đơn Lẻ Có Xác Thực Lại Step-Up, Giao Dịch `SERIALIZABLE` & Chặn Custom Role Đặc Quyền (`removeMfaMethod`, BUG-003).
    */
-  async removeMfaMethod(
+  removeMfaMethod(
     principal: AuthPrincipal,
     methodId: string,
+    currentPassword: string,
+    code: string | undefined,
+    recoveryCode: string | undefined,
     context: RequestContext,
-  ): Promise<void> {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(methodId)) {
-      throw new BadRequestException('MFA method identifier must be a valid UUID.');
-    }
-    if (!principal.mfa) {
-      throw new ForbiddenException(
-        'Step-up MFA verification is required to enroll or modify MFA factors.',
-      );
-    }
-    const activeMethods = await this.repository.getActiveMfaMethods(principal.userId);
-    const target = activeMethods.find((m) => m.id === methodId);
-    if (!target) {
-      throw new NotFoundException('Active MFA method was not found.');
-    }
-    const requiresMandatoryMfa = principal.roles.some((r) => MFA_REQUIRED_ROLES.has(r));
-    if (requiresMandatoryMfa && activeMethods.length <= 1) {
-      throw new ForbiddenException(
-        'Cannot remove the last active MFA factor for a privileged role.',
-      );
-    }
-    const disabled = await this.repository.disableSingleMfaMethod(principal.userId, methodId);
-    if (!disabled) {
-      throw new NotFoundException('Active MFA method was not found.');
-    }
-    await this.audit.record(
-      {
-        action: 'MFA_FACTOR_REMOVED',
-        outcome: 'SUCCESS',
-        actorUserId: principal.userId,
-        actorUsername: principal.username,
-        objectId: methodId,
-        details: { methodType: target.methodType, label: target.label ?? null },
-      },
+  ): Promise<RemoveMfaMethodResult> {
+    return executeRemoveMfaMethod(
+      this.deps(),
+      principal,
+      methodId,
+      currentPassword,
+      code,
+      recoveryCode,
       context,
     );
   }
@@ -407,10 +413,21 @@ export class AuthService {
       accessTtl: this.accessTtl,
       refreshTtl: this.refreshTtl,
       resetTtl: this.resetTtl,
-      onUserSessionsRevoked: (userId: bigint, reason: string) => {
+      onUserSessionsRevoked: (
+        userId: bigint,
+        reason: string,
+        options?: {
+          excludeSessionId?: string | undefined;
+          excludeSessionIds?: readonly string[] | undefined;
+        },
+      ) => {
         this.realtime?.publish({
           type: 'USER_SESSION_REVOKED',
           targetUserIds: [userId.toString()],
+          ...(options?.excludeSessionId ? { excludeSessionId: options.excludeSessionId } : {}),
+          ...(options?.excludeSessionIds && options.excludeSessionIds.length > 0
+            ? { excludeSessionIds: options.excludeSessionIds }
+            : {}),
           payload: { userId: userId.toString(), reason },
         });
       },

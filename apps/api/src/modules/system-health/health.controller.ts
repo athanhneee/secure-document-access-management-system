@@ -22,8 +22,9 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AppConfigService } from '../../config/config.service.js';
 import { PublicEndpoint } from '../../public-endpoint.js';
+import { cidrMatch } from '../abac/cidr.js';
 import { CsrfService } from '../auth/csrf.service.js';
-import { RequirePermission } from '../rbac/require-permission.js';
+import { RequireAnyPermission, RequirePermission } from '../rbac/require-permission.js';
 import { HealthService } from './health.service.js';
 import { MetricsService } from './metrics.service.js';
 import type { LivenessResponse, ReadinessResponse } from '@sda/contracts';
@@ -53,17 +54,22 @@ const CaptureSnapshotSchema = z
  *     + Lớp B `172.16.0.0/12` bằng trích xuất octet thứ hai qua biểu thức chính quy `^172\.(\d{1,3})\.` và kiểm tra miền giá trị `16 <= secondOctet <= 31`.
  *   - Mặc định từ chối (`false`) đối với mọi địa chỉ công cộng hoặc chuỗi rỗng.
  */
+const PRIVATE_OR_LOOPBACK_CIDRS = [
+  '127.0.0.0/8',
+  '10.0.0.0/8',
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  '::1/128',
+  'fc00::/7',
+  'fe80::/10',
+] as const;
+
 function isPrivateOrLoopbackIp(rawIp: string | undefined): boolean {
   if (!rawIp) return false;
-  const ip = rawIp.startsWith('::ffff:') ? rawIp.slice(7) : rawIp;
-  if (ip === '127.0.0.1' || ip === '::1') return true;
-  if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
-  const match172 = /^172\.(\d{1,3})\./.exec(ip);
-  if (match172 && match172[1]) {
-    const secondOctet = Number.parseInt(match172[1], 10);
-    if (secondOctet >= 16 && secondOctet <= 31) return true;
-  }
-  return false;
+  const trimmed = rawIp.trim();
+  if (!trimmed) return false;
+  const withoutZone = trimmed.includes('%') ? trimmed.slice(0, trimmed.indexOf('%')) : trimmed;
+  return PRIVATE_OR_LOOPBACK_CIDRS.some((cidr) => cidrMatch(withoutZone, cidr));
 }
 
 @ApiTags('system-health')
@@ -124,7 +130,10 @@ export class HealthController {
   }
 
   @Get('dashboard')
-  @RequirePermission('SYSTEM_HEALTH', 'VIEW')
+  @RequireAnyPermission([
+    { resource: 'SYSTEM_HEALTH', action: 'VIEW' },
+    { resource: 'SYSTEM_HEALTH', action: 'MANAGE' },
+  ])
   @Header('Cache-Control', 'no-store')
   @ApiOperation({ summary: 'Operational metrics dashboard reading live runtime metrics' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Live operational metrics' })
@@ -133,7 +142,10 @@ export class HealthController {
   }
 
   @Get('snapshots')
-  @RequirePermission('SYSTEM_HEALTH', 'VIEW')
+  @RequireAnyPermission([
+    { resource: 'SYSTEM_HEALTH', action: 'VIEW' },
+    { resource: 'SYSTEM_HEALTH', action: 'MANAGE' },
+  ])
   @Header('Cache-Control', 'no-store')
   @ApiOperation({ summary: 'Historical business health snapshots' })
   @ApiResponse({ status: HttpStatus.OK, description: 'List of business snapshots' })

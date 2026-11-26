@@ -211,6 +211,7 @@ describe('Owner Notification Dispatch Across Access Requests, Documents & Incide
       createMockAudit(),
       createMockAuthorization([
         { userId: 1n, resource: 'DOCUMENT', action: 'MANAGE', scopeDepartmentId: 100n },
+        { userId: 2n, resource: 'DOCUMENT', action: 'MANAGE', scopeDepartmentId: 100n },
       ]),
       new AuthorizationCache(),
       stores.db,

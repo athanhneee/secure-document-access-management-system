@@ -103,7 +103,7 @@ export async function executeLogin(
             tx,
           ),
       ),
-      deps.tokens.issueAccessToken(user.id, sessionId, false),
+      deps.tokens.issueAccessToken(user.id, sessionId, false, { preMfa: mfaRequired }),
     ]);
     artifacts = {
       sessionId,
@@ -114,14 +114,26 @@ export async function executeLogin(
       refreshMaxAge: deps.refreshTtl,
       mfaRequired,
       enrollmentRequired: false,
-      ...(!mfaRequired && user.profile ? { user: user.profile } : {}),
+      ...(!mfaRequired && user.profile
+        ? {
+            user: {
+              ...user.profile,
+              mfaEnabled: Boolean(user.mfaMethod),
+              mfaVerified: false,
+            },
+          }
+        : {}),
     };
   } else {
     await deps.rateLimit.clearAccount(accountKey);
     await deps.repository.recordLoginSuccess(user.id);
     artifacts = await startAuthSession(deps, user.id, context, !mfaRequired, mfaRequired);
     if (!mfaRequired && user.profile) {
-      artifacts.user = user.profile;
+      artifacts.user = {
+        ...user.profile,
+        mfaEnabled: Boolean(user.mfaMethod),
+        mfaVerified: false,
+      };
     }
     await deps.audit.record(
       {
@@ -175,6 +187,7 @@ export async function executeRefresh(
     result.user.id,
     result.sessionId,
     result.mfa,
+    { preMfa: false },
   );
   await deps.audit.record(
     {
@@ -226,7 +239,7 @@ async function startAuthSession(
   });
   return {
     sessionId,
-    accessToken: await deps.tokens.issueAccessToken(userId, sessionId, false),
+    accessToken: await deps.tokens.issueAccessToken(userId, sessionId, false, { preMfa }),
     refreshToken,
     csrfToken: randomBytes(32).toString('base64url'),
     accessMaxAge: preMfa ? 300 : deps.accessTtl,

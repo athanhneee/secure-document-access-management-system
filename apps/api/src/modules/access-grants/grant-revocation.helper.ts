@@ -295,6 +295,7 @@ export async function executeRevokeGrantWorkflow(
       realtime.publish({
         type: 'ACCESS_SESSION_UPDATED',
         targetRoles: ['SECURITY_OFFICER'],
+        targetDepartmentId: grant.documents?.department_id?.toString() ?? null,
         ...(affectedSessionUserIds.length > 0 ? { targetUserIds: affectedSessionUserIds } : {}),
         payload: {
           grantId,

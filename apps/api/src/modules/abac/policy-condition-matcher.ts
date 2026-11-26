@@ -9,7 +9,7 @@ import type {
   PolicyEvaluationInput,
   TimeWindow,
 } from './abac.types.js';
-import { cidrMatch } from './cidr.js';
+import { canonicalizeIpAddress, cidrMatch } from './cidr.js';
 
 export type RuntimeValue = string | number | boolean | string[] | null | undefined;
 
@@ -55,7 +55,9 @@ export function matchesCondition(
   condition: PolicyCondition,
   attributes: Readonly<Record<string, RuntimeValue>>,
 ): boolean {
-  const actual = attributes[condition.attribute];
+  const actual = Object.hasOwn(attributes, condition.attribute)
+    ? attributes[condition.attribute]
+    : undefined;
   const exists = !isMissingAttribute(actual);
   if (condition.operator === 'EXISTS') return exists === condition.expected;
   if (!exists) return false;
@@ -112,24 +114,54 @@ function matchArray(condition: PolicyCondition, actual: string[]): boolean {
 }
 
 /**
- * Algorithm / Thuật toán: So sánh bằng nghiêm ngặt kiểu nguyên thủy (Strict Scalar Equality).
+ * Algorithm / Thuật toán: So sánh bằng đa miền chuẩn hóa (Canonical Scalar, IP & Strict ISO-8601 Equality, BUG-104).
+ *   1. Trả `true` tức thì nếu khớp nguyên thủy nghiêm ngặt (`===`).
+ *   2. Nếu cả hai đều là chuỗi ISO-8601 hợp lệ nghiêm ngặt (`parseStrictIsoTimestamp`), đối chiếu theo mili-giây epoch UTC để đồng nhất mọi độ lệch múi giờ (`Z` vs `+07:00`).
+ *   3. Nếu cả hai đều là chuỗi địa chỉ IP hợp lệ (`canonicalizeIpAddress`), đối chiếu trên biểu diễn chuẩn tắc 32/128-bit (đồng nhất `::ffff:a.b.c.d` với `a.b.c.d` và IPv6 viết hoa/rút gọn).
  */
 function equal(actual: RuntimeValue, expected: ExpectedValue): boolean {
-  return (
-    (typeof actual === 'string' || typeof actual === 'number' || typeof actual === 'boolean') &&
-    actual === expected
-  );
+  if (typeof actual !== 'string' && typeof actual !== 'number' && typeof actual !== 'boolean') {
+    return false;
+  }
+  if (actual === expected) return true;
+  if (typeof actual !== 'string' || typeof expected !== 'string') return false;
+
+  const leftTs = parseStrictIsoTimestamp(actual);
+  if (leftTs !== null) {
+    const rightTs = parseStrictIsoTimestamp(expected);
+    if (rightTs !== null) return leftTs === rightTs;
+  }
+
+  const leftIp = canonicalizeIpAddress(actual);
+  if (leftIp !== null) {
+    const rightIp = canonicalizeIpAddress(expected);
+    if (rightIp !== null) return leftIp === rightIp;
+  }
+
+  return false;
 }
 
 export const STRICT_ISO_DATE_PATTERN =
   /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
 
 /**
- * Algorithm / Thuật toán: Phân tích chuỗi ngày giờ chuẩn ISO-8601 nghiêm ngặt sang epoch milliseconds.
- * Từ chối mọi chuỗi thường ("dept-2", "1") mà V8 `Date.parse` có thể hiểu nhầm thành mốc thời gian.
+ * Algorithm / Thuật toán: Phân tích chuỗi ngày giờ chuẩn ISO-8601 nghiêm ngặt kèm kiểm tra lịch Gregorian thực sang epoch milliseconds.
+ * Từ chối mọi chuỗi thường ("DOC-2026-01", "dept-2", "1") và ngày tràn lịch ("2026-02-31") mà V8 `Date.parse` hiểu nhầm.
  */
 export function parseStrictIsoTimestamp(value: string): number | null {
   if (!STRICT_ISO_DATE_PATTERN.test(value)) return null;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const calendarProbe = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendarProbe.getUTCFullYear() !== year ||
+    calendarProbe.getUTCMonth() !== month - 1 ||
+    calendarProbe.getUTCDate() !== day
+  ) {
+    return null;
+  }
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : null;
 }

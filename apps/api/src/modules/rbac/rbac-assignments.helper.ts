@@ -10,7 +10,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { withSerializableTransaction, type getDatabaseClient } from '@sda/database';
+import { withSerializableTransaction, type getDatabaseClient, type Prisma } from '@sda/database';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from './authorization.service.js';
 import {
@@ -19,9 +19,20 @@ import {
 } from './permission-matrix.js';
 import type { RbacAuditService } from './rbac-audit.service.js';
 import {
+  assertUserClearanceMeetsActiveRoleGrants,
+  assertUsersOwnNoBusinessDocuments,
+  cascadeCleanupOnPrivilegedRoleEscalation,
+  terminateUserSessionsOpenedViaRevokedRole,
+} from './rbac-grant-cascade.helper.js';
+import {
   PRIVILEGED_ROLE_MFA_REVOKE_REASON,
   revokeUnverifiedMfaSessionsForUsers,
 } from './rbac-role-permissions.helper.js';
+import {
+  assertCanManageTargetUser,
+  assertNotLastActiveGlobalSystemAdminForAssignment,
+  resolveActorGovernanceContext,
+} from './rbac-user-governance.helper.js';
 
 export { PRIVILEGED_ROLE_MFA_REVOKE_REASON, revokeUnverifiedMfaSessionsForUsers };
 
@@ -29,17 +40,16 @@ type PrismaClient = ReturnType<typeof getDatabaseClient>;
 type RoleLookupClient = Pick<PrismaClient, 'userRole'>;
 
 /**
- * Thuật toán: Xác định quản trị viên hệ thống tối cao (`SYSTEM_ADMIN` toàn cục kèm quyền `ROLE_MANAGE` toàn cục).
- * Chỉ khi người thực hiện nắm giữ đồng thời vai trò `SYSTEM_ADMIN` đang hiệu lực và quyền `ROLE_MANAGE` ở phạm vi
- * `scopeDepartmentId === null`, hệ thống mới cho phép cấp phát/thu hồi vai trò nghiệp vụ hoặc đặc quyền cho nhân sự
- * khác mà không bị chặn bởi tập con `targetRolePermissions ⊆ actorPermissions` (do SoD đã gỡ `DOCUMENT_*` khỏi `SYSTEM_ADMIN`).
+ * Thuật toán: Xác định quản trị viên hệ thống tối cao (`SYSTEM_ADMIN` toàn cục kèm quyền `ROLE_MANAGE` toàn cục),
+ * hỗ trợ tái sử dụng kết nối `tx` của giao dịch `SERIALIZABLE` đang mở để chống tự khóa chết pool CSDL (`BUG-048`).
  */
 export async function isGlobalSystemAdminRoleManager(
   authorization: AuthorizationService,
   principal: AuthPrincipal,
+  tx?: Prisma.TransactionClient,
 ): Promise<boolean> {
   if (typeof authorization.effectiveGrants === 'function') {
-    const grants = await authorization.effectiveGrants(principal.userId);
+    const grants = await authorization.effectiveGrants(principal.userId, tx);
     const hasGlobalSystemAdminRole = grants.some(
       (grant) => grant.roleCode === 'SYSTEM_ADMIN' && grant.scopeDepartmentId === null,
     );
@@ -54,11 +64,17 @@ export async function isGlobalSystemAdminRoleManager(
     return false;
   }
   if (typeof authorization.hasPermission === 'function') {
-    return authorization.hasPermission(principal, 'ROLE', 'MANAGE', { requireGlobal: true });
+    return authorization.hasPermission(principal, 'ROLE', 'MANAGE', { requireGlobal: true }, tx);
   }
   if (typeof authorization.assertPermission === 'function') {
     try {
-      await authorization.assertPermission(principal, 'ROLE', 'MANAGE', { requireGlobal: true });
+      await authorization.assertPermission(
+        principal,
+        'ROLE',
+        'MANAGE',
+        { requireGlobal: true },
+        tx,
+      );
       return true;
     } catch {
       return false;
@@ -94,9 +110,12 @@ export async function executeAssignUserRole(
   if (input.validTo !== null && input.validTo <= now) {
     throw new BadRequestException('validTo must be in the future.');
   }
-  const bypassDelegationSubset = await isGlobalSystemAdminRoleManager(authorization, principal);
   const id = await withSerializableTransaction(
     async (transaction) => {
+      const [bypassDelegationSubset, actorContext] = await Promise.all([
+        isGlobalSystemAdminRoleManager(authorization, principal, transaction),
+        resolveActorGovernanceContext(authorization, principal, transaction),
+      ]);
       const [user, role] = await Promise.all([
         transaction.user.findUnique({ where: { id: userId } }),
         transaction.role.findFirst({
@@ -107,12 +126,20 @@ export async function executeAssignUserRole(
       if (!user || user.status === 'DISABLED')
         throw new NotFoundException('Active user not found.');
       if (!role) throw new NotFoundException('Active role not found.');
-      await authorization.assertPermission(principal, 'USER', 'MANAGE', {
-        targetDepartmentId: user.department_id,
-      });
-      await authorization.assertPermission(principal, 'USER', 'MANAGE', {
-        targetDepartmentId: input.scopeDepartmentId,
-      });
+      await authorization.assertPermission(
+        principal,
+        'USER',
+        'MANAGE',
+        { targetDepartmentId: user.department_id },
+        transaction,
+      );
+      await authorization.assertPermission(
+        principal,
+        'USER',
+        'MANAGE',
+        { targetDepartmentId: input.scopeDepartmentId },
+        transaction,
+      );
       if (input.scopeDepartmentId !== null) {
         const scope = await transaction.department.findFirst({
           where: { id: input.scopeDepartmentId, is_active: true },
@@ -120,17 +147,22 @@ export async function executeAssignUserRole(
         if (!scope) throw new NotFoundException('Active scope department not found.');
         if (
           user.department_id === null ||
-          !(await authorization.departmentWithinScope(user.department_id, input.scopeDepartmentId))
+          !(await authorization.departmentWithinScope(
+            user.department_id,
+            input.scopeDepartmentId,
+            transaction,
+          ))
         ) {
           throw new ForbiddenException('Role scope must contain the target user department.');
         }
       }
-      // CONFLICT-RESOLVED: Cho phép SYSTEM_ADMIN toàn cục có ROLE_MANAGE toàn cục cấp phát vai trò cho nhân sự khác (bởi SoD đã tách quyền nghiệp vụ khỏi SYSTEM_ADMIN), đồng thời giữ nguyên kiểm tra trần ủy quyền tập con cho mọi quản trị viên cấp thấp/custom role.
+      // CONFLICT-RESOLVED: Cho phép SYSTEM_ADMIN toàn cục có ROLE_MANAGE toàn cục cấp phát vai trò cho nhân sự khác, đồng thời truyền `transaction` vào `assertCanDelegate` chống tự khóa chết kết nối CSDL (BUG-048).
       if (!bypassDelegationSubset) {
         await authorization.assertCanDelegate(
           principal,
           role.role_permissions.map((mapping) => mapping.permission_id),
           input.scopeDepartmentId,
+          transaction,
         );
       }
       // CONFLICT-RESOLVED: Kiểm tra xung đột Phân tách Nhiệm vụ (SoD) theo cả mã vai trò lẫn tập quyền thực tế trên khoảng thời gian chồng lấp (HIGH-01).
@@ -156,13 +188,74 @@ export async function executeAssignUserRole(
       const overlappingDescriptors = overlappingAssignments.map((assignment) => ({
         code: assignment.roles.code,
         permissions: (assignment.roles.role_permissions ?? [])
-          .map((m) => m.permissions)
+          .map((p) => p.permissions)
           .filter((p): p is NonNullable<typeof p> => Boolean(p)),
       }));
       if (!areOverlappingRolesSodCompatible([...overlappingDescriptors, candidateDescriptor])) {
         throw new ConflictException(
           'Separation of duties violation: privileged roles and capabilities are mutually exclusive and cannot be combined with business roles.',
         );
+      }
+      // BUG-006: Chặn tài khoản không phải global SYSTEM_ADMIN gán vai trò lên tài khoản đang giữ vai trò đặc quyền cao hơn hoặc toàn cục.
+      await assertCanManageTargetUser({
+        transaction,
+        actorContext,
+        targetUserId: userId,
+        now,
+      });
+      const candidateIsPrivileged = isPrivilegedSeparationRoleOrCapability(
+        role.code,
+        candidateDescriptor.permissions,
+      );
+      // CONFLICT-RESOLVED: Hợp nhất BUG-005 và BUG-047 —
+      // 1) Khi gán vai trò đặc quyền: chặn 409 nếu người dùng đang sở hữu tài liệu chưa bàn giao (`owner_id`), đồng thời thu hồi dây chuyền mọi USER/ROLE AccessGrant ACTIVE, đóng AccessSession ACTIVE và hủy AccessRequest PENDING của họ.
+      // 2) Khi gán vai trò thường đang nắm ROLE grant mức mật cao: chặn 409 nếu người dùng đang giữ vai trò đặc quyền hoặc có bậc thẩm tra thấp hơn bậc mật của ROLE grant (yêu cầu nâng clearance trước, bảo toàn quyền cho các thành viên khác của vai trò).
+      if (candidateIsPrivileged) {
+        await assertUsersOwnNoBusinessDocuments(transaction, [userId]);
+        const overlappingRoleIds = [
+          ...new Set([
+            input.roleId,
+            ...overlappingAssignments
+              .map((assignment) => assignment.role_id)
+              .filter((rid): rid is bigint => typeof rid === 'bigint'),
+          ]),
+        ];
+        await cascadeCleanupOnPrivilegedRoleEscalation({
+          transaction,
+          userIds: [userId],
+          roleIds: overlappingRoleIds,
+          actorUserId: principal.userId,
+          reason: `User assigned privileged role ${role.code}`,
+          now,
+        });
+      } else {
+        if (
+          overlappingDescriptors.some((descriptor) =>
+            isPrivilegedSeparationRoleOrCapability(descriptor.code, descriptor.permissions),
+          ) &&
+          typeof transaction.accessGrant?.count === 'function'
+        ) {
+          const activeCandidateRoleGrants = await transaction.accessGrant.count({
+            where: {
+              principal_type: 'ROLE',
+              principal_role_id: input.roleId,
+              status: 'ACTIVE',
+              valid_until: { gt: now },
+            },
+          });
+          if (activeCandidateRoleGrants > 0) {
+            throw new ConflictException(
+              'Separation of duties violation: cannot assign a role with active document access grants to a privileged user.',
+            );
+          }
+        }
+        await assertUserClearanceMeetsActiveRoleGrants({
+          transaction,
+          userId,
+          roleId: input.roleId,
+          roleCode: role.code,
+          now,
+        });
       }
       const assignment = await transaction.userRole.create({
         data: {
@@ -174,7 +267,7 @@ export async function executeAssignUserRole(
           assigned_by: principal.userId,
         },
       });
-      if (isPrivilegedSeparationRoleOrCapability(role.code, candidateDescriptor.permissions)) {
+      if (candidateIsPrivileged) {
         await revokeUnverifiedMfaSessionsForUsers(transaction, [userId], new Date());
       }
       await audit.record(
@@ -212,32 +305,58 @@ export async function executeRevokeUserRole(
   if (principal.userId === userId) {
     throw new ForbiddenException('Administrators cannot revoke their own roles.');
   }
-  const bypassDelegationSubset = await isGlobalSystemAdminRoleManager(authorization, principal);
   await withSerializableTransaction(
     async (transaction) => {
+      const [bypassDelegationSubset, actorContext] = await Promise.all([
+        isGlobalSystemAdminRoleManager(authorization, principal, transaction),
+        resolveActorGovernanceContext(authorization, principal, transaction),
+      ]);
       const assignment = await transaction.userRole.findFirst({
         where: { id: assignmentId, user_id: userId },
         include: { roles: { include: { role_permissions: true } } },
       });
       if (!assignment) throw new NotFoundException('Role assignment not found.');
       const user = await transaction.user.findUniqueOrThrow({ where: { id: userId } });
-      await authorization.assertPermission(principal, 'USER', 'MANAGE', {
-        targetDepartmentId: user.department_id,
-      });
-      await authorization.assertPermission(principal, 'USER', 'MANAGE', {
-        targetDepartmentId: assignment.scope_department_id,
+      await authorization.assertPermission(
+        principal,
+        'USER',
+        'MANAGE',
+        { targetDepartmentId: user.department_id },
+        transaction,
+      );
+      await authorization.assertPermission(
+        principal,
+        'USER',
+        'MANAGE',
+        { targetDepartmentId: assignment.scope_department_id },
+        transaction,
+      );
+      const now = new Date();
+      // BUG-006: Ngăn tài khoản không phải global SYSTEM_ADMIN thu hồi vai trò của tài khoản đặc quyền cao hơn hoặc toàn cục.
+      await assertCanManageTargetUser({
+        transaction,
+        actorContext,
+        targetUserId: userId,
+        now,
       });
       if (!bypassDelegationSubset && assignment.roles?.role_permissions) {
         await authorization.assertCanDelegate(
           principal,
           assignment.roles.role_permissions.map((mapping) => mapping.permission_id),
           assignment.scope_department_id,
+          transaction,
         );
       }
-      const now = new Date();
       if (assignment.valid_to !== null && assignment.valid_to <= now) {
         throw new ConflictException('Role assignment is already inactive.');
       }
+      // BUG-006: Trong giao dịch SERIALIZABLE, bắt buộc duy trì ít nhất 1 global SYSTEM_ADMIN đang ACTIVE sau khi thu hồi.
+      await assertNotLastActiveGlobalSystemAdminForAssignment({
+        transaction,
+        assignment,
+        targetUserStatus: user.status,
+        now,
+      });
       // CONFLICT-RESOLVED: Xóa trực tiếp bản ghi gán vai trò chưa đến giờ hiệu lực (`valid_from >= now`) để không vi phạm ràng buộc SQL `CHECK (valid_to IS NULL OR valid_to > valid_from)` (HIGH-12)
       let afterSnapshot: ReturnType<typeof auditAssignmentSnapshot> | null = null;
       if (assignment.valid_from >= now) {
@@ -249,6 +368,14 @@ export async function executeRevokeUserRole(
         });
         afterSnapshot = auditAssignmentSnapshot(after);
       }
+      // BUG-047: Đóng tức thì mọi AccessSession đang ACTIVE mà người dùng đã mở qua ROLE grant của vai trò vừa gỡ.
+      await terminateUserSessionsOpenedViaRevokedRole({
+        transaction,
+        userId,
+        roleId: assignment.role_id,
+        roleCode: assignment.roles?.code,
+        now,
+      });
       await audit.record(
         transaction,
         {

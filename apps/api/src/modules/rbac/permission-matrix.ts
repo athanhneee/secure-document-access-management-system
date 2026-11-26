@@ -10,6 +10,7 @@ export const SYSTEM_ROLE_PERMISSION_MATRIX = {
     'SYSTEM_HEALTH_VIEW',
     // CONFLICT-RESOLVED: Bổ sung quyền SYSTEM_HEALTH_MANAGE cho SYSTEM_ADMIN để điều hành chụp ảnh sức khỏe và dọn dẹp dữ liệu quá hạn.
     'SYSTEM_HEALTH_MANAGE',
+    'NOTIFICATION_VIEW',
   ],
   SECURITY_OFFICER: [
     'AUDIT_VIEW',
@@ -20,8 +21,16 @@ export const SYSTEM_ROLE_PERMISSION_MATRIX = {
     'INCIDENT_CREATE',
     'INCIDENT_MANAGE',
     'ACCESS_SESSION_TERMINATE',
+    'NOTIFICATION_VIEW',
   ],
-  AUDITOR: ['AUDIT_VIEW', 'AUDIT_EXPORT', 'ALERT_VIEW', 'WATERMARK_TRACE', 'SYSTEM_REPORT_EXPORT'],
+  AUDITOR: [
+    'AUDIT_VIEW',
+    'AUDIT_EXPORT',
+    'ALERT_VIEW',
+    'WATERMARK_TRACE',
+    'SYSTEM_REPORT_EXPORT',
+    'NOTIFICATION_VIEW',
+  ],
   DOCUMENT_OWNER: [
     'DOCUMENT_UPLOAD',
     // CONFLICT-RESOLVED: Bổ sung quyền DOCUMENT_MANAGE cho DOCUMENT_OWNER đồng bộ với seed-catalog.ts và chuyển quyền sở hữu tài liệu.
@@ -98,7 +107,6 @@ const BUSINESS_EXCLUSIVE_CODES = new Set([
   'ACCESS_GRANT_CREATE',
   'ACCESS_GRANT_REVOKE',
   'ACCESS_GRANT_VIEW',
-  'NOTIFICATION_VIEW',
 ]);
 
 export interface PermissionCapabilityLike {
@@ -145,9 +153,7 @@ function allowedArchetypesForPermission(
   if (
     BUSINESS_EXCLUSIVE_CODES.has(code) ||
     (resource !== undefined &&
-      ['DOCUMENT', 'DOCUMENT_VERSION', 'ACCESS_REQUEST', 'ACCESS_GRANT', 'NOTIFICATION'].includes(
-        resource,
-      ))
+      ['DOCUMENT', 'DOCUMENT_VERSION', 'ACCESS_REQUEST', 'ACCESS_GRANT'].includes(resource))
   ) {
     return ['BUSINESS_DOCUMENT'];
   }

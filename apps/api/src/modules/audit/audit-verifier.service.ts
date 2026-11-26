@@ -30,6 +30,8 @@ export interface PartitionVerificationResult {
   partition: string;
   valid: boolean;
   totalChecked: number;
+  skippedBeforeAnchor?: number | undefined;
+  verificationMode?: 'FULL' | 'INCREMENTAL' | undefined;
   anchorsChecked: number;
   resumedFromAnchorSequence?: string | undefined;
   violations: AuditViolation[];
@@ -55,12 +57,12 @@ export class AuditVerifierService {
   }
 
   /**
-   * Thuật toán: Thẩm định chuỗi băm phân lô con trỏ (`take: 1000`) kết hợp nối tiếp từ điểm neo `VALID` mới nhất
-   * và nhường vòng lặp sự kiện `setImmediate` giữa các lô.
+   * Thuật toán: Thẩm định chuỗi băm phân lô con trỏ (`take: 1000`), hỗ trợ chế độ quét toàn phần (`fullScan: true`)
+   * từ `sequence = 1` và chế độ nối tiếp điểm neo `VALID` không cộng khống `totalChecked` cho các bản ghi bị bỏ qua.
    */
   async verifyPartition(
     partition: string,
-    options?: { fromSequence?: bigint; toSequence?: bigint },
+    options?: { fromSequence?: bigint; toSequence?: bigint; fullScan?: boolean },
   ): Promise<PartitionVerificationResult> {
     const violations: AuditViolation[] = [];
     const VERIFY_BATCH_SIZE = 1000;
@@ -68,6 +70,7 @@ export class AuditVerifierService {
     const preloadedAnchors = await fetchPartitionAnchors(this.database, partition, options);
     const logHashBySequence = new Map<bigint, { id: bigint; entry_hash: string }>();
     let totalChecked = 0;
+    let skippedBeforeAnchor = 0;
 
     let previousHash: string | null = null;
     // CONFLICT-RESOLVED: Khởi tạo expectedSequence = 1n mặc định thay vì null để chặn tấn công cắt cụt đầu chuỗi (Head-Truncation 1..K).
@@ -81,7 +84,11 @@ export class AuditVerifierService {
     let resumedFromCheckpoint = false;
     let resumedFromAnchorSequence: string | undefined;
 
-    if (options?.fromSequence === undefined && preloadedAnchors.length > 0) {
+    if (
+      options?.fullScan !== true &&
+      options?.fromSequence === undefined &&
+      preloadedAnchors.length > 0
+    ) {
       const checkpoint = await resolveVerifiedAnchorCheckpoint({
         database: this.database,
         partition,
@@ -92,7 +99,9 @@ export class AuditVerifierService {
       if (checkpoint) {
         resumedFromCheckpoint = true;
         resumedFromAnchorSequence = checkpoint.anchor.anchor_sequence.toString();
-        totalChecked = Number(checkpoint.anchor.anchor_sequence);
+        // Chỉ tính đúng 1 bản ghi điểm neo K đã được tái tính HMAC thực tế; tuyệt đối không cộng khống [1..K-1] bị bỏ qua.
+        totalChecked = 1;
+        skippedBeforeAnchor = Number(checkpoint.anchor.anchor_sequence - 1n);
         previousHash = checkpoint.entryHash;
         expectedSequence = checkpoint.anchor.anchor_sequence + 1n;
         cursorSequence = checkpoint.anchor.anchor_sequence;
@@ -179,18 +188,31 @@ export class AuditVerifierService {
     );
     violations.push(...anchorCheck.violations);
 
+    // Thuật toán: Khử trùng lặp vi phạm theo bộ khóa `(code, sequence, logId, message)` khi lùi về quét toàn phần (BUG-111).
+    const seenViolationKeys = new Set<string>();
+    const uniqueViolations: AuditViolation[] = [];
+    for (const v of violations) {
+      const dedupeKey = `${v.code}:${v.sequence.toString()}:${v.logId?.toString() ?? ''}:${v.message}`;
+      if (!seenViolationKeys.has(dedupeKey)) {
+        seenViolationKeys.add(dedupeKey);
+        uniqueViolations.push(v);
+      }
+    }
+
     const alertId =
-      violations.length > 0
-        ? await raiseAuditIntegrityAlert(this.database, this.logger, partition, violations)
+      uniqueViolations.length > 0
+        ? await raiseAuditIntegrityAlert(this.database, this.logger, partition, uniqueViolations)
         : undefined;
 
     return {
       partition,
-      valid: violations.length === 0,
+      valid: uniqueViolations.length === 0,
       totalChecked,
+      skippedBeforeAnchor,
+      verificationMode: resumedFromCheckpoint ? 'INCREMENTAL' : 'FULL',
       anchorsChecked: resumedFromCheckpoint ? preloadedAnchors.length : anchorCheck.anchorsChecked,
       ...(resumedFromAnchorSequence !== undefined ? { resumedFromAnchorSequence } : {}),
-      violations,
+      violations: uniqueViolations,
       alertId,
     };
   }
@@ -198,7 +220,9 @@ export class AuditVerifierService {
   /**
    * Thuật toán: Quét kiểm chứng tuần tự hợp nhất danh sách phân vùng từ cả `audit_logs` và `audit_anchors`.
    */
-  async verifyAllPartitions(): Promise<Record<string, PartitionVerificationResult>> {
+  async verifyAllPartitions(options?: {
+    fullScan?: boolean;
+  }): Promise<Record<string, PartitionVerificationResult>> {
     const distinctLogPartitions = await this.database.auditLog.findMany({
       select: { chain_partition: true },
       distinct: ['chain_partition'],
@@ -219,7 +243,7 @@ export class AuditVerifierService {
 
     const results: Record<string, PartitionVerificationResult> = {};
     for (const partition of partitionNames) {
-      results[partition] = await this.verifyPartition(partition);
+      results[partition] = await this.verifyPartition(partition, options);
     }
     return results;
   }

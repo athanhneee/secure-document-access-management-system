@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import type { Prisma, incident_status } from '@sda/database';
 import { AppErrorCode, type QueryIncidentReportsInput } from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
+import { resolveSocDateRangeBounds } from './security-alerts.helper.js';
 
 export interface IncidentActionDetail {
   id: string;
@@ -116,10 +117,9 @@ export function buildIncidentQueryWhere(
     ];
   }
 
-  if (query.from || query.to) {
-    where.created_at = {};
-    if (query.from) where.created_at.gte = new Date(query.from);
-    if (query.to) where.created_at.lte = new Date(query.to);
+  const dateBounds = resolveSocDateRangeBounds(query.from, query.to);
+  if (dateBounds) {
+    where.created_at = dateBounds;
   }
   return where;
 }

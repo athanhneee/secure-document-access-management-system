@@ -98,62 +98,67 @@ export class SecurityDetectionService {
   }
 
   /**
-   * Algorithm: Cooldown-Bounded Alert Deduplication & Evidence Linking.
-   * Suppresses duplicate `OPEN`/`INVESTIGATING` alerts within `[now - cooldownMinutes, now]` while
-   * incrementally linking newly discovered `audit_log_id` evidence rows into `alert_audit_links`.
+   * Algorithm: Advisory-Locked Cooldown-Bounded Alert Deduplication & Evidence Linking (`BUG-069`).
+   * Acquires a transaction-scoped `pg_advisory_xact_lock` keyed by `(ruleCode, userId)` so concurrent
+   * API and Worker sweeps never create duplicate `OPEN` alerts within `[now - cooldownMinutes, now]`.
    */
   private async processAlertOrSuppress(params: AlertMatchCandidate): Promise<DetectionResult> {
     const { rule, userId, documentId, matchingLogIds, title, description } = params;
     const cooldownBoundary = new Date(Date.now() - rule.cooldownMinutes * 60 * 1000);
+    const lockSubjectKey = userId != null ? userId.toString() : 'GLOBAL_SYSTEM';
 
-    const existingAlert = await this.database.securityAlert.findFirst({
-      where: {
-        alert_type: rule.ruleCode,
-        // CONFLICT-RESOLVED: Luôn khóa rõ detected_user_id (kể cả null cho sự kiện ẩn danh) tránh cảnh báo theo user đè mất cảnh báo ẩn danh (N09).
-        detected_user_id: userId ?? null,
-        status: { in: ['OPEN', 'INVESTIGATING'] },
-        detected_at: { gte: cooldownBoundary },
-      },
-      include: { alert_audit_links: true },
-      orderBy: { detected_at: 'desc' },
-    });
-
-    if (existingAlert) {
-      const existingLinkedLogIds = new Set(
-        (existingAlert.alert_audit_links ?? []).map((link) => link.audit_log_id.toString()),
-      );
-      const newLogIdsToLink = matchingLogIds.filter(
-        (logId) => !existingLinkedLogIds.has(logId.toString()),
-      );
-
-      if (newLogIdsToLink.length > 0) {
-        await this.database.alertAuditLink.createMany({
-          data: newLogIdsToLink.map((logId) => ({
-            alert_id: existingAlert.id,
-            audit_log_id: logId,
-          })),
-          skipDuplicates: true,
-        });
+    const executeAtomicCorrelation = async (
+      tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0] | PrismaClient,
+    ): Promise<
+      | { kind: 'suppressed'; alertId: string; newLinkedCount: number }
+      | { kind: 'created'; alertId: string }
+    > => {
+      if (typeof tx.$executeRawUnsafe === 'function') {
+        await tx.$executeRawUnsafe(
+          'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+          `soc-alert:${rule.ruleCode}`,
+          lockSubjectKey,
+        );
       }
 
-      this.logger.log(
-        `Alert storm suppressed for rule ${rule.ruleCode} (user: ${userId?.toString() ?? 'system'}). ` +
-          `Linked ${newLogIdsToLink.length} new audit logs to existing alert ${existingAlert.id}.`,
-      );
+      const existingAlert = await tx.securityAlert.findFirst({
+        where: {
+          alert_type: rule.ruleCode,
+          // CONFLICT-RESOLVED: Luôn khóa rõ detected_user_id (kể cả null cho sự kiện ẩn danh/toàn hệ thống) bên trong $transaction có khóa tư vấn (BUG-069 / N09).
+          detected_user_id: userId ?? null,
+          status: { in: ['OPEN', 'INVESTIGATING'] },
+          detected_at: { gte: cooldownBoundary },
+        },
+        include: { alert_audit_links: true },
+        orderBy: { detected_at: 'desc' },
+      });
 
-      return {
-        ruleCode: rule.ruleCode,
-        matched: true,
-        alertId: existingAlert.id,
-        isNewAlert: false,
-        suppressedByCooldown: true,
-        linkedAuditLogIds: matchingLogIds.map((id) => id.toString()),
-        userId: userId != null ? userId.toString() : undefined,
-      };
-    }
+      if (existingAlert) {
+        const existingLinkedLogIds = new Set(
+          (existingAlert.alert_audit_links ?? []).map((link) => link.audit_log_id.toString()),
+        );
+        const newLogIdsToLink = matchingLogIds.filter(
+          (logId) => !existingLinkedLogIds.has(logId.toString()),
+        );
 
-    const newAlertId = randomUUID();
-    await this.database.$transaction(async (tx) => {
+        if (newLogIdsToLink.length > 0) {
+          await tx.alertAuditLink.createMany({
+            data: newLogIdsToLink.map((logId) => ({
+              alert_id: existingAlert.id,
+              audit_log_id: logId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        return {
+          kind: 'suppressed',
+          alertId: existingAlert.id,
+          newLinkedCount: newLogIdsToLink.length,
+        };
+      }
+
+      const newAlertId = randomUUID();
       await tx.securityAlert.create({
         data: {
           id: newAlertId,
@@ -177,13 +182,60 @@ export class SecurityDetectionService {
           skipDuplicates: true,
         });
       }
-    });
 
+      return { kind: 'created', alertId: newAlertId };
+    };
+
+    const outcome =
+      typeof this.database.$transaction === 'function'
+        ? await this.database.$transaction((tx) => executeAtomicCorrelation(tx))
+        : await executeAtomicCorrelation(this.database);
+
+    if (outcome.kind === 'suppressed') {
+      this.logger.log(
+        `Alert storm suppressed for rule ${rule.ruleCode} (user: ${userId?.toString() ?? 'system'}). ` +
+          `Linked ${outcome.newLinkedCount} new audit logs to existing alert ${outcome.alertId}.`,
+      );
+
+      return {
+        ruleCode: rule.ruleCode,
+        matched: true,
+        alertId: outcome.alertId,
+        isNewAlert: false,
+        suppressedByCooldown: true,
+        linkedAuditLogIds: matchingLogIds.map((id) => id.toString()),
+        userId: userId != null ? userId.toString() : undefined,
+      };
+    }
+
+    const newAlertId = outcome.alertId;
     try {
       const { MetricsService } = await import('../system-health/metrics.service.js');
       MetricsService.getInstance().recordSecurityAlert(rule.severity, rule.ruleCode);
     } catch {
       // Fallback when metrics registry is inactive in isolated unit tests
+    }
+
+    let targetDepartmentId: string | null = null;
+    if (documentId && typeof this.database?.document?.findUnique === 'function') {
+      const doc = await this.database.document
+        .findUnique({ where: { id: documentId }, select: { department_id: true } })
+        .catch(() => null);
+      if (doc?.department_id != null) {
+        targetDepartmentId = doc.department_id.toString();
+      }
+    }
+    if (
+      !targetDepartmentId &&
+      userId != null &&
+      typeof this.database?.user?.findUnique === 'function'
+    ) {
+      const usr = await this.database.user
+        .findUnique({ where: { id: userId }, select: { department_id: true } })
+        .catch(() => null);
+      if (usr?.department_id != null) {
+        targetDepartmentId = usr.department_id.toString();
+      }
     }
 
     this.logger.warn(
@@ -192,6 +244,7 @@ export class SecurityDetectionService {
     this.realtime?.publish({
       type: 'SECURITY_ALERT_UPDATED',
       targetRoles: ['SECURITY_OFFICER'],
+      ...(targetDepartmentId ? { targetDepartmentId } : {}),
       payload: {
         id: newAlertId,
         alertType: rule.ruleCode,

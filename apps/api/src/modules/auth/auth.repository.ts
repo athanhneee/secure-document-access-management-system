@@ -4,6 +4,8 @@
  */
 import { Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient, type Prisma } from '@sda/database';
+
+type PrismaClient = ReturnType<typeof getDatabaseClient>;
 import { AppConfigService } from '../../config/config.service.js';
 import { DistributedStateService } from '../concurrency/distributed-state.service.js';
 import {
@@ -29,8 +31,10 @@ import {
   expireAuthSessionFamily,
   queryActiveUserSessions,
   revokeOtherActiveUserSessions,
+  revokeOtherUnverifiedMfaUserSessions,
   touchAuthSessionActivity,
   type ActiveAuthSessionItem,
+  type RevokeOtherUnverifiedMfaSessionsResult,
 } from './auth-sessions-management.helper.js';
 import {
   advanceWebAuthnCounterAtomic,
@@ -38,13 +42,17 @@ import {
   consumeMfaRecoveryCodeAtomic,
   createUserMfaEnrollment,
   disableSingleUserMfaMethod,
+  disableSingleUserMfaMethodAtomic,
   disableUserMfaMethods,
+  disableUserMfaMethodsAtomic,
   enableUserMfaMethod,
   findPendingMfaMethod,
   insertSecurityAlert,
   listActiveMfaMethods,
   updateUserMfaSecret,
   type ActiveMfaMethodRecord,
+  type DisableAllMfaMethodsResult,
+  type DisableSingleMfaMethodResult,
 } from './auth-mfa.repository.js';
 import {
   buildActiveUserInclude,
@@ -104,8 +112,15 @@ export class AuthRepository {
     return user ? mapRecordToAuthUser(user) : null;
   }
 
-  async findUserById(userId: bigint): Promise<AuthUser | null> {
-    const user = await this.database.user.findUnique({
+  async findUserById(
+    userId: bigint,
+    transaction?: Prisma.TransactionClient,
+  ): Promise<AuthUser | null> {
+    const client =
+      transaction && typeof transaction.user?.findUnique === 'function'
+        ? transaction
+        : this.database;
+    const user = await client.user.findUnique({
       where: { id: userId },
       include: buildActiveUserInclude(new Date()),
     });
@@ -129,9 +144,10 @@ export class AuthRepository {
       maxConcurrentSessions: input.maxConcurrentSessions ?? this.maxConcurrentSessions,
     });
     if (evictedIds.length > 0) {
-      await Promise.all(
-        evictedIds.map((evictedId) => this.stateStore.deleteKey('auth-session', evictedId)),
-      );
+      await Promise.all([
+        ...evictedIds.map((evictedId) => this.stateStore.deleteKey('auth-session', evictedId)),
+        this.stateStore.bumpNamespaceEpoch(`auth-user:${input.userId.toString()}`),
+      ]);
     }
   }
 
@@ -152,9 +168,10 @@ export class AuthRepository {
       recordAuditInTx,
     );
     if (evictedIds.length > 0) {
-      await Promise.all(
-        evictedIds.map((evictedId) => this.stateStore.deleteKey('auth-session', evictedId)),
-      );
+      await Promise.all([
+        ...evictedIds.map((evictedId) => this.stateStore.deleteKey('auth-session', evictedId)),
+        this.stateStore.bumpNamespaceEpoch(`auth-user:${input.userId.toString()}`),
+      ]);
     }
   }
 
@@ -177,14 +194,14 @@ export class AuthRepository {
       this.database,
       oldHash,
       replacement,
-      (id) => this.findUserById(id),
+      (id, tx) => this.findUserById(id, tx),
       {
         idleTtlSeconds: this.idleTtlSeconds,
         ipAddress: context?.ip,
         userAgent: context?.userAgent,
       },
     );
-    if (result.kind === 'reuse') {
+    if (result.kind !== 'rotated' && result.userId !== undefined) {
       await this.invalidateSessionCache(result.userId, result.sessionId);
     }
     return result;
@@ -229,13 +246,14 @@ export class AuthRepository {
       } else {
         await expireOp(this.database);
       }
-      await this.stateStore.deleteKey('auth-session', session.id);
+      await this.invalidateSessionCache(userId, session.id);
       return null;
     }
     const mfa = session.mfa_verified_at !== null;
     const mfaRequiredForUser =
       Boolean(user.requiresMfa) ||
       Boolean(user.mfaMethod) ||
+      Boolean(user.hasMandatoryMfaRole) ||
       user.roles.some((role) => MFA_REQUIRED_ROLES.has(role));
     return {
       userId,
@@ -244,6 +262,7 @@ export class AuthRepository {
       roles: user.roles,
       mfa,
       mfaPending: !mfa && mfaRequiredForUser,
+      restrictedNonBusiness: Boolean(user.hasMandatoryMfaRole),
     };
   }
 
@@ -285,11 +304,79 @@ export class AuthRepository {
     return count;
   }
 
+  /**
+   * Thuật toán: Thu hồi toàn bộ các phiên đang hoạt động chưa xác thực MFA (`mfa_verified_at === null`) ngoại trừ `excludeSessionId` vừa nâng cấp và xóa tức thì cache phiên bị thu hồi (`BUG-046`).
+   */
+  async revokeOtherUnverifiedMfaSessions(
+    userId: bigint,
+    excludeSessionId: string,
+    reason: string,
+  ): Promise<RevokeOtherUnverifiedMfaSessionsResult> {
+    const result = await revokeOtherUnverifiedMfaUserSessions(
+      this.database,
+      userId,
+      excludeSessionId,
+      reason,
+    );
+    if (result.revokedCount > 0) {
+      await Promise.all([
+        ...result.revokedSessionIds.map((sid) => this.stateStore.deleteKey('auth-session', sid)),
+        this.invalidateSessionCache(userId),
+      ]);
+    }
+    return result;
+  }
+
   async updatePassword(userId: bigint, passwordHash: string): Promise<void> {
     await this.database.user.update({
       where: { id: userId },
-      data: { password_hash: passwordHash },
+      data: { password_hash: passwordHash, updated_at: new Date(), version: { increment: 1 } },
     });
+  }
+
+  /**
+   * Thuật toán: Đổi mật khẩu nguyên tử trong 1 giao dịch CSDL kèm tăng `version`, vô hiệu hóa toàn bộ `password_reset_tokens` chưa dùng,
+   * thu hồi mọi phiên đăng nhập (`auth_sessions`/`refresh_tokens`) và chấm dứt mọi phiên đọc tài liệu đang `ACTIVE` (`HIGH-09`).
+   */
+  async changePasswordAndRevokeAll(
+    userId: bigint,
+    passwordHash: string,
+    reason: string,
+  ): Promise<void> {
+    const now = new Date();
+    const runChange = async (tx: PrismaClient): Promise<void> => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { password_hash: passwordHash, updated_at: now, version: { increment: 1 } },
+      });
+      if (typeof tx.passwordResetToken?.updateMany === 'function') {
+        await tx.passwordResetToken.updateMany({
+          where: { user_id: userId, used_at: null },
+          data: { used_at: now },
+        });
+      }
+      await tx.refreshToken.updateMany({
+        where: { auth_sessions: { user_id: userId }, revoked_at: null },
+        data: { revoked_at: now, revocation_reason: reason },
+      });
+      await tx.authSession.updateMany({
+        where: { user_id: userId, status: 'ACTIVE' },
+        data: { status: 'REVOKED', revoked_at: now, revocation_reason: reason },
+      });
+      if (typeof tx.accessSession?.updateMany === 'function') {
+        await tx.accessSession.updateMany({
+          where: { user_id: userId, status: 'ACTIVE' },
+          data: { status: 'TERMINATED', ended_at: now, terminated_reason: reason },
+        });
+      }
+    };
+
+    if (typeof this.database.$transaction === 'function') {
+      await this.database.$transaction(async (tx) => runChange(tx as unknown as PrismaClient));
+    } else {
+      await runChange(this.database);
+    }
+    await this.invalidateSessionCache(userId);
   }
 
   createPasswordReset(
@@ -383,9 +470,24 @@ export class AuthRepository {
     return disabled;
   }
 
+  async disableMfaAtomic(userId: bigint): Promise<DisableAllMfaMethodsResult> {
+    const result = await disableUserMfaMethodsAtomic(this.database, userId);
+    if (result.kind === 'disabled') await this.invalidateSessionCache(userId);
+    return result;
+  }
+
   async disableSingleMfaMethod(userId: bigint, methodId: string): Promise<boolean> {
     const disabled = await disableSingleUserMfaMethod(this.database, userId, methodId);
     if (disabled) await this.invalidateSessionCache(userId);
     return disabled;
+  }
+
+  async disableSingleMfaMethodAtomic(
+    userId: bigint,
+    methodId: string,
+  ): Promise<DisableSingleMfaMethodResult> {
+    const result = await disableSingleUserMfaMethodAtomic(this.database, userId, methodId);
+    if (result.kind === 'disabled') await this.invalidateSessionCache(userId);
+    return result;
   }
 }

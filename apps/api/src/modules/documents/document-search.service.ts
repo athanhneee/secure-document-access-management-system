@@ -7,9 +7,12 @@ import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { getDatabaseClient, Prisma } from '@sda/database';
 import {
   AppErrorCode,
+  resolveClassificationDefaultViewDays,
   type MyGrantedDocumentsInput,
   type SearchDocumentsInput,
 } from '@sda/contracts';
+import { formatRetentionDateIso } from '../access-grants/grant-retention-bounds.helper.js';
+import { resolveScopedRoleAccessForSql } from '../access-grants/grant-role-visibility.helper.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
 import { isPureTechnicalOrAuditRole } from './document-access-guard.helper.js';
@@ -72,6 +75,7 @@ export class DocumentSearchService {
     let discoverableDeptIds: bigint[] | null = [];
     let hasGlobalDiscover = false;
     let roleIds: bigint[] = [];
+    let scopedRoleDepts: Array<{ roleId: bigint; departmentIds: bigint[] }> = [];
     if (scope !== 'owned') {
       discoverableDeptIds = await this.authorization.visibleDepartmentIds(
         principal,
@@ -80,8 +84,13 @@ export class DocumentSearchService {
       );
       hasGlobalDiscover = discoverableDeptIds === null;
 
-      const userRoles = await this.authorization.effectiveGrants(userId);
-      roleIds = [...new Set(userRoles.map((g) => g.roleId))];
+      const roleAccess = await resolveScopedRoleAccessForSql({
+        database: this.database,
+        authorization: this.authorization,
+        userId,
+      });
+      roleIds = roleAccess.globalRoleIds;
+      scopedRoleDepts = roleAccess.scopedRoleDepts;
     }
     const userClearanceRank = await queryUserClearanceRank(this.database, userId);
 
@@ -90,6 +99,7 @@ export class DocumentSearchService {
       hasGlobalDiscover,
       discoverableDeptIds,
       roleIds,
+      scopedRoleDepts,
       userClearanceRank,
       input,
       sanitizedQuery,
@@ -111,9 +121,13 @@ export class DocumentSearchService {
         classification_level_name: string | null;
         classification_level_code: string | null;
         classification_allow_download?: boolean | null;
+        classification_default_view_days?: number | null;
+        retention_until?: Date | string | null;
         business_category_id?: string | bigint | number | null;
         business_category_code?: string | null;
         business_category_name?: string | null;
+        current_version_no?: number | bigint | null;
+        version_count?: number | bigint | null;
         created_at: Date;
         updated_at: Date;
       }>
@@ -125,17 +139,23 @@ export class DocumentSearchService {
           d."title",
           LEFT(d."description", 200) AS "description",
           d."status"::text,
+          d."retention_until",
           dep."name" AS "department_name",
           cl."name" AS "classification_level_name",
           cl."code" AS "classification_level_code",
           cl."allow_download" AS "classification_allow_download",
+          cl."default_view_days" AS "classification_default_view_days",
           dch."business_category_id"::text AS "business_category_id",
           bc."code" AS "business_category_code",
           bc."name" AS "business_category_name",
+          cv."version_no" AS "current_version_no",
+          (SELECT COUNT(*)::int FROM document_versions dv WHERE dv.document_id = d.id) AS "version_count",
           d."created_at",
           d."updated_at"
         FROM documents d
         JOIN departments dep ON dep.id = d.department_id
+        LEFT JOIN document_versions cv
+          ON cv.id = d.current_version_id
         LEFT JOIN document_classification_history dch
           ON dch.document_id = d.id AND dch.effective_to IS NULL
         LEFT JOIN classification_levels cl
@@ -150,28 +170,46 @@ export class DocumentSearchService {
     );
 
     const hasMore = rows.length > input.pageSize;
-    const data: SearchResultItem[] = rows.slice(0, input.pageSize).map((row) => ({
-      id: row.id,
-      documentCode: row.document_code,
-      title: row.title,
-      description: row.description,
-      status: row.status,
-      departmentName: row.department_name,
-      classificationLevelName: row.classification_level_name,
-      classificationLevelCode: row.classification_level_code,
-      businessCategoryId:
-        row.business_category_id !== undefined && row.business_category_id !== null
-          ? String(row.business_category_id)
-          : null,
-      businessCategoryCode: row.business_category_code ?? null,
-      businessCategoryName: row.business_category_name ?? null,
-      allowDownload: resolveFailClosedAllowDownload(
-        row.classification_allow_download,
-        row.classification_level_code,
-      ),
-      createdAt: row.created_at.toISOString(),
-      updatedAt: row.updated_at.toISOString(),
-    }));
+    const data: SearchResultItem[] = rows.slice(0, input.pageSize).map((row) => {
+      const currentVersionNo =
+        row.current_version_no !== undefined && row.current_version_no !== null
+          ? Number(row.current_version_no)
+          : null;
+      const versionCount =
+        row.version_count !== undefined && row.version_count !== null
+          ? Math.max(0, Number(row.version_count))
+          : (currentVersionNo ?? 1);
+
+      return {
+        id: row.id,
+        documentCode: row.document_code,
+        title: row.title,
+        description: row.description,
+        status: row.status,
+        departmentName: row.department_name,
+        classificationLevelName: row.classification_level_name,
+        classificationLevelCode: row.classification_level_code,
+        businessCategoryId:
+          row.business_category_id !== undefined && row.business_category_id !== null
+            ? String(row.business_category_id)
+            : null,
+        businessCategoryCode: row.business_category_code ?? null,
+        businessCategoryName: row.business_category_name ?? null,
+        allowDownload: resolveFailClosedAllowDownload(
+          row.classification_allow_download,
+          row.classification_level_code,
+        ),
+        retentionUntil: formatRetentionDateIso(row.retention_until),
+        defaultViewDays: resolveClassificationDefaultViewDays(
+          row.classification_level_code,
+          row.classification_default_view_days,
+        ),
+        currentVersionNo,
+        versionCount,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      };
+    });
 
     // Thuật toán: Ghi nhật ký tìm kiếm `DOCUMENT_SEARCHED` bất đồng bộ phi chặn ở runtime thực (giữ await trong kiểm thử đơn vị) để phản hồi danh sách tài liệu tức thì.
     const searchAuditPromise = this.audit.record(

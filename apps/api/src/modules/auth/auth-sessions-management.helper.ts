@@ -228,6 +228,48 @@ export async function revokeOtherActiveUserSessions(
   });
 }
 
+export interface RevokeOtherUnverifiedMfaSessionsResult {
+  revokedCount: number;
+  revokedSessionIds: string[];
+  preservedSessionIds: string[];
+}
+
+/**
+ * Thuật toán: Khi người dùng kích hoạt nhân tố MFA mới, thu hồi nguyên tử toàn bộ các phiên `ACTIVE` khác đang ở trạng thái chưa xác thực MFA (`mfa_verified_at IS NULL`),
+ * tuyệt đối loại trừ `excludeSessionId` (phiên vừa xoay nâng cấp MFA) và giữ nguyên các phiên khác đã xác thực MFA để không đá văng chính tab đang hiển thị mã khôi phục (`BUG-046`).
+ */
+export async function revokeOtherUnverifiedMfaUserSessions(
+  database: PrismaClient,
+  userId: bigint,
+  excludeSessionId: string,
+  reason: string,
+): Promise<RevokeOtherUnverifiedMfaSessionsResult> {
+  return database.$transaction(async (transaction) => {
+    const otherSessions = await transaction.authSession.findMany({
+      where: {
+        user_id: userId,
+        status: 'ACTIVE',
+        id: { not: excludeSessionId },
+      },
+    });
+    const revokedSessionIds: string[] = [];
+    const preservedSessionIds: string[] = [];
+    for (const session of otherSessions) {
+      if (session.mfa_verified_at === null || session.mfa_verified_at === undefined) {
+        await revokeTokenFamily(transaction, session.token_family_id, session.id, reason);
+        revokedSessionIds.push(session.id);
+      } else {
+        preservedSessionIds.push(session.id);
+      }
+    }
+    return {
+      revokedCount: revokedSessionIds.length,
+      revokedSessionIds,
+      preservedSessionIds,
+    };
+  });
+}
+
 /**
  * Thuật toán: Điều phối dịch vụ quản lý phiên (liệt kê phiên, đăng xuất thiết bị khác, thu hồi phiên chỉ định có kiểm tra UUID).
  */

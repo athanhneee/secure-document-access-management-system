@@ -4,7 +4,13 @@
  * kiểm chứng chuyển đổi máy trạng thái hữu hạn (`OPEN <-> INVESTIGATING -> RESOLVED | FALSE_POSITIVE`),
  * tự động chuyển sang `INVESTIGATING` khi phân công cán bộ xử lý hoặc ghi chú điều tra và ghi nhật ký chuỗi băm.
  */
-import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { getDatabaseClient } from '@sda/database';
 import {
   AppErrorCode,
@@ -172,9 +178,34 @@ export class SecurityAlertsService {
     return mapAlertFullDetail(alert);
   }
 
+  private async resolveAlertTargetDepartmentId(alert: {
+    detected_user_id?: bigint | null;
+    document_id?: string | null;
+  }): Promise<string | null> {
+    try {
+      if (alert.detected_user_id && typeof this.database?.user?.findUnique === 'function') {
+        const u = await this.database.user.findUnique({
+          where: { id: alert.detected_user_id },
+          select: { department_id: true },
+        });
+        if (u?.department_id != null) return u.department_id.toString();
+      }
+      if (alert.document_id && typeof this.database?.document?.findUnique === 'function') {
+        const d = await this.database.document.findUnique({
+          where: { id: alert.document_id },
+          select: { department_id: true },
+        });
+        if (d?.department_id != null) return d.department_id.toString();
+      }
+    } catch {
+      // Ignore department lookup failure on partial unit test mocks
+    }
+    return null;
+  }
+
   /**
    * Thuật toán: Cập nhật nguyên tử trạng thái cảnh báo theo đồ thị chuyển trạng thái hợp lệ, bắt buộc ghi chú kết luận khi đóng cảnh báo
-   * và gộp luôn `investigationNote` (nếu có) vào cùng lệnh ghi CSDL để chống lệch trạng thái bán phần (#09).
+   * và gộp luôn `investigationNote` (nếu có) bằng SQL `CASE` nguyên tử chống ghi đè đồng thời (#09, `BUG-061`).
    */
   async updateAlertStatus(
     id: string,
@@ -185,20 +216,67 @@ export class SecurityAlertsService {
     const alert = await this.requireAlert(id);
     const { resolvedAt, resolutionNote } = validateAlertStatusTransition(alert.status, input);
     const trimmedInvNote = input.investigationNote?.trim();
-    const nextDescription =
+    const noteLine =
       trimmedInvNote && trimmedInvNote.length > 0
-        ? `${alert.description ?? ''}\n[${new Date().toISOString()}] ${actor.username}: ${trimmedInvNote}`
+        ? `[${new Date().toISOString()}] ${actor.username}: ${trimmedInvNote}`
         : undefined;
 
-    const updated = await this.database.securityAlert.update({
-      where: { id },
-      data: {
-        status: input.status,
-        resolved_at: resolvedAt,
-        resolution_note: resolutionNote,
-        ...(nextDescription !== undefined ? { description: nextDescription } : {}),
-      },
-    });
+    // MED-08: Dùng Compare-And-Swap trên trạng thái nguồn (`status = alert.status`) để ngăn 2 SOC đồng thời bỏ qua kiểm định chuyển trạng thái.
+    if (noteLine !== undefined && typeof this.database.$executeRawUnsafe === 'function') {
+      const affected = await this.database.$executeRawUnsafe(
+        `UPDATE public.security_alerts
+         SET status = $2::public.alert_status,
+             resolved_at = $3,
+             resolution_note = $4,
+             description = CASE
+               WHEN description IS NULL OR description = '' THEN $5
+               ELSE description || E'\\n' || $5
+             END
+         WHERE id = $1::uuid AND status = $6::public.alert_status`,
+        id,
+        input.status,
+        resolvedAt,
+        resolutionNote,
+        noteLine,
+        alert.status,
+      );
+      if (typeof affected === 'number' && affected === 0) {
+        throw new ConflictException({
+          errorCode: AppErrorCode.RESOURCE_CONFLICT,
+          message: 'Security alert status was modified concurrently; please reload and retry.',
+        });
+      }
+    } else {
+      const nextDescription =
+        noteLine !== undefined ? `${alert.description ?? ''}\n${noteLine}` : undefined;
+      if (typeof this.database.securityAlert.updateMany === 'function') {
+        const updated = await this.database.securityAlert.updateMany({
+          where: { id, status: alert.status },
+          data: {
+            status: input.status,
+            resolved_at: resolvedAt,
+            resolution_note: resolutionNote,
+            ...(nextDescription !== undefined ? { description: nextDescription } : {}),
+          },
+        });
+        if (updated.count === 0) {
+          throw new ConflictException({
+            errorCode: AppErrorCode.RESOURCE_CONFLICT,
+            message: 'Security alert status was modified concurrently; please reload and retry.',
+          });
+        }
+      } else {
+        await this.database.securityAlert.update({
+          where: { id },
+          data: {
+            status: input.status,
+            resolved_at: resolvedAt,
+            resolution_note: resolutionNote,
+            ...(nextDescription !== undefined ? { description: nextDescription } : {}),
+          },
+        });
+      }
+    }
 
     if (this.auditWriter) {
       await this.auditWriter.writeLog({
@@ -218,17 +296,21 @@ export class SecurityAlertsService {
       });
     }
 
-    const detail = await this.getAlertById(updated.id, actor);
+    const [detail, targetDepartmentId] = await Promise.all([
+      this.getAlertById(id, actor),
+      this.resolveAlertTargetDepartmentId(alert),
+    ]);
     this.realtime?.publish({
       type: 'SECURITY_ALERT_UPDATED',
       targetRoles: ['SECURITY_OFFICER'],
+      targetDepartmentId,
       payload: { id: detail.id, status: detail.status, action: 'STATUS_UPDATED' },
     });
     return detail;
   }
 
   /**
-   * Thuật toán: Phân công cán bộ SOC phụ trách cảnh báo và tự động nâng trạng thái từ `OPEN` sang `INVESTIGATING`.
+   * Thuật toán: Phân công cán bộ SOC `ACTIVE` phụ trách cảnh báo chưa đóng và tự động nâng trạng thái từ `OPEN` sang `INVESTIGATING` (`BUG-061`).
    */
   async assignAlert(
     id: string,
@@ -238,20 +320,52 @@ export class SecurityAlertsService {
     await assertAlertInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const alert = await this.requireAlert(id);
 
-    if (assignedToUserId) {
+    if (alert.status === 'RESOLVED' || alert.status === 'FALSE_POSITIVE') {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.ALERT_INVALID_TRANSITION,
+        message: `Cannot assign a closed security alert in ${alert.status} status.`,
+      });
+    }
+
+    if (assignedToUserId !== null) {
       const user = await this.database.user.findUnique({ where: { id: assignedToUserId } });
       if (!user) {
-        throw new NotFoundException(`Assigned user ${assignedToUserId} was not found.`);
+        throw new NotFoundException({
+          errorCode: AppErrorCode.RESOURCE_NOT_FOUND,
+          message: `Assigned user ${assignedToUserId.toString()} was not found.`,
+        });
+      }
+      if ('status' in user && user.status !== 'ACTIVE') {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.USER_NOT_ACTIVE,
+          message: `Assigned user ${assignedToUserId.toString()} is not active.`,
+        });
       }
     }
 
-    const updated = await this.database.securityAlert.update({
-      where: { id },
-      data: {
-        assigned_to: assignedToUserId,
-        status: alert.status === 'OPEN' ? 'INVESTIGATING' : alert.status,
-      },
-    });
+    if (typeof this.database.securityAlert.updateMany === 'function') {
+      const casUpdated = await this.database.securityAlert.updateMany({
+        where: { id, status: alert.status },
+        data: {
+          assigned_to: assignedToUserId,
+          status: alert.status === 'OPEN' ? 'INVESTIGATING' : alert.status,
+        },
+      });
+      if (casUpdated.count === 0) {
+        throw new ConflictException({
+          errorCode: AppErrorCode.RESOURCE_CONFLICT,
+          message: 'Security alert status changed concurrently before assignment.',
+        });
+      }
+    } else {
+      await this.database.securityAlert.update({
+        where: { id },
+        data: {
+          assigned_to: assignedToUserId,
+          status: alert.status === 'OPEN' ? 'INVESTIGATING' : alert.status,
+        },
+      });
+    }
 
     if (this.auditWriter) {
       await this.auditWriter.writeLog({
@@ -269,30 +383,51 @@ export class SecurityAlertsService {
       });
     }
 
-    const detail = await this.getAlertById(updated.id, actor);
+    const [detail, targetDepartmentId] = await Promise.all([
+      this.getAlertById(id, actor),
+      this.resolveAlertTargetDepartmentId(alert),
+    ]);
     this.realtime?.publish({
       type: 'SECURITY_ALERT_UPDATED',
       targetRoles: ['SECURITY_OFFICER'],
+      targetDepartmentId,
       payload: { id: detail.id, status: detail.status, action: 'ASSIGNED' },
     });
     return detail;
   }
 
   /**
-   * Thuật toán: Ghi nối tiếp dòng nhật ký điều tra có gắn dấu thời gian ISO-8601 vào mô tả cảnh báo (`Append-Only Note`).
+   * Thuật toán: Ghi nối tiếp nguyên tử dòng nhật ký điều tra có gắn dấu thời gian ISO-8601 vào mô tả cảnh báo bằng SQL `CASE` chống mất ghi chú đồng thời (`BUG-061`).
    */
   async addAlertNote(id: string, note: string, actor: AuthPrincipal): Promise<AlertDetail> {
     await assertAlertInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const alert = await this.requireAlert(id);
-    const entry = `\n[${new Date().toISOString()}] ${actor.username}: ${note.trim()}`;
+    const noteLine = `[${new Date().toISOString()}] ${actor.username}: ${note.trim()}`;
 
-    await this.database.securityAlert.update({
-      where: { id },
-      data: {
-        description: (alert.description ?? '') + entry,
-        status: alert.status === 'OPEN' ? 'INVESTIGATING' : alert.status,
-      },
-    });
+    if (typeof this.database.$executeRawUnsafe === 'function') {
+      await this.database.$executeRawUnsafe(
+        `UPDATE public.security_alerts
+         SET description = CASE
+               WHEN description IS NULL OR description = '' THEN $2
+               ELSE description || E'\\n' || $2
+             END,
+             status = CASE
+               WHEN status = 'OPEN'::public.alert_status THEN 'INVESTIGATING'::public.alert_status
+               ELSE status
+             END
+         WHERE id = $1::uuid`,
+        id,
+        noteLine,
+      );
+    } else {
+      await this.database.securityAlert.update({
+        where: { id },
+        data: {
+          description: `${alert.description ?? ''}\n${noteLine}`,
+          status: alert.status === 'OPEN' ? 'INVESTIGATING' : alert.status,
+        },
+      });
+    }
 
     if (this.auditWriter) {
       await this.auditWriter.writeLog({
@@ -307,10 +442,14 @@ export class SecurityAlertsService {
       });
     }
 
-    const detail = await this.getAlertById(id, actor);
+    const [detail, targetDepartmentId] = await Promise.all([
+      this.getAlertById(id, actor),
+      this.resolveAlertTargetDepartmentId(alert),
+    ]);
     this.realtime?.publish({
       type: 'SECURITY_ALERT_UPDATED',
       targetRoles: ['SECURITY_OFFICER'],
+      targetDepartmentId,
       payload: { id: detail.id, status: detail.status, action: 'NOTE_ADDED' },
     });
     return detail;

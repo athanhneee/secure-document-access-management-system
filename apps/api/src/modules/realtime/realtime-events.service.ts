@@ -1,10 +1,9 @@
 /**
  * @module RealtimeEventsService
- * Thuật toán: Trung Tâm Phát Sóng Server-Sent Events (SSE) Phân Tán Qua Redis Pub/Sub Có Kiểm Soát Phạm Vi Đích Zero-Trust.
- *   1. Duy trì bảng kết nối SSE đang mở theo định danh phiên kết nối và người dùng (giới hạn tối đa 10 kết nối/tài khoản chống cạn kiệt socket).
- *   2. Lắng nghe kênh `sda:realtime:events` trên `DistributedStateService` để tiếp nhận đồng thời sự kiện từ mọi bản sao API và từ `@sda/worker`.
- *   3. Cưỡng chế nguyên tắc Mặc Định Từ Chối (Fail-Closed Audience Scoping): chỉ phát khung `event: <type>` cho các client có `userId` thuộc `targetUserIds` hoặc sở hữu vai trò nằm trong `targetRoles`, tuyệt đối bóc tách danh sách đích trước khi gửi ra trình duyệt.
- *   4. Gửi nhịp tim `: heartbeat\n\n` mỗi 20 giây để giữ kết nối sống ổn định qua reverse proxy và dọn sạch mọi socket khi tắt tiến trình.
+ * Thuật toán: Trung Tâm Phát Sóng Server-Sent Events (SSE) Phân Tán Qua Redis Pub/Sub Có Kiểm Soát Phạm Vi Đích Zero-Trust (`BUG-063`).
+ *   1. Lắng nghe `stateStore.onInvalidate` (`rbac-user:<id>`, `rbac-global`) để chủ động đóng luồng TCP (`client.close()`) KHÔNG gửi `USER_SESSION_REVOKED`, buộc trình duyệt tự kết nối lại nạp quyền/phòng ban mới mà không bị đăng xuất nhầm ra `/login`.
+ *   2. Cưỡng chế hạn sống `expiresAtMs` của từng kết nối SSE trong cả thời điểm phát sự kiện lẫn nhịp tim 20 giây.
+ *   3. Cô lập sự kiện SOC theo phòng ban (`targetDepartmentId` đối chiếu `allowedDeptIds` của từng kết nối SSE).
  */
 import { Injectable, Logger, Optional, type OnModuleDestroy } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -20,6 +19,10 @@ export interface SseClientRegistration {
   userId: string;
   sessionId?: string | undefined;
   roles: readonly string[];
+  expiresAtMs?: number | undefined;
+  allowedDeptIds?: ReadonlySet<string> | readonly string[] | null | undefined;
+  allowedSocEvents?: ReadonlySet<string> | readonly string[] | undefined;
+  allowedDeptIdsByEvent?: ReadonlyMap<string, ReadonlySet<string> | null> | undefined;
   writeFrame: (frame: string) => boolean;
   close: () => void;
 }
@@ -29,12 +32,21 @@ interface ActiveSseClient {
   userId: string;
   sessionId?: string | undefined;
   roles: Set<string>;
+  expiresAtMs?: number | undefined;
+  allowedDeptIds?: Set<string> | null | undefined;
+  allowedSocEvents?: Set<string> | undefined;
+  allowedDeptIdsByEvent?: Map<string, Set<string> | null> | undefined;
   writeFrame: (frame: string) => boolean;
   close: () => void;
 }
 
 const MAX_CONNECTIONS_PER_USER = 10;
 const HEARTBEAT_INTERVAL_MS = 20_000;
+const SOC_DEPARTMENT_SCOPED_EVENTS = new Set<string>([
+  'SECURITY_ALERT_UPDATED',
+  'INCIDENT_REPORT_UPDATED',
+  'ACCESS_SESSION_UPDATED',
+]);
 
 @Injectable()
 export class RealtimeEventsService implements OnModuleDestroy {
@@ -42,6 +54,7 @@ export class RealtimeEventsService implements OnModuleDestroy {
   private readonly clients = new Map<string, ActiveSseClient>();
   private readonly clientsByUser = new Map<string, Set<string>>();
   private readonly unsubscribeChannel: (() => void) | null = null;
+  private readonly unsubscribeInvalidate: (() => void) | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(@Optional() private readonly stateStore?: DistributedStateService) {
@@ -52,6 +65,20 @@ export class RealtimeEventsService implements OnModuleDestroy {
           this.handleBrokerMessage(rawMessage);
         },
       );
+    }
+
+    // BUG-063: Khi vai trò/quyền thay đổi (`rbac-user:<id>` hoặc `rbac-global`), chỉ đóng socket TCP (`client.close()`) để trình duyệt tự kết nối lại nạp quyền mới — tuyệt đối KHÔNG phát `USER_SESSION_REVOKED` làm đăng xuất người dùng!
+    if (this.stateStore && typeof this.stateStore.onInvalidate === 'function') {
+      this.unsubscribeInvalidate = this.stateStore.onInvalidate((event) => {
+        if (event.namespace === 'rbac-global') {
+          this.disconnectClientsSilently(() => true);
+        } else if (event.namespace.startsWith('rbac-user:')) {
+          const targetUserId = event.namespace.slice('rbac-user:'.length);
+          if (targetUserId) {
+            this.disconnectUserClientsSilently(targetUserId);
+          }
+        }
+      });
     }
   }
 
@@ -75,11 +102,39 @@ export class RealtimeEventsService implements OnModuleDestroy {
       }
     }
 
+    const normalizedAllowedDepts =
+      registration.allowedDeptIds === undefined
+        ? undefined
+        : registration.allowedDeptIds === null
+          ? null
+          : new Set(registration.allowedDeptIds);
+    const normalizedAllowedSocEvents =
+      registration.allowedSocEvents !== undefined
+        ? new Set(registration.allowedSocEvents)
+        : undefined;
+    const normalizedAllowedDeptsByEvent =
+      registration.allowedDeptIdsByEvent !== undefined
+        ? new Map(
+            [...registration.allowedDeptIdsByEvent.entries()].map(([evt, scope]) => [
+              evt,
+              scope === null ? null : new Set(scope),
+            ]),
+          )
+        : undefined;
+
     const client: ActiveSseClient = {
       id: clientId,
       userId: registration.userId,
       ...(registration.sessionId ? { sessionId: registration.sessionId } : {}),
       roles: new Set(registration.roles),
+      ...(registration.expiresAtMs !== undefined ? { expiresAtMs: registration.expiresAtMs } : {}),
+      ...(normalizedAllowedDepts !== undefined ? { allowedDeptIds: normalizedAllowedDepts } : {}),
+      ...(normalizedAllowedSocEvents !== undefined
+        ? { allowedSocEvents: normalizedAllowedSocEvents }
+        : {}),
+      ...(normalizedAllowedDeptsByEvent !== undefined
+        ? { allowedDeptIdsByEvent: normalizedAllowedDeptsByEvent }
+        : {}),
       writeFrame: registration.writeFrame,
       close: registration.close,
     };
@@ -125,6 +180,9 @@ export class RealtimeEventsService implements OnModuleDestroy {
       ? [...new Set(input.targetSessionIds.filter((id) => id.length > 0))]
       : undefined;
     const excludeSessionId = input.excludeSessionId?.trim() || undefined;
+    const excludeSessionIds = input.excludeSessionIds
+      ? [...new Set(input.excludeSessionIds.map((id) => id.trim()).filter((id) => id.length > 0))]
+      : undefined;
 
     if (
       (!targetUserIds || targetUserIds.length === 0) &&
@@ -139,8 +197,12 @@ export class RealtimeEventsService implements OnModuleDestroy {
       occurredAt: new Date().toISOString(),
       ...(targetUserIds && targetUserIds.length > 0 ? { targetUserIds } : {}),
       ...(targetRoles && targetRoles.length > 0 ? { targetRoles } : {}),
+      ...(input.targetDepartmentId !== undefined
+        ? { targetDepartmentId: input.targetDepartmentId }
+        : {}),
       ...(targetSessionIds && targetSessionIds.length > 0 ? { targetSessionIds } : {}),
       ...(excludeSessionId ? { excludeSessionId } : {}),
+      ...(excludeSessionIds && excludeSessionIds.length > 0 ? { excludeSessionIds } : {}),
       payload: input.payload,
     };
 
@@ -165,6 +227,7 @@ export class RealtimeEventsService implements OnModuleDestroy {
 
   onModuleDestroy(): void {
     this.unsubscribeChannel?.();
+    this.unsubscribeInvalidate?.();
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -180,6 +243,36 @@ export class RealtimeEventsService implements OnModuleDestroy {
     this.clientsByUser.clear();
   }
 
+  private disconnectUserClientsSilently(userId: string): void {
+    const clientIds = [...(this.clientsByUser.get(userId) ?? [])];
+    for (const clientId of clientIds) {
+      const client = this.clients.get(clientId);
+      this.unregisterClient(clientId);
+      try {
+        client?.close();
+      } catch {
+        // Ignore close error on reconnecting client
+      }
+    }
+  }
+
+  private disconnectClientsSilently(predicate: (client: ActiveSseClient) => boolean): void {
+    const toClose: ActiveSseClient[] = [];
+    for (const client of this.clients.values()) {
+      if (predicate(client)) {
+        toClose.push(client);
+      }
+    }
+    for (const client of toClose) {
+      this.unregisterClient(client.id);
+      try {
+        client.close();
+      } catch {
+        // Ignore close error on reconnecting client
+      }
+    }
+  }
+
   private handleBrokerMessage(rawMessage: string): void {
     try {
       const parsed = JSON.parse(rawMessage) as RealtimeEventEnvelope;
@@ -193,7 +286,7 @@ export class RealtimeEventsService implements OnModuleDestroy {
   }
 
   /**
-   * Thuật toán: Lọc phạm vi nhận sự kiện Zero-Trust (`targetUserIds` ∪ `targetRoles`) và đóng gói chuẩn khung SSE RFC 8895.
+   * Thuật toán: Lọc phạm vi nhận sự kiện Zero-Trust (`targetUserIds` ∪ `targetRoles`), kiểm tra `expiresAtMs` và phạm vi phòng ban `allowedDeptIds` (`BUG-063`).
    */
   private dispatchToMatchingClients(envelope: RealtimeEventEnvelope): void {
     if (this.clients.size === 0) return;
@@ -217,26 +310,64 @@ export class RealtimeEventsService implements OnModuleDestroy {
     };
     const frame = `id: ${wirePayload.id}\nevent: ${wirePayload.type}\ndata: ${JSON.stringify(wirePayload)}\n\n`;
 
+    const nowMs = Date.now();
     const staleClientIds: string[] = [];
+    const expiredClients: ActiveSseClient[] = [];
     const revokedClients: ActiveSseClient[] = [];
     const shouldCloseAfterDelivery = envelope.type === 'USER_SESSION_REVOKED';
     const sessionFilterSet =
       Array.isArray(envelope.targetSessionIds) && envelope.targetSessionIds.length > 0
         ? new Set(envelope.targetSessionIds)
         : null;
-    const excludedSessionId = envelope.excludeSessionId ?? null;
+    const excludedSessionSet = new Set<string>();
+    if (envelope.excludeSessionId) {
+      excludedSessionSet.add(envelope.excludeSessionId);
+    }
+    if (Array.isArray(envelope.excludeSessionIds)) {
+      for (const sid of envelope.excludeSessionIds) {
+        if (typeof sid === 'string' && sid.length > 0) excludedSessionSet.add(sid);
+      }
+    }
+
+    const isDeptScopedEvent =
+      SOC_DEPARTMENT_SCOPED_EVENTS.has(envelope.type) || envelope.targetDepartmentId !== undefined;
+
     for (const client of this.clients.values()) {
+      if (client.expiresAtMs !== undefined && nowMs >= client.expiresAtMs) {
+        expiredClients.push(client);
+        continue;
+      }
+
       const matchedUser = userSet !== null && userSet.has(client.userId);
-      const matchedRole = roleSet !== null && [...client.roles].some((role) => roleSet.has(role));
+      const matchedExplicitRole =
+        roleSet !== null && [...client.roles].some((role) => roleSet.has(role));
+      const matchedSocCapability =
+        roleSet !== null &&
+        roleSet.has('SECURITY_OFFICER') &&
+        client.allowedSocEvents !== undefined &&
+        client.allowedSocEvents.has(envelope.type);
+      const matchedRole = matchedExplicitRole || matchedSocCapability;
       if (!matchedUser && !matchedRole) continue;
-      // Thuật toán: Cô lập ngắt kết nối SSE chính xác theo phiên đăng nhập đích (`targetSessionIds` / `excludeSessionId`) để không đóng nhầm thiết bị hiện tại khi đăng xuất thiết bị khác (V-06).
+
+      // HIGH-10: Nếu client chỉ khớp qua vai trò/năng lực SOC (không nằm trong `targetUserIds` cá nhân), cưỡng chế lọc chính xác theo từng loại sự kiện SOC và phạm vi phòng ban `allowedDeptIdsByEvent` / `allowedDeptIds`.
+      if (!matchedUser && matchedRole && isDeptScopedEvent) {
+        const scopedDepts = client.allowedDeptIdsByEvent?.has(envelope.type)
+          ? client.allowedDeptIdsByEvent.get(envelope.type)
+          : client.allowedDeptIds;
+        if (scopedDepts !== undefined && scopedDepts !== null) {
+          if (!envelope.targetDepartmentId || !scopedDepts.has(envelope.targetDepartmentId)) {
+            continue;
+          }
+        }
+      }
+
       if (
         sessionFilterSet !== null &&
         (!client.sessionId || !sessionFilterSet.has(client.sessionId))
       ) {
         continue;
       }
-      if (excludedSessionId !== null && client.sessionId === excludedSessionId) {
+      if (client.sessionId && excludedSessionSet.has(client.sessionId)) {
         continue;
       }
 
@@ -251,6 +382,14 @@ export class RealtimeEventsService implements OnModuleDestroy {
     for (const staleId of staleClientIds) {
       this.unregisterClient(staleId);
     }
+    for (const expired of expiredClients) {
+      this.unregisterClient(expired.id);
+      try {
+        expired.close();
+      } catch {
+        // Ignore close error on expired socket
+      }
+    }
     for (const revoked of revokedClients) {
       this.unregisterClient(revoked.id);
       try {
@@ -264,14 +403,28 @@ export class RealtimeEventsService implements OnModuleDestroy {
   private ensureHeartbeatRunning(): void {
     if (this.heartbeatTimer) return;
     this.heartbeatTimer = setInterval(() => {
+      const nowMs = Date.now();
       const stale: string[] = [];
+      const expired: ActiveSseClient[] = [];
       for (const client of this.clients.values()) {
+        if (client.expiresAtMs !== undefined && nowMs >= client.expiresAtMs) {
+          expired.push(client);
+          continue;
+        }
         if (!client.writeFrame(': heartbeat\n\n')) {
           stale.push(client.id);
         }
       }
       for (const id of stale) {
         this.unregisterClient(id);
+      }
+      for (const client of expired) {
+        this.unregisterClient(client.id);
+        try {
+          client.close();
+        } catch {
+          // Ignore close error on expired socket
+        }
       }
     }, HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref();

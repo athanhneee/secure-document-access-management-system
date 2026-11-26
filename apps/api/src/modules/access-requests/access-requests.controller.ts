@@ -29,7 +29,7 @@ import {
 } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
-import { RequirePermission } from '../rbac/require-permission.js';
+import { RequireAnyPermission, RequirePermission } from '../rbac/require-permission.js';
 import { AccessRequestsService, type AccessRequestDetail } from './access-requests.service.js';
 
 @ApiTags('access-requests')
@@ -82,10 +82,13 @@ export class AccessRequestsController {
   }
 
   /**
-   * UC13 & UC15: List user access requests (scope: 'my' or 'incoming').
+   * UC13 & UC15: List user access requests (scope: 'my', 'incoming', or 'all').
    */
   @Get()
-  @RequirePermission('ACCESS_REQUEST', 'VIEW_OWN')
+  @RequireAnyPermission([
+    { resource: 'ACCESS_REQUEST', action: 'VIEW_OWN' },
+    { resource: 'ACCESS_REQUEST', action: 'DECIDE' },
+  ])
   @ApiOperation({ summary: 'List user access requests' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Access requests list' })
   async listRequests(

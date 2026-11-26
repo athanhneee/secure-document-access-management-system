@@ -32,6 +32,33 @@ function isLoopbackOrUnresolvedIp(ip: string): boolean {
   );
 }
 
+export type AuthRateLimitScope = 'login' | 'change-password' | 'forgot-password' | 'mfa';
+
+interface RateLimitNamespaces {
+  epochPrefix: string;
+  counterNamespace: string;
+  blockNamespace: string;
+}
+
+/**
+ * Thuật toán: Cô lập không gian tên bộ đếm & khóa tạm thời theo luồng xác thực (`login`, `change-password`, `forgot-password`, BUG-107)
+ * để yêu cầu quên mật khẩu / đổi mật khẩu trên mạng văn phòng NAT chung không bao giờ cộng dồn khóa đăng nhập `login-failures`.
+ */
+function resolveScopeNamespaces(scope: AuthRateLimitScope): RateLimitNamespaces {
+  if (scope === 'login') {
+    return {
+      epochPrefix: 'login-acct',
+      counterNamespace: 'login-failures',
+      blockNamespace: 'login-block',
+    };
+  }
+  return {
+    epochPrefix: `auth-acct:${scope}`,
+    counterNamespace: `auth-failures:${scope}`,
+    blockNamespace: `auth-block:${scope}`,
+  };
+}
+
 @Injectable()
 export class LoginRateLimitService {
   private readonly stateStore: DistributedStateService;
@@ -45,27 +72,41 @@ export class LoginRateLimitService {
 
   /**
    * Thuật toán: Tách khóa giới hạn tần suất an toàn cho proxy nội bộ kết hợp số hiệu thế hệ tài khoản (`Epoch Versioning`).
-   *   - Với IP ngoại vi thực (`192.0.2.1`...): khóa trên `ip:<ip>` và `account:<key>:e<epoch>` chống password spraying.
+   *   - Với IP ngoại vi thực (`192.0.2.1`...): khóa trên `ip:<ip>` và `account:<key>:e<epoch>` trong không gian tên của từng `scope`.
    *   - Với IP loopback (`127.0.0.1`, `::1`, `unknown`): ghép `ip:<ip>:account:<key>:e<epoch>` chống DoS toàn hệ thống.
    */
-  private async resolveKeys(ip: string, accountKey: string): Promise<[string, string]> {
-    const accountEpoch = await this.stateStore.getNamespaceEpoch(`login-acct:${accountKey}`);
+  private async resolveKeys(
+    ip: string,
+    accountKey: string,
+    scope: AuthRateLimitScope,
+  ): Promise<{ keys: [string, string]; namespaces: RateLimitNamespaces }> {
+    const namespaces = resolveScopeNamespaces(scope);
+    const accountEpoch = await this.stateStore.getNamespaceEpoch(
+      `${namespaces.epochPrefix}:${accountKey}`,
+    );
     const scopedAccountKey = `account:${accountKey}:e${accountEpoch}`;
     const ipKey = isLoopbackOrUnresolvedIp(ip)
       ? `ip:${ip}:account:${accountKey}:e${accountEpoch}`
       : `ip:${ip}`;
-    return [ipKey, scopedAccountKey];
+    return { keys: [ipKey, scopedAccountKey], namespaces };
   }
 
   /**
-   * Thuật toán: Kiểm tra khóa tạm thời trên hai chiều độc lập (`ip` và `account`) qua `mgetBatch` gộp 1-RTT khi khả dụng.
+   * Thuật toán: Kiểm tra khóa tạm thời trên hai chiều độc lập (`ip` và `account`) theo `scope` qua `mgetBatch` gộp 1-RTT khi khả dụng.
    */
-  async assertAllowed(ip: string, accountKey: string, now = Date.now()): Promise<void> {
-    const keys = await this.resolveKeys(ip, accountKey);
+  async assertAllowed(
+    ip: string,
+    accountKey: string,
+    nowOrScope: number | AuthRateLimitScope = Date.now(),
+    scopeArg: AuthRateLimitScope = 'login',
+  ): Promise<void> {
+    const now = typeof nowOrScope === 'number' ? nowOrScope : Date.now();
+    const scope = typeof nowOrScope === 'string' ? nowOrScope : scopeArg;
+    const { keys, namespaces } = await this.resolveKeys(ip, accountKey, scope);
     let blocks: Array<BlockState | null>;
     if (typeof this.stateStore.mgetBatch === 'function') {
       const rawValues = await this.stateStore.mgetBatch(
-        keys.map((id) => ({ kind: 'state' as const, namespace: 'login-block', id })),
+        keys.map((id) => ({ kind: 'state' as const, namespace: namespaces.blockNamespace, id })),
       );
       blocks = rawValues.map((raw) => {
         if (!raw) return null;
@@ -77,7 +118,7 @@ export class LoginRateLimitService {
       });
     } else {
       blocks = await Promise.all(
-        keys.map((key) => this.stateStore.getJson<BlockState>('login-block', key)),
+        keys.map((key) => this.stateStore.getJson<BlockState>(namespaces.blockNamespace, key)),
       );
     }
     if (blocks.some((state) => state !== null && state.blockedUntil > now)) {
@@ -89,14 +130,21 @@ export class LoginRateLimitService {
   }
 
   /**
-   * Thuật toán: Tăng nguyên tử bộ đếm lỗi cửa sổ 15 phút (`incrementWindowCounter`) và áp phạt trễ lũy thừa cơ số 2 (`min(5000ms, 250 * 2^(n-3))`).
+   * Thuật toán: Tăng nguyên tử bộ đếm lỗi cửa sổ 15 phút (`incrementWindowCounter`) theo `scope` và áp phạt trễ lũy thừa cơ số 2 (`min(5000ms, 250 * 2^(n-3))`).
    */
-  async recordFailure(ip: string, accountKey: string, now = Date.now()): Promise<number> {
-    const keys = await this.resolveKeys(ip, accountKey);
+  async recordFailure(
+    ip: string,
+    accountKey: string,
+    nowOrScope: number | AuthRateLimitScope = Date.now(),
+    scopeArg: AuthRateLimitScope = 'login',
+  ): Promise<number> {
+    const now = typeof nowOrScope === 'number' ? nowOrScope : Date.now();
+    const scope = typeof nowOrScope === 'string' ? nowOrScope : scopeArg;
+    const { keys, namespaces } = await this.resolveKeys(ip, accountKey, scope);
     let delay = 0;
     for (const key of keys) {
       const { count } = await this.stateStore.incrementWindowCounter(
-        'login-failures',
+        namespaces.counterNamespace,
         key,
         LOGIN_WINDOW_MS,
       );
@@ -104,7 +152,7 @@ export class LoginRateLimitService {
       const progressiveDelay = Math.min(maxDelayMs, count < 3 ? 0 : 250 * 2 ** (count - 3));
       if (progressiveDelay > 0) {
         await this.stateStore.putEphemeral<BlockState>(
-          'login-block',
+          namespaces.blockNamespace,
           key,
           { blockedUntil: now + progressiveDelay },
           Math.max(progressiveDelay, 5_000),
@@ -116,10 +164,10 @@ export class LoginRateLimitService {
   }
 
   /**
-   * Thuật toán: Xóa trạng thái phạt của tài khoản trên mọi bản sao trong đúng 1 vòng RTT Lua (`bumpNamespaceEpoch`),
-   * không còn tốn vòng đọc trước `getNamespaceEpoch` hay 2 lệnh `DEL` dư thừa vì khóa tài khoản gắn hậu tố `:e<epoch>`.
+   * Thuật toán: Xóa trạng thái phạt của tài khoản trên mọi bản sao trong đúng 1 vòng RTT Lua (`bumpNamespaceEpoch`) theo `scope`.
    */
-  async clearAccount(accountKey: string): Promise<void> {
-    await this.stateStore.bumpNamespaceEpoch(`login-acct:${accountKey}`);
+  async clearAccount(accountKey: string, scope: AuthRateLimitScope = 'login'): Promise<void> {
+    const { epochPrefix } = resolveScopeNamespaces(scope);
+    await this.stateStore.bumpNamespaceEpoch(`${epochPrefix}:${accountKey}`);
   }
 }

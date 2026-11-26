@@ -41,7 +41,9 @@ export class AbacAuditService {
   }
 
   /**
-   * Thuật toán: Nối tiếp bản ghi kiểm toán `ABAC` có thử lại tự động khi gặp xung đột tuần tự hóa tạm thời.
+   * Thuật toán: Nối tiếp bản ghi kiểm toán `ABAC`.
+   *   - Khi nhận `TransactionClient` đang mở (không có `$transaction`), gọi thẳng `append(transaction)` để lỗi xung đột `40001` nổi nguyên vẹn cho `withSerializableTransaction` rollback và thử lại (`BUG-049`).
+   *   - Khi nhận `PrismaClient` gốc có `$transaction`, bọc `executeAuditWithRetry` mở giao dịch mới mỗi lần thử.
    */
   async record(
     transaction: Prisma.TransactionClient,
@@ -68,10 +70,10 @@ export class AbacAuditService {
         context,
       });
 
-    await executeAuditWithRetry(() =>
-      typeof maybeClient.$transaction === 'function'
-        ? maybeClient.$transaction((tx) => append(tx))
-        : append(transaction),
-    );
+    if (typeof maybeClient.$transaction === 'function') {
+      await executeAuditWithRetry(() => maybeClient.$transaction((tx) => append(tx)));
+      return;
+    }
+    await append(transaction);
   }
 }

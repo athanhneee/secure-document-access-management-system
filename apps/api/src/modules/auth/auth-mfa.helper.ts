@@ -3,7 +3,7 @@
  * Algorithm: Step-Up MFA Enrollment Guard, QR Code Provisioning, RFC 6238 TOTP Verification & One-Time Recovery Code Fallback.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, HttpException, UnauthorizedException } from '@nestjs/common';
 import QRCode from 'qrcode';
 import type { AuthAuditService } from './auth-audit.service.js';
 import type { AuthRepository } from './auth.repository.js';
@@ -14,7 +14,17 @@ import type { MfaService } from './mfa.service.js';
 import type { PasswordService } from './password.service.js';
 import type { TokenService } from './token.service.js';
 
-export { executeDisableMfa } from './auth-mfa-disable.helper.js';
+export {
+  executeDisableMfa,
+  executeRemoveMfaMethod,
+  hasMandatoryMfaPrivilegedCapability,
+  type RemoveMfaMethodResult,
+} from './auth-mfa-disable.helper.js';
+
+export interface SessionRevocationBroadcastOptions {
+  excludeSessionId?: string | undefined;
+  excludeSessionIds?: readonly string[] | undefined;
+}
 
 export interface AuthMfaDeps {
   repository: AuthRepository;
@@ -25,6 +35,9 @@ export interface AuthMfaDeps {
   audit: AuthAuditService;
   accessTtl: number;
   refreshTtl: number;
+  onUserSessionsRevoked?:
+    | ((userId: bigint, reason: string, options?: SessionRevocationBroadcastOptions) => void)
+    | undefined;
 }
 
 /**
@@ -61,10 +74,10 @@ export async function assertMfaEnrollmentAllowed(
  * Algorithm / Thuật toán: Thăng cấp phiên tiền-MFA thành phiên xác thực đầy đủ, nạp song song hồ sơ người dùng (`profile`)
  * và phát hành Refresh Token & CSRF mới để giao diện bỏ qua lượt gọi thừa `GET /users/me`.
  */
-export async function activateVerifiedMfaSession(
+export async function activateVerifiedMfaSessionWithId(
   deps: Pick<AuthMfaDeps, 'repository' | 'tokens' | 'accessTtl' | 'refreshTtl'>,
   principal: AuthPrincipal,
-): Promise<SessionArtifacts> {
+): Promise<{ artifacts: SessionArtifacts; rotatedSessionId: string }> {
   const refreshToken = deps.tokens.newOpaqueToken();
   const [activated, userRecord] = await Promise.all([
     deps.repository.activateMfaSession(principal.sessionId, principal.userId, {
@@ -79,15 +92,56 @@ export async function activateVerifiedMfaSession(
   if (!activated) throw new UnauthorizedException('Session is no longer valid.');
   const rotatedSessionId = typeof activated === 'string' ? activated : randomUUID();
   return {
-    accessToken: await deps.tokens.issueAccessToken(principal.userId, rotatedSessionId, true),
-    refreshToken,
-    csrfToken: randomBytes(32).toString('base64url'),
-    accessMaxAge: deps.accessTtl,
-    refreshMaxAge: deps.refreshTtl,
-    mfaRequired: false,
-    enrollmentRequired: false,
-    ...(userRecord?.profile ? { user: userRecord.profile } : {}),
+    rotatedSessionId,
+    artifacts: {
+      accessToken: await deps.tokens.issueAccessToken(principal.userId, rotatedSessionId, true),
+      refreshToken,
+      csrfToken: randomBytes(32).toString('base64url'),
+      accessMaxAge: deps.accessTtl,
+      refreshMaxAge: deps.refreshTtl,
+      mfaRequired: false,
+      enrollmentRequired: false,
+      ...(userRecord?.profile
+        ? { user: { ...userRecord.profile, mfaEnabled: true, mfaVerified: true } }
+        : {}),
+    },
   };
+}
+
+export async function activateVerifiedMfaSession(
+  deps: Pick<AuthMfaDeps, 'repository' | 'tokens' | 'accessTtl' | 'refreshTtl'>,
+  principal: AuthPrincipal,
+): Promise<SessionArtifacts> {
+  const { artifacts } = await activateVerifiedMfaSessionWithId(deps, principal);
+  return artifacts;
+}
+
+/**
+ * Thuật toán: Thu hồi toàn bộ các phiên `ACTIVE` khác chưa xác thực MFA (`mfa_verified_at === null`) ngay sau khi người dùng bật MFA,
+ * bảo toàn tuyệt đối `rotatedSessionId` vừa nâng cấp và tab `/mfa` hiện hành (`excludeSessionId: rotatedSessionId`) để người dùng kịp lưu 10 mã khôi phục (`BUG-046`).
+ */
+export async function revokeOtherUnverifiedSessionsOnMfaEnrollment(
+  deps: Pick<AuthMfaDeps, 'repository' | 'onUserSessionsRevoked'>,
+  principal: AuthPrincipal,
+  rotatedSessionId: string,
+): Promise<void> {
+  if (typeof deps.repository.revokeOtherUnverifiedMfaSessions !== 'function') {
+    return;
+  }
+  const revoked = await deps.repository.revokeOtherUnverifiedMfaSessions(
+    principal.userId,
+    rotatedSessionId,
+    'MFA_ENABLED_REVOKE_UNVERIFIED',
+  );
+  const revokedCount = typeof revoked === 'number' ? revoked : revoked.revokedCount;
+  const preservedIds =
+    typeof revoked === 'object' && revoked !== null ? (revoked.preservedSessionIds ?? []) : [];
+  if (revokedCount > 0) {
+    deps.onUserSessionsRevoked?.(principal.userId, 'MFA_ENABLED_REVOKE_UNVERIFIED', {
+      excludeSessionId: rotatedSessionId,
+      excludeSessionIds: [rotatedSessionId, principal.sessionId, ...preservedIds],
+    });
+  }
 }
 
 /**
@@ -121,24 +175,32 @@ export async function executeBeginMfaEnrollment(
 export async function executeVerifyMfaEnrollment(
   deps: Pick<
     AuthMfaDeps,
-    'repository' | 'tokens' | 'mfa' | 'rateLimit' | 'audit' | 'accessTtl' | 'refreshTtl'
+    | 'repository'
+    | 'tokens'
+    | 'mfa'
+    | 'rateLimit'
+    | 'audit'
+    | 'accessTtl'
+    | 'refreshTtl'
+    | 'onUserSessionsRevoked'
   >,
   principal: AuthPrincipal,
   code: string,
   context: RequestContext,
 ): Promise<SessionArtifacts & { recoveryCodes: string[] }> {
   const rateKey = `mfa-enroll:${principal.userId}`;
-  await deps.rateLimit.assertAllowed(context.ip, rateKey);
+  await deps.rateLimit.assertAllowed(context.ip, rateKey, 'mfa');
   await assertMfaEnrollmentAllowed(deps, principal, context);
   const pending = await deps.repository.pendingMfaMethod(principal.userId);
   if (!pending || !(await deps.mfa.verifyTotp(pending.encryptedSecret, code, principal.userId))) {
-    await deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey, 'mfa');
     throw new UnauthorizedException('MFA verification failed.');
   }
-  await deps.rateLimit.clearAccount(rateKey);
+  await deps.rateLimit.clearAccount(rateKey, 'mfa');
   const recovery = deps.mfa.createRecoveryCodes();
   await deps.repository.enableMfa(pending.id, principal.userId, recovery.hashes);
-  const artifacts = await activateVerifiedMfaSession(deps, principal);
+  const { artifacts, rotatedSessionId } = await activateVerifiedMfaSessionWithId(deps, principal);
+  await revokeOtherUnverifiedSessionsOnMfaEnrollment(deps, principal, rotatedSessionId);
   await deps.audit.record(
     { action: 'MFA_ENABLED', outcome: 'SUCCESS', actorUserId: principal.userId },
     context,
@@ -160,12 +222,13 @@ export async function verifyActiveMfaChallenge(
 
   if (code) {
     for (const method of activeMethods) {
+      if (method.methodType !== 'TOTP') continue;
       try {
         if (await deps.mfa.verifyTotp(method.encryptedSecret, code, userId)) {
           return true;
         }
-      } catch {
-        // Ignore non-TOTP secrets (e.g. WebAuthn JSON credential payloads)
+      } catch (err) {
+        if (err instanceof HttpException) throw err;
       }
     }
   }
@@ -202,10 +265,10 @@ export async function executeVerifyMfa(
   context: RequestContext,
 ): Promise<SessionArtifacts> {
   const rateKey = `mfa:${principal.userId}`;
-  await deps.rateLimit.assertAllowed(context.ip, rateKey);
+  await deps.rateLimit.assertAllowed(context.ip, rateKey, 'mfa');
   const valid = await verifyActiveMfaChallenge(deps, principal.userId, code, recoveryCode);
   if (!valid) {
-    await deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey, 'mfa');
     await deps.audit.record(
       { action: 'MFA_VERIFY', outcome: 'DENIED', actorUserId: principal.userId },
       context,
@@ -213,7 +276,7 @@ export async function executeVerifyMfa(
     throw new UnauthorizedException('MFA verification failed.');
   }
   const [, artifacts] = await Promise.all([
-    deps.rateLimit.clearAccount(rateKey),
+    deps.rateLimit.clearAccount(rateKey, 'mfa'),
     activateVerifiedMfaSession(deps, principal),
   ]);
   await deps.audit.record(

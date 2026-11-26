@@ -91,7 +91,16 @@ function wrapContentLines(content: string, maxChars: number = 90): WrappedDispla
         current = candidate;
       } else {
         if (current) output.push({ text: current, isTableRow });
-        current = word.length > maxChars ? word.slice(0, maxChars) : word;
+        if (word.length > maxChars) {
+          let offset = 0;
+          while (offset + maxChars < word.length) {
+            output.push({ text: word.slice(offset, offset + maxChars), isTableRow });
+            offset += maxChars;
+          }
+          current = word.slice(offset);
+        } else {
+          current = word;
+        }
       }
     }
     if (current) output.push({ text: current, isTableRow });

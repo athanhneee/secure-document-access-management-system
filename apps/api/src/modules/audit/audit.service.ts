@@ -2,7 +2,7 @@
  * @module AuditService
  * Algorithm: Role-Scoped Audit Log Querying (IDOR-Protected), Sanitized Export & Chain Verification Facade.
  */
-import { ForbiddenException, Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Optional } from '@nestjs/common';
 import { getDatabaseClient, type Prisma } from '@sda/database';
 import type {
   QueryAuditLogsInput,
@@ -52,6 +52,8 @@ export interface SerializedPartitionVerificationResult {
   partition: string;
   valid: boolean;
   totalChecked: number;
+  skippedBeforeAnchor?: number | undefined;
+  verificationMode?: 'FULL' | 'INCREMENTAL' | undefined;
   anchorsChecked: number;
   resumedFromAnchorSequence?: string | undefined;
   violations: SerializedAuditViolation[];
@@ -71,6 +73,10 @@ function serializeVerificationResult(
     partition: result.partition,
     valid: result.valid,
     totalChecked: result.totalChecked,
+    ...(result.skippedBeforeAnchor !== undefined
+      ? { skippedBeforeAnchor: result.skippedBeforeAnchor }
+      : {}),
+    ...(result.verificationMode !== undefined ? { verificationMode: result.verificationMode } : {}),
     anchorsChecked: result.anchorsChecked,
     ...(result.resumedFromAnchorSequence !== undefined
       ? { resumedFromAnchorSequence: result.resumedFromAnchorSequence }
@@ -179,11 +185,31 @@ export class AuditService {
         }
         where.document_id = query.documentId;
       } else {
-        const ownedDocs = await this.database.document.findMany({
-          where: { owner_id: principal.userId },
-          select: { id: true },
-        });
-        where.document_id = { in: ownedDocs.map((d) => d.id) };
+        const [ownedDocs, submittedIncidents] = await Promise.all([
+          this.database.document.findMany({
+            where: { owner_id: principal.userId },
+            select: { id: true },
+          }),
+          typeof this.database.incidentReport?.findMany === 'function'
+            ? this.database.incidentReport.findMany({
+                where: { submitted_to_owner: principal.userId },
+                select: { id: true },
+              })
+            : Promise.resolve([]),
+        ]);
+        const ownedDocIds = ownedDocs.map((d) => d.id);
+        const submittedToMeIncidentIds = submittedIncidents.map((inc) => inc.id);
+        if (submittedToMeIncidentIds.length > 0) {
+          where.OR = [
+            { document_id: { in: ownedDocIds } },
+            {
+              object_type: 'INCIDENT_REPORT',
+              object_id: { in: submittedToMeIncidentIds },
+            },
+          ];
+        } else {
+          where.document_id = { in: ownedDocIds };
+        }
       }
     } else {
       if (query.documentId) {
@@ -309,10 +335,16 @@ export class AuditService {
   }
 
   /**
-   * Algorithm / Thuật toán: Tạo điểm neo chữ ký HMAC cho phân vùng nhật ký kiểm toán.
+   * Algorithm / Thuật toán: Tạo điểm neo chữ ký HMAC cho phân vùng nhật ký kiểm toán sau khi xác minh toàn chuỗi từ sequence = 1.
    */
   async createAnchor(principal: AuthPrincipal, partition: string): Promise<CreatedAuditAnchorDto> {
-    return createPartitionAnchor(this.database, this.writerService, principal, partition);
+    return createPartitionAnchor(
+      this.database,
+      this.writerService,
+      principal,
+      partition,
+      this.verifierService,
+    );
   }
 
   /**
@@ -335,31 +367,55 @@ export class AuditService {
       throw new ForbiddenException('Only Security Officer or Auditor can verify audit chains');
     }
 
-    if (input.chainPartition) {
-      const options: { fromSequence?: bigint; toSequence?: bigint } = {};
+    const normalizedPartition = input.chainPartition?.trim();
+    if (
+      (input.fromSequence !== undefined || input.toSequence !== undefined) &&
+      !normalizedPartition
+    ) {
+      throw new BadRequestException(
+        'chainPartition is required when fromSequence or toSequence is specified.',
+      );
+    }
+    if (
+      input.fromSequence !== undefined &&
+      input.toSequence !== undefined &&
+      input.fromSequence > input.toSequence
+    ) {
+      throw new BadRequestException('fromSequence must not be greater than toSequence.');
+    }
+
+    if (normalizedPartition) {
+      const options: { fromSequence?: bigint; toSequence?: bigint; fullScan?: boolean } = {};
       if (input.fromSequence !== undefined) options.fromSequence = input.fromSequence;
       if (input.toSequence !== undefined) options.toSequence = input.toSequence;
-      const single = await this.verifierService.verifyPartition(input.chainPartition, options);
+      if (input.fullScan !== undefined) options.fullScan = input.fullScan;
+      const single = await this.verifierService.verifyPartition(normalizedPartition, options);
       const serialized = serializeVerificationResult(single);
       await this.recordAuditOfAudit(principal, 'AUDIT_CHAIN_VERIFIED', {
-        scope: input.chainPartition,
+        scope: normalizedPartition,
+        fullScan: input.fullScan === true,
         valid: serialized.valid,
         totalChecked: serialized.totalChecked,
+        skippedBeforeAnchor: serialized.skippedBeforeAnchor ?? 0,
         violationCount: serialized.violations.length,
       });
       return serialized;
     }
 
-    const all = await this.verifierService.verifyAllPartitions();
+    const all = await this.verifierService.verifyAllPartitions(
+      input.fullScan !== undefined ? { fullScan: input.fullScan } : undefined,
+    );
     const serializedAll = Object.fromEntries(
       Object.entries(all).map(([partition, res]) => [partition, serializeVerificationResult(res)]),
     );
     const allResults = Object.values(serializedAll);
     await this.recordAuditOfAudit(principal, 'AUDIT_CHAIN_VERIFIED', {
       scope: 'ALL',
+      fullScan: input.fullScan === true,
       partitionCount: allResults.length,
       valid: allResults.every((r) => r.valid),
       totalChecked: allResults.reduce((acc, r) => acc + r.totalChecked, 0),
+      skippedBeforeAnchor: allResults.reduce((acc, r) => acc + (r.skippedBeforeAnchor ?? 0), 0),
       violationCount: allResults.reduce((acc, r) => acc + r.violations.length, 0),
     });
     return serializedAll;

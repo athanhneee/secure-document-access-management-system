@@ -19,6 +19,7 @@ import type { DocumentEncryptionService } from './document-encryption.service.js
 import type { DocumentPepService } from './document-pep.service.js';
 import type { ObjectStorageService } from './object-storage.service.js';
 import type { OfficeConverterService } from './office-converter.service.js';
+import { withSessionWatermarkLock } from './delivery-preview.helper.js';
 import { loadValidatedDeliverySession, type DeliveryFileResult } from './delivery-ticket.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -56,7 +57,7 @@ export async function executeControlledDownload(params: {
   } = params;
   const now = new Date();
 
-  const session = await loadValidatedDeliverySession({
+  const { session, sessionPolicy } = await loadValidatedDeliverySession({
     database,
     pep,
     sessionId,
@@ -86,7 +87,9 @@ export async function executeControlledDownload(params: {
     });
   }
 
-  const requireWatermark = currentClassification?.classification_levels?.require_watermark ?? true;
+  const classRequireWatermark =
+    currentClassification?.classification_levels?.require_watermark ?? true;
+  const requireWatermark = classRequireWatermark || Boolean(sessionPolicy?.watermarkRequired);
   const encryptedBytes = await storage.getObject(storage.documentsBucket, docVersion.storage_key);
   const decrypted = await encryption.decryptToTempFile(
     encryptedBytes,
@@ -125,38 +128,84 @@ export async function executeControlledDownload(params: {
         fullName: user?.full_name ?? undefined,
         employeeCode: user?.employee_code ?? undefined,
       };
-      const docData: WatermarkDocumentData = {
-        id: document.id,
-        documentCode: document.document_code,
-        title: document.title,
-        classificationName: currentClassification?.classification_levels?.name,
-        requireWatermark: true,
-      };
+      const wmResult = await withSessionWatermarkLock(sessionId, docVersion.id, async () => {
+        const existingInstance =
+          typeof database.watermarkInstance?.findFirst === 'function'
+            ? await database.watermarkInstance.findFirst({
+                where: { access_session_id: sessionId, document_version_id: docVersion.id },
+                orderBy: { generated_at: 'desc' },
+              })
+            : null;
+        const docData: WatermarkDocumentData = {
+          id: document.id,
+          documentCode: document.document_code,
+          title: document.title,
+          classificationName: currentClassification?.classification_levels?.name,
+          classificationCode: currentClassification?.classification_levels?.code,
+          classificationRank: currentClassification?.classification_levels?.rank,
+          requireWatermark: true,
+        };
 
-      const wmResult = await watermarkEngine.applyWatermarkToPdf(
-        pdfForWatermark,
-        userData,
-        docData,
-        config,
-        undefined,
-        now,
-      );
+        let applied = await watermarkEngine.applyWatermarkToPdf(
+          pdfForWatermark,
+          userData,
+          docData,
+          config,
+          existingInstance?.watermark_token,
+          now,
+        );
+
+        if (!existingInstance) {
+          try {
+            await watermarkEngine.recordWatermarkInstance({
+              watermarkConfigId: config.id,
+              accessSessionId: sessionId,
+              documentVersionId: docVersion.id,
+              userId: principal.userId,
+              watermarkToken: applied.watermarkToken,
+              renderedText: applied.renderedText,
+              outputSha256Hash: applied.outputSha256Hash,
+              generatedAt: now,
+            });
+          } catch (err: unknown) {
+            const code = (err as { code?: string } | null)?.code;
+            if (code !== 'P2002' && code !== '23505') throw err;
+            const winner =
+              typeof database.watermarkInstance?.findFirst === 'function'
+                ? await database.watermarkInstance.findFirst({
+                    where: { access_session_id: sessionId, document_version_id: docVersion.id },
+                    orderBy: { generated_at: 'desc' },
+                  })
+                : null;
+            if (!winner) throw err;
+            applied = await watermarkEngine.applyWatermarkToPdf(
+              pdfForWatermark,
+              userData,
+              docData,
+              config,
+              winner.watermark_token,
+              now,
+            );
+          }
+        } else if (typeof database.watermarkInstance?.update === 'function') {
+          await database.watermarkInstance.update({
+            where: { id: existingInstance.id },
+            data: {
+              watermark_config_id: config.id,
+              rendered_text: applied.renderedText.slice(0, 1000),
+              output_sha256_hash: applied.outputSha256Hash,
+              generated_at: now,
+            },
+          });
+        }
+
+        return applied;
+      });
 
       fileBuffer = wmResult.watermarkedBuffer;
       mimeType = 'application/pdf';
       filename = `${document.document_code || 'doc'}-watermarked.pdf`;
       watermarkToken = wmResult.watermarkToken;
-
-      await watermarkEngine.recordWatermarkInstance({
-        watermarkConfigId: config.id,
-        accessSessionId: sessionId,
-        documentVersionId: docVersion.id,
-        userId: principal.userId,
-        watermarkToken: wmResult.watermarkToken,
-        renderedText: wmResult.renderedText,
-        outputSha256Hash: wmResult.outputSha256Hash,
-        generatedAt: now,
-      });
 
       await audit.record(
         {

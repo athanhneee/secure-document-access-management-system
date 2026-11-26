@@ -22,7 +22,7 @@ export const CONTEXT_ATTRIBUTES: Readonly<Record<string, AttributeDescriptor>> =
   'subject.clearanceRank': descriptor('subject.clearanceRank', 'NUMBER', true),
   'subject.departmentId': descriptor('subject.departmentId', 'STRING', true),
   'subject.employmentStatus': descriptor('subject.employmentStatus', 'STRING', true),
-  'subject.projects': descriptor('subject.projects', 'STRING', false),
+  'subject.projects': descriptor('subject.projects', 'STRING', false, true),
   'resource.classificationRank': descriptor('resource.classificationRank', 'NUMBER', true),
   'resource.ownerId': descriptor('resource.ownerId', 'STRING', true),
   'resource.departmentId': descriptor('resource.departmentId', 'STRING', true),
@@ -36,6 +36,11 @@ export const CONTEXT_ATTRIBUTES: Readonly<Record<string, AttributeDescriptor>> =
   'environment.riskScore': descriptor('environment.riskScore', 'NUMBER', true),
 };
 
-function descriptor(key: string, type: AttributeType, required: boolean): AttributeDescriptor {
-  return { key, type, required };
+function descriptor(
+  key: string,
+  type: AttributeType,
+  required: boolean,
+  multiValue = false,
+): AttributeDescriptor {
+  return multiValue ? { key, type, required, multiValue: true } : { key, type, required };
 }

@@ -48,29 +48,43 @@ export async function isDepartmentDescendant(
 
 /**
  * Thuật toán: Kiểm Chứng Toàn Vẹn Tham Chiếu Nút Lá Song Song (Parallel Leaf Referential-Integrity Guard)
- * Mục đích: Đảm bảo phòng ban không còn phòng ban con đang mở, người dùng hoạt động hoặc gán vai trò theo phạm vi còn hiệu lực.
+ * Mục đích: Đảm bảo phòng ban không còn phòng ban con đang mở, người dùng hoạt động, tài liệu `DRAFT`/`ACTIVE`,
+ *   danh mục nghiệp vụ đang mở hoặc gán vai trò theo phạm vi hiện tại/tương lai trước khi vô hiệu hóa.
  * Cơ chế hoạt động:
- *   - Thực thi đồng thời 3 truy vấn `COUNT(*)` trong cùng giao dịch `Serializable` và từ chối `409 Conflict` nếu tổng phụ thuộc `> 0`.
+ *   - Thực thi đồng thời 5 truy vấn `COUNT(*)` trong cùng giao dịch `Serializable` và từ chối `409 Conflict` nếu tổng phụ thuộc `> 0`.
  */
 export async function assertDepartmentHasNoActiveDependents(
   transaction: Prisma.TransactionClient,
   id: bigint,
   now: Date,
 ): Promise<void> {
-  const [activeChildren, activeUsers, activeScopes] = await Promise.all([
-    transaction.department.count({ where: { parent_id: id, is_active: true } }),
-    transaction.user.count({ where: { department_id: id, status: { not: 'DISABLED' } } }),
-    transaction.userRole.count({
-      where: {
-        scope_department_id: id,
-        valid_from: { lte: now },
-        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-      },
-    }),
-  ]);
-  if (activeChildren + activeUsers + activeScopes > 0) {
+  const [activeChildren, activeUsers, activeDocuments, activeCategories, activeOrFutureScopes] =
+    await Promise.all([
+      transaction.department.count({ where: { parent_id: id, is_active: true } }),
+      transaction.user.count({ where: { department_id: id, status: { not: 'DISABLED' } } }),
+      typeof transaction.document?.count === 'function'
+        ? transaction.document.count({
+            where: { department_id: id, status: { in: ['DRAFT', 'ACTIVE'] } },
+          })
+        : Promise.resolve(0),
+      typeof transaction.businessCategory?.count === 'function'
+        ? transaction.businessCategory.count({
+            where: { department_id: id, is_active: true },
+          })
+        : Promise.resolve(0),
+      transaction.userRole.count({
+        where: {
+          scope_department_id: id,
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+        },
+      }),
+    ]);
+  if (
+    activeChildren + activeUsers + activeDocuments + activeCategories + activeOrFutureScopes >
+    0
+  ) {
     throw new ConflictException(
-      'Department still has active children, users, or scoped role assignments.',
+      'Department still has active children, users, documents, business categories, or scoped role assignments.',
     );
   }
 }

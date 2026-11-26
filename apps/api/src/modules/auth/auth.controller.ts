@@ -22,6 +22,7 @@ import { AppConfigService } from '../../config/config.service.js';
 import { PublicEndpoint } from '../../public-endpoint.js';
 import { AllowAuthenticatedSelf } from '../rbac/require-permission.js';
 import { AllowPreMfa } from './allow-pre-mfa.js';
+import { sanitizeDeviceFingerprintHeader } from './auth-session-posture.helper.js';
 import { AuthService } from './auth.service.js';
 import { CsrfService } from './csrf.service.js';
 import * as S from './auth.schemas.js';
@@ -86,6 +87,7 @@ export class AuthController {
     return { authenticated: true as const };
   }
 
+  @AllowPreMfa()
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@Req() request: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
@@ -106,6 +108,23 @@ export class AuthController {
   @Get('sessions')
   listSessions(@Req() request: FastifyRequest) {
     return this.auth.listSessions(requireAuthPrincipal(request));
+  }
+
+  @Get('session-posture')
+  @ApiOperation({
+    summary:
+      'Evaluate read-only security posture (MFA, network, device trust, risk score) for current session',
+  })
+  getSessionPosture(@Req() request: FastifyRequest) {
+    const rawFingerprint = request.headers['x-device-fingerprint'];
+    const deviceFingerprint = sanitizeDeviceFingerprintHeader(
+      Array.isArray(rawFingerprint) ? rawFingerprint[0] : rawFingerprint,
+    );
+    return this.auth.getSessionPosture(
+      requireAuthPrincipal(request),
+      extractAuthRequestContext(request),
+      deviceFingerprint,
+    );
   }
 
   @Post('logout-others')
@@ -236,14 +255,27 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async removeMfaMethod(
     @Param('methodId') methodId: string,
+    @Body() body: unknown,
     @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<void> {
-    this.csrf.assertRequest(request);
-    await this.auth.removeMfaMethod(
-      requireAuthPrincipal(request),
-      methodId,
-      extractAuthRequestContext(request),
+    const { input, principal, context } = guardAuthenticatedBody(
+      this.csrf,
+      request,
+      S.DisableMfaSchema,
+      body,
     );
+    const result = await this.auth.removeMfaMethod(
+      principal,
+      methodId,
+      input.currentPassword,
+      input.code,
+      input.recoveryCode,
+      context,
+    );
+    if (result.allMfaRemoved) {
+      clearAuthSessionCookies(reply, this.secureCookies);
+    }
   }
 
   @Delete('mfa')

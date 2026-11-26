@@ -655,4 +655,318 @@ test('UsersService & UsersController — clearance options, create/update/PUT cl
     () => service.update(managerPrincipal, 2n, { expectedVersion: 3, departmentId: null }, ctx),
     BadRequestException,
   );
+
+  // 9. BUG-007: Block self-clearance modification via both PUT /users/:ownId/clearance and PATCH /users/:ownId
+  await assert.rejects(
+    () =>
+      controller.updateClearance('1', { expectedVersion: 0, clearanceOptionId: '3' }, authedReq),
+    ForbiddenException,
+  );
+  await assert.rejects(
+    () =>
+      controller.updateClearance('1', { expectedVersion: 0, clearanceOptionId: null }, authedReq),
+    ForbiddenException,
+  );
+  await assert.rejects(
+    () => service.update(managerPrincipal, 1n, { expectedVersion: 0, clearanceOptionId: 3n }, ctx),
+    ForbiddenException,
+  );
+  await assert.rejects(
+    () =>
+      service.update(managerPrincipal, 1n, { expectedVersion: 0, clearanceOptionId: null }, ctx),
+    ForbiddenException,
+  );
+  // Updating own non-clearance profile fields (without clearanceOptionId) remains allowed
+  const selfRenamed = await service.update(
+    managerPrincipal,
+    1n,
+    { expectedVersion: 0, fullName: 'Quản lý Định danh (Cập nhật)' },
+    ctx,
+  );
+  assert.equal(selfRenamed.fullName, 'Quản lý Định danh (Cập nhật)');
+});
+
+test('UsersService [BUG-006] — enforces user management privilege hierarchy and preserves at least 1 active global SYSTEM_ADMIN', async () => {
+  const departments = new Map([
+    [1n, { id: 1n, code: 'HEAD_OFFICE', name: 'Trụ sở chính', parent_id: null, is_active: true }],
+    [2n, { id: 2n, code: 'SUB_DEPT', name: 'Phòng trực thuộc', parent_id: 1n, is_active: true }],
+  ]);
+
+  const userManagePerm = { id: 10n, code: 'USER_MANAGE', resource_type: 'USER', action: 'MANAGE' };
+  const alertManagePerm = {
+    id: 11n,
+    code: 'ALERT_MANAGE',
+    resource_type: 'SECURITY_ALERT',
+    action: 'MANAGE',
+  };
+  const docViewPerm = { id: 12n, code: 'DOCUMENT_VIEW', resource_type: 'DOCUMENT', action: 'VIEW' };
+
+  const users = new Map([
+    [1n, makeUserRow(1n, 'dept.mgr', 'dept.mgr@sda.local', 'Dept Mgr', 'E1', departments.get(1n))],
+    [2n, makeUserRow(2n, 'sys.admin1', 'sys1@sda.local', 'Sys Admin 1', 'E2', departments.get(1n))],
+    [3n, makeUserRow(3n, 'sec.officer', 'soc@sda.local', 'Sec Officer', 'E3', departments.get(1n))],
+    [4n, makeUserRow(4n, 'auditor.u', 'aud@sda.local', 'Auditor', 'E4', departments.get(1n))],
+    [
+      5n,
+      makeUserRow(5n, 'global.reader', 'gr@sda.local', 'Global Reader', 'E5', departments.get(1n)),
+    ],
+    [6n, makeUserRow(6n, 'scoped.soc', 'ssoc@sda.local', 'Scoped SOC', 'E6', departments.get(1n))],
+    [7n, makeUserRow(7n, 'peer.mgr', 'peer@sda.local', 'Peer Mgr', 'E7', departments.get(1n))],
+    [8n, makeUserRow(8n, 'sub.mgr', 'sub@sda.local', 'Sub Dept Mgr', 'E8', departments.get(2n))],
+    [9n, makeUserRow(9n, 'staff.u', 'staff@sda.local', 'Normal Staff', 'E9', departments.get(1n))],
+    [
+      10n,
+      makeUserRow(10n, 'sys.admin2', 'sys2@sda.local', 'Sys Admin 2', 'E10', departments.get(1n), {
+        status: 'LOCKED',
+      }),
+    ],
+  ]);
+
+  const past = new Date(Date.now() - 3600_000);
+  const roleAssignments = [
+    {
+      id: 101n,
+      user_id: 2n,
+      scope_department_id: null,
+      valid_from: past,
+      valid_to: null,
+      roles: {
+        code: 'SYSTEM_ADMIN',
+        is_active: true,
+        role_permissions: [{ permission_id: userManagePerm.id, permissions: userManagePerm }],
+      },
+    },
+    {
+      id: 102n,
+      user_id: 3n,
+      scope_department_id: null,
+      valid_from: past,
+      valid_to: null,
+      roles: {
+        code: 'SECURITY_OFFICER',
+        is_active: true,
+        role_permissions: [{ permission_id: alertManagePerm.id, permissions: alertManagePerm }],
+      },
+    },
+    {
+      id: 103n,
+      user_id: 4n,
+      scope_department_id: 1n,
+      valid_from: past,
+      valid_to: null,
+      roles: { code: 'AUDITOR', is_active: true, role_permissions: [] },
+    },
+    {
+      id: 104n,
+      user_id: 5n,
+      scope_department_id: null,
+      valid_from: past,
+      valid_to: null,
+      roles: {
+        code: 'DOCUMENT_READER',
+        is_active: true,
+        role_permissions: [{ permission_id: docViewPerm.id, permissions: docViewPerm }],
+      },
+    },
+    {
+      id: 105n,
+      user_id: 6n,
+      scope_department_id: 1n,
+      valid_from: past,
+      valid_to: null,
+      roles: {
+        code: 'CUSTOM_SOC',
+        is_active: true,
+        role_permissions: [{ permission_id: alertManagePerm.id, permissions: alertManagePerm }],
+      },
+    },
+    {
+      id: 106n,
+      user_id: 7n,
+      scope_department_id: 1n,
+      valid_from: past,
+      valid_to: null,
+      roles: {
+        code: 'DEPT_USER_MGR',
+        is_active: true,
+        role_permissions: [{ permission_id: userManagePerm.id, permissions: userManagePerm }],
+      },
+    },
+    {
+      id: 107n,
+      user_id: 8n,
+      scope_department_id: 2n,
+      valid_from: past,
+      valid_to: null,
+      roles: {
+        code: 'SUB_USER_MGR',
+        is_active: true,
+        role_permissions: [{ permission_id: userManagePerm.id, permissions: userManagePerm }],
+      },
+    },
+    {
+      id: 108n,
+      user_id: 9n,
+      scope_department_id: 1n,
+      valid_from: past,
+      valid_to: null,
+      roles: {
+        code: 'DOCUMENT_READER',
+        is_active: true,
+        role_permissions: [{ permission_id: docViewPerm.id, permissions: docViewPerm }],
+      },
+    },
+    {
+      id: 109n,
+      user_id: 10n,
+      scope_department_id: null,
+      valid_from: past,
+      valid_to: null,
+      roles: {
+        code: 'SYSTEM_ADMIN',
+        is_active: true,
+        role_permissions: [{ permission_id: userManagePerm.id, permissions: userManagePerm }],
+      },
+    },
+  ];
+
+  const db = {
+    department: {
+      findUnique: async ({ where }) => departments.get(where.id) ?? null,
+      findFirst: async ({ where }) => {
+        const d = departments.get(where.id);
+        return d && d.is_active === where.is_active ? d : null;
+      },
+    },
+    user: {
+      findUnique: async ({ where }) => users.get(where.id) ?? null,
+      findUniqueOrThrow: async ({ where }) => users.get(where.id),
+      updateMany: async ({ where, data }) => {
+        const cur = users.get(where.id);
+        if (!cur || cur.version !== where.version) return { count: 0 };
+        const patch = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
+        users.set(where.id, { ...cur, ...patch, version: cur.version + 1 });
+        return { count: 1 };
+      },
+    },
+    userRole: {
+      findMany: async ({ where }) =>
+        roleAssignments.filter((a) => {
+          if (where.user_id !== undefined && a.user_id !== where.user_id) return false;
+          if (where.roles?.is_active && !a.roles.is_active) return false;
+          return true;
+        }),
+      count: async ({ where }) =>
+        roleAssignments.filter((a) => {
+          if (typeof where.user_id === 'bigint' && a.user_id !== where.user_id) return false;
+          if (where.user_id?.not !== undefined && a.user_id === where.user_id.not) return false;
+          if (where.scope_department_id === null && a.scope_department_id !== null) return false;
+          if (where.roles?.code && a.roles.code !== where.roles.code) return false;
+          if (where.roles?.is_active && !a.roles.is_active) return false;
+          if (where.valid_from?.lte && a.valid_from > where.valid_from.lte) return false;
+          if (where.users_user_roles_user_idTousers?.status) {
+            const u = users.get(a.user_id);
+            if (!u || u.status !== where.users_user_roles_user_idTousers.status) return false;
+          }
+          return true;
+        }).length,
+      updateMany: async () => ({ count: 0 }),
+    },
+    authSession: { updateMany: async () => ({ count: 0 }) },
+    refreshToken: { updateMany: async () => ({ count: 0 }) },
+    accessSession: { updateMany: async () => ({ count: 0 }) },
+    userAttributeAssignment: { findFirst: async () => null, findMany: async () => [] },
+    $transaction: async (fn) => fn(db),
+  };
+
+  const deptMgrPrincipal = { ...managerPrincipal, userId: 1n, roles: ['DEPT_USER_MGR'] };
+  const sysAdmin2Principal = { ...managerPrincipal, userId: 10n, roles: ['SYSTEM_ADMIN'] };
+
+  const grantsByUser = new Map([
+    [
+      1n,
+      [
+        {
+          permissionId: userManagePerm.id,
+          code: 'USER_MANAGE',
+          resource: 'USER',
+          action: 'MANAGE',
+          roleId: 1n,
+          roleCode: 'DEPT_USER_MGR',
+          scopeDepartmentId: 1n,
+          validTo: null,
+        },
+      ],
+    ],
+    [
+      10n,
+      [
+        {
+          permissionId: userManagePerm.id,
+          code: 'USER_MANAGE',
+          resource: 'USER',
+          action: 'MANAGE',
+          roleId: 2n,
+          roleCode: 'SYSTEM_ADMIN',
+          scopeDepartmentId: null,
+          validTo: null,
+        },
+      ],
+    ],
+  ]);
+
+  const authz = {
+    effectiveGrants: async (uid) => grantsByUser.get(uid) ?? [],
+    hasPermission: async () => true,
+    assertPermission: async () => {},
+    invalidateUser: async () => {},
+  };
+
+  const service = new UsersService(authz, new PasswordService(), { record: async () => {} }, db);
+
+  // 1. Department USER:MANAGE manager on HEAD_OFFICE is BLOCKED from acting on SYSTEM_ADMIN, SECURITY_OFFICER, AUDITOR, global-scoped user, scoped SOC, and peer dept manager
+  await assert.rejects(() => service.disable(deptMgrPrincipal, 2n, 0, ctx), ForbiddenException);
+  await assert.rejects(() => service.lock(deptMgrPrincipal, 2n, 0, ctx), ForbiddenException);
+  await assert.rejects(
+    () => service.update(deptMgrPrincipal, 2n, { expectedVersion: 0, email: 'hack@evil.com' }, ctx),
+    ForbiddenException,
+  );
+  await assert.rejects(
+    () =>
+      service.updateClearance(
+        deptMgrPrincipal,
+        2n,
+        { expectedVersion: 0, clearanceOptionId: null },
+        ctx,
+      ),
+    ForbiddenException,
+  );
+  await assert.rejects(() => service.disable(deptMgrPrincipal, 3n, 0, ctx), ForbiddenException);
+  await assert.rejects(() => service.lock(deptMgrPrincipal, 4n, 0, ctx), ForbiddenException);
+  await assert.rejects(
+    () => service.update(deptMgrPrincipal, 5n, { expectedVersion: 0, fullName: 'Hijacked' }, ctx),
+    ForbiddenException,
+  );
+  await assert.rejects(() => service.disable(deptMgrPrincipal, 6n, 0, ctx), ForbiddenException);
+  await assert.rejects(() => service.disable(deptMgrPrincipal, 7n, 0, ctx), ForbiddenException);
+
+  // 2. Department manager CAN manage normal business staff and strictly subordinate sub-department manager
+  const updatedStaff = await service.update(
+    deptMgrPrincipal,
+    9n,
+    { expectedVersion: 0, fullName: 'Normal Staff Updated' },
+    ctx,
+  );
+  assert.equal(updatedStaff.fullName, 'Normal Staff Updated');
+  const lockedSubMgr = await service.lock(deptMgrPrincipal, 8n, 0, ctx);
+  assert.equal(lockedSubMgr.status, 'LOCKED');
+
+  // 3. Even a global SYSTEM_ADMIN cannot lock or disable the last ACTIVE global SYSTEM_ADMIN (user #10 is LOCKED so user #2 is the only ACTIVE one)
+  await assert.rejects(() => service.disable(sysAdmin2Principal, 2n, 0, ctx), ConflictException);
+  await assert.rejects(() => service.lock(sysAdmin2Principal, 2n, 0, ctx), ConflictException);
+
+  // 4. Once user #10 is ACTIVE, disabling user #2 succeeds while leaving user #10 as the remaining ACTIVE global SYSTEM_ADMIN
+  users.set(10n, { ...users.get(10n), status: 'ACTIVE' });
+  const disabledAdmin1 = await service.disable(sysAdmin2Principal, 2n, 0, ctx);
+  assert.equal(disabledAdmin1.status, 'DISABLED');
 });

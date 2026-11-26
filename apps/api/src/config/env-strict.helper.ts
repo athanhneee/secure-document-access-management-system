@@ -6,6 +6,7 @@
  */
 import { isIP } from 'node:net';
 import { z } from 'zod';
+import { cidrMatch, isValidCidr } from '../modules/abac/cidr.js';
 
 const STRICT_TRUST_PROXY_PRESETS = new Set(['false', 'loopback', 'linklocal', 'uniquelocal']);
 
@@ -158,7 +159,7 @@ export function enforceStrictEnvironmentInvariants(
       .filter(Boolean);
     const isAllowedEntry = (entry: string): boolean => {
       const lowered = entry.toLowerCase();
-      return lowered in TRUST_PROXY_PRESET_CIDRS || isValidIpOrCidr(entry);
+      return Object.hasOwn(TRUST_PROXY_PRESET_CIDRS, lowered) || isValidIpOrCidr(entry);
     };
     if (entries.length === 0 || !entries.every(isAllowedEntry)) {
       context.addIssue({
@@ -170,17 +171,19 @@ export function enforceStrictEnvironmentInvariants(
   }
 
   const trustedCidrs = value.ABAC_TRUSTED_NETWORK_CIDRS.split(',')
-    .map((cidr) => cidr.trim().toLowerCase())
+    .map((cidr) => cidr.trim())
     .filter(Boolean);
-  if (
-    trustedCidrs.some(
-      (cidr) => cidr.startsWith('127.') || cidr === '::1' || cidr.startsWith('::1/'),
-    )
-  ) {
+  if (trustedCidrs.some((cidr) => !isValidCidr(cidr))) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['ABAC_TRUSTED_NETWORK_CIDRS'],
-      message: `Loopback CIDRs (127.0.0.0/8, ::1/128) are forbidden in ABAC_TRUSTED_NETWORK_CIDRS in ${value.NODE_ENV} to prevent reverse-proxy trustedNetwork bypass.`,
+      message: `ABAC_TRUSTED_NETWORK_CIDRS in ${value.NODE_ENV} contains an invalid IP/CIDR entry.`,
+    });
+  } else if (trustedCidrs.some((cidr) => cidrMatch('127.0.0.1', cidr) || cidrMatch('::1', cidr))) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['ABAC_TRUSTED_NETWORK_CIDRS'],
+      message: `Loopback-covering CIDRs (e.g. 127.0.0.0/8, ::1/128, 0.0.0.0/0, ::/0, ::ffff:127.0.0.1/128) are forbidden in ABAC_TRUSTED_NETWORK_CIDRS in ${value.NODE_ENV} to prevent reverse-proxy trustedNetwork bypass.`,
     });
   }
 }
@@ -195,7 +198,9 @@ export function resolveTrustProxyConfig(
   if (!normalized || normalized === 'false' || normalized === '0' || normalized === 'off') {
     return false;
   }
-  const singlePreset = TRUST_PROXY_PRESET_CIDRS[normalized];
+  const singlePreset = Object.hasOwn(TRUST_PROXY_PRESET_CIDRS, normalized)
+    ? TRUST_PROXY_PRESET_CIDRS[normalized]
+    : undefined;
   if (singlePreset) {
     return [...singlePreset];
   }
@@ -211,7 +216,10 @@ export function resolveTrustProxyConfig(
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)) {
-    const presetCidrs = TRUST_PROXY_PRESET_CIDRS[entry.toLowerCase()];
+    const lowerEntry = entry.toLowerCase();
+    const presetCidrs = Object.hasOwn(TRUST_PROXY_PRESET_CIDRS, lowerEntry)
+      ? TRUST_PROXY_PRESET_CIDRS[lowerEntry]
+      : undefined;
     if (presetCidrs) {
       resolved.push(...presetCidrs);
     } else {

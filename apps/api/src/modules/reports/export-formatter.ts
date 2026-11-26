@@ -26,7 +26,8 @@ export function sanitizeForPdf(text: string): string {
 }
 
 /**
- * Thuật toán: Ngắt dòng văn bản ô bảng PDF theo bề rộng phông chữ thực tế (`measureWidth`), bảo toàn 100% ký tự dài (SHA-256, UUID) không cắt mất dữ liệu.
+ * Thuật toán: Ngắt dòng văn bản ô bảng PDF ưu tiên biên từ kết hợp tìm kiếm nhị phân cho chuỗi dài không khoảng trắng
+ * (SHA-256, UUID) để đạt độ phức tạp `O(L log L)` thay vì đo từng ký tự `O(L^2)` và bảo toàn 100% dữ liệu (`LOW-12`).
  */
 function wrapPdfCellText(
   rawText: string,
@@ -38,18 +39,54 @@ function wrapPdfCellText(
   if (measureWidth(cleaned) <= maxWidth) return [cleaned];
 
   const lines: string[] = [];
+  const words = cleaned.split(' ');
   let current = '';
-  for (const ch of cleaned) {
-    const candidate = current + ch;
-    if (current.length > 0 && measureWidth(candidate) > maxWidth) {
-      lines.push(current.trimEnd());
-      current = ch === ' ' ? '' : ch;
-    } else {
+
+  const splitLongToken = (token: string): void => {
+    let offset = 0;
+    while (offset < token.length) {
+      let lo = 1;
+      let hi = token.length - offset;
+      let best = 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >>> 1;
+        if (measureWidth(token.slice(offset, offset + mid)) <= maxWidth) {
+          best = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      const chunk = token.slice(offset, offset + best);
+      offset += best;
+      if (offset < token.length) {
+        lines.push(chunk);
+      } else {
+        current = chunk;
+      }
+    }
+  };
+
+  for (const word of words) {
+    if (!word) continue;
+    const candidate = current ? `${current} ${word}` : word;
+    if (measureWidth(candidate) <= maxWidth) {
       current = candidate;
+      continue;
+    }
+    if (current) {
+      lines.push(current);
+      current = '';
+    }
+    if (measureWidth(word) <= maxWidth) {
+      current = word;
+    } else {
+      splitLongToken(word);
     }
   }
+
   if (current.length > 0 || lines.length === 0) {
-    lines.push(current.trimEnd());
+    lines.push(current);
   }
   return lines;
 }

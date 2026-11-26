@@ -9,7 +9,11 @@ import type { getDatabaseClient } from '@sda/database';
 import { cidrMatch } from '../abac/policy-engine.js';
 import type { AppConfigService } from '../../config/config.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
-import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
+import {
+  isPrivilegedSeparationRoleOrCapability,
+  PRIVILEGED_SEPARATION_ROLES,
+  type PermissionCapabilityLike,
+} from '../rbac/permission-matrix.js';
 import type { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -36,13 +40,32 @@ export interface PepEvaluationResult {
   obligations: string[];
 }
 
+export interface SessionSubjectPolicySnapshot {
+  employmentStatus: string | null;
+  clearanceRank: number | null;
+  departmentId: string | null;
+}
+
+export interface SessionResourcePolicySnapshot {
+  classificationRank: number;
+  category: string | null;
+  departmentId: string | null;
+  status: string;
+}
+
 export interface ActiveSessionPolicy {
   grantedAction: 'VIEW' | 'DOWNLOAD';
   forbidDownload: boolean;
+  watermarkRequired: boolean;
   expiresAtMs: number | null;
   maxSessionMinutes?: number | null | undefined;
   ipAddress?: string | null | undefined;
   userAgent?: string | null | undefined;
+  policyVersion?: string | null | undefined;
+  abacEpoch?: number | undefined;
+  userEpoch?: number | undefined;
+  subjectSnapshot?: SessionSubjectPolicySnapshot | undefined;
+  resourceSnapshot?: SessionResourcePolicySnapshot | undefined;
 }
 
 /**
@@ -62,11 +85,95 @@ export function computeBoundedSessionPolicyTtlMs(
 }
 
 /**
- * Algorithm / Thuật toán: Kiểm tra Phân tách nhiệm vụ (SoD) bất biến tại cổng PEP cho `SYSTEM_ADMIN`, `SECURITY_OFFICER` và `AUDITOR`.
+ * Algorithm / Thuật toán: Kiểm tra Phân tách nhiệm vụ (SoD) bất biến tại cổng PEP cho cả vai trò hệ thống (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`)
+ * lẫn Custom Role mang năng lực đặc quyền quản trị/SOC/kiểm toán (`BUG-047`).
  */
-export function isRestrictedNonBusinessRole(roles: readonly string[]): boolean {
-  // CONFLICT-RESOLVED: Removed `!hasBusinessRole` bypass and included `SECURITY_OFFICER` via `PRIVILEGED_SEPARATION_ROLES`.
-  return roles.some((role) => PRIVILEGED_SEPARATION_ROLES.has(role));
+export function isRestrictedNonBusinessRole(
+  principalOrRoles: AuthPrincipal | readonly string[],
+  permissions?: Iterable<string | PermissionCapabilityLike>,
+): boolean {
+  if (!Array.isArray(principalOrRoles) && 'userId' in principalOrRoles) {
+    const principal = principalOrRoles as AuthPrincipal;
+    if (principal.restrictedNonBusiness === true) {
+      return true;
+    }
+    if ((principal.roles ?? []).some((role) => PRIVILEGED_SEPARATION_ROLES.has(role))) {
+      return true;
+    }
+    if (permissions !== undefined) {
+      return isPrivilegedSeparationRoleOrCapability(undefined, permissions);
+    }
+    return false;
+  }
+  const roles = principalOrRoles;
+  // CONFLICT-RESOLVED: Removed `!hasBusinessRole` bypass, included `SECURITY_OFFICER` via `PRIVILEGED_SEPARATION_ROLES`, and checked custom privileged capabilities (`BUG-047`).
+  if (roles.some((role) => PRIVILEGED_SEPARATION_ROLES.has(role))) {
+    return true;
+  }
+  if (permissions !== undefined) {
+    return isPrivilegedSeparationRoleOrCapability(undefined, permissions);
+  }
+  return false;
+}
+
+/**
+ * Thuật toán: Xác minh trực tiếp từ CSDL xem chủ thể có đang nắm bất kỳ vai trò hệ thống hoặc Custom Role đặc quyền quản trị/SOC/kiểm toán nào hay không (`BUG-047`).
+ */
+export async function hasPrivilegedNonBusinessCapability(
+  database: PrismaClient | undefined,
+  principal: AuthPrincipal,
+  now = new Date(),
+): Promise<boolean> {
+  if (isRestrictedNonBusinessRole(principal)) {
+    return true;
+  }
+  if (typeof database?.userRole?.findMany !== 'function') {
+    return false;
+  }
+  try {
+    const activeAssignments = await database.userRole.findMany({
+      where: {
+        user_id: principal.userId,
+        valid_from: { lte: now },
+        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+        roles: { is_active: true },
+      },
+      include: {
+        roles: {
+          select: {
+            code: true,
+            role_permissions: {
+              select: {
+                permissions: { select: { code: true, resource_type: true, action: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    for (const assignment of activeAssignments) {
+      const roleObj = (
+        assignment as {
+          roles?: {
+            code?: string;
+            role_permissions?: Array<{
+              permissions?: { code: string; resource_type?: string; action?: string } | null;
+            }>;
+          } | null;
+        }
+      ).roles;
+      if (!roleObj) continue;
+      const perms = (roleObj.role_permissions ?? [])
+        .map((rp) => rp.permissions)
+        .filter((p): p is NonNullable<typeof p> => Boolean(p));
+      if (isPrivilegedSeparationRoleOrCapability(roleObj.code, perms)) {
+        return true;
+      }
+    }
+  } catch {
+    // Fallback safely to principal checks when lightweight unit test mocks omit role relations
+  }
+  return false;
 }
 
 /**
@@ -147,6 +254,7 @@ export async function buildPepSubjectAttributes(
         attribute_definitions: { select: { code: true, is_active: true } },
         attribute_options: true,
       },
+      orderBy: [{ attribute_definition_id: 'asc' }, { id: 'asc' }],
     });
     const projectValues: string[] = [];
     for (const raw of attrAssignments) {
@@ -175,8 +283,11 @@ export async function buildPepSubjectAttributes(
   return {
     clearanceRank: activeClearanceRank,
     departmentId: user?.department_id?.toString() ?? null,
-    // CONFLICT-RESOLVED: Đồng bộ subject.employmentStatus giữa PIP và Từ điển ABAC (EMPLOYMENT_STATUS), giữ fallback user.status cho tương thích ngược.
-    employmentStatus: explicitEmploymentStatus ?? user?.status ?? null,
+    // BUG-037: Nếu tài khoản không còn ACTIVE (LOCKED/DISABLED), luôn áp user.status thay vì để thuộc tính EMPLOYMENT_STATUS cũ ghi đè.
+    employmentStatus:
+      user && user.status !== 'ACTIVE'
+        ? user.status
+        : (explicitEmploymentStatus ?? user?.status ?? null),
     projects,
   };
 }

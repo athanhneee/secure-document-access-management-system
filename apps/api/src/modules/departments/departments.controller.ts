@@ -62,6 +62,7 @@ export class DepartmentsController {
     { resource: 'DOCUMENT', action: 'UPLOAD' },
     { resource: 'DOCUMENT', action: 'DISCOVER' },
     { resource: 'DEPARTMENT', action: 'MANAGE' },
+    { resource: 'ATTRIBUTE', action: 'MANAGE' },
     { resource: 'USER', action: 'MANAGE' },
     { resource: 'POLICY', action: 'MANAGE' },
     { resource: 'POLICY', action: 'SIMULATE' },

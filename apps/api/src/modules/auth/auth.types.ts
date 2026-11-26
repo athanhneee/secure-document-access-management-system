@@ -11,6 +11,8 @@ export interface AuthUserProfile {
   clearanceCode: string | null;
   clearanceName: string | null;
   clearanceRank: number;
+  mfaEnabled?: boolean | undefined;
+  mfaVerified?: boolean | undefined;
   status: string;
   version: number;
   roles: string[];
@@ -27,6 +29,7 @@ export interface AuthUser {
   lockedUntil: Date | null;
   failedLoginCount: number;
   roles: string[];
+  hasMandatoryMfaRole?: boolean | undefined;
   requiresMfa?: boolean | undefined;
   profile?: AuthUserProfile | undefined;
   mfaMethod: {
@@ -49,6 +52,8 @@ export interface AuthPrincipal {
   roles: string[];
   mfa: boolean;
   mfaPending?: boolean | undefined;
+  restrictedNonBusiness?: boolean | undefined;
+  departmentId?: bigint | undefined;
 }
 
 declare module 'fastify' {

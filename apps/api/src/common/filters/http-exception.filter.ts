@@ -20,6 +20,7 @@ import {
   DatabaseError,
   DatabaseNotFoundError,
   DatabaseUnavailableError,
+  UniqueConstraintError,
   isDatabaseOperationError,
   mapDatabaseError,
 } from '@sda/database';
@@ -154,6 +155,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
         }
         if (resObj['details'] !== undefined) {
           details = resObj['details'];
+          if (
+            Array.isArray(resObj['issues']) &&
+            typeof details === 'object' &&
+            details !== null &&
+            !Array.isArray(details) &&
+            !('issues' in details)
+          ) {
+            details = { ...(details as Record<string, unknown>), issues: resObj['issues'] };
+          }
+        } else if (Array.isArray(resObj['issues'])) {
+          details = { issues: resObj['issues'] };
         } else if (
           Array.isArray(resObj['formErrors']) ||
           (typeof resObj['fieldErrors'] === 'object' && resObj['fieldErrors'] !== null)
@@ -230,7 +242,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
       // CONFLICT-RESOLVED: Ánh xạ các lớp DatabaseError từ @sda/database sang mã trạng thái HTTP ngữ nghĩa (409/400/404/503) thay vì để lọt thành 500.
       const rawCode = extractRawDbErrorCode(exception);
       const mapped = exception instanceof DatabaseError ? exception : mapDatabaseError(exception);
-      if (mapped instanceof DatabaseConflictError || rawCode === 'P2002' || rawCode === '23505') {
+      if (
+        mapped instanceof UniqueConstraintError ||
+        mapped instanceof DatabaseConflictError ||
+        rawCode === 'P2002' ||
+        rawCode === '23505'
+      ) {
         statusCode = HttpStatus.CONFLICT;
         errorCode = AppErrorCode.RESOURCE_CONFLICT;
         message = mapped.message;

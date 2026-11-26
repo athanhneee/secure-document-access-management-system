@@ -28,6 +28,10 @@ import { AccessGrantAuditService } from './access-grant-audit.service.js';
 import { toGrantDetail, type GrantDetail, type GrantListResult } from './access-grants.types.js';
 import { verifyGrantValidForAccess } from './grant-enforcement.helper.js';
 import { executeRevokeGrantWorkflow } from './grant-revocation.helper.js';
+import {
+  buildReceivedRoleGrantOrBranches,
+  canUserReadRoleGrant,
+} from './grant-role-visibility.helper.js';
 import { executeCreateOrExtendGrantTx } from './grant-transaction.helper.js';
 import { validateCreateGrantPreconditions } from './grant-validation.helper.js';
 
@@ -82,9 +86,10 @@ export class AccessGrantsService {
     input: CreateAccessGrantInput,
     principal: AuthPrincipal,
     context: RequestContext,
+    options?: { decisionNote?: string | null | undefined },
   ): Promise<GrantDetail> {
     const now = new Date();
-    const { validFrom, validUntil, maxMs, documentTitle, documentCode } =
+    const { validFrom, validUntil, maxMs, retentionUntilIso, documentTitle, documentCode } =
       await validateCreateGrantPreconditions({
         input,
         principal,
@@ -107,6 +112,8 @@ export class AccessGrantsService {
         validUntil,
         maxMs,
         maxDurationDays: this.maxDurationDays,
+        retentionUntilIso,
+        decisionNote: options?.decisionNote,
         database: this.database,
         audit: this.audit,
       });
@@ -245,7 +252,20 @@ export class AccessGrantsService {
     const isOwner = grant.documents.owner_id === principal.userId;
     const isPrincipal =
       grant.principal_type === 'USER' && grant.principal_user_id === principal.userId;
-    if (!isOwner && !isPrincipal) {
+    const isRoleHolder =
+      !isOwner &&
+      !isPrincipal &&
+      grant.principal_type === 'ROLE' &&
+      grant.principal_role_id !== null
+        ? await canUserReadRoleGrant({
+            database: this.database,
+            authorization: this.authorization,
+            userId: principal.userId,
+            roleId: grant.principal_role_id,
+            docDepartmentId: grant.documents.department_id,
+          })
+        : false;
+    if (!isOwner && !isPrincipal && !isRoleHolder) {
       throw new NotFoundException({
         errorCode: AppErrorCode.GRANT_NOT_FOUND,
         message: 'Access grant was not found.',
@@ -256,7 +276,7 @@ export class AccessGrantsService {
   }
 
   /**
-   * Algorithm / Thuật toán: Phân Trang Đọc Trước N+1 Theo Phạm Vi Quyền Nhìn Thấy (`owned` | `received` | `all`) Chống BOLA.
+   * Algorithm / Thuật toán: Phân Trang Đọc Trước N+1 Theo Phạm Vi Quyền Nhìn Thấy (`owned` | `received` | `all`) Chống BOLA & Đối Chiếu Phạm Vi Vai Trò.
    */
   async listGrants(
     input: ListAccessGrantsInput,
@@ -275,7 +295,7 @@ export class AccessGrantsService {
     if (input.documentId) {
       const doc = await this.database.document.findUnique({
         where: { id: input.documentId },
-        select: { owner_id: true, status: true },
+        select: { owner_id: true, department_id: true, status: true },
       });
       if (!doc || doc.status === 'DELETED') {
         return { data: [], page: input.page, pageSize: input.pageSize, hasMore: false };
@@ -289,9 +309,22 @@ export class AccessGrantsService {
         // Loại bỏ bản ghi cấp quyền kỹ thuật tự sinh cho chính chủ sở hữu (pep-clearance.helper) khỏi danh sách quyền đã cấp.
         where['NOT'] = { principal_type: 'USER', principal_user_id: principal.userId };
       } else if (scope === 'received' || !isOwner) {
+        const roleBranches = await buildReceivedRoleGrantOrBranches({
+          database: this.database,
+          authorization: this.authorization,
+          userId: principal.userId,
+          documentScope: { documentId: input.documentId, departmentId: doc.department_id },
+        });
         where['document_id'] = input.documentId;
-        where['principal_type'] = 'USER';
-        where['principal_user_id'] = principal.userId;
+        if (roleBranches.length > 0) {
+          where['OR'] = [
+            { principal_type: 'USER', principal_user_id: principal.userId },
+            ...roleBranches,
+          ];
+        } else {
+          where['principal_type'] = 'USER';
+          where['principal_user_id'] = principal.userId;
+        }
       } else {
         where['document_id'] = input.documentId;
       }
@@ -300,10 +333,31 @@ export class AccessGrantsService {
       // Loại bỏ bản ghi cấp quyền kỹ thuật tự sinh cho chính chủ sở hữu khỏi tab "Quyền truy cập đã cấp".
       where['NOT'] = { principal_type: 'USER', principal_user_id: principal.userId };
     } else if (scope === 'received') {
-      where['principal_type'] = 'USER';
-      where['principal_user_id'] = principal.userId;
-      where['documents'] = { status: { not: 'DELETED' } };
+      const roleBranches = await buildReceivedRoleGrantOrBranches({
+        database: this.database,
+        authorization: this.authorization,
+        userId: principal.userId,
+      });
+      if (roleBranches.length > 0) {
+        where['OR'] = [
+          {
+            principal_type: 'USER',
+            principal_user_id: principal.userId,
+            documents: { status: { not: 'DELETED' } },
+          },
+          ...roleBranches,
+        ];
+      } else {
+        where['principal_type'] = 'USER';
+        where['principal_user_id'] = principal.userId;
+        where['documents'] = { status: { not: 'DELETED' } };
+      }
     } else {
+      const roleBranches = await buildReceivedRoleGrantOrBranches({
+        database: this.database,
+        authorization: this.authorization,
+        userId: principal.userId,
+      });
       where['OR'] = [
         { documents: { owner_id: principal.userId, status: { not: 'DELETED' } } },
         {
@@ -311,6 +365,7 @@ export class AccessGrantsService {
           principal_user_id: principal.userId,
           documents: { status: { not: 'DELETED' } },
         },
+        ...roleBranches,
       ];
     }
 
@@ -365,6 +420,7 @@ export class AccessGrantsService {
       requestedAction,
       now,
       expectedDocumentId,
+      this.authorization,
     );
   }
 }

@@ -47,7 +47,12 @@ export class RbacService {
       take: 200,
       include: { role_permissions: { include: { permissions: true } } },
     });
-    return { data: roles.map((role) => presentRoleDto(role)) };
+    const data = roles.map((role) => presentRoleDto(role));
+    const total =
+      roles.length >= 200 && typeof this.database.role.count === 'function'
+        ? await this.database.role.count()
+        : data.length;
+    return { data, total, truncated: total > data.length };
   }
 
   /**
@@ -185,16 +190,41 @@ export class RbacService {
         const before = await transaction.role.findUnique({ where: { id } });
         if (!before) throw new NotFoundException('Role not found.');
         if (before.is_system_role) throw new ForbiddenException('System roles cannot be disabled.');
+        if (!before.is_active) throw new ConflictException('Role is already disabled.');
         // CONFLICT-RESOLVED: Chạy `actorHoldsActiveRole` bên trong giao dịch `transaction` để giữ cô lập SERIALIZABLE chống tự nâng quyền/khóa vai trò (HIGH-02).
         if (await actorHoldsActiveRole(transaction, principal.userId, id)) {
           throw new ForbiddenException('Administrators cannot disable a role they hold.');
         }
+        const now = new Date();
         const changed = await transaction.role.updateMany({
           where: { id, version: expectedVersion },
-          data: { is_active: false, updated_at: new Date(), version: { increment: 1 } },
+          data: { is_active: false, updated_at: now, version: { increment: 1 } },
         });
         if (changed.count !== 1)
           throw new ConflictException('Role was changed by another request.');
+
+        // Thuật toán: Chấm dứt toàn bộ `AccessSession` đang `ACTIVE` mở qua `ROLE` `AccessGrant` của vai trò vừa vô hiệu hóa (HIGH-05 / BUG-047).
+        if (
+          typeof transaction.accessGrant?.findMany === 'function' &&
+          typeof transaction.accessSession?.updateMany === 'function'
+        ) {
+          const roleGrants = await transaction.accessGrant.findMany({
+            where: { principal_type: 'ROLE', principal_role_id: id },
+            select: { id: true },
+          });
+          const roleGrantIds = roleGrants.map((g) => g.id);
+          if (roleGrantIds.length > 0) {
+            await transaction.accessSession.updateMany({
+              where: { status: 'ACTIVE', access_grant_id: { in: roleGrantIds } },
+              data: {
+                status: 'TERMINATED',
+                ended_at: now,
+                terminated_reason: `Role ${before.code} disabled`,
+              },
+            });
+          }
+        }
+
         const after = await transaction.role.findUniqueOrThrow({ where: { id } });
         await this.audit.record(
           transaction,

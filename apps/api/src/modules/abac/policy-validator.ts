@@ -12,7 +12,7 @@ import type {
   PolicyValidationIssue,
   TimeWindow,
 } from './abac.types.js';
-import { isValidCidr } from './cidr.js';
+import { canonicalizeIpAddress, isValidCidr } from './cidr.js';
 import { parseStrictIsoTimestamp } from './policy-condition-matcher.js';
 import { compareExpectedValues, hasContradiction } from './policy-contradiction-solver.js';
 
@@ -74,7 +74,9 @@ export function validatePolicy(
       }
       let validGroup = true;
       for (const condition of group.conditions) {
-        const attribute = attributes[condition.attribute];
+        const attribute = Object.hasOwn(attributes, condition.attribute)
+          ? attributes[condition.attribute]
+          : undefined;
         if (!attribute) {
           issues.push({
             code: 'UNKNOWN_ATTRIBUTE',
@@ -106,7 +108,7 @@ export function validatePolicy(
           validGroup = false;
         }
       }
-      if (validGroup && !hasContradiction(group.conditions)) reachableGroup = true;
+      if (validGroup && !hasContradiction(group.conditions, attributes)) reachableGroup = true;
     }
     if (!reachableGroup) {
       issues.push({
@@ -182,6 +184,7 @@ function scalarMatches(
   if (type === 'NUMBER') return typeof value === 'number' && Number.isFinite(value);
   if (type === 'BOOLEAN') return typeof value === 'boolean';
   if (type === 'DATE') return typeof value === 'string' && parseStrictIsoTimestamp(value) !== null;
+  if (type === 'IP') return typeof value === 'string' && canonicalizeIpAddress(value) !== null;
   return typeof value === 'string';
 }
 

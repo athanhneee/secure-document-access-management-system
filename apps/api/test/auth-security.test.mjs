@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as OTPAuth from 'otpauth';
 import { AuthService } from '../dist/modules/auth/auth.service.js';
+import { DisableMfaSchema, MfaVerifySchema } from '../dist/modules/auth/auth.schemas.js';
 import { CsrfService } from '../dist/modules/auth/csrf.service.js';
 import { LoginRateLimitService } from '../dist/modules/auth/login-rate-limit.service.js';
 import { MfaService } from '../dist/modules/auth/mfa.service.js';
@@ -54,11 +55,32 @@ test('TOTP secrets are encrypted, prevent same-step replay, and recovery codes a
   const code = totp.generate();
   assert.equal(await service.verifyTotp(enrollment.encryptedSecret, code, '42'), true);
   assert.equal(await service.verifyTotp(enrollment.encryptedSecret, code, '42'), false);
-  const recovery = service.createRecoveryCodes(2);
-  assert.notEqual(recovery.hashes[0], recovery.plaintext[0]);
-  const remaining = service.consumeRecoveryCode(recovery.hashes, recovery.plaintext[0]);
-  assert.equal(remaining.length, 1);
-  assert.equal(service.consumeRecoveryCode(remaining, recovery.plaintext[0]), null);
+  const recovery = service.createRecoveryCodes(10);
+  assert.equal(recovery.plaintext.length, 10);
+  assert.equal(recovery.hashes.length, 10);
+  for (let i = 0; i < recovery.plaintext.length; i += 1) {
+    assert.match(recovery.plaintext[i], /^[A-Za-z0-9_-]{22}$/);
+    assert.notEqual(recovery.hashes[i], recovery.plaintext[i]);
+  }
+  const mixedCaseCode = recovery.plaintext.find((item) => /[a-z]/.test(item));
+  assert.ok(mixedCaseCode, 'Generated Base64URL recovery codes must include lowercase characters');
+  assert.equal(
+    service.consumeRecoveryCode(recovery.hashes, mixedCaseCode.toUpperCase()),
+    null,
+    'Uppercased Base64URL recovery code must fail without consuming the stored hash',
+  );
+  const remaining = service.consumeRecoveryCode(recovery.hashes, mixedCaseCode);
+  assert.equal(remaining.length, 9);
+  assert.equal(service.consumeRecoveryCode(remaining, mixedCaseCode), null);
+
+  const parsedVerify = MfaVerifySchema.parse({ recoveryCode: `  ${mixedCaseCode}  ` });
+  assert.equal(parsedVerify.recoveryCode, mixedCaseCode);
+  const parsedDisable = DisableMfaSchema.parse({
+    currentPassword: 'correct horse battery staple',
+    recoveryCode: `  ${mixedCaseCode}  `,
+  });
+  assert.equal(parsedDisable.recoveryCode, mixedCaseCode);
+  assert.equal(MfaVerifySchema.safeParse({ recoveryCode: ' '.repeat(22) }).success, false);
 });
 
 test('CSRF requires an allowed Origin and matching double-submit token', () => {

@@ -5,7 +5,12 @@
  * chữ ký thông điệp HMAC-SHA256 và cơ chế thử lại xung đột tuần tự hóa có trễ lũy tiến kèm nhiễu ngẫu nhiên.
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { buildAuditKeyRing, type AuditKeyRing } from '@sda/contracts';
+import {
+  buildAuditKeyRing,
+  resolvePrimaryAuditHmacKeyFromGetter,
+  type AuditHmacEnvKey,
+  type AuditKeyRing,
+} from '@sda/contracts';
 import { DatabaseConflictError, type Prisma } from '@sda/database';
 import type { AppConfigService } from '../../config/config.service.js';
 import type { RequestContext } from '../auth/auth.types.js';
@@ -17,48 +22,38 @@ const UUID_V1_TO_V5_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
- * Thuật toán: Đọc an toàn biến môi trường cấu hình khóa HMAC kiểm toán, trả `undefined` nếu chưa khai báo.
+ * Thuật toán: Đọc an toàn biến môi trường cấu hình khóa HMAC kiểm toán, trả `undefined` nếu chưa khai báo hoặc chỉ chứa khoảng trắng.
  */
 function safeConfigKey(
   config: AppConfigService,
-  key:
-    | 'AUDIT_INTEGRITY_KEY'
-    | 'DOCUMENT_AUDIT_HMAC_KEY'
-    | 'AUTH_AUDIT_HMAC_KEY'
-    | 'AUDIT_KEY_ROTATION_JSON',
+  key: AuditHmacEnvKey | 'AUDIT_KEY_ROTATION_JSON',
 ): string | undefined {
   try {
-    const val = config.get(key);
-    return typeof val === 'string' && val.length > 0 ? val : undefined;
+    const val = (config as unknown as { get: (k: string) => unknown }).get(key);
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
 }
 
 /**
- * Thuật toán: Phân giải thứ tự ưu tiên khóa gốc HMAC kiểm toán (Hierarchical Primary Key Resolution).
- * Tuyệt đối từ chối khóa mặc định trên cả môi trường `production` lẫn `staging`.
+ * Thuật toán: Phân giải thứ tự ưu tiên khóa gốc HMAC kiểm toán dùng chung 100% với `@sda/worker` (`BUG-065`).
+ * Thứ tự ưu tiên: `AUDIT_INTEGRITY_KEY` -> `DOCUMENT_AUDIT_HMAC_KEY` -> `AUTH_AUDIT_HMAC_KEY` -> `AUDIT_HMAC_KEY`.
+ * Tuyệt đối từ chối khóa mặc định/yếu trên cả môi trường `production` lẫn `staging`.
  */
 export function resolvePrimaryAuditHmacKey(config: AppConfigService): string {
-  const configured =
-    safeConfigKey(config, 'AUDIT_INTEGRITY_KEY') ||
-    safeConfigKey(config, 'DOCUMENT_AUDIT_HMAC_KEY') ||
-    safeConfigKey(config, 'AUTH_AUDIT_HMAC_KEY');
-  if (configured) return configured;
-
-  // CONFLICT-RESOLVED: Tuyệt đối từ chối khóa HMAC kiểm toán mặc định gắn cứng khi chạy ở môi trường Production/Staging (HIGH-09).
+  // CONFLICT-RESOLVED: Hợp nhất phân giải khóa gốc HMAC qua `@sda/contracts` để API và Worker không bao giờ lệch khóa khi biến trước rỗng ("") hoặc chỉ khai báo AUTH_AUDIT_HMAC_KEY / AUDIT_HMAC_KEY (BUG-065).
   let nodeEnv: string | undefined;
   try {
     nodeEnv = config.get('NODE_ENV');
   } catch {
     nodeEnv = process.env['NODE_ENV'];
   }
-  if (nodeEnv === 'production' || nodeEnv === 'staging') {
-    throw new Error(
-      'AUDIT_INTEGRITY_KEY (or DOCUMENT_AUDIT_HMAC_KEY / AUTH_AUDIT_HMAC_KEY) must be configured in production and staging.',
-    );
-  }
-  return 'local-only-audit-integrity-hmac-key-0000000000000000';
+  return resolvePrimaryAuditHmacKeyFromGetter((key) => safeConfigKey(config, key), nodeEnv);
 }
 
 /**

@@ -39,6 +39,7 @@ export interface DownloadTicketEntry {
   userId: bigint;
   principal: AuthPrincipal;
   issuedIp: string | null;
+  issuedUa?: string | null | undefined;
   createdAt: number;
   expiresAt: number;
 }
@@ -72,7 +73,8 @@ function assertSessionContextBinding(
 ): void {
   const boundIp = normalizeDeliveryClientIp(session.ip_address);
   const callerIp = normalizeDeliveryClientIp(context?.ip);
-  if (boundIp && callerIp && boundIp !== callerIp) {
+  // BUG-057: Kiểm tra một chiều fail-closed — khi phiên đã neo IP hoặc User-Agent thì yêu cầu bỏ trống header cũng bị từ chối tức thì.
+  if (boundIp && (!callerIp || boundIp !== callerIp)) {
     throw new ForbiddenException({
       errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
       message: 'Client IP address does not match the bound access session.',
@@ -80,7 +82,7 @@ function assertSessionContextBinding(
   }
   const boundUa = session.user_agent?.trim() || null;
   const callerUa = context?.userAgent?.trim() || null;
-  if (boundUa && callerUa && boundUa !== callerUa) {
+  if (boundUa && (!callerUa || boundUa !== callerUa)) {
     throw new ForbiddenException({
       errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
       message: 'Client User-Agent does not match the bound access session.',
@@ -145,7 +147,7 @@ export async function loadValidatedDeliverySession(params: {
       message: 'Policy enforcement point is unavailable; failing closed.',
     });
   }
-  await pep.enforceSessionPolicy(
+  const sessionPolicy = await pep.enforceSessionPolicy(
     session,
     requireDownloadPolicy ? 'DOWNLOAD' : 'VIEW',
     principal,
@@ -153,7 +155,7 @@ export async function loadValidatedDeliverySession(params: {
     now,
   );
 
-  return session;
+  return { session, sessionPolicy };
 }
 
 /**
@@ -252,6 +254,10 @@ export async function issueShortLivedDownloadTicket(params: {
         : {}),
     },
     issuedIp: normalizeDeliveryClientIp(context?.ip),
+    issuedUa:
+      (session as { user_agent?: string | null }).user_agent?.trim() ||
+      context?.userAgent?.trim() ||
+      null,
     createdAt: now,
     expiresAt: expiresAtMs,
   };

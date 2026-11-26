@@ -1,9 +1,16 @@
 /**
  * Module: Scoped Prisma Export `where` Clause Builders
- * Thuật toán: Biên Dịch Bộ Lọc Phạm Vi Cây Phòng Ban (`effectiveDepartmentIds`) Sang Điều Kiện Truy Vấn Prisma An Toàn Kiểu.
+ * Thuật toán: Ủy quyền trực tiếp sang bộ biên dịch `where` dùng chung `@sda/contracts`
+ * bảo đảm 100% đồng nhất truy vấn giữa `@sda/api` và `@sda/worker`.
  */
 import type { Prisma } from '@sda/database';
-import type { NormalizedExportFilters } from './export-filter-scope.helper.js';
+import {
+  buildAuditLogExportWhere as buildSharedAuditLogExportWhere,
+  buildIncidentReportExportWhere as buildSharedIncidentReportExportWhere,
+  buildSecurityAlertExportWhere as buildSharedSecurityAlertExportWhere,
+  buildSystemHealthExportWhere as buildSharedSystemHealthExportWhere,
+  type NormalizedExportFilters,
+} from '@sda/contracts';
 
 /**
  * Algorithm: Department-Scoped Audit Log Export Filter Builder
@@ -11,30 +18,7 @@ import type { NormalizedExportFilters } from './export-filter-scope.helper.js';
 export function buildAuditLogExportWhere(
   filters: NormalizedExportFilters,
 ): Prisma.AuditLogWhereInput {
-  const where: Prisma.AuditLogWhereInput = {};
-  if (filters.fromDate || filters.toDate) {
-    where.occurred_at = {
-      ...(filters.fromDate ? { gte: filters.fromDate } : {}),
-      ...(filters.toDate ? { lte: filters.toDate } : {}),
-    };
-  }
-  if (filters.actorUserId !== null) where.actor_user_id = filters.actorUserId;
-  if (filters.actorUsername) {
-    where.actor_username = { contains: filters.actorUsername, mode: 'insensitive' };
-  }
-  if (filters.documentId) where.document_id = filters.documentId;
-  if (filters.action) {
-    where.action = { contains: filters.action, mode: 'insensitive' };
-  }
-  if (filters.outcome) where.outcome = filters.outcome;
-  if (filters.chainPartition) where.chain_partition = filters.chainPartition;
-  if (filters.effectiveDepartmentIds !== null) {
-    where.OR = [
-      { users: { department_id: { in: filters.effectiveDepartmentIds } } },
-      { documents: { department_id: { in: filters.effectiveDepartmentIds } } },
-    ];
-  }
-  return where;
+  return buildSharedAuditLogExportWhere(filters) as Prisma.AuditLogWhereInput;
 }
 
 /**
@@ -43,36 +27,7 @@ export function buildAuditLogExportWhere(
 export function buildSecurityAlertExportWhere(
   filters: NormalizedExportFilters,
 ): Prisma.SecurityAlertWhereInput {
-  const where: Prisma.SecurityAlertWhereInput = {};
-  if (filters.fromDate || filters.toDate) {
-    where.detected_at = {
-      ...(filters.fromDate ? { gte: filters.fromDate } : {}),
-      ...(filters.toDate ? { lte: filters.toDate } : {}),
-    };
-  }
-  if (filters.actorUserId !== null) where.detected_user_id = filters.actorUserId;
-  if (filters.documentId) where.document_id = filters.documentId;
-  if (filters.severity) where.severity = filters.severity;
-  if (
-    filters.status === 'OPEN' ||
-    filters.status === 'INVESTIGATING' ||
-    filters.status === 'RESOLVED' ||
-    filters.status === 'FALSE_POSITIVE'
-  ) {
-    where.status = filters.status;
-  }
-  if (filters.alertType) where.alert_type = filters.alertType;
-  if (filters.effectiveDepartmentIds !== null) {
-    where.OR = [
-      {
-        users_security_alerts_detected_user_idTousers: {
-          department_id: { in: filters.effectiveDepartmentIds },
-        },
-      },
-      { documents: { department_id: { in: filters.effectiveDepartmentIds } } },
-    ];
-  }
-  return where;
+  return buildSharedSecurityAlertExportWhere(filters) as Prisma.SecurityAlertWhereInput;
 }
 
 /**
@@ -81,40 +36,7 @@ export function buildSecurityAlertExportWhere(
 export function buildIncidentReportExportWhere(
   filters: NormalizedExportFilters,
 ): Prisma.IncidentReportWhereInput {
-  const where: Prisma.IncidentReportWhereInput = {};
-  if (filters.fromDate || filters.toDate) {
-    where.created_at = {
-      ...(filters.fromDate ? { gte: filters.fromDate } : {}),
-      ...(filters.toDate ? { lte: filters.toDate } : {}),
-    };
-  }
-  if (filters.actorUserId !== null) where.prepared_by = filters.actorUserId;
-  if (filters.incidentCode) where.incident_code = filters.incidentCode;
-  if (filters.status === 'DRAFT' || filters.status === 'SUBMITTED' || filters.status === 'CLOSED') {
-    where.status = filters.status;
-  }
-  if (filters.effectiveDepartmentIds !== null) {
-    where.OR = [
-      {
-        users_incident_reports_prepared_byTousers: {
-          department_id: { in: filters.effectiveDepartmentIds },
-        },
-      },
-      {
-        security_alerts: {
-          OR: [
-            { documents: { department_id: { in: filters.effectiveDepartmentIds } } },
-            {
-              users_security_alerts_detected_user_idTousers: {
-                department_id: { in: filters.effectiveDepartmentIds },
-              },
-            },
-          ],
-        },
-      },
-    ];
-  }
-  return where;
+  return buildSharedIncidentReportExportWhere(filters) as Prisma.IncidentReportWhereInput;
 }
 
 /**
@@ -123,14 +45,5 @@ export function buildIncidentReportExportWhere(
 export function buildSystemHealthExportWhere(
   filters: NormalizedExportFilters,
 ): Prisma.SystemHealthSnapshotWhereInput {
-  const where: Prisma.SystemHealthSnapshotWhereInput = {};
-  if (filters.fromDate || filters.toDate) {
-    where.captured_at = {
-      ...(filters.fromDate ? { gte: filters.fromDate } : {}),
-      ...(filters.toDate ? { lte: filters.toDate } : {}),
-    };
-  }
-  if (filters.serviceName) where.service_name = filters.serviceName;
-  if (filters.status) where.status = filters.status;
-  return where;
+  return buildSharedSystemHealthExportWhere(filters) as Prisma.SystemHealthSnapshotWhereInput;
 }

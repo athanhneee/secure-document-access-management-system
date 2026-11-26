@@ -211,28 +211,43 @@ export async function assertSerializableRetryAndBatchedRetention() {
 
   let permCalls = 0;
   let createManyCount = 0;
+  let capturedWhere = null;
   const expiredAt = new Date(Date.now() - 86_400_000);
-  await executeCheckRetentionWarnings({
+  const userScopedRes = await executeCheckRetentionWarnings({
     database: {
       document: {
-        findMany: async () => [
-          {
-            id: randomUUID(),
-            document_code: 'D1',
-            title: 'T1',
-            owner_id: 2n,
-            department_id: 50n,
-            retention_until: expiredAt,
-          },
-          {
-            id: randomUUID(),
-            document_code: 'D2',
-            title: 'T2',
-            owner_id: 3n,
-            department_id: 50n,
-            retention_until: expiredAt,
-          },
-        ],
+        findMany: async ({ where }) => {
+          capturedWhere = where;
+          return [
+            {
+              id: randomUUID(),
+              document_code: 'D1',
+              title: 'T1',
+              status: 'ACTIVE',
+              owner_id: 99n,
+              department_id: 50n,
+              retention_until: expiredAt,
+            },
+            {
+              id: randomUUID(),
+              document_code: 'D2',
+              title: 'T2',
+              status: 'ARCHIVED',
+              owner_id: 99n,
+              department_id: 50n,
+              retention_until: expiredAt,
+            },
+            {
+              id: randomUUID(),
+              document_code: 'D3-FOREIGN',
+              title: 'Foreign Owner Doc',
+              status: 'ACTIVE',
+              owner_id: 3n,
+              department_id: 50n,
+              retention_until: expiredAt,
+            },
+          ];
+        },
       },
       notification: { createMany: async ({ data }) => (createManyCount += data.length) },
       securityAlert: { createMany: async () => {} },
@@ -248,6 +263,56 @@ export async function assertSerializableRetryAndBatchedRetention() {
       mfa: true,
     },
   });
-  assert.equal(permCalls, 1, 'Duplicate department RBAC checks must be deduplicated');
+  assert.equal(capturedWhere?.owner_id, 99n, 'BUG-056: User-scoped scan must filter by owner_id');
+  assert.equal(
+    permCalls,
+    0,
+    'BUG-056: User-scoped scan must not grant peer department cross-owner access',
+  );
+  assert.equal(
+    userScopedRes.warningCount,
+    2,
+    'Only caller-owned ACTIVE/ARCHIVED docs are returned',
+  );
   assert.equal(createManyCount, 2, 'Notifications must be batch-inserted via createMany');
+
+  // System scan (no principal) must still batch-notify all owners in a single createMany call
+  let systemBatchCount = 0;
+  await executeCheckRetentionWarnings({
+    database: {
+      document: {
+        findMany: async () => [
+          {
+            id: randomUUID(),
+            document_code: 'SYS-1',
+            title: 'Sys 1',
+            status: 'ACTIVE',
+            owner_id: 2n,
+            department_id: 50n,
+            retention_until: expiredAt,
+          },
+          {
+            id: randomUUID(),
+            document_code: 'SYS-2',
+            title: 'Sys 2',
+            status: 'ACTIVE',
+            owner_id: 3n,
+            department_id: 50n,
+            retention_until: expiredAt,
+          },
+        ],
+      },
+      notification: { createMany: async ({ data }) => (systemBatchCount += data.length) },
+      securityAlert: { createMany: async () => {} },
+    },
+    authorization: { hasPermission: async () => true },
+    audit: { record: async () => {} },
+    daysThreshold: 30,
+    systemScan: true,
+  });
+  assert.equal(
+    systemBatchCount,
+    2,
+    'System retention scan must batch-insert across owners via createMany',
+  );
 }

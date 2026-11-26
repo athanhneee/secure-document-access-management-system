@@ -3,7 +3,9 @@
  * Thuật toán: Truy Vấn Danh Sách Quyền Cấp Phát (`USER` & `ROLE`) Kèm Trần Độ Mật Bell-LaPadula & Ghép Bảng Băm Quyền Hạn.
  */
 import { type getDatabaseClient, Prisma } from '@sda/database';
-import type { MyGrantedDocumentsInput } from '@sda/contracts';
+import { resolveClassificationDefaultViewDays, type MyGrantedDocumentsInput } from '@sda/contracts';
+import { formatRetentionDateIso } from '../access-grants/grant-retention-bounds.helper.js';
+import { resolveScopedRoleAccessForSql } from '../access-grants/grant-role-visibility.helper.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import {
@@ -31,8 +33,11 @@ export async function executeGrantedDocumentsQuery(params: {
   const sortColumn = resolveGrantSortColumn(input.sort);
   const orderDir = input.order === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
 
-  const userRoles = await authorization.effectiveGrants(userId);
-  const roleIds = [...new Set(userRoles.map((g) => g.roleId))];
+  const { globalRoleIds, scopedRoleDepts } = await resolveScopedRoleAccessForSql({
+    database,
+    authorization,
+    userId,
+  });
   const userClearanceRank = await queryUserClearanceRank(database, userId);
   const effectiveClearanceRank = userClearanceRank ?? 0;
   const grantClearanceFilter = Prisma.sql`AND (cl."rank" IS NULL OR cl."rank" <= ${effectiveClearanceRank})`;
@@ -40,9 +45,15 @@ export async function executeGrantedDocumentsQuery(params: {
   const grantVisibility: Prisma.Sql[] = [
     Prisma.sql`(ag.principal_type = 'USER' AND ag.principal_user_id = ${userId})`,
   ];
-  if (roleIds.length > 0) {
+  if (globalRoleIds.length > 0) {
     grantVisibility.push(
-      Prisma.sql`(ag.principal_type = 'ROLE' AND ag.principal_role_id = ANY(${roleIds}))`,
+      Prisma.sql`(ag.principal_type = 'ROLE' AND ag.principal_role_id = ANY(${globalRoleIds}))`,
+    );
+  }
+  for (const entry of scopedRoleDepts) {
+    if (entry.departmentIds.length === 0) continue;
+    grantVisibility.push(
+      Prisma.sql`(ag.principal_type = 'ROLE' AND ag.principal_role_id = ${entry.roleId} AND d."department_id" = ANY(${entry.departmentIds}))`,
     );
   }
 
@@ -59,9 +70,11 @@ export async function executeGrantedDocumentsQuery(params: {
       doc_code: string;
       doc_title: string;
       doc_status: string;
+      doc_retention_until?: Date | string | null;
       cl_name: string | null;
       cl_code?: string | null;
       cl_allow_download?: boolean | null;
+      cl_default_view_days?: number | null;
     }>
   >(
     Prisma.sql`
@@ -71,7 +84,9 @@ export async function executeGrantedDocumentsQuery(params: {
         ag."valid_from", ag."valid_until", ag."granted_at",
         d."id"::text AS "doc_id", d."document_code" AS "doc_code",
         d."title" AS "doc_title", d."status"::text AS "doc_status",
-        cl."name" AS "cl_name", cl."code" AS "cl_code", cl."allow_download" AS "cl_allow_download"
+        d."retention_until" AS "doc_retention_until",
+        cl."name" AS "cl_name", cl."code" AS "cl_code", cl."allow_download" AS "cl_allow_download",
+        cl."default_view_days" AS "cl_default_view_days"
       FROM access_grants ag
       JOIN documents d ON d.id = ag.document_id
       LEFT JOIN roles r ON r.id = ag.principal_role_id
@@ -129,6 +144,8 @@ export async function executeGrantedDocumentsQuery(params: {
       classificationLevelName: row.cl_name,
       classificationLevelCode: row.cl_code ?? null,
       allowDownload: resolveFailClosedAllowDownload(row.cl_allow_download, row.cl_code),
+      retentionUntil: formatRetentionDateIso(row.doc_retention_until),
+      defaultViewDays: resolveClassificationDefaultViewDays(row.cl_code, row.cl_default_view_days),
     },
   }));
 

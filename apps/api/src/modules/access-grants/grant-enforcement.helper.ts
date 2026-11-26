@@ -5,7 +5,9 @@
 import { ForbiddenException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
+import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { fetchUserClearanceRank } from './grant-pip.helper.js';
+import { canUserReadRoleGrant } from './grant-role-visibility.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -15,7 +17,7 @@ type PrismaClient = ReturnType<typeof getDatabaseClient>;
  *   2. Kiểm tra khoảng nửa mở `[valid_from, valid_until)`: từ chối nếu `now < valid_from` hoặc `now >= valid_until`.
  *   3. Kiểm tra quyền tường minh (`VIEW` không suy diễn sang `DOWNLOAD`) và cờ `allow_download` của mức phân loại.
  *   4. Thực thi bất biến độ mật Bell-LaPadula (`userRank >= documentRank`) cho từng cá nhân (kể cả qua `ROLE` grant),
- *      xác minh tư cách thành viên role đang hoạt động hoặc khớp người nhận trực tiếp chống IDOR.
+ *      xác minh tư cách thành viên role đang hoạt động có phạm vi phòng ban `scope_department_id` bao phủ `documents.department_id` hoặc khớp người nhận trực tiếp chống IDOR.
  */
 export async function verifyGrantValidForAccess(
   database: PrismaClient,
@@ -24,8 +26,10 @@ export async function verifyGrantValidForAccess(
   requestedAction: 'VIEW' | 'DOWNLOAD',
   now: Date = new Date(),
   expectedDocumentId?: string,
+  authorization?: AuthorizationService,
 ): Promise<{
   grant: { id: string; document_id: string; principal_type: string };
+  permissions: string[];
   documentRank: number;
 }> {
   const grant = await database.accessGrant.findUnique({
@@ -124,19 +128,19 @@ export async function verifyGrantValidForAccess(
   }
 
   if (grant.principal_type === 'ROLE' && grant.principal_role_id) {
-    const hasRole = await database.userRole.findFirst({
-      where: {
-        user_id: userId,
-        role_id: grant.principal_role_id,
-        valid_from: { lte: now },
-        OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-        roles: { is_active: true },
-      },
+    const hasScopedRole = await canUserReadRoleGrant({
+      database,
+      authorization,
+      userId,
+      roleId: grant.principal_role_id,
+      docDepartmentId: grant.documents.department_id,
+      now,
     });
-    if (!hasRole) {
+    if (!hasScopedRole) {
       throw new ForbiddenException({
         errorCode: AppErrorCode.DOCUMENT_ACCESS_DENIED,
-        message: 'User does not currently hold the required role for this grant.',
+        message:
+          'User does not currently hold the required role within the document department scope.',
       });
     }
   }
@@ -165,6 +169,7 @@ export async function verifyGrantValidForAccess(
       document_id: grant.document_id,
       principal_type: grant.principal_type,
     },
+    permissions: grantedPerms,
     documentRank,
   };
 }

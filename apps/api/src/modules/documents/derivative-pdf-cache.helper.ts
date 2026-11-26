@@ -28,11 +28,22 @@ export interface WatermarkConfigEpochPayload {
   configId?: string | undefined;
 }
 
+export interface DerivativePdfClassificationContext {
+  classificationLevelId: string | null;
+  classificationName: string | null;
+  requireWatermark: boolean;
+  documentCode: string | null;
+}
+
 export interface CachedDerivativePdfMetadata {
   pageCount: number;
   watermarkToken?: string | undefined;
   outputSha256Hash: string;
   configEpoch?: string | null | undefined;
+  classificationLevelId?: string | null | undefined;
+  classificationName?: string | null | undefined;
+  requireWatermark?: boolean | undefined;
+  documentCode?: string | null | undefined;
 }
 
 export interface LoadedDerivativeSessionPdf extends CachedDerivativePdfMetadata {
@@ -151,8 +162,10 @@ export async function tryLoadCachedSessionPdf(params: {
   config: AppConfigService | undefined;
   accessSessionId: string;
   documentVersionId: bigint | string | number;
+  expectedContext?: DerivativePdfClassificationContext | undefined;
 }): Promise<LoadedDerivativeSessionPdf | null> {
-  const { storage, stateStore, config, accessSessionId, documentVersionId } = params;
+  const { storage, stateStore, config, accessSessionId, documentVersionId, expectedContext } =
+    params;
   if (
     !stateStore ||
     typeof storage?.derivativesBucket !== 'string' ||
@@ -163,6 +176,20 @@ export async function tryLoadCachedSessionPdf(params: {
   }
 
   const metaId = buildDerivativeMetaId(accessSessionId, documentVersionId);
+  const objectKey = buildDerivativePdfStorageKey(accessSessionId, documentVersionId);
+  const evictStaleDerivative = async (): Promise<null> => {
+    await stateStore.deleteKey(DERIVATIVE_META_NAMESPACE, metaId);
+    const maybeDeletable = storage as ObjectStorageService & {
+      deleteObject?: (bucket: string, key: string) => Promise<unknown>;
+    };
+    if (typeof maybeDeletable.deleteObject === 'function') {
+      await maybeDeletable
+        .deleteObject(storage.derivativesBucket, objectKey)
+        .catch(() => undefined);
+    }
+    return null;
+  };
+
   const [meta, currentEpoch] = await Promise.all([
     stateStore.getJson<CachedDerivativePdfMetadata>(DERIVATIVE_META_NAMESPACE, metaId),
     stateStore
@@ -176,12 +203,24 @@ export async function tryLoadCachedSessionPdf(params: {
 
   // CONFLICT-RESOLVED: Tự động vô hiệu hóa bản đệm xem trước 30 phút nếu quản trị viên vừa cập nhật cấu hình watermark, đảm bảo trang tiếp theo áp dụng ngay cấu hình mới.
   if (currentEpoch?.updatedAt && currentEpoch.updatedAt !== (meta.configEpoch ?? null)) {
-    await stateStore.deleteKey(DERIVATIVE_META_NAMESPACE, metaId);
-    return null;
+    return evictStaleDerivative();
+  }
+
+  // BUG-053: Đối chiếu bắt buộc (classificationLevelId, classificationName, requireWatermark, documentCode) để vô hiệu hóa tức thì bản PDF phái sinh cũ khi nâng mức mật hoặc đổi mã tài liệu.
+  if (expectedContext) {
+    const missingRequiredWatermark =
+      expectedContext.requireWatermark === true && !meta.watermarkToken;
+    const contextMismatch =
+      (meta.classificationLevelId ?? null) !== expectedContext.classificationLevelId ||
+      (meta.classificationName ?? null) !== expectedContext.classificationName ||
+      meta.requireWatermark !== expectedContext.requireWatermark ||
+      (meta.documentCode ?? null) !== expectedContext.documentCode;
+    if (missingRequiredWatermark || contextMismatch) {
+      return evictStaleDerivative();
+    }
   }
 
   try {
-    const objectKey = buildDerivativePdfStorageKey(accessSessionId, documentVersionId);
     const encryptedBytes = await storage.getObject(storage.derivativesBucket, objectKey);
     const pdfBuffer = decryptDerivativeSessionPdf(
       encryptedBytes,
@@ -194,10 +233,13 @@ export async function tryLoadCachedSessionPdf(params: {
       pageCount: meta.pageCount,
       watermarkToken: meta.watermarkToken,
       outputSha256Hash: meta.outputSha256Hash,
+      classificationLevelId: meta.classificationLevelId,
+      classificationName: meta.classificationName,
+      requireWatermark: meta.requireWatermark,
+      documentCode: meta.documentCode,
     };
   } catch {
-    await stateStore.deleteKey(DERIVATIVE_META_NAMESPACE, metaId);
-    return null;
+    return evictStaleDerivative();
   }
 }
 
@@ -214,6 +256,7 @@ export async function storeCachedSessionPdf(params: {
   pageCount: number;
   watermarkToken?: string | undefined;
   outputSha256Hash: string;
+  classificationContext?: DerivativePdfClassificationContext | undefined;
 }): Promise<void> {
   const {
     storage,
@@ -225,6 +268,7 @@ export async function storeCachedSessionPdf(params: {
     pageCount,
     watermarkToken,
     outputSha256Hash,
+    classificationContext,
   } = params;
 
   if (
@@ -261,6 +305,14 @@ export async function storeCachedSessionPdf(params: {
       ...(watermarkToken !== undefined ? { watermarkToken } : {}),
       outputSha256Hash,
       configEpoch: currentEpoch?.updatedAt ?? null,
+      ...(classificationContext
+        ? {
+            classificationLevelId: classificationContext.classificationLevelId,
+            classificationName: classificationContext.classificationName,
+            requireWatermark: classificationContext.requireWatermark,
+            documentCode: classificationContext.documentCode,
+          }
+        : {}),
     };
     await stateStore.putEphemeral(
       DERIVATIVE_META_NAMESPACE,

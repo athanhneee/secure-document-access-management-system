@@ -29,7 +29,10 @@ import {
   type IngestDocumentOutput,
 } from './ingestion-validation.helper.js';
 import { stageAndScanQuarantineUpload } from './ingestion-quarantine.helper.js';
-import { persistCleanIngestedVersion } from './ingestion-version.helper.js';
+import {
+  persistCleanIngestedVersionWithStatus,
+  type PersistedIngestedVersionResult,
+} from './ingestion-version.helper.js';
 
 export type { IngestDocumentInput, IngestDocumentOutput } from './ingestion-validation.helper.js';
 
@@ -60,6 +63,10 @@ export class DocumentIngestionService {
     }
   }
 
+  get maxUploadFileSizeBytes(): number {
+    return this.maxFileSize;
+  }
+
   /**
    * Thuật toán: Đường ống tiếp nhận tài liệu đa chặng có bù trừ Saga và dọn tệp tạm `sda-ing-*` bắt buộc trong `finally`.
    */
@@ -78,7 +85,19 @@ export class DocumentIngestionService {
       try {
         validatedInfo = this.fileValidation.preValidate(input.rawFilename, input.declaredMime);
       } catch (err) {
+        input.fileStream.destroy();
         await this.compensation.compensate(session);
+        await this.audit.record(
+          {
+            action: 'DOCUMENT_UPLOAD_FAILED',
+            outcome: 'FAILED',
+            actorUserId: input.principal.userId,
+            actorUsername: input.principal.username,
+            documentId: targetDocId,
+            reasonCode: AppErrorCode.INVALID_FILE_TYPE,
+          },
+          input.context,
+        );
         throw err;
       }
 
@@ -182,13 +201,16 @@ export class DocumentIngestionService {
           key: documentStorageKey,
         });
       } catch (err: unknown) {
-        await this.compensation.compensate(session);
+        await failUpload('ENCRYPTION_OR_STORAGE_FAILED');
         throw err;
       }
 
-      let finalVersionNo = 1;
+      let persisted: PersistedIngestedVersionResult = {
+        versionNo: 1,
+        documentStatus: 'DRAFT',
+      };
       try {
-        finalVersionNo = await persistCleanIngestedVersion({
+        persisted = await persistCleanIngestedVersionWithStatus({
           database: this.database,
           redlock: this.redlock,
           authorization: this.authorization,
@@ -204,6 +226,7 @@ export class DocumentIngestionService {
         await failUpload('DATABASE_TRANSACTION_FAILED');
         throw err;
       }
+      const finalVersionNo = persisted.versionNo;
 
       session.storageKeysToDelete = session.storageKeysToDelete.filter(
         (item) => item.key !== documentStorageKey,
@@ -225,6 +248,7 @@ export class DocumentIngestionService {
             fileSizeBytes: spoolResult.totalBytes,
             sha256Hash: spoolResult.sha256Hash,
             scanStatus: 'CLEAN',
+            documentStatus: persisted.documentStatus,
           },
         },
         input.context,
@@ -238,9 +262,12 @@ export class DocumentIngestionService {
         fileSizeBytes: spoolResult.totalBytes,
         sha256Hash: spoolResult.sha256Hash,
         scanStatus: 'CLEAN',
-        status: 'DRAFT',
+        status: persisted.documentStatus,
       };
     } finally {
+      if (!input.fileStream.destroyed && !input.fileStream.readableEnded) {
+        input.fileStream.destroy();
+      }
       await fsp.unlink(spoolFilePath).catch(() => {});
       await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }

@@ -180,7 +180,11 @@ export function createInMemoryDatabase(initialState = {}) {
 
 export function createDocumentsTestService(
   initialState = {},
-  permissions = [{ userId: 1n, resource: 'DOCUMENT', action: 'UPLOAD', scopeDepartmentId: 100n }],
+  permissions = [
+    { userId: 1n, resource: 'DOCUMENT', action: 'UPLOAD', scopeDepartmentId: 100n },
+    { userId: 1n, resource: 'DOCUMENT', action: 'MANAGE', scopeDepartmentId: 100n },
+    { userId: 2n, resource: 'DOCUMENT', action: 'MANAGE', scopeDepartmentId: 100n },
+  ],
 ) {
   const stores = createInMemoryDatabase(initialState);
   const mockAudit = createMockAudit();

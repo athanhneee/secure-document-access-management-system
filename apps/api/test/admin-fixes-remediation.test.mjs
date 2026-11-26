@@ -104,17 +104,17 @@ test('UsersService.reactivate restores DISABLED account while lock/disable emit 
   assert.equal(closed, true);
   assert.equal(realtime.activeConnectionCount(), 0);
 
-  // Disable account -> unlock must still reject (MED-07), reactivate must succeed
+  // Disable account -> unlock must still reject (MED-07 / BUG-105 409 state conflict), reactivate must succeed
   const disabled = await service.disable(adminPrincipal, 2n, 1, ctx);
   assert.equal(disabled.status, 'DISABLED');
-  await assert.rejects(() => service.unlock(adminPrincipal, 2n, 2, ctx), BadRequestException);
+  await assert.rejects(() => service.unlock(adminPrincipal, 2n, 2, ctx), ConflictException);
 
   const reactivated = await service.reactivate(adminPrincipal, 2n, 2, ctx);
   assert.equal(reactivated.status, 'ACTIVE');
   assert.equal(audits.at(-1).action, 'USER_REACTIVATED');
 
   // Reactivating an already ACTIVE account is rejected
-  await assert.rejects(() => service.reactivate(adminPrincipal, 2n, 3, ctx), BadRequestException);
+  await assert.rejects(() => service.reactivate(adminPrincipal, 2n, 3, ctx), ConflictException);
 });
 
 test('DepartmentsService.activate re-enables inactive department, blocks inactive parent, and enforces CAS', async () => {

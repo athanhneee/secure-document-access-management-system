@@ -4,7 +4,7 @@
  *   optimistic CAS mutations, and cascading session revocation on account lock/disable.
  */
 import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { getDatabaseClient } from '@sda/database';
+import { getDatabaseClient, type Prisma } from '@sda/database';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { PasswordService } from '../auth/password.service.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
@@ -32,6 +32,14 @@ import {
 } from './users-mutations.helper.js';
 
 export type { CreateUserInput, UpdateUserClearanceInput, UpdateUserInput };
+
+export interface ListUsersQueryInput {
+  page?: number | undefined;
+  pageSize?: number | undefined;
+  search?: string | undefined;
+  status?: 'ACTIVE' | 'LOCKED' | 'DISABLED' | 'PENDING' | undefined;
+  departmentId?: bigint | 'UNASSIGNED' | undefined;
+}
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -87,13 +95,56 @@ export class UsersService {
         : Promise.resolve(0),
     ]);
     const { departments, ...userFields } = user;
+    const userManageGrants = grants.filter(
+      (grant) => grant.resource === 'USER' && grant.action === 'MANAGE',
+    );
+    const hasGlobalUserManage = userManageGrants.some(
+      (grant) => (grant.scopeDepartmentId ?? null) === null,
+    );
+    const userManageDepartmentIds = [
+      ...new Set(
+        userManageGrants
+          .map((grant) => grant.scopeDepartmentId)
+          .filter((id): id is bigint => id !== null && id !== undefined)
+          .map((id) => id.toString()),
+      ),
+    ].sort();
+    const docUploadGrants = grants.filter(
+      (grant) =>
+        grant.resource === 'DOCUMENT' &&
+        (grant.action === 'UPLOAD' || grant.action === 'CLASSIFY' || grant.action === 'MANAGE'),
+    );
+    const hasGlobalDocumentUpload = docUploadGrants.some(
+      (grant) => (grant.scopeDepartmentId ?? null) === null,
+    );
+    const documentUploadDepartmentIds = [
+      ...new Set(
+        docUploadGrants
+          .map((grant) => grant.scopeDepartmentId)
+          .filter((id): id is bigint => id !== null && id !== undefined)
+          .map((id) => id.toString()),
+      ),
+    ].sort();
+    const globalPermissions = [
+      ...new Set(
+        grants
+          .filter((grant) => (grant.scopeDepartmentId ?? null) === null)
+          .map((grant) => `${grant.resource}:${grant.action}`),
+      ),
+    ].sort();
     return {
       ...presentUserRecord(userFields),
       departmentName: departments?.name ?? null,
       mfaEnabled: activeMfaCount > 0,
+      mfaVerified: Boolean(principal.mfa),
       ...clearance,
       roles: [...new Set(grants.map((grant) => grant.roleCode))].sort(),
       permissions: [...new Set(grants.map((grant) => `${grant.resource}:${grant.action}`))].sort(),
+      globalPermissions,
+      hasGlobalUserManage,
+      userManageDepartmentIds,
+      hasGlobalDocumentUpload,
+      documentUploadDepartmentIds,
     };
   }
 
@@ -106,35 +157,90 @@ export class UsersService {
   }
 
   /**
-   * Thuật toán: Liệt kê người dùng theo bao đóng cây con phòng ban có chặn trần kết quả (`take: 200`) kèm cấp thẩm tra `CLEARANCE_LEVEL`.
+   * Thuật toán: Liệt kê người dùng phân trang & lọc máy chủ theo bao đóng cây con phòng ban (`take: pageSize`, mặc định `200`),
+   * giữ nguyên mảng `data` cấp 1 kèm siêu dữ liệu `{ total, page, pageSize, totalPages, truncated }` tương thích ngược 100%.
    */
-  async list(principal: AuthPrincipal) {
+  async list(principal: AuthPrincipal, query?: ListUsersQueryInput) {
+    const page = query?.page ?? 1;
+    const pageSize = query?.pageSize ?? 200;
+    const skip = (page - 1) * pageSize;
     const visible = await this.authorization.visibleDepartmentIds(principal, 'USER', 'MANAGE');
-    const users = await this.database.user.findMany({
-      where: visible === null ? {} : { department_id: { in: visible } },
-      orderBy: [{ full_name: 'asc' }, { id: 'asc' }],
-      take: 200,
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        full_name: true,
-        employee_code: true,
-        department_id: true,
-        status: true,
-        locked_until: true,
-        version: true,
-      },
-    });
+
+    if (query?.departmentId === 'UNASSIGNED' && visible !== null) {
+      return { data: [], total: 0, page, pageSize, totalPages: 1, truncated: false };
+    }
+    if (
+      typeof query?.departmentId === 'bigint' &&
+      visible !== null &&
+      !visible.includes(query.departmentId)
+    ) {
+      return { data: [], total: 0, page, pageSize, totalPages: 1, truncated: false };
+    }
+
+    const where: Prisma.UserWhereInput = {};
+    if (query?.departmentId === 'UNASSIGNED') {
+      where.department_id = null;
+    } else if (typeof query?.departmentId === 'bigint') {
+      where.department_id = query.departmentId;
+    } else if (visible !== null) {
+      where.department_id = { in: visible };
+    }
+
+    if (query?.status) {
+      where.status = query.status;
+    }
+
+    const trimmedSearch = query?.search?.trim();
+    if (trimmedSearch && trimmedSearch.length > 0) {
+      where.OR = [
+        { full_name: { contains: trimmedSearch, mode: 'insensitive' } },
+        { username: { contains: trimmedSearch, mode: 'insensitive' } },
+        { email: { contains: trimmedSearch, mode: 'insensitive' } },
+        { employee_code: { contains: trimmedSearch, mode: 'insensitive' } },
+      ];
+    }
+
+    const hasCount = typeof this.database.user.count === 'function';
+    const [users, countedTotal] = await Promise.all([
+      this.database.user.findMany({
+        where,
+        orderBy: [{ full_name: 'asc' }, { id: 'asc' }],
+        ...(skip > 0 ? { skip } : {}),
+        take: pageSize,
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          full_name: true,
+          employee_code: true,
+          department_id: true,
+          status: true,
+          locked_until: true,
+          version: true,
+        },
+      }),
+      hasCount ? this.database.user.count({ where }) : Promise.resolve<number | null>(null),
+    ]);
+
     const clearancesByUser = await fetchActiveClearancesByUserIds(
       this.database,
       users.map((user) => user.id),
     );
+    const data = users.map((user) => ({
+      ...presentUserRecord(user),
+      ...(clearancesByUser.get(user.id.toString()) ?? EMPTY_CLEARANCE_SUMMARY),
+    }));
+    const total = countedTotal ?? skip + data.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const truncated = total > data.length;
+
     return {
-      data: users.map((user) => ({
-        ...presentUserRecord(user),
-        ...(clearancesByUser.get(user.id.toString()) ?? EMPTY_CLEARANCE_SUMMARY),
-      })),
+      data,
+      total,
+      page,
+      pageSize,
+      totalPages,
+      truncated,
     };
   }
 

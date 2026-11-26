@@ -88,9 +88,7 @@ export async function resolveVerifiedAnchorCheckpoint(params: {
   if (typeof database.auditLog?.findFirst !== 'function') return null;
 
   const validCandidates = preloadedAnchors.filter(
-    (a) =>
-      (a.status === undefined || a.status === null || a.status === 'VALID') &&
-      (toSequence === undefined || a.anchor_sequence <= toSequence),
+    (a) => a.status === 'VALID' && (toSequence === undefined || a.anchor_sequence <= toSequence),
   );
   const latest = validCandidates[validCandidates.length - 1];
   if (!latest) return null;
@@ -99,7 +97,7 @@ export async function resolveVerifiedAnchorCheckpoint(params: {
   // Nếu có điểm neo lịch sử bị giả mạo hoặc thiếu bản ghi trước điểm neo, tự động lùi về quét toàn phần từ sequence = 1.
   for (const priorAnchor of preloadedAnchors) {
     if (priorAnchor.anchor_sequence > latest.anchor_sequence) continue;
-    if (priorAnchor.status === 'INVALID') {
+    if (priorAnchor.status !== 'VALID') {
       return null;
     }
     const priorKey = getHmacKey(parseSignerKeyVersion(priorAnchor.signer_key_id));

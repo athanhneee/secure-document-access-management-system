@@ -26,6 +26,7 @@ import {
   DEL_AND_PUBLISH_LUA,
   INCR_WINDOW_LUA,
   parseCacheInvalidationPayload,
+  SET_IF_EPOCHS_MATCH_LUA,
   type CacheInvalidationEvent,
 } from './distributed-state-pubsub.helper.js';
 
@@ -191,6 +192,70 @@ export class DistributedStateService implements OnModuleDestroy {
       }
     }
     this.setLocalBounded(namespace, id, serialized, Date.now() + safeTtlMs);
+  }
+
+  /**
+   * Thuật toán: Ghi trạng thái ngắn hạn có điều kiện Compare-And-Swap theo tem Epoch (`putEphemeralIfEpochsMatch`, `BUG-043`).
+   *   - Với Redis thật hỗ trợ `eval`: chạy `SET_IF_EPOCHS_MATCH_LUA` nguyên tử 1-RTT, từ chối ghi nếu bất kỳ Epoch nào đã đổi.
+   *   - Nhánh dự phòng an toàn khi chạy kiểm thử dùng in-memory mock không có `eval`: đọc lại toàn bộ Epoch hiện hành trước khi ghi.
+   */
+  async putEphemeralIfEpochsMatch<T>(params: {
+    namespace: string;
+    id: string;
+    value: T;
+    ttlMs: number;
+    expectedEpochs: ReadonlyArray<{ namespace: string; epoch: number }>;
+    options?: StatePolicyOptions;
+  }): Promise<boolean> {
+    const { namespace, id, value, ttlMs, expectedEpochs, options } = params;
+    const serialized = JSON.stringify(value);
+    const safeTtlMs = Math.max(1_000, Math.floor(ttlMs));
+    const stateKey = this.key(namespace, id);
+    const epochKeys = expectedEpochs.map((item) => this.epochKey(item.namespace));
+
+    if (this.redis) {
+      try {
+        if (typeof this.redis.eval === 'function') {
+          const written = Number(
+            await this.redis.eval(
+              SET_IF_EPOCHS_MATCH_LUA,
+              1 + epochKeys.length,
+              stateKey,
+              ...epochKeys,
+              serialized,
+              String(safeTtlMs),
+              ...expectedEpochs.map((item) => String(item.epoch)),
+            ),
+          );
+          return written === 1;
+        }
+        const rawCurrent =
+          typeof this.redis.mget === 'function' && epochKeys.length > 0
+            ? await this.redis.mget(...epochKeys)
+            : await Promise.all(epochKeys.map((k) => this.redis!.get(k)));
+        const allMatched = expectedEpochs.every((item, idx) => {
+          const cur = rawCurrent[idx] ? Number(rawCurrent[idx]) || 0 : 0;
+          return cur === item.epoch;
+        });
+        if (!allMatched) return false;
+        await this.redis.set(stateKey, serialized, 'PX', safeTtlMs);
+        return true;
+      } catch (err) {
+        this.enforceFallbackPolicy(namespace, err, options?.failClosedInProd ?? false);
+      }
+    }
+
+    const now = Date.now();
+    const epochsBucket = this.bucket('__epochs__');
+    for (const expected of expectedEpochs) {
+      const entry = epochsBucket.get(expected.namespace);
+      const currentEpoch = entry && entry.expiresAt > now ? Number(entry.value) || 0 : 0;
+      if (currentEpoch !== expected.epoch) {
+        return false;
+      }
+    }
+    this.setLocalBounded(namespace, id, serialized, now + safeTtlMs);
+    return true;
   }
 
   /** Thuật toán: Đọc và hủy nguyên tử vé một lần bằng Lua (`GET` + `DEL`). */

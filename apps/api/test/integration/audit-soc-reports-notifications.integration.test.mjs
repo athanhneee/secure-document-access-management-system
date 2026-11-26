@@ -92,8 +92,16 @@ test('Audit SQL integration — HMAC chain append, checkpoint anchor verificatio
   const verified = await auditVerifier.verifyPartition('INTEGRATION_TEST');
   assert.deepEqual(verified.violations, []);
   assert.equal(verified.valid, true);
-  assert.equal(verified.totalChecked, 2);
+  assert.equal(verified.totalChecked, 1);
+  assert.equal(verified.skippedBeforeAnchor, 1);
   assert.equal(verified.anchorsChecked, 1);
+
+  const verifiedFull = await auditVerifier.verifyPartition('INTEGRATION_TEST', { fullScan: true });
+  assert.deepEqual(verifiedFull.violations, []);
+  assert.equal(verifiedFull.valid, true);
+  assert.equal(verifiedFull.totalChecked, 2);
+  assert.equal(verifiedFull.skippedBeforeAnchor, 0);
+  assert.equal(verifiedFull.anchorsChecked, 1);
 
   const listed = await auditService.queryAuditLogs(
     {

@@ -1,9 +1,16 @@
 /**
  * Module: Bounded Compliance Export Dataset Query & Tabular Row Builder
- * Thuật toán: Truy Vấn Tập Dữ Liệu Xuất Tuân Thủ Có Giới Hạn Bản Ghi & Chuẩn Hóa Dòng Bảng Theo Từng Loại Báo Cáo.
+ * Thuật toán: Truy Vấn Tập Dữ Liệu Xuất Tuân Thủ Có Giới Hạn Bản Ghi & Chuẩn Hóa Dòng Bảng Theo Bộ Hợp Nhất `@sda/contracts`.
  */
 import type { getDatabaseClient } from '@sda/database';
-import type { ExportType } from '@sda/contracts';
+import {
+  DEFAULT_SYSTEM_HEALTH_EXPORT_LIMIT,
+  EXPORT_REPORT_SPECS,
+  MAX_EXPORT_LIMIT,
+  MAX_SYSTEM_HEALTH_EXPORT_LIMIT,
+  projectExportRows,
+  type ExportType,
+} from '@sda/contracts';
 import type { ExportDatasetPayload } from './export-artifact.helper.js';
 import {
   buildAuditLogExportWhere,
@@ -32,9 +39,10 @@ export async function buildExportDataset(
   filterParams: unknown = {},
   allowedDepartmentIds: bigint[] | null = null,
 ): Promise<ExportDatasetPayload> {
-  const filters = normalizeExportFilters(filterParams, allowedDepartmentIds);
+  const filters = normalizeExportFilters(filterParams, allowedDepartmentIds, exportType);
   const scopeEmpty =
     filters.effectiveDepartmentIds !== null && filters.effectiveDepartmentIds.length === 0;
+  const spec = EXPORT_REPORT_SPECS[exportType];
 
   switch (exportType) {
     case 'AUDIT_LOGS': {
@@ -42,44 +50,15 @@ export async function buildExportDataset(
         ? []
         : await database.auditLog.findMany({
             where: buildAuditLogExportWhere(filters),
-            take: filters.limit ?? 1000,
+            take: filters.limit ?? MAX_EXPORT_LIMIT,
             orderBy: { occurred_at: 'desc' },
           });
       return {
-        reportTitle: 'Secure Document Access - Audit Trail Report',
+        exportType,
+        reportTitle: spec.reportTitle,
         rawRecords: logs,
-        columns: [
-          { key: 'id', header: 'Log ID' },
-          { key: 'occurred_at', header: 'Timestamp (UTC)' },
-          { key: 'actor_username', header: 'Actor' },
-          { key: 'action', header: 'Action' },
-          { key: 'object_type', header: 'Resource Type' },
-          { key: 'object_id', header: 'Resource ID' },
-          { key: 'document_id', header: 'Document ID' },
-          { key: 'outcome', header: 'Outcome' },
-          { key: 'reason_code', header: 'Reason Code' },
-          { key: 'ip_address', header: 'IP Address' },
-          { key: 'correlation_id', header: 'Correlation ID' },
-          { key: 'chain_partition', header: 'Partition' },
-          { key: 'chain_sequence', header: 'Sequence' },
-          { key: 'entry_hash', header: 'HMAC Hash' },
-        ],
-        rows: logs.map((l) => ({
-          id: l.id.toString(),
-          occurred_at: l.occurred_at.toISOString(),
-          actor_username: l.actor_username ?? '',
-          action: l.action,
-          object_type: l.object_type,
-          object_id: l.object_id ?? '',
-          document_id: l.document_id ?? '',
-          outcome: l.outcome,
-          reason_code: l.reason_code ?? '',
-          ip_address: l.ip_address ?? '',
-          correlation_id: l.correlation_id ?? '',
-          chain_partition: l.chain_partition,
-          chain_sequence: l.chain_sequence.toString(),
-          entry_hash: l.entry_hash,
-        })),
+        columns: [...spec.columns],
+        rows: projectExportRows('AUDIT_LOGS', logs as unknown as Record<string, unknown>[]),
       };
     }
 
@@ -88,34 +67,15 @@ export async function buildExportDataset(
         ? []
         : await database.securityAlert.findMany({
             where: buildSecurityAlertExportWhere(filters),
-            take: filters.limit ?? 1000,
+            take: filters.limit ?? MAX_EXPORT_LIMIT,
             orderBy: { detected_at: 'desc' },
           });
       return {
-        reportTitle: 'Security Operations - Alert Incident Report',
+        exportType,
+        reportTitle: spec.reportTitle,
         rawRecords: alerts,
-        columns: [
-          { key: 'id', header: 'Alert ID' },
-          { key: 'alert_type', header: 'Alert Type' },
-          { key: 'severity', header: 'Severity' },
-          { key: 'status', header: 'Status' },
-          { key: 'title', header: 'Title' },
-          { key: 'description', header: 'Description' },
-          { key: 'detected_at', header: 'Detected At (UTC)' },
-          { key: 'resolved_at', header: 'Resolved At' },
-          { key: 'resolution_note', header: 'Resolution Note' },
-        ],
-        rows: alerts.map((a) => ({
-          id: a.id,
-          alert_type: a.alert_type,
-          severity: a.severity,
-          status: a.status,
-          title: a.title,
-          description: a.description,
-          detected_at: a.detected_at.toISOString(),
-          resolved_at: a.resolved_at?.toISOString() ?? '',
-          resolution_note: a.resolution_note ?? '',
-        })),
+        columns: [...spec.columns],
+        rows: projectExportRows('SECURITY_ALERTS', alerts as unknown as Record<string, unknown>[]),
       };
     }
 
@@ -124,60 +84,38 @@ export async function buildExportDataset(
         ? []
         : await database.incidentReport.findMany({
             where: buildIncidentReportExportWhere(filters),
-            take: filters.limit ?? 1000,
+            take: filters.limit ?? MAX_EXPORT_LIMIT,
             orderBy: { created_at: 'desc' },
           });
       return {
-        reportTitle: 'Security Operations - Incident Summary Report',
+        exportType,
+        reportTitle: spec.reportTitle,
         rawRecords: incidents,
-        columns: [
-          { key: 'id', header: 'ID' },
-          { key: 'incident_code', header: 'Incident Code' },
-          { key: 'status', header: 'Status' },
-          { key: 'title', header: 'Title' },
-          { key: 'summary', header: 'Summary' },
-          { key: 'created_at', header: 'Created At' },
-          { key: 'submitted_at', header: 'Submitted At' },
-          { key: 'closed_at', header: 'Closed At' },
-        ],
-        rows: incidents.map((i) => ({
-          id: i.id,
-          incident_code: i.incident_code,
-          status: i.status,
-          title: i.title,
-          summary: i.summary,
-          created_at: i.created_at.toISOString(),
-          submitted_at: i.submitted_at?.toISOString() ?? '',
-          closed_at: i.closed_at?.toISOString() ?? '',
-        })),
+        columns: [...spec.columns],
+        rows: projectExportRows(
+          'INCIDENT_REPORTS',
+          incidents as unknown as Record<string, unknown>[],
+        ),
       };
     }
 
-    default: {
-      const snapshots = await database.systemHealthSnapshot.findMany({
-        where: buildSystemHealthExportWhere(filters),
-        take: Math.min(filters.limit ?? 50, 200),
-        orderBy: { captured_at: 'desc' },
-      });
+    case 'SYSTEM_REPORT': {
+      const snapshots = scopeEmpty
+        ? []
+        : await database.systemHealthSnapshot.findMany({
+            where: buildSystemHealthExportWhere(filters),
+            take: Math.min(
+              filters.limit ?? DEFAULT_SYSTEM_HEALTH_EXPORT_LIMIT,
+              MAX_SYSTEM_HEALTH_EXPORT_LIMIT,
+            ),
+            orderBy: { captured_at: 'desc' },
+          });
       return {
-        reportTitle: 'System Health Diagnostic Snapshot Report',
+        exportType,
+        reportTitle: spec.reportTitle,
         rawRecords: snapshots,
-        columns: [
-          { key: 'id', header: 'ID' },
-          { key: 'service_name', header: 'Service' },
-          { key: 'status', header: 'Status' },
-          { key: 'response_time_ms', header: 'Latency (ms)' },
-          { key: 'error_count', header: 'Errors' },
-          { key: 'captured_at', header: 'Captured At' },
-        ],
-        rows: snapshots.map((s) => ({
-          id: s.id.toString(),
-          service_name: s.service_name,
-          status: s.status,
-          response_time_ms: s.response_time_ms !== null ? s.response_time_ms.toString() : '0',
-          error_count: s.error_count.toString(),
-          captured_at: s.captured_at.toISOString(),
-        })),
+        columns: [...spec.columns],
+        rows: projectExportRows('SYSTEM_REPORT', snapshots as unknown as Record<string, unknown>[]),
       };
     }
   }

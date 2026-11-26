@@ -55,7 +55,7 @@ export async function resolveActiveDetectionRules(
             ruleCode: cfg.rule_code,
             name: cfg.name,
             description: cfg.description ?? '',
-            isEnabled: cfg.is_enabled,
+            isEnabled: cfg.rule_code === 'AUDIT_INTEGRITY_COMPROMISED' ? true : cfg.is_enabled,
             severity: cfg.severity,
             threshold: cfg.threshold,
             windowMinutes: cfg.window_minutes,

@@ -194,18 +194,23 @@ export async function buildPolicyConditionRows(
     sequence_no: number;
   }> = [];
 
-  groups.forEach((group, groupIdx) => {
-    const conditionGroup = group.id && group.id >= 1 ? group.id : groupIdx + 1;
+  // Thuật toán: Đánh số lại tuần tự `condition_group = 1, 2, ...` và `sequence_no = 1, 2, ...` trong từng nhóm không rỗng
+  // để ngăn xung đột ràng buộc duy nhất `(policy_rule_id, condition_group, sequence_no)` khi UI nhân bản hoặc đổi chỗ nhóm (BUG-109).
+  let nextGroupNo = 0;
+  for (const group of groups) {
+    if (group.conditions.length === 0) continue;
+    nextGroupNo += 1;
+    const conditionGroup = nextGroupNo;
     group.conditions.forEach((cond, condIdx) => {
       const attr = cond.attribute.trim();
       let attributeDefinitionId: bigint | null = null;
       let contextKey: string | null = null;
 
-      if (attr in CONTEXT_ATTRIBUTES) {
+      if (Object.hasOwn(CONTEXT_ATTRIBUTES, attr)) {
         contextKey = attr;
       } else if (defByCode.has(attr)) {
         attributeDefinitionId = defByCode.get(attr)!;
-      } else if (ATTRIBUTE_CODE_TO_KEY[attr]) {
+      } else if (Object.hasOwn(ATTRIBUTE_CODE_TO_KEY, attr) && ATTRIBUTE_CODE_TO_KEY[attr]) {
         contextKey = ATTRIBUTE_CODE_TO_KEY[attr]!;
       } else {
         throw new BadRequestException({
@@ -223,7 +228,7 @@ export async function buildPolicyConditionRows(
         sequence_no: condIdx + 1,
       });
     });
-  });
+  }
 
   return rows;
 }

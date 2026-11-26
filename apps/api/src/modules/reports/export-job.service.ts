@@ -28,6 +28,7 @@ import {
   assertCrossUserExportScope,
   assertExportJobAccess,
   assertExportJobReadyForDownload,
+  assertLiveExportDownloadAuthorization,
   mapExportJobToDetail,
   readVerifiedExportArtifactAsync,
   resolveExportDownloadMeta,
@@ -119,10 +120,14 @@ export class ExportJobService {
       actor,
       input.exportType,
     );
-    normalizeExportFilters(input.filterParams, allowedDepartmentIds);
+    const normalizedFilters = normalizeExportFilters(
+      input.filterParams,
+      allowedDepartmentIds,
+      input.exportType,
+    );
     const id = randomUUID();
     const expiresAt = new Date(Date.now() + DEFAULT_TTL_HOURS * 60 * 60 * 1000);
-    const persistedFilters = buildPersistedExportFilters(input.filterParams, allowedDepartmentIds);
+    const persistedFilters = buildPersistedExportFilters(normalizedFilters, allowedDepartmentIds);
     const job = await this.database.asyncExportJob.create({
       data: {
         id,
@@ -141,9 +146,17 @@ export class ExportJobService {
       correlationId: correlationId ?? null,
     });
     if (this.shouldExecuteInline()) {
-      void this.processExportJob(id, input, actor, correlationId, allowedDepartmentIds).catch(
-        (err) => this.logger.error(`Unhandled export job ${id} rejection:`, err),
-      );
+      const normalizedInput: CreateExportJobInput = {
+        ...input,
+        filterParams: persistedFilters,
+      };
+      void this.processExportJob(
+        id,
+        normalizedInput,
+        actor,
+        correlationId,
+        normalizedFilters.effectiveDepartmentIds,
+      ).catch((err) => this.logger.error(`Unhandled export job ${id} rejection:`, err));
     }
     const detail = mapExportJobToDetail(job);
     this.realtime?.publish({
@@ -193,7 +206,7 @@ export class ExportJobService {
         message: `Export job ${id} was not found.`,
       });
     }
-    assertExportJobAccess(job, actor);
+    assertExportJobAccess(job, actor, this.authorization);
     await assertCrossUserExportScope(this.database, this.authorization, job, actor);
     return job;
   }
@@ -207,13 +220,14 @@ export class ExportJobService {
   }
 
   /**
-   * Thuật toán: Tải xuống tệp báo cáo có kiểm tra UUID, chống leo thang đường dẫn, xác thực phạm vi phòng ban, kiểm tra TTL và giải mã `AES-256-GCM`.
+   * Thuật toán: Tải xuống tệp báo cáo có kiểm tra UUID, tái thẩm định trực tiếp quyền RBAC `EXPORT` + trạng thái tài khoản, chống leo thang đường dẫn, kiểm tra TTL và giải mã `AES-256-GCM`.
    */
   async downloadExportJob(
     id: string,
     actor: AuthPrincipal,
   ): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
     const job = await this.loadAuthorizedJob(id, actor);
+    await assertLiveExportDownloadAuthorization(this.database, this.authorization, job, actor);
     assertExportJobReadyForDownload(job);
     const buffer = await readVerifiedExportArtifactAsync(
       this.exportDir,

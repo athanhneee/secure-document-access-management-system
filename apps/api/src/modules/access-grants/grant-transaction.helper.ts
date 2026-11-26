@@ -2,12 +2,16 @@
  * @module GrantTransactionHelper
  * Algorithm: Serializable Pessimistic Row-Locked Grant Creation & Interval Coalescing (`[min(from), max(until)]`).
  */
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { ConflictException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { withSerializableTransaction, type getDatabaseClient } from '@sda/database';
 import { AppErrorCode, type CreateAccessGrantInput } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AccessGrantAuditService } from './access-grant-audit.service.js';
+import {
+  assertWithinDocumentRetention,
+  assertWithinMaxGrantDuration,
+} from './grant-retention-bounds.helper.js';
 import { toGrantDetail, type GrantDetail } from './access-grants.types.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -21,6 +25,8 @@ export interface ExecuteCreateGrantTxParams {
   validUntil: Date;
   maxMs: number;
   maxDurationDays: number;
+  retentionUntilIso?: string | null | undefined;
+  decisionNote?: string | null | undefined;
   database: PrismaClient;
   audit: AccessGrantAuditService;
 }
@@ -44,8 +50,9 @@ export async function executeCreateOrExtendGrantTx(
     now,
     validFrom,
     validUntil,
-    maxMs,
     maxDurationDays,
+    retentionUntilIso,
+    decisionNote,
     database,
     audit,
   } = params;
@@ -122,12 +129,20 @@ export async function executeCreateOrExtendGrantTx(
         const newValidFrom =
           validFrom < existingGrant.valid_from ? validFrom : existingGrant.valid_from;
 
-        if (newValidUntil.getTime() - now.getTime() > maxMs) {
-          throw new BadRequestException({
-            errorCode: AppErrorCode.GRANT_DURATION_EXCEEDED,
-            message: `Extended grant duration cannot exceed ${maxDurationDays} days from now.`,
-          });
-        }
+        assertWithinMaxGrantDuration({
+          validFrom: newValidFrom,
+          validUntil: newValidUntil,
+          now,
+          maxDurationDays,
+          mode: 'EXTEND',
+        });
+
+        assertWithinDocumentRetention({
+          retentionUntil: retentionUntilIso,
+          targetUntil: newValidUntil,
+          now,
+          context: 'GRANT',
+        });
 
         await tx.accessGrant.update({
           where: { id: existingGrant.id },
@@ -191,6 +206,7 @@ export async function executeCreateOrExtendGrantTx(
           newValidFrom,
           newValidUntil,
           now,
+          decisionNote,
         );
 
         const updated = await tx.accessGrant.findUnique({
@@ -253,6 +269,7 @@ export async function executeCreateOrExtendGrantTx(
         validFrom,
         validUntil,
         now,
+        decisionNote,
       );
 
       resultGrant = toGrantDetail(created);
@@ -264,7 +281,7 @@ export async function executeCreateOrExtendGrantTx(
 }
 
 /**
- * Algorithm / Thuật toán: Cập nhật yêu cầu xin quyền liên kết sang trạng thái `APPROVED` trong cùng giao dịch.
+ * Algorithm / Thuật toán: Cập nhật yêu cầu xin quyền liên kết sang trạng thái `APPROVED` kèm lưu `decision_note` trong cùng giao dịch.
  */
 async function markLinkedAccessRequestApproved(
   tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0],
@@ -273,6 +290,7 @@ async function markLinkedAccessRequestApproved(
   approvedFrom: Date,
   approvedUntil: Date,
   now: Date,
+  decisionNote?: string | null | undefined,
 ): Promise<void> {
   // CONFLICT-RESOLVED: Cưỡng chế CAS nguyên tử `status = 'PENDING'` khi chuyển `accessRequestId` sang `APPROVED` để tự động rollback grant nếu yêu cầu đã bị hủy đồng thời (HIGH-11).
   if (!accessRequestId) return;
@@ -298,6 +316,7 @@ async function markLinkedAccessRequestApproved(
       access_request_id: accessRequestId,
       decision: 'APPROVED',
       decided_by: decidedBy,
+      decision_note: decisionNote ?? null,
       approved_from: approvedFrom,
       approved_until: approvedUntil,
       decided_at: now,

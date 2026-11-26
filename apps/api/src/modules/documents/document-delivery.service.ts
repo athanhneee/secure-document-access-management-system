@@ -18,6 +18,7 @@ import { WatermarkEngineService } from '../watermarks/watermark-engine.service.j
 import { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
+import { AuthorizationService } from '../rbac/authorization.service.js';
 import {
   consumeSingleUseDownloadTicket,
   issueShortLivedDownloadTicket,
@@ -48,6 +49,7 @@ export class DocumentDeliveryService {
     private readonly config: AppConfigService,
     @Optional() databaseClient?: PrismaClient,
     @Optional() stateStore?: DistributedStateService,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
@@ -159,13 +161,15 @@ export class DocumentDeliveryService {
    */
   async redeemDownloadTicket(ticket: string, context: RequestContext): Promise<DeliveryFileResult> {
     const entry = await consumeSingleUseDownloadTicket(this.stateStore, ticket);
-    await reverifyRedeemedTicketState({
+    const livePrincipal = await reverifyRedeemedTicketState({
       database: this.database,
       grantsService: this.grantsService,
+      authorization: this.authorization,
+      config: this.config,
       entry,
       context,
       now: new Date(),
     });
-    return await this.downloadDocument(entry.documentId, entry.sessionId, entry.principal, context);
+    return await this.downloadDocument(entry.documentId, entry.sessionId, livePrincipal, context);
   }
 }

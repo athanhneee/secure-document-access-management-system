@@ -1,11 +1,17 @@
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AppConfigService } from '../dist/config/config.service.js';
 import { CsrfService } from '../dist/modules/auth/csrf.service.js';
 import { DepartmentsService } from '../dist/modules/departments/departments.service.js';
 import { DepartmentsController } from '../dist/modules/departments/departments.controller.js';
+import { AuthorizationService } from '../dist/modules/rbac/authorization.service.js';
 
 const adminPrincipal = {
   userId: 1n,
@@ -215,4 +221,142 @@ test('DepartmentsController — enforces authentication, CSRF double-submit toke
   await assert.rejects(async () =>
     controller.create({ code: 'bad lowercase', name: 'X' }, authedReq),
   );
+});
+
+function createScopedAuthorizationService(db, grantsByUserId) {
+  const authz = Object.create(AuthorizationService.prototype);
+  authz.database = db;
+  authz.effectiveGrants = async (userId) => grantsByUserId.get(userId) ?? [];
+  authz.invalidateAll = async () => {};
+  return authz;
+}
+
+test('DepartmentsService [BUG-004] — blocks scoped admin from promoting child to root (parentId: null) or detaching outside scope, while allowing in-scope reparent, no-op parentId rename, global promotion, and TOCTOU guard', async () => {
+  const db = createInMemoryDepartmentDb([
+    { id: 1n, code: 'HQ', name: 'Trụ sở chính', parent_id: null, is_active: true, version: 0 },
+    { id: 2n, code: 'DEPT_A', name: 'Phòng A', parent_id: 1n, is_active: true, version: 0 },
+    { id: 3n, code: 'DEPT_B', name: 'Phòng B', parent_id: 2n, is_active: true, version: 0 },
+    { id: 4n, code: 'DEPT_C', name: 'Phòng C', parent_id: 2n, is_active: true, version: 0 },
+    { id: 5n, code: 'OTHER_ROOT', name: 'Khối Khác', parent_id: null, is_active: true, version: 0 },
+  ]);
+
+  const deptManageGrant = (scopeDepartmentId) => ({
+    permissionId: 10n,
+    code: 'DEPARTMENT_MANAGE',
+    resource: 'DEPARTMENT',
+    action: 'MANAGE',
+    roleId: 1n,
+    roleCode: 'DEPT_ADMIN',
+    scopeDepartmentId,
+    validTo: null,
+  });
+
+  const deptAAdmin = { ...adminPrincipal, userId: 101n, username: 'admin.depta' };
+  const hqScopedAdmin = { ...adminPrincipal, userId: 102n, username: 'admin.hq' };
+  const dualScopedAdmin = { ...adminPrincipal, userId: 103n, username: 'admin.dual' };
+  const globalAdmin = { ...adminPrincipal, userId: 104n, username: 'admin.global' };
+
+  const grantsByUserId = new Map([
+    [deptAAdmin.userId, [deptManageGrant(2n)]],
+    [hqScopedAdmin.userId, [deptManageGrant(1n)]],
+    [dualScopedAdmin.userId, [deptManageGrant(2n), deptManageGrant(5n)]],
+    [globalAdmin.userId, [deptManageGrant(null)]],
+  ]);
+
+  const authz = createScopedAuthorizationService(db, grantsByUserId);
+  const service = new DepartmentsService(authz, { record: async () => {} }, db);
+
+  // 1. BUG-004: Dept A admin cannot promote child Dept B to global root (parentId: null)
+  await assert.rejects(
+    () => service.update(deptAAdmin, 3n, { expectedVersion: 0, parentId: null }, ctx),
+    ForbiddenException,
+  );
+  assert.equal(db.rows.get(3n).parent_id, 2n);
+
+  // 2. Dept A admin cannot promote Dept A itself to global root (parentId: null)
+  await assert.rejects(
+    () => service.update(deptAAdmin, 2n, { expectedVersion: 0, parentId: null }, ctx),
+    ForbiddenException,
+  );
+  assert.equal(db.rows.get(2n).parent_id, 1n);
+
+  // 3. Dept A admin cannot move Dept B into external branch OTHER_ROOT
+  await assert.rejects(
+    () => service.update(deptAAdmin, 3n, { expectedVersion: 0, parentId: 5n }, ctx),
+    ForbiddenException,
+  );
+  assert.equal(db.rows.get(3n).parent_id, 2n);
+
+  // 4. Dual-scoped admin (Dept A + OTHER_ROOT, no HQ) cannot detach Dept A from HQ into OTHER_ROOT
+  await assert.rejects(
+    () => service.update(dualScopedAdmin, 2n, { expectedVersion: 0, parentId: 5n }, ctx),
+    ForbiddenException,
+  );
+  assert.equal(db.rows.get(2n).parent_id, 1n);
+
+  // 5. Dual-scoped admin (HQ + OTHER_ROOT, no global) cannot demote root HQ under OTHER_ROOT
+  grantsByUserId.set(dualScopedAdmin.userId, [deptManageGrant(1n), deptManageGrant(5n)]);
+  await assert.rejects(
+    () => service.update(dualScopedAdmin, 1n, { expectedVersion: 0, parentId: 5n }, ctx),
+    ForbiddenException,
+  );
+  assert.equal(db.rows.get(1n).parent_id, null);
+
+  // 6. Dept A admin CAN legitimately reparent Dept B under sibling Dept C inside Dept A's subtree
+  const movedInScope = await service.update(
+    deptAAdmin,
+    3n,
+    { expectedVersion: 0, parentId: 4n },
+    ctx,
+  );
+  assert.equal(movedInScope.parentId, '4');
+  assert.equal(movedInScope.version, 1);
+
+  // 7. Scoped admins CAN rename their own scope root even when client echoes unchanged parentId
+  const renamedDeptA = await service.update(
+    deptAAdmin,
+    2n,
+    { expectedVersion: 0, name: 'Phòng A Đổi Tên', parentId: 1n },
+    ctx,
+  );
+  assert.equal(renamedDeptA.name, 'Phòng A Đổi Tên');
+  assert.equal(renamedDeptA.parentId, '1');
+
+  const renamedHq = await service.update(
+    hqScopedAdmin,
+    1n,
+    { expectedVersion: 0, name: 'Trụ Sở Chính Mới', parentId: null },
+    ctx,
+  );
+  assert.equal(renamedHq.name, 'Trụ Sở Chính Mới');
+  assert.equal(renamedHq.parentId, null);
+
+  // 8. Global admin CAN legitimately promote Dept B to global root (parentId: null)
+  const promotedToRoot = await service.update(
+    globalAdmin,
+    3n,
+    { expectedVersion: 1, parentId: null },
+    ctx,
+  );
+  assert.equal(promotedToRoot.parentId, null);
+  assert.equal(promotedToRoot.version, 2);
+
+  // 9. TOCTOU guard: if parent_id mutates concurrently between pre-tx checks and entering SERIALIZABLE tx, reject with ConflictException
+  const origTransaction = db.$transaction;
+  db.$transaction = async (fn) => {
+    const current = db.rows.get(1n);
+    db.rows.set(1n, { ...current, parent_id: 5n });
+    return origTransaction(fn);
+  };
+  await assert.rejects(
+    () =>
+      service.update(
+        hqScopedAdmin,
+        1n,
+        { expectedVersion: 1, name: 'TOCTOU Attempt', parentId: null },
+        ctx,
+      ),
+    ConflictException,
+  );
+  assert.equal(db.rows.get(1n).parent_id, 5n);
 });

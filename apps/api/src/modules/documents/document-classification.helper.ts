@@ -8,6 +8,7 @@ import { AppErrorCode, type ReclassifyDocumentInput } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationCache } from '../rbac/authorization-cache.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
+import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import type { DocumentAuditService } from './document-audit.service.js';
 import {
   assertDocumentMutationPermission,
@@ -30,12 +31,14 @@ export async function executeReclassifyDocument(params: {
   authorization: AuthorizationService;
   cache: AuthorizationCache;
   audit: DocumentAuditService;
+  realtime?: RealtimeEventsService | undefined;
   documentId: string;
   input: ReclassifyDocumentInput;
   principal: AuthPrincipal;
   context: RequestContext;
 }): Promise<void> {
-  const { database, authorization, cache, audit, documentId, input, principal, context } = params;
+  const { database, authorization, cache, audit, realtime, documentId, input, principal, context } =
+    params;
 
   const doc = await database.document.findUnique({ where: { id: documentId } });
   if (!doc || doc.status === 'DELETED') {
@@ -80,8 +83,22 @@ export async function executeReclassifyDocument(params: {
   let isLevelIncrease = false;
   let revokedGrantsCount = 0;
   let terminatedSessionsCount = 0;
+  const affectedUserIds = new Set<string>([principal.userId.toString(), doc.owner_id.toString()]);
+  const affectedRoleIds = new Set<bigint>();
+  let usersToInvalidateAfterCommit: bigint[] = [];
 
   await database.$transaction(async (tx) => {
+    if (typeof tx.accessGrant?.findMany === 'function') {
+      const priorActiveGrants = await tx.accessGrant.findMany({
+        where: { document_id: documentId, status: 'ACTIVE' },
+      });
+      for (const g of priorActiveGrants) {
+        if (g.principal_user_id) affectedUserIds.add(g.principal_user_id.toString());
+        if (g.principal_type === 'ROLE' && g.principal_role_id) {
+          affectedRoleIds.add(g.principal_role_id);
+        }
+      }
+    }
     if (
       typeof (tx as unknown as { $executeRawUnsafe?: unknown }).$executeRawUnsafe === 'function'
     ) {
@@ -143,9 +160,11 @@ export async function executeReclassifyDocument(params: {
         newRank,
         actorUserId: principal.userId,
         now,
+        deferCacheInvalidation: true,
       });
       revokedGrantsCount = cascaded.revokedGrantsCount;
       terminatedSessionsCount = cascaded.terminatedSessionsCount;
+      usersToInvalidateAfterCommit = cascaded.affectedUserIdsToInvalidate;
     }
 
     if (targetLevel.allow_download === false) {
@@ -159,6 +178,10 @@ export async function executeReclassifyDocument(params: {
       terminatedSessionsCount += stripped.terminatedSessionsCount;
     }
   });
+
+  if (usersToInvalidateAfterCommit.length > 0) {
+    await Promise.all(usersToInvalidateAfterCommit.map((uid) => cache.invalidateUser(uid)));
+  }
 
   await audit.record(
     {
@@ -180,6 +203,67 @@ export async function executeReclassifyDocument(params: {
     },
     context,
   );
+
+  // Thuật toán: Phát sự kiện SSE thời gian thực sau khi giao dịch tái phân loại commit để cập nhật ngay danh sách quyền/tài liệu của Owner và Reader (BUG-099).
+  if (realtime) {
+    if (affectedRoleIds.size > 0 && typeof database.userRole?.findMany === 'function') {
+      const holders = await database.userRole
+        .findMany({
+          where: {
+            role_id: { in: [...affectedRoleIds] },
+            valid_from: { lte: now },
+            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          },
+          select: { user_id: true },
+          take: 200,
+        })
+        .catch(() => []);
+      for (const h of holders) affectedUserIds.add(h.user_id.toString());
+    }
+    const targetUserIds = [...affectedUserIds];
+    const hasRoleGrant = affectedRoleIds.size > 0;
+    realtime.publish({
+      type: 'ACCESS_GRANT_UPDATED',
+      targetUserIds,
+      ...(hasRoleGrant ? { targetRoles: ['DOCUMENT_READER'] } : {}),
+      payload: {
+        documentId,
+        status: revokedGrantsCount > 0 ? 'REVOKED' : 'ACTIVE',
+        action: revokedGrantsCount > 0 ? 'REVOKED' : 'UPDATED',
+        reason: 'DOCUMENT_RECLASSIFIED',
+        classificationLevelCode: targetLevel.code,
+        allowDownload: targetLevel.allow_download,
+        revokedGrantsCount,
+      },
+    });
+    realtime.publish({
+      type: 'DOCUMENT_UPDATED',
+      targetUserIds,
+      ...(hasRoleGrant ? { targetRoles: ['DOCUMENT_READER'] } : {}),
+      payload: {
+        id: documentId,
+        documentId,
+        classificationLevelCode: targetLevel.code,
+        allowDownload: targetLevel.allow_download,
+        action: 'RECLASSIFIED',
+      },
+    });
+    if (terminatedSessionsCount > 0) {
+      realtime.publish({
+        type: 'ACCESS_SESSION_UPDATED',
+        targetRoles: ['SECURITY_OFFICER'],
+        targetDepartmentId: doc.department_id?.toString() ?? null,
+        targetUserIds,
+        payload: {
+          documentId,
+          terminatedSessions: terminatedSessionsCount,
+          status: 'TERMINATED',
+          action: 'TERMINATED',
+          reason: 'DOCUMENT_RECLASSIFIED',
+        },
+      });
+    }
+  }
 }
 
 /**

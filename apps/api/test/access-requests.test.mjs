@@ -108,12 +108,14 @@ test('AccessRequestsService: createRequest rejects non-existent document', async
   );
 });
 
-test('AccessRequestsService: createRequest rejects non-ACTIVE document', async () => {
+test('AccessRequestsService: createRequest hides DRAFT with 404 anti-enumeration and rejects ARCHIVED', async () => {
+  let docStatus = 'DRAFT';
   const mockDb = {
     document: {
       findUnique: async () => ({
         id: randomUUID(),
-        status: 'DRAFT',
+        owner_id: 99n,
+        status: docStatus,
         classification_history: [],
       }),
     },
@@ -128,6 +130,21 @@ test('AccessRequestsService: createRequest rejects non-ACTIVE document', async (
   };
   const context = { ip: '127.0.0.1', correlationId: 'c1' };
 
+  await assert.rejects(
+    () =>
+      service.createRequest(
+        {
+          documentId: randomUUID(),
+          requestedAction: 'VIEW',
+          reason: 'Cần tra cứu tài liệu phục vụ công tác',
+        },
+        principal,
+        context,
+      ),
+    (err) => err.response?.errorCode === 'DOCUMENT_NOT_FOUND',
+  );
+
+  docStatus = 'ARCHIVED';
   await assert.rejects(
     () =>
       service.createRequest(

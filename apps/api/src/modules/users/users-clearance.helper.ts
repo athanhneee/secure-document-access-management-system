@@ -5,6 +5,7 @@ import type { getDatabaseClient, withSerializableTransaction } from '@sda/databa
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { isPrivilegedSeparationRoleOrCapability } from '../rbac/permission-matrix.js';
+import { terminateUserSessionsOpenedViaRevokedRole } from '../rbac/rbac-grant-cascade.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 type SerializableTransaction = Parameters<Parameters<typeof withSerializableTransaction>[0]>[0];
@@ -222,6 +223,12 @@ export async function revokeUserActiveSessions(
   action: string,
   now: Date,
 ): Promise<void> {
+  if (typeof transaction.passwordResetToken?.updateMany === 'function') {
+    await transaction.passwordResetToken.updateMany({
+      where: { user_id: userId, used_at: null },
+      data: { used_at: now },
+    });
+  }
   await transaction.refreshToken.updateMany({
     where: { auth_sessions: { user_id: userId }, revoked_at: null },
     data: { revoked_at: now, revocation_reason: action },
@@ -241,29 +248,83 @@ export async function revokeUserActiveSessions(
 }
 
 /**
- * Thuật toán: Cắt hiệu lực vai trò gắn phạm vi phòng ban cũ khi điều chuyển công tác (Department-Scoped Role Expiration)
- * Mục đích: Ngăn chặn tích lũy đặc quyền xuyên phòng ban sau khi nhân sự chuyển sang đơn vị mới.
+ * Thuật toán: Cắt hiệu lực mọi vai trò gắn phạm vi phòng ban không khớp `newDepartmentId` khi điều chuyển công tác (`HIGH-04` + `BUG-106`)
+ * và đóng tức thì các `AccessSession` đang `ACTIVE` mở qua `ROLE` grant của các vai trò vừa hết hạn.
+ * Mục đích: Ngăn chặn tuyệt đối tích lũy đặc quyền xuyên phòng ban (bao gồm cả khi điều chuyển từ phòng ban cha xuống phòng ban con hoặc sang phòng ban ngang cấp)
+ * mà không vi phạm ràng buộc `CHECK (valid_to IS NULL OR valid_to > valid_from)`.
  * Cơ chế hoạt động:
- *   - Cập nhật `valid_to = changedAt` cho mọi bản ghi `user_roles` đang hiệu lực (`valid_from < changedAt` và `valid_to IS NULL OR valid_to > changedAt`) có `scope_department_id === previousDepartmentId`.
- *
- * Algorithm: Department-Transfer Scoped Role Expiration.
- * Terminates active role assignments bound to the user's previous department upon department transfer.
+ *   1. Thu thập toàn bộ `user_roles` có `scope_department_id IS NOT NULL` và `scope_department_id !== newDepartmentId` (luôn bao gồm `previousDepartmentId` nếu khác `newDepartmentId`).
+ *   2. Với bản ghi đặt lịch tương lai (`valid_from >= changedAt`): xóa hẳn bằng `deleteMany` để tránh lỗi PostgreSQL `23514`.
+ *   3. Với bản ghi đã có hiệu lực (`valid_from < changedAt`): đặt `valid_to = changedAt` bằng `updateMany`.
+ *   4. Đóng mọi `AccessSession` đang `ACTIVE` mở thông qua `ROLE` grant của các vai trò vừa bị cắt hiệu lực.
  */
 export async function expirePreviousDepartmentRoles(
   transaction: SerializableTransaction,
   userId: bigint,
   previousDepartmentId: bigint,
   changedAt: Date = new Date(),
+  newDepartmentId: bigint | null = null,
 ): Promise<void> {
+  let targetScopeIds: bigint[] =
+    newDepartmentId !== previousDepartmentId ? [previousDepartmentId] : [];
+  const expiredRoleIds = new Set<bigint>();
+
+  if (typeof transaction.userRole?.findMany === 'function') {
+    const scopedAssignments = await transaction.userRole.findMany({
+      where: {
+        user_id: userId,
+        scope_department_id: { not: null },
+        OR: [{ valid_to: null }, { valid_to: { gt: changedAt } }],
+      },
+      select: { role_id: true, scope_department_id: true },
+    });
+    const outOfScopeIds = new Set<bigint>();
+    for (const row of scopedAssignments) {
+      if (row.scope_department_id !== null && row.scope_department_id !== newDepartmentId) {
+        outOfScopeIds.add(row.scope_department_id);
+        expiredRoleIds.add(row.role_id);
+      }
+    }
+    if (previousDepartmentId !== newDepartmentId) {
+      outOfScopeIds.add(previousDepartmentId);
+    }
+    targetScopeIds = [...outOfScopeIds];
+  }
+
+  if (targetScopeIds.length === 0) {
+    return;
+  }
+
+  const scopeFilter = targetScopeIds.length === 1 ? targetScopeIds[0]! : { in: targetScopeIds };
+
+  if (typeof transaction.userRole.deleteMany === 'function') {
+    await transaction.userRole.deleteMany({
+      where: {
+        user_id: userId,
+        scope_department_id: scopeFilter,
+        valid_from: { gte: changedAt },
+        OR: [{ valid_to: null }, { valid_to: { gt: changedAt } }],
+      },
+    });
+  }
   await transaction.userRole.updateMany({
     where: {
       user_id: userId,
-      scope_department_id: previousDepartmentId,
+      scope_department_id: scopeFilter,
       valid_from: { lt: changedAt },
       OR: [{ valid_to: null }, { valid_to: { gt: changedAt } }],
     },
     data: { valid_to: changedAt },
   });
+
+  for (const roleId of expiredRoleIds) {
+    await terminateUserSessionsOpenedViaRevokedRole({
+      transaction,
+      userId,
+      roleId,
+      now: changedAt,
+    });
+  }
 }
 
 const SAFE_USER_RECORD_KEYS = new Set([

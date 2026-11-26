@@ -40,6 +40,20 @@ export const DEL_AND_PUBLISH_LUA = [
   'return removed',
 ].join(';');
 
+/**
+ * Thuật toán: Ghi có điều kiện Compare-And-Swap theo thế hệ Epoch bằng Lua nguyên tử 1-RTT (`SET_IF_EPOCHS_MATCH_LUA`, `BUG-043`).
+ * Chỉ thực thi `SET KEYS[1] ARGV[1] PX ARGV[2]` nếu mọi khóa thế hệ `KEYS[2..N]` trên Redis vẫn bằng đúng tem `ARGV[3..N+1]` đã chụp trước lúc đọc CSDL.
+ */
+export const SET_IF_EPOCHS_MATCH_LUA = [
+  'for i = 2, #KEYS do',
+  '  local cur = tonumber(redis.call("get", KEYS[i]) or "0") or 0',
+  '  local exp = tonumber(ARGV[i + 1]) or 0',
+  '  if cur ~= exp then return 0 end',
+  'end',
+  'redis.call("set", KEYS[1], ARGV[1], "PX", ARGV[2])',
+  'return 1',
+].join('\n');
+
 export type CacheInvalidationEvent =
   | { kind: 'epoch'; namespace: string; epoch: number }
   | { kind: 'key'; namespace: string; id: string };
@@ -67,7 +81,15 @@ export function parseCacheInvalidationPayload(raw: string): CacheInvalidationEve
 }
 
 /**
- * Thuật toán: Khởi tạo cặp kết nối Redis chủ động (Command Client + Pub/Sub Subscriber) có tự nối lại và không chặn khởi động.
+ * Thuật toán: Chiến lược thử lại kết nối Redis lệnh với độ trễ tăng dần có trần 5 giây (Capped Indefinite Backoff).
+ * Tuyệt đối không trả về `null` để ngăn `ioredis` chuyển sang trạng thái `'end'` vĩnh viễn sau sự cố mạng/failover > 3,75 giây.
+ */
+export function activeRedisRetryStrategy(times: number): number {
+  return Math.min(Math.max(1, times) * 250, 5_000);
+}
+
+/**
+ * Thuật toán: Khởi tạo cặp kết nối Redis chủ động (Command Client + Pub/Sub Subscriber) có tự nối lại vô hạn với backoff có trần và không chặn khởi động.
  */
 export function createActiveRedisClient(redisUrl: string, logger: Logger, label: string): Redis {
   const safeUrl = redactRedisEndpointUrl(redisUrl);
@@ -77,7 +99,7 @@ export function createActiveRedisClient(redisUrl: string, logger: Logger, label:
     maxRetriesPerRequest: 1,
     connectTimeout: 3_000,
     commandTimeout: 2_500,
-    retryStrategy: (times) => (times > 5 ? null : Math.min(times * 250, 1_500)),
+    retryStrategy: activeRedisRetryStrategy,
   });
   client.on('error', (err) => {
     logger.debug(`Redis ${label} (${safeUrl}) connection notice: ${err.message}`);

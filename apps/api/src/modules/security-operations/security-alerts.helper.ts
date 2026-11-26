@@ -137,6 +137,61 @@ const VALID_ALERT_TRANSITIONS: Record<alert_status, alert_status[]> = {
   FALSE_POSITIVE: ['INVESTIGATING'],
 };
 
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/u;
+
+/**
+ * Thuật toán: Chuẩn hóa khoảng lọc ngày `[from, to]` — mở rộng `to = YYYY-MM-DD` tới `T23:59:59.999Z` và từ chối `from > to` (`BUG-061`).
+ */
+export function resolveSocDateRangeBounds(
+  fromRaw?: string | Date | null,
+  toRaw?: string | Date | null,
+): { gte?: Date; lte?: Date } | undefined {
+  if (!fromRaw && !toRaw) return undefined;
+
+  let gte: Date | undefined;
+  let lte: Date | undefined;
+
+  if (fromRaw) {
+    const str = typeof fromRaw === 'string' ? fromRaw.trim() : '';
+    gte =
+      typeof fromRaw === 'string' && DATE_ONLY_RE.test(str)
+        ? new Date(`${str}T00:00:00.000Z`)
+        : new Date(fromRaw);
+    if (Number.isNaN(gte.getTime())) {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: 'Invalid "from" date filter.',
+      });
+    }
+  }
+
+  if (toRaw) {
+    const str = typeof toRaw === 'string' ? toRaw.trim() : '';
+    lte =
+      typeof toRaw === 'string' && DATE_ONLY_RE.test(str)
+        ? new Date(`${str}T23:59:59.999Z`)
+        : new Date(toRaw);
+    if (Number.isNaN(lte.getTime())) {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: 'Invalid "to" date filter.',
+      });
+    }
+  }
+
+  if (gte && lte && gte.getTime() > lte.getTime()) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.VALIDATION_FAILED,
+      message: '"from" date must not be later than "to" date.',
+    });
+  }
+
+  return {
+    ...(gte ? { gte } : {}),
+    ...(lte ? { lte } : {}),
+  };
+}
+
 /**
  * Thuật toán: Tổng hợp bộ lọc Prisma `SecurityAlertWhereInput` từ tập tham số truy vấn trạng thái, mức độ và khoảng thời gian.
  */
@@ -167,11 +222,9 @@ export function buildSecurityAlertsWhere(
     ];
   }
 
-  if (query.from || query.to) {
-    where.detected_at = {
-      ...(query.from ? { gte: new Date(query.from) } : {}),
-      ...(query.to ? { lte: new Date(query.to) } : {}),
-    };
+  const dateBounds = resolveSocDateRangeBounds(query.from, query.to);
+  if (dateBounds) {
+    where.detected_at = dateBounds;
   }
   return where;
 }

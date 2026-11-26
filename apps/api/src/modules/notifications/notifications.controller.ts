@@ -1,7 +1,7 @@
 /**
  * @module NotificationsController
- * Thuật toán: Điều phối API tra cứu thông báo phân trang đọc trước (`pageSize + 1`)
- * và đánh dấu đã đọc lũy đẳng có kiểm tra chủ sở hữu chống IDOR kèm bảo vệ CSRF.
+ * Thuật toán: Điều phối API hộp thư thông báo cá nhân của mọi người dùng đã xác thực (`@AllowAuthenticatedSelf()` - `BUG-062`),
+ * phân trang đọc trước (`pageSize + 1`) và đánh dấu đã đọc lũy đẳng có kiểm tra chủ sở hữu chống IDOR kèm bảo vệ CSRF.
  */
 import {
   Controller,
@@ -18,11 +18,12 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import type { FastifyRequest } from 'fastify';
 import { QueryNotificationsSchema, UuidParamSchema } from '@sda/contracts';
 import { CsrfService } from '../auth/csrf.service.js';
-import { RequirePermission } from '../rbac/require-permission.js';
+import { AllowAuthenticatedSelf } from '../rbac/require-permission.js';
 import { NotificationsService } from './notifications.service.js';
 
 @ApiTags('notifications')
 @ApiBearerAuth()
+@AllowAuthenticatedSelf()
 @Controller('notifications')
 export class NotificationsController {
   constructor(
@@ -31,7 +32,6 @@ export class NotificationsController {
   ) {}
 
   @Get()
-  @RequirePermission('NOTIFICATION', 'VIEW')
   @ApiOperation({ summary: 'List in-app notifications for authenticated user' })
   @ApiResponse({ status: HttpStatus.OK, description: 'User notifications list' })
   async listMyNotifications(@Query() query: unknown, @Req() req: FastifyRequest) {
@@ -42,7 +42,6 @@ export class NotificationsController {
   }
 
   @Patch('read-all')
-  @RequirePermission('NOTIFICATION', 'VIEW')
   @ApiOperation({ summary: 'Mark all unread in-app notifications as read' })
   @ApiResponse({ status: HttpStatus.OK, description: 'All notifications marked as read' })
   async markAllAsRead(@Req() req: FastifyRequest) {
@@ -53,7 +52,6 @@ export class NotificationsController {
   }
 
   @Patch(':id/read')
-  @RequirePermission('NOTIFICATION', 'VIEW')
   @ApiOperation({ summary: 'Mark an in-app notification as read' })
   @ApiResponse({ status: HttpStatus.NO_CONTENT, description: 'Notification marked as read' })
   async markAsRead(@Param('id') id: string, @Req() req: FastifyRequest) {

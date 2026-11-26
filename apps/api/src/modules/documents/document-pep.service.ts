@@ -22,8 +22,12 @@ import { DistributedStateService } from '../concurrency/distributed-state.servic
 import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { DocumentDeliveryAuditService } from './document-delivery-audit.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
-import { verifyAndResolveEffectiveGrant } from './pep-clearance.helper.js';
 import {
+  ensurePermittedOwnerSystemGrant,
+  verifyAndResolveEffectiveGrant,
+} from './pep-clearance.helper.js';
+import {
+  hasPrivilegedNonBusinessCapability,
   isRestrictedNonBusinessRole,
   recordPepDenyAudit,
   type ActiveSessionPolicy,
@@ -133,7 +137,10 @@ export class DocumentPepService {
         context,
       });
 
-    if (isRestrictedNonBusinessRole(principal.roles ?? [])) {
+    if (
+      isRestrictedNonBusinessRole(principal) ||
+      (await hasPrivilegedNonBusinessCapability(this.database, principal, now))
+    ) {
       await deny(
         pepContext.grantId ?? null,
         AppErrorCode.DOCUMENT_ACCESS_DENIED,
@@ -190,17 +197,24 @@ export class DocumentPepService {
     const classRequireWatermark =
       currentClassification?.classification_levels?.require_watermark ?? true;
 
-    const effectiveGrantId = await verifyAndResolveEffectiveGrant({
+    const isOwner = document.owner_id === principal.userId;
+    const {
+      effectiveGrantId: candidateGrantId,
+      grantPermitsDownload,
+      pendingOwnerGrantProvision,
+    } = await verifyAndResolveEffectiveGrant({
       database: this.database,
       grantsService: this.grantsService,
       documentId,
+      documentDepartmentId: document.department_id,
       requestedGrantId: pepContext.grantId,
       userId: principal.userId,
       action,
       now,
       documentRank,
-      isOwner: document.owner_id === principal.userId,
+      isOwner,
       classAllowDownload,
+      documentRetentionUntil: (document as { retention_until?: Date | null }).retention_until,
       deny,
     });
 
@@ -222,9 +236,22 @@ export class DocumentPepService {
       ownerId: document.owner_id,
       categoryCode,
       classRequireWatermark,
-      effectiveGrantId,
+      effectiveGrantId: candidateGrantId,
       deny,
     });
+
+    const effectiveGrantId =
+      pendingOwnerGrantProvision || candidateGrantId === null
+        ? await ensurePermittedOwnerSystemGrant({
+            database: this.database,
+            documentId,
+            userId: principal.userId,
+            action,
+            now,
+            classAllowDownload,
+            documentRetentionUntil: (document as { retention_until?: Date | null }).retention_until,
+          })
+        : candidateGrantId;
 
     const sessionId = await finalizePermittedAccessSession({
       database: this.database,
@@ -245,6 +272,7 @@ export class DocumentPepService {
     this.realtime?.publish({
       type: 'ACCESS_SESSION_UPDATED',
       targetRoles: ['SECURITY_OFFICER'],
+      targetDepartmentId: document.department_id?.toString() ?? null,
       payload: { id: sessionId, documentId, status: 'ACTIVE', action: 'STARTED' },
     });
 
@@ -257,7 +285,8 @@ export class DocumentPepService {
       versionNo: currentVersion.version_no,
       grantId: effectiveGrantId,
       watermarkRequired: policyOutcome.watermarkRequired,
-      allowDownload: classAllowDownload && !policyOutcome.forbidDownloadObligation,
+      allowDownload:
+        classAllowDownload && grantPermitsDownload && !policyOutcome.forbidDownloadObligation,
       classificationRank: documentRank,
       obligations: policyOutcome.obligationTypes,
     };

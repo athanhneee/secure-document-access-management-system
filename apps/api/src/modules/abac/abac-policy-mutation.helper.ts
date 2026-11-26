@@ -90,14 +90,6 @@ export async function executeUpsertAbacPolicy(params: {
         });
         if (!before) throw new NotFoundException('Policy rule was not found.');
 
-        let nextVersion = before.version + 1n;
-        if (typeof tx.$queryRawUnsafe === 'function') {
-          const seqRows = await tx.$queryRawUnsafe<Array<{ v: bigint | number | string }>>(
-            "SELECT nextval('abac_policy_version_seq') AS v",
-          );
-          if (seqRows[0]?.v !== undefined) nextVersion = BigInt(seqRows[0].v);
-        }
-
         await tx.policyRuleCondition.deleteMany({ where: { policy_rule_id: ruleId } });
         await tx.policyRule.update({
           where: { id: ruleId },
@@ -112,7 +104,7 @@ export async function executeUpsertAbacPolicy(params: {
             obligations: input.obligations as Prisma.InputJsonValue,
             is_active: input.isActive ?? before.is_active,
             updated_at: new Date(),
-            version: nextVersion,
+            version: before.version + 1n,
             ...(conditionRows.length > 0
               ? { policy_rule_conditions: { createMany: { data: conditionRows } } }
               : {}),

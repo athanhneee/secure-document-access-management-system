@@ -6,32 +6,31 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  EXPORT_AT_REST_HKDF_INFO,
+  EXPORT_AT_REST_HKDF_SALT,
+  resolveExportEncryptionIkm,
+} from '@sda/contracts';
 
 const EXPORT_MAGIC = Buffer.from('SDEA\x01', 'binary');
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
-const EPHEMERAL_FALLBACK_KEY = randomBytes(32);
 
 /**
- * Thuật toán: Dẫn xuất khóa 256-bit bằng HKDF-SHA256 cho vùng lưu trữ tạm `.dat` trên đĩa.
- * Khóa chặt Fail-Fast trên `production`/`staging` nếu thiếu cả `EXPORT_ENCRYPTION_KEY` lẫn `AUDIT_INTEGRITY_KEY`.
+ * Thuật toán: Dẫn xuất khóa 256-bit bằng HKDF-SHA256 tất định đồng bộ 100% giữa `@sda/api` và `@sda/worker` (`BUG-066`).
+ * Loại bỏ hoàn toàn `randomBytes(32)` cục bộ mỗi tiến trình; khóa chặt Fail-Fast trên `production`/`staging` nếu thiếu khóa thực `>= 32` ký tự.
  */
-function resolveExportAtRestKey(): Buffer {
-  const configured =
-    process.env['EXPORT_ENCRYPTION_KEY']?.trim() || process.env['AUDIT_INTEGRITY_KEY']?.trim();
-  const nodeEnv = process.env['NODE_ENV']?.trim().toLowerCase();
-  if (!configured && (nodeEnv === 'production' || nodeEnv === 'staging')) {
-    throw new Error(
-      'EXPORT_ENCRYPTION_KEY (or AUDIT_INTEGRITY_KEY) is mandatory for export encryption in production and staging.',
-    );
-  }
-  const ikm = configured ? Buffer.from(configured, 'utf8') : EPHEMERAL_FALLBACK_KEY;
+export function resolveExportAtRestKey(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Buffer {
+  // CONFLICT-RESOLVED: Dẫn xuất HKDF-SHA256 tất định từ `resolveExportEncryptionIkm` dùng chung với Worker để API giải mã được tệp `.dat` đa tiến trình ở dev/test mà vẫn Fail-Fast ở production/staging (BUG-066).
+  const ikm = Buffer.from(resolveExportEncryptionIkm(env), 'utf8');
   return Buffer.from(
     hkdfSync(
       'sha256',
       ikm,
-      Buffer.from('sda-export-at-rest-salt-v1', 'utf8'),
-      Buffer.from('sda-export-artifact-aes-256-gcm', 'utf8'),
+      Buffer.from(EXPORT_AT_REST_HKDF_SALT, 'utf8'),
+      Buffer.from(EXPORT_AT_REST_HKDF_INFO, 'utf8'),
       32,
     ),
   );

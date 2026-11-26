@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { Readable } from 'node:stream';
 import type { getDatabaseClient } from '@sda/database';
-import { AppErrorCode } from '@sda/contracts';
+import { AppErrorCode, MAX_PG_BIGINT } from '@sda/contracts';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
@@ -21,6 +21,7 @@ import {
   getUserClearanceRank,
 } from './document-access-guard.helper.js';
 import { parseIsoRetentionDate } from './document-draft-validation.helper.js';
+import { hasPrivilegedNonBusinessCapability } from './pep-context-builder.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -49,7 +50,77 @@ export interface IngestDocumentOutput {
   fileSizeBytes: number;
   sha256Hash: string;
   scanStatus: 'CLEAN' | 'INFECTED' | 'FAILED';
-  status: 'DRAFT';
+  status: 'DRAFT' | 'ACTIVE';
+}
+
+/**
+ * Thuật toán: Thẩm Định Cấp Độ Mật, Trần Bell-LaPadula & Danh Mục Nghiệp Vụ Khi Gắn Phân Loại Khởi Tạo (`assertIngestionClassificationValid`).
+ * Áp dụng thống nhất cho cả tài liệu tạo mới lẫn bản nháp (`DRAFT`) chưa có phân loại hiện hành, ở cả pha tiền kiểm lẫn bên trong `$transaction`.
+ */
+export async function assertIngestionClassificationValid(params: {
+  database: PrismaClient;
+  principal: AuthPrincipal;
+  classificationLevelId?: bigint | undefined;
+  businessCategoryId?: bigint | undefined;
+  onReject?: (() => void) | undefined;
+}): Promise<void> {
+  const { database, principal, classificationLevelId, businessCategoryId, onReject } = params;
+
+  if (classificationLevelId !== undefined) {
+    if (typeof database?.classificationLevel?.findUnique === 'function') {
+      const level = await database.classificationLevel.findUnique({
+        where: { id: classificationLevelId },
+      });
+      if (!level || !level.is_active) {
+        onReject?.();
+        throw new BadRequestException({
+          errorCode: AppErrorCode.VALIDATION_FAILED,
+          message: 'Target classification level does not exist or is inactive.',
+        });
+      }
+      if (typeof database?.userAttributeAssignment?.findFirst === 'function') {
+        const rank = await getUserClearanceRank(database, principal.userId, new Date());
+        if (rank < level.rank) {
+          onReject?.();
+          throw new ForbiddenException({
+            errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
+            message: `Insufficient clearance level (${rank}) to upload document at rank ${level.rank}.`,
+          });
+        }
+      }
+    }
+
+    const effectiveBusinessCategoryId = businessCategoryId ?? 1n;
+    if (typeof database?.businessCategory?.findUnique === 'function') {
+      const category = await database.businessCategory.findUnique({
+        where: { id: effectiveBusinessCategoryId },
+      });
+      if (!category || !category.is_active) {
+        onReject?.();
+        throw new BadRequestException({
+          errorCode: AppErrorCode.VALIDATION_FAILED,
+          message: 'Target business category does not exist or is inactive.',
+        });
+      }
+    }
+    return;
+  }
+
+  if (
+    businessCategoryId !== undefined &&
+    typeof database?.businessCategory?.findUnique === 'function'
+  ) {
+    const category = await database.businessCategory.findUnique({
+      where: { id: businessCategoryId },
+    });
+    if (!category || !category.is_active) {
+      onReject?.();
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: 'Target business category does not exist or is inactive.',
+      });
+    }
+  }
 }
 
 /**
@@ -62,8 +133,12 @@ export async function validateIngestionPreconditions(
   authorization?: AuthorizationService,
 ): Promise<void> {
   const callerRoles = input.principal.roles ?? [];
-  // CONFLICT-RESOLVED: Unconditionally block document ingestion by PRIVILEGED_SEPARATION_ROLES (SYSTEM_ADMIN, SECURITY_OFFICER, AUDITOR).
-  if (callerRoles.some((role) => PRIVILEGED_SEPARATION_ROLES.has(role))) {
+  // CONFLICT-RESOLVED: Unconditionally block document ingestion by PRIVILEGED_SEPARATION_ROLES and Custom Roles holding privileged capabilities (MED-04).
+  if (
+    input.principal.restrictedNonBusiness === true ||
+    callerRoles.some((role) => PRIVILEGED_SEPARATION_ROLES.has(role)) ||
+    (await hasPrivilegedNonBusinessCapability(database, input.principal))
+  ) {
     input.fileStream.destroy();
     throw new ForbiddenException({
       errorCode: AppErrorCode.TECHNICAL_ADMIN_CANNOT_OWN,
@@ -92,6 +167,32 @@ export async function validateIngestionPreconditions(
       errorCode: AppErrorCode.VALIDATION_FAILED,
       message: 'Invalid documentCode format.',
     });
+  }
+
+  // Thuật toán: Chốt chặn độ dài tiêu đề `1..255` ký tự và trần PostgreSQL 64-bit `BIGINT` trước khi ghi đệm luồng tải lên (BUG-110).
+  if (input.title !== undefined) {
+    const trimmedTitle = input.title.trim();
+    if (trimmedTitle.length === 0 || trimmedTitle.length > 255) {
+      input.fileStream.destroy();
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: 'Document title must be between 1 and 255 characters.',
+      });
+    }
+  }
+
+  for (const [fieldName, idVal] of [
+    ['departmentId', input.departmentId],
+    ['classificationLevelId', input.classificationLevelId],
+    ['businessCategoryId', input.businessCategoryId],
+  ] as const) {
+    if (idVal !== undefined && (idVal < 1n || idVal > MAX_PG_BIGINT)) {
+      input.fileStream.destroy();
+      throw new BadRequestException({
+        errorCode: AppErrorCode.VALIDATION_FAILED,
+        message: `${fieldName} must be a positive 64-bit integer within PostgreSQL BIGINT range.`,
+      });
+    }
   }
 
   if (input.retentionUntil !== undefined && input.retentionUntil !== '') {
@@ -134,16 +235,15 @@ export async function validateIngestionPreconditions(
         message: 'Cannot upload new version to an archived or deleted document.',
       });
     }
-    if (
-      typeof database?.documentClassificationHistory?.findFirst === 'function' &&
-      typeof database?.userAttributeAssignment?.findFirst === 'function'
-    ) {
+    let hasActiveClassification = false;
+    if (typeof database?.documentClassificationHistory?.findFirst === 'function') {
       const currentClass = await database.documentClassificationHistory.findFirst({
         where: { document_id: targetDoc.id, effective_to: null },
         include: { classification_levels: true },
       });
+      hasActiveClassification = Boolean(currentClass);
       const existingRank = currentClass?.classification_levels?.rank ?? 0;
-      if (existingRank > 0) {
+      if (existingRank > 0 && typeof database?.userAttributeAssignment?.findFirst === 'function') {
         const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
         if (rank < existingRank) {
           input.fileStream.destroy();
@@ -153,6 +253,15 @@ export async function validateIngestionPreconditions(
           });
         }
       }
+    }
+    if (!hasActiveClassification) {
+      await assertIngestionClassificationValid({
+        database,
+        principal: input.principal,
+        classificationLevelId: input.classificationLevelId,
+        businessCategoryId: input.businessCategoryId,
+        onReject: () => input.fileStream.destroy(),
+      });
     }
   } else if (!input.documentId) {
     // CONFLICT-RESOLVED: Kiểm tra quyền trên phòng ban đích và độ mật Bell-LaPadula trước khi ghi đệm tệp tải lên mới (HIGH-05).
@@ -184,44 +293,42 @@ export async function validateIngestionPreconditions(
         });
       }
     }
-    if (
-      input.classificationLevelId &&
-      typeof database?.classificationLevel?.findUnique === 'function'
-    ) {
-      const level = await database.classificationLevel.findUnique({
-        where: { id: input.classificationLevelId },
-      });
-      if (!level || !level.is_active) {
-        input.fileStream.destroy();
-        throw new BadRequestException({
-          errorCode: AppErrorCode.VALIDATION_FAILED,
-          message: 'Target classification level does not exist or is inactive.',
-        });
-      }
-      if (typeof database?.userAttributeAssignment?.findFirst === 'function') {
-        const rank = await getUserClearanceRank(database, input.principal.userId, new Date());
-        if (rank < level.rank) {
-          input.fileStream.destroy();
-          throw new ForbiddenException({
-            errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
-            message: `Insufficient clearance level (${rank}) to upload document at rank ${level.rank}.`,
-          });
-        }
-      }
-    }
+    await assertIngestionClassificationValid({
+      database,
+      principal: input.principal,
+      classificationLevelId: input.classificationLevelId,
+      businessCategoryId: input.businessCategoryId,
+      onReject: () => input.fileStream.destroy(),
+    });
   }
 }
+
+type MultipartReadable = Readable & { truncated?: boolean | undefined };
 
 /**
  * Algorithm: Backpressure-Controlled Single-Pass Temp Spooling & SHA-256 Hashing
  * Streams incoming bytes to a `0o600` temp file with `pause`/`drain` flow control, aborts immediately on `maxFileSize`
- * overflow, and computes incremental SHA-256 plus the leading 512-byte magic header in one pass.
+ * overflow, busboy `'limit'` / `.truncated` truncation, or premature stream `'close'`, and computes incremental SHA-256
+ * plus the leading 512-byte magic header in one pass.
  */
 export async function spoolUploadStreamToTempFile(
   fileStream: Readable,
   spoolFilePath: string,
   maxFileSize: number,
 ): Promise<{ totalBytes: number; sha256Hash: string; headerBuffer: Buffer }> {
+  const multipartStream = fileStream as MultipartReadable;
+  const makeSizeExceededError = (): PayloadTooLargeException =>
+    new PayloadTooLargeException({
+      errorCode: AppErrorCode.FILE_SIZE_EXCEEDED,
+      message: `File size exceeds allowed limit of ${maxFileSize} bytes.`,
+    });
+
+  // Fail fast if busboy already truncated the multipart file stream before spooling started
+  if (multipartStream.truncated) {
+    fileStream.destroy();
+    throw makeSizeExceededError();
+  }
+
   let totalBytes = 0;
   const sha256Hasher = crypto.createHash('sha256');
   const headerChunks: Buffer[] = [];
@@ -229,19 +336,35 @@ export async function spoolUploadStreamToTempFile(
   const writeStream = fs.createWriteStream(spoolFilePath, { mode: 0o600 });
 
   await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let streamEnded = false;
+
+    const fail = (err: unknown): void => {
+      if (settled) return;
+      settled = true;
+      fileStream.destroy();
+      writeStream.destroy();
+      reject(err);
+    };
+
+    const succeed = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    fileStream.once('limit', () => {
+      fail(makeSizeExceededError());
+    });
+
     fileStream.on('data', (chunk: Buffer | Uint8Array) => {
+      if (settled) return;
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       totalBytes += buf.length;
 
-      if (totalBytes > maxFileSize) {
-        fileStream.destroy();
-        writeStream.destroy();
-        return reject(
-          new PayloadTooLargeException({
-            errorCode: AppErrorCode.FILE_SIZE_EXCEEDED,
-            message: `File size exceeds allowed limit of ${maxFileSize} bytes.`,
-          }),
-        );
+      if (totalBytes > maxFileSize || multipartStream.truncated) {
+        fail(makeSizeExceededError());
+        return;
       }
 
       sha256Hasher.update(buf);
@@ -252,21 +375,70 @@ export async function spoolUploadStreamToTempFile(
 
       if (!writeStream.write(buf)) {
         fileStream.pause();
-        writeStream.once('drain', () => fileStream.resume());
+        writeStream.once('drain', () => {
+          if (!settled) fileStream.resume();
+        });
       }
     });
 
-    fileStream.on('end', () => {
-      writeStream.end(() => resolve());
+    fileStream.once('end', () => {
+      streamEnded = true;
+      if (settled) return;
+      if (multipartStream.truncated || totalBytes > maxFileSize) {
+        fail(makeSizeExceededError());
+        return;
+      }
+      writeStream.end(() => succeed());
     });
-    fileStream.on('error', (err) => {
-      writeStream.destroy();
-      reject(err);
+
+    fileStream.once('close', () => {
+      if (settled) return;
+      if (multipartStream.truncated || totalBytes > maxFileSize) {
+        fail(makeSizeExceededError());
+        return;
+      }
+      if (!streamEnded && !fileStream.readableEnded) {
+        fail(
+          new BadRequestException({
+            errorCode: AppErrorCode.VALIDATION_FAILED,
+            message: 'Upload stream closed prematurely before completion.',
+          }),
+        );
+      }
     });
-    writeStream.on('error', (err) => {
-      fileStream.destroy();
-      reject(err);
+
+    fileStream.once('error', (err) => {
+      fail(err);
     });
+
+    writeStream.once('error', (err) => {
+      fail(err);
+    });
+
+    writeStream.once('close', () => {
+      if (!settled && !streamEnded) {
+        fail(
+          new BadRequestException({
+            errorCode: AppErrorCode.VALIDATION_FAILED,
+            message: 'Temporary upload spool closed before stream completion.',
+          }),
+        );
+      }
+    });
+
+    if (multipartStream.truncated) {
+      fail(makeSizeExceededError());
+    } else if (fileStream.destroyed && !fileStream.readableEnded) {
+      fail(
+        new BadRequestException({
+          errorCode: AppErrorCode.VALIDATION_FAILED,
+          message: 'Upload stream was aborted before spooling.',
+        }),
+      );
+    } else if (fileStream.readableEnded) {
+      streamEnded = true;
+      writeStream.end(() => succeed());
+    }
   });
 
   return {

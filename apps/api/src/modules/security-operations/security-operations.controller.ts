@@ -264,7 +264,10 @@ export class SecurityOperationsController {
   }
 
   @Get('security-detection/rules')
-  @RequirePermission('SECURITY_ALERT', 'VIEW')
+  @RequireAnyPermission([
+    { resource: 'SECURITY_ALERT', action: 'VIEW' },
+    { resource: 'SECURITY_ALERT', action: 'MANAGE' },
+  ])
   @ApiOperation({ summary: 'List configurable anomaly detection rules' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Detection rules list' })
   async getDetectionRules(@Req() req: FastifyRequest) {

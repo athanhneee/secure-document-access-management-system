@@ -7,7 +7,7 @@
  *   3. Cưỡng chế thu hồi dây chuyền Bell-LaPadula khi hạ bậc thẩm quyền (`newRank < previousRank`):
  *      thu hồi toàn bộ `AccessGrant` (`USER`, `ACTIVE`) và đóng toàn bộ `AccessSession` (`ACTIVE`) trên các tài liệu có bậc phân loại lớn hơn `newRank`.
  */
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import type { getDatabaseClient, withSerializableTransaction } from '@sda/database';
 import {
   EMPTY_CLEARANCE_SUMMARY,
@@ -154,7 +154,8 @@ export async function fetchActiveClearancesByUserIds(
 }
 
 /**
- * Thuật toán: Thu hồi dây chuyền giấy phép truy cập & phiên đọc tài liệu khi hạ bậc thẩm tra Bell-LaPadula của người dùng.
+ * Thuật toán: Thu hồi dây chuyền giấy phép truy cập (`USER` + `ROLE` Lattice Meet), phiên đọc tài liệu và yêu cầu truy cập `PENDING` vượt bậc
+ * khi hạ bậc thẩm tra Bell-LaPadula của người dùng (`BUG-047`).
  */
 async function cascadeRevokeOnUserClearanceDowngrade(params: {
   transaction: SerializableTransaction;
@@ -166,6 +167,7 @@ async function cascadeRevokeOnUserClearanceDowngrade(params: {
   const { transaction, userId, newRank, actorUserId, now } = params;
   let revokedGrantsCount = 0;
   let terminatedSessionsCount = 0;
+  const revokedRoleGrantIds: string[] = [];
 
   if (typeof transaction?.accessGrant?.findMany === 'function') {
     const activeGrants = await transaction.accessGrant.findMany({
@@ -202,6 +204,64 @@ async function cascadeRevokeOnUserClearanceDowngrade(params: {
           },
         });
         revokedGrantsCount += 1;
+      }
+    }
+
+    // BUG-047 & HIGH-06: Quét thu hồi cả các ROLE AccessGrant đang ACTIVE trên cả vai trò hiện hành lẫn vai trò đặt lịch tương lai (`valid_to IS NULL OR valid_to > now`) mà người dùng tham gia nếu `docRank > newRank`.
+    if (typeof transaction?.userRole?.findMany === 'function') {
+      const activeRoleLinks = await transaction.userRole.findMany({
+        where: {
+          user_id: userId,
+          OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          roles: { is_active: true },
+        },
+        select: { role_id: true },
+      });
+      const memberRoleIds = [
+        ...new Set(
+          activeRoleLinks
+            .map((r) => r.role_id)
+            .filter((rid): rid is bigint => typeof rid === 'bigint'),
+        ),
+      ];
+      if (memberRoleIds.length > 0) {
+        const activeRoleGrants = await transaction.accessGrant.findMany({
+          where: {
+            principal_type: 'ROLE',
+            principal_role_id: { in: memberRoleIds },
+            status: 'ACTIVE',
+          },
+          include: {
+            documents: {
+              select: {
+                classification_history: {
+                  where: { effective_to: null },
+                  include: { classification_levels: { select: { rank: true } } },
+                  take: 1,
+                },
+              },
+            },
+          },
+        });
+        for (const roleGrant of activeRoleGrants) {
+          const docRank =
+            roleGrant.documents?.classification_history?.[0]?.classification_levels?.rank ?? 0;
+          if (docRank > newRank) {
+            await transaction.accessGrant.update({
+              where: { id: roleGrant.id },
+              data: {
+                status: 'REVOKED',
+                revoked_by: actorUserId,
+                revoked_at: now,
+                revoke_reason:
+                  'Role member clearance downgraded below document classification rank',
+                version: { increment: 1 },
+              },
+            });
+            revokedGrantsCount += 1;
+            revokedRoleGrantIds.push(roleGrant.id);
+          }
+        }
       }
     }
   }
@@ -250,6 +310,74 @@ async function cascadeRevokeOnUserClearanceDowngrade(params: {
       });
       terminatedSessionsCount += terminated.count;
     }
+
+    if (
+      revokedRoleGrantIds.length > 0 &&
+      typeof transaction?.accessSession?.updateMany === 'function'
+    ) {
+      const terminatedRoleSessions = await transaction.accessSession.updateMany({
+        where: {
+          access_grant_id: { in: revokedRoleGrantIds },
+          status: 'ACTIVE',
+        },
+        data: {
+          status: 'TERMINATED',
+          ended_at: now,
+          terminated_reason: 'Role grant revoked because member clearance was downgraded',
+        },
+      });
+      terminatedSessionsCount += terminatedRoleSessions.count;
+    }
+  }
+
+  // BUG-047: Hủy mọi yêu cầu truy cập PENDING vượt bậc thẩm tra mới của người dùng (`cancelled_at = now` thỏa CHECK 23514).
+  if (typeof transaction?.accessRequest?.findMany === 'function') {
+    const pendingRequests = await transaction.accessRequest.findMany({
+      where: { requester_id: userId, status: 'PENDING' },
+      include: {
+        documents: {
+          select: {
+            classification_history: {
+              where: { effective_to: null },
+              include: { classification_levels: { select: { rank: true } } },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+    const requestIdsToCancel: string[] = [];
+    for (const req of pendingRequests) {
+      const docRank = req.documents?.classification_history?.[0]?.classification_levels?.rank ?? 0;
+      if (docRank > newRank) {
+        requestIdsToCancel.push(req.id);
+      }
+    }
+    if (requestIdsToCancel.length > 0) {
+      if (typeof transaction.accessRequest.updateMany === 'function') {
+        await transaction.accessRequest.updateMany({
+          where: { id: { in: requestIdsToCancel }, status: 'PENDING' },
+          data: {
+            status: 'CANCELLED',
+            cancelled_at: now,
+            updated_at: now,
+            version: { increment: 1 },
+          },
+        });
+      } else if (typeof transaction.accessRequest.update === 'function') {
+        for (const reqId of requestIdsToCancel) {
+          await transaction.accessRequest.update({
+            where: { id: reqId },
+            data: {
+              status: 'CANCELLED',
+              cancelled_at: now,
+              updated_at: now,
+              version: { increment: 1 },
+            },
+          });
+        }
+      }
+    }
   }
 
   return { revokedGrantsCount, terminatedSessionsCount };
@@ -266,6 +394,10 @@ export async function syncUserClearanceAssignment(params: {
   now: Date;
 }): Promise<SyncUserClearanceResult> {
   const { transaction, userId, clearanceOptionId, actorUserId, now } = params;
+  // BUG-007: Phòng thủ chiều sâu — tuyệt đối cấm tự sửa thuộc tính CLEARANCE_LEVEL cho chính tài khoản đang thao tác.
+  if (userId === actorUserId) {
+    throw new ForbiddenException('Administrators cannot modify their own security clearance.');
+  }
 
   const clearanceDef = await transaction.attributeDefinition.findUnique({
     where: { code: 'CLEARANCE_LEVEL' },

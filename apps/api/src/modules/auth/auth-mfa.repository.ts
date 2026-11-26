@@ -5,9 +5,23 @@
 import { randomUUID } from 'node:crypto';
 import { ConflictException } from '@nestjs/common';
 import { AppErrorCode } from '@sda/contracts';
-import type { getDatabaseClient } from '@sda/database';
+import { withSerializableTransaction, type getDatabaseClient, type Prisma } from '@sda/database';
+import { isPrivilegedSeparationRoleOrCapability } from '../rbac/permission-matrix.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
+
+export type DisableSingleMfaMethodResult =
+  | {
+      kind: 'disabled';
+      remainingCount: number;
+      methodType: 'TOTP' | 'WEBAUTHN';
+      label: string | null;
+    }
+  | { kind: 'not_found' }
+  | { kind: 'mandatory_role_last_factor' };
+
+export type DisableAllMfaMethodsResult =
+  { kind: 'disabled'; disabledCount: number } | { kind: 'mandatory_role_blocked' };
 
 export interface ActiveMfaMethodRecord {
   id: string;
@@ -86,20 +100,20 @@ export async function createUserMfaEnrollment(
 }
 
 /**
- * Algorithm / Thuật toán: Truy vấn phương thức MFA đang chờ kích hoạt của người dùng.
+ * Algorithm / Thuật toán: Truy vấn phương thức TOTP MFA đang chờ kích hoạt của người dùng (lọc đúng `method_type: 'TOTP'`, BUG-109).
  */
 export async function findPendingMfaMethod(
   database: PrismaClient,
   userId: bigint,
 ): Promise<{ id: string; encryptedSecret: string } | null> {
   const method = await database.mfaMethod.findFirst({
-    where: { user_id: userId, verified_at: null, disabled_at: null },
+    where: { user_id: userId, method_type: 'TOTP', verified_at: null, disabled_at: null },
   });
   return method ? { id: method.id, encryptedSecret: method.secret_encrypted } : null;
 }
 
 /**
- * Algorithm / Thuật toán: Kích hoạt nguyên tử phương thức MFA và lưu mảng băm mã khôi phục một lần.
+ * Algorithm / Thuật toán: Kích hoạt nguyên tử phương thức MFA CAS (`count === 1`) và lưu mảng băm mã khôi phục một lần (BUG-109).
  */
 export async function enableUserMfaMethod(
   database: PrismaClient,
@@ -107,7 +121,7 @@ export async function enableUserMfaMethod(
   userId: bigint,
   recoveryHashes: string[],
 ): Promise<void> {
-  await database.mfaMethod.updateMany({
+  const updated = await database.mfaMethod.updateMany({
     where: { id: methodId, user_id: userId, verified_at: null, disabled_at: null },
     data: {
       verified_at: new Date(),
@@ -115,6 +129,12 @@ export async function enableUserMfaMethod(
       recovery_code_hashes: recoveryHashes,
     },
   });
+  if (updated.count !== 1) {
+    throw new ConflictException({
+      errorCode: AppErrorCode.RESOURCE_CONFLICT,
+      message: 'MFA enrollment is no longer pending or was modified concurrently.',
+    });
+  }
 }
 
 /**
@@ -238,6 +258,183 @@ export async function listActiveMfaMethods(
       : [],
     createdAt: m.created_at,
   }));
+}
+
+/**
+ * Thuật toán: Kiểm Tra Vai Trò & Năng Lực Đặc Quyền Bắt Buộc MFA Trực Tiếp Trong Giao Dịch DB (`hasLiveMandatoryMfaRoleInTx`).
+ * Mục đích: Đọc danh sách vai trò còn hiệu lực (`user_roles` -> `roles` -> `role_permissions` -> `permissions`) ngay trong giao dịch `SERIALIZABLE`
+ *   để phát hiện cả vai trò hệ thống (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`) lẫn Custom Role mang quyền đặc quyền.
+ */
+async function hasLiveMandatoryMfaRoleInTx(
+  transaction: Prisma.TransactionClient,
+  userId: bigint,
+  now: Date,
+): Promise<boolean> {
+  const assignments = await transaction.userRole.findMany({
+    where: {
+      user_id: userId,
+      valid_from: { lte: now },
+      AND: [
+        { OR: [{ valid_to: null }, { valid_to: { gt: now } }] },
+        { OR: [{ scope_department_id: null }, { departments: { is: { is_active: true } } }] },
+      ],
+      roles: { is_active: true },
+    },
+    include: {
+      roles: {
+        include: {
+          role_permissions: {
+            include: {
+              permissions: { select: { code: true, resource_type: true, action: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return assignments.some((assignment) =>
+    isPrivilegedSeparationRoleOrCapability(
+      assignment.roles.code,
+      (assignment.roles.role_permissions ?? [])
+        .map((rp) => rp.permissions ?? undefined)
+        .filter((perm): perm is NonNullable<typeof perm> => perm !== undefined),
+    ),
+  );
+}
+
+/**
+ * Thuật toán: Gỡ Nguyên Tử Một Nhân Tố MFA Đơn Lẻ Trong Giao Dịch `SERIALIZABLE` Kèm Khóa `SELECT ... FOR UPDATE` (`disableSingleUserMfaMethodAtomic`, BUG-003).
+ * Mục đích: Triệt tiêu hoàn toàn điều kiện tranh chấp TOCTOU khi gửi song song nhiều lệnh gỡ nhân tố MFA của tài khoản đặc quyền,
+ *   khóa tuần tự bản ghi `users` rồi khóa toàn bộ `mfa_methods` đang hoạt động và kiểm tra `isPrivilegedSeparationRoleOrCapability` trên dữ liệu DB mới nhất.
+ */
+export async function disableSingleUserMfaMethodAtomic(
+  database: PrismaClient,
+  userId: bigint,
+  methodId: string,
+): Promise<DisableSingleMfaMethodResult> {
+  return withSerializableTransaction(
+    async (transaction) => {
+      const now = new Date();
+      await transaction.$queryRaw<Array<{ id: bigint }>>`SELECT id
+        FROM public.users
+        WHERE id = ${userId}
+        FOR UPDATE`;
+
+      const lockedRows = await transaction.$queryRaw<
+        Array<{
+          id: string;
+          method_type: string;
+          label: string | null;
+          recovery_code_hashes: unknown;
+        }>
+      >`SELECT id::text AS id, method_type::text AS method_type, label, recovery_code_hashes
+        FROM public.mfa_methods
+        WHERE user_id = ${userId}
+          AND enabled_at IS NOT NULL
+          AND disabled_at IS NULL
+        ORDER BY id ASC
+        FOR UPDATE`;
+
+      const target = lockedRows.find((row) => row.id === methodId);
+      if (!target) {
+        return { kind: 'not_found' };
+      }
+
+      const requiresMandatoryMfa = await hasLiveMandatoryMfaRoleInTx(transaction, userId, now);
+      const remainingRows = lockedRows.filter((row) => row.id !== methodId);
+      const remainingCount = remainingRows.length;
+      if (requiresMandatoryMfa && remainingCount < 1) {
+        return { kind: 'mandatory_role_last_factor' };
+      }
+
+      // Thuật toán: Di trú bộ mã khôi phục chưa sử dụng sang nhân tố MFA còn sống nếu nhân tố sắp gỡ đang giữ bộ mã khôi phục duy nhất (LOW-06).
+      const targetRecoveryHashes = Array.isArray(target.recovery_code_hashes)
+        ? (target.recovery_code_hashes as string[])
+        : [];
+      const anySurvivorHasRecoveryCodes = remainingRows.some(
+        (row) => Array.isArray(row.recovery_code_hashes) && row.recovery_code_hashes.length > 0,
+      );
+      if (
+        targetRecoveryHashes.length > 0 &&
+        !anySurvivorHasRecoveryCodes &&
+        remainingRows.length > 0 &&
+        typeof transaction.mfaMethod?.update === 'function'
+      ) {
+        await transaction.mfaMethod.update({
+          where: { id: remainingRows[0]!.id },
+          data: { recovery_code_hashes: targetRecoveryHashes },
+        });
+      }
+
+      const updated = await transaction.mfaMethod.updateMany({
+        where: {
+          id: methodId,
+          user_id: userId,
+          enabled_at: { not: null },
+          disabled_at: null,
+        },
+        data: {
+          disabled_at: now,
+          ...(targetRecoveryHashes.length > 0 &&
+          !anySurvivorHasRecoveryCodes &&
+          remainingRows.length > 0
+            ? { recovery_code_hashes: [] }
+            : {}),
+        },
+      });
+      if (updated.count === 0) {
+        return { kind: 'not_found' };
+      }
+
+      return {
+        kind: 'disabled',
+        remainingCount,
+        methodType: target.method_type === 'WEBAUTHN' ? 'WEBAUTHN' : 'TOTP',
+        label: target.label,
+      };
+    },
+    { client: database },
+  );
+}
+
+/**
+ * Thuật toán: Tắt Toàn Bộ Nhân Tố MFA Trong Giao Dịch `SERIALIZABLE` Kèm Khóa `SELECT ... FOR UPDATE` (`disableUserMfaMethodsAtomic`, BUG-003).
+ * Mục đích: Đảm bảo vai trò hệ thống hoặc Custom Role đặc quyền mới được gán đồng thời không bao giờ bị vô hiệu hóa sạch MFA.
+ */
+export async function disableUserMfaMethodsAtomic(
+  database: PrismaClient,
+  userId: bigint,
+): Promise<DisableAllMfaMethodsResult> {
+  return withSerializableTransaction(
+    async (transaction) => {
+      const now = new Date();
+      await transaction.$queryRaw<Array<{ id: bigint }>>`SELECT id
+        FROM public.users
+        WHERE id = ${userId}
+        FOR UPDATE`;
+
+      await transaction.$queryRaw<Array<{ id: string }>>`SELECT id::text AS id
+        FROM public.mfa_methods
+        WHERE user_id = ${userId}
+          AND enabled_at IS NOT NULL
+          AND disabled_at IS NULL
+        ORDER BY id ASC
+        FOR UPDATE`;
+
+      const requiresMandatoryMfa = await hasLiveMandatoryMfaRoleInTx(transaction, userId, now);
+      if (requiresMandatoryMfa) {
+        return { kind: 'mandatory_role_blocked' };
+      }
+
+      const updated = await transaction.mfaMethod.updateMany({
+        where: { user_id: userId, enabled_at: { not: null }, disabled_at: null },
+        data: { disabled_at: now },
+      });
+      return { kind: 'disabled', disabledCount: updated.count };
+    },
+    { client: database },
+  );
 }
 
 /**

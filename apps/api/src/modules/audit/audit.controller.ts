@@ -144,13 +144,30 @@ export class AuditController {
   @ApiOperation({ summary: 'List signed checkpoint anchors for audit partitions' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Audit anchors retrieved' })
   async listAnchors(
-    @Query('chainPartition') chainPartition: string | undefined,
+    @Query('chainPartition') chainPartition: unknown,
     @Req() request: FastifyRequest,
   ): Promise<unknown> {
     if (!request.auth) {
       throw new UnauthorizedException('Authenticated principal is required');
     }
-    return await this.auditService.listAnchors(request.auth, chainPartition);
+    if (chainPartition !== undefined && typeof chainPartition !== 'string') {
+      throw new BadRequestException({
+        code: AppErrorCode.VALIDATION_FAILED,
+        message: 'chainPartition query parameter must be a single string.',
+      });
+    }
+    const normalizedPartition =
+      typeof chainPartition === 'string' ? chainPartition.trim() : undefined;
+    if (normalizedPartition !== undefined && normalizedPartition.length > 64) {
+      throw new BadRequestException({
+        code: AppErrorCode.VALIDATION_FAILED,
+        message: 'chainPartition must not exceed 64 characters.',
+      });
+    }
+    return await this.auditService.listAnchors(
+      request.auth,
+      normalizedPartition && normalizedPartition.length > 0 ? normalizedPartition : undefined,
+    );
   }
 
   /**

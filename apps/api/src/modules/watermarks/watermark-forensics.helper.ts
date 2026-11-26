@@ -138,7 +138,35 @@ export async function traceWatermarkToken(
       include: FORENSIC_INSTANCE_INCLUDE,
     });
   type ForensicInstanceRecord = Awaited<ReturnType<typeof findExactInstance>>;
+
+  // Thuật toán: Phân giải trước phạm vi phòng ban (`visibleDepts`) và lọc loại trừ `TOP_SECRET` / ngoài phạm vi
+  // TRƯỚC KHI kiểm tra xung đột tiền tố `409 AMBIGUOUS_WATERMARK_TOKEN`, đồng thời vẫn ghi nhật ký `DENIED` khi khớp ngoài phạm vi (BUG-121).
+  const visibleDepts =
+    authorization && actor && typeof authorization.visibleDepartmentIds === 'function'
+      ? await authorization.visibleDepartmentIds(actor, 'WATERMARK_INSTANCE', 'TRACE')
+      : null;
+
+  const isInstanceVisibleToCaller = (candidate: NonNullable<ForensicInstanceRecord>): boolean => {
+    if (visibleDepts === null) return true;
+    const candidateDoc = candidate.document_versions?.document as
+      | {
+          department_id?: bigint;
+          classification_history?: Array<{
+            classification_levels?: { code?: string; rank?: number } | null;
+          }>;
+        }
+      | undefined;
+    if (!candidateDoc) return false;
+    const candidateLevel = candidateDoc.classification_history?.[0]?.classification_levels;
+    const isTopSecret = candidateLevel?.code === 'TOP_SECRET' || (candidateLevel?.rank ?? 0) >= 4;
+    const inScope =
+      candidateDoc.department_id !== undefined && visibleDepts.includes(candidateDoc.department_id);
+    return inScope && !isTopSecret;
+  };
+
   let instance: ForensicInstanceRecord = null;
+  let hiddenOutOfScopeMatch = false;
+
   // CONFLICT-RESOLVED: Mở rộng truy vấn tiền tố startsWith cho mọi normalizedToken hợp lệ dài 15..50 ký tự (WM- + 12..47 hex), chỉ tìm khớp chính xác khi đủ 51 ký tự (WM- + 48 hex).
   if (
     normalizedToken.length >= 15 &&
@@ -146,26 +174,86 @@ export async function traceWatermarkToken(
     PREFIX_WATERMARK_TOKEN_REGEX.test(normalizedToken) &&
     typeof database.watermarkInstance?.findMany === 'function'
   ) {
-    const matches = await database.watermarkInstance.findMany({
-      where: { watermark_token: { startsWith: normalizedToken } },
-      take: 2,
-      include: FORENSIC_INSTANCE_INCLUDE,
-    });
-    if (matches.length > 1) {
-      throw new ConflictException({
-        code: 'AMBIGUOUS_WATERMARK_TOKEN',
-        errorCode: 'AMBIGUOUS_WATERMARK_TOKEN',
-        message:
-          'Multiple watermark instances match this short token prefix; please scan or provide the full QR watermark token.',
+    if (visibleDepts === null) {
+      const matches = await database.watermarkInstance.findMany({
+        where: { watermark_token: { startsWith: normalizedToken } },
+        take: 2,
+        include: FORENSIC_INSTANCE_INCLUDE,
       });
+      if (matches.length > 1) {
+        throw new ConflictException({
+          code: 'AMBIGUOUS_WATERMARK_TOKEN',
+          errorCode: 'AMBIGUOUS_WATERMARK_TOKEN',
+          message:
+            'Multiple watermark instances match this short token prefix; please scan or provide the full QR watermark token.',
+        });
+      }
+      instance = matches[0] ?? null;
+    } else if (visibleDepts.length === 0) {
+      const probe = await database.watermarkInstance.findMany({
+        where: { watermark_token: { startsWith: normalizedToken } },
+        take: 1,
+        include: FORENSIC_INSTANCE_INCLUDE,
+      });
+      hiddenOutOfScopeMatch = probe.length > 0;
+      instance = null;
+    } else {
+      const scopedMatches = await database.watermarkInstance.findMany({
+        where: {
+          watermark_token: { startsWith: normalizedToken },
+          document_versions: {
+            document: {
+              department_id: { in: visibleDepts },
+              NOT: {
+                classification_history: {
+                  some: {
+                    effective_to: null,
+                    classification_levels: {
+                      OR: [{ code: 'TOP_SECRET' }, { rank: { gte: 4 } }],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        take: 2,
+        include: FORENSIC_INSTANCE_INCLUDE,
+      });
+      const visibleMatches = scopedMatches.filter((m) => isInstanceVisibleToCaller(m));
+      if (scopedMatches.length > visibleMatches.length) {
+        hiddenOutOfScopeMatch = true;
+      }
+      if (visibleMatches.length === 0 && !hiddenOutOfScopeMatch) {
+        const unscopedProbe = await database.watermarkInstance.findMany({
+          where: { watermark_token: { startsWith: normalizedToken } },
+          take: 1,
+          select: { id: true },
+        });
+        hiddenOutOfScopeMatch = unscopedProbe.length > 0;
+      }
+      if (visibleMatches.length > 1) {
+        throw new ConflictException({
+          code: 'AMBIGUOUS_WATERMARK_TOKEN',
+          errorCode: 'AMBIGUOUS_WATERMARK_TOKEN',
+          message:
+            'Multiple watermark instances match this short token prefix; please scan or provide the full QR watermark token.',
+        });
+      }
+      instance = visibleMatches[0] ?? null;
     }
-    instance = matches[0] ?? null;
   } else {
-    instance = await findExactInstance();
+    const exactMatch = await findExactInstance();
+    if (exactMatch && !isInstanceVisibleToCaller(exactMatch)) {
+      hiddenOutOfScopeMatch = true;
+      instance = null;
+    } else {
+      instance = exactMatch;
+    }
   }
 
   if (!instance) {
-    await recordNotFoundAudit(false);
+    await recordNotFoundAudit(hiddenOutOfScopeMatch);
     throw new NotFoundException({
       errorCode: AppErrorCode.WATERMARK_TOKEN_NOT_FOUND,
       message: 'Watermark token was not found in the reconciliation registry.',
@@ -209,28 +297,6 @@ export async function traceWatermarkToken(
 
   const docWithClass = typedInstance.document_versions.document;
   const activeLevel = docWithClass.classification_history?.[0]?.classification_levels;
-
-  // CONFLICT-RESOLVED: Giới hạn phạm vi phòng ban và chặn cán bộ cấp phòng ban truy vết watermark liên phòng ban hoặc tài liệu `TOP_SECRET` (HIGH-06).
-  if (authorization && actor && typeof authorization.visibleDepartmentIds === 'function') {
-    const visibleDepts = await authorization.visibleDepartmentIds(
-      actor,
-      'WATERMARK_INSTANCE',
-      'TRACE',
-    );
-    if (visibleDepts !== null) {
-      const isTopSecret = activeLevel?.code === 'TOP_SECRET' || (activeLevel?.rank ?? 0) >= 4;
-      const inScope =
-        docWithClass.department_id !== undefined &&
-        visibleDepts.includes(docWithClass.department_id);
-      if (!inScope || isTopSecret) {
-        await recordNotFoundAudit(true);
-        throw new NotFoundException({
-          errorCode: AppErrorCode.WATERMARK_TOKEN_NOT_FOUND,
-          message: 'Watermark token was not found in the reconciliation registry.',
-        });
-      }
-    }
-  }
 
   if (auditWriter && actor) {
     await auditWriter.writeLog(

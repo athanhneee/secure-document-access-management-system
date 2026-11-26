@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient, Prisma } from '@sda/database';
 import { isPrivilegedSeparationRoleOrCapability } from '../rbac/permission-matrix.js';
-import { revokeTokenFamily } from './auth-session.repository.js';
+import { normalizeValidInetAddress, revokeTokenFamily } from './auth-session.repository.js';
 import type { AuthUser } from './auth.types.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
@@ -106,16 +106,15 @@ export function mapRecordToAuthUser(user: {
   const recoveryHashes = Array.isArray(method?.recovery_code_hashes)
     ? method.recovery_code_hashes.filter((value): value is string => typeof value === 'string')
     : [];
-  const requiresMfa =
-    Boolean(method) ||
-    user.user_roles_user_roles_user_idTousers.some((assignment) =>
-      isPrivilegedSeparationRoleOrCapability(
-        assignment.roles.code,
-        (assignment.roles.role_permissions ?? [])
-          .map((rp) => rp.permissions ?? undefined)
-          .filter((perm): perm is NonNullable<typeof perm> => perm !== undefined),
-      ),
-    );
+  const hasMandatoryMfaRole = user.user_roles_user_roles_user_idTousers.some((assignment) =>
+    isPrivilegedSeparationRoleOrCapability(
+      assignment.roles.code,
+      (assignment.roles.role_permissions ?? [])
+        .map((rp) => rp.permissions ?? undefined)
+        .filter((perm): perm is NonNullable<typeof perm> => perm !== undefined),
+    ),
+  );
+  const requiresMfa = Boolean(method) || hasMandatoryMfaRole;
   const roleCodes = [
     ...new Set(user.user_roles_user_roles_user_idTousers.map((a) => a.roles.code)),
   ];
@@ -146,6 +145,7 @@ export function mapRecordToAuthUser(user: {
     lockedUntil: user.locked_until,
     failedLoginCount: user.failed_login_count,
     roles: user.user_roles_user_roles_user_idTousers.map((assignment) => assignment.roles.code),
+    hasMandatoryMfaRole,
     requiresMfa,
     profile: {
       id: user.id.toString(),
@@ -236,7 +236,7 @@ export async function createUserPasswordReset(
         user_id: userId,
         token_hash: tokenHash,
         expires_at: expiresAt,
-        requested_ip: ip,
+        requested_ip: normalizeValidInetAddress(ip) ?? null,
       },
     });
   });
@@ -249,15 +249,23 @@ export async function findPasswordResetTokenOwner(
   database: PrismaClient,
   tokenHash: string,
 ): Promise<{ userId: bigint; username: string; email: string } | null> {
+  const now = new Date();
   const token = await database.passwordResetToken.findUnique({
     where: { token_hash: tokenHash },
-    include: { users: { select: { id: true, username: true, email: true, status: true } } },
+    include: {
+      users: {
+        select: { id: true, username: true, email: true, status: true, locked_until: true },
+      },
+    },
   });
   if (
     !token ||
     token.used_at ||
-    token.expires_at <= new Date() ||
-    token.users.status === 'DISABLED'
+    token.expires_at <= now ||
+    token.users.status !== 'ACTIVE' ||
+    (token.users.locked_until !== null &&
+      token.users.locked_until !== undefined &&
+      token.users.locked_until > now)
   ) {
     return null;
   }
@@ -268,42 +276,82 @@ export async function findPasswordResetTokenOwner(
   };
 }
 
+class IneligiblePasswordResetRollbackError extends Error {}
+
 /**
- * Algorithm / Thuật toán: Tiêu thụ nguyên tử một lần mã đặt lại mật khẩu bằng Compare-And-Swap (Single-Use Atomic CAS Consumption).
+ * Algorithm / Thuật toán: Tiêu thụ nguyên tử một lần mã đặt lại mật khẩu bằng Compare-And-Swap (Single-Use Atomic CAS Consumption),
+ * cưỡng chế kiểm tra nguyên tử `status === 'ACTIVE' && (!locked_until || locked_until <= now)` kèm tăng `version` để ngăn tài khoản `LOCKED`/`PENDING`/`locked_until > now` tự mở khóa (`BUG-045`).
  */
 export async function consumeUserPasswordReset(
   database: PrismaClient,
   tokenHash: string,
   passwordHash: string,
 ): Promise<bigint | null> {
-  return database.$transaction(async (transaction) => {
-    const token = await transaction.passwordResetToken.findUnique({
-      where: { token_hash: tokenHash },
-      include: { users: true },
+  try {
+    return await database.$transaction(async (transaction) => {
+      const now = new Date();
+      const token = await transaction.passwordResetToken.findUnique({
+        where: { token_hash: tokenHash },
+        include: { users: true },
+      });
+      if (
+        !token ||
+        token.used_at ||
+        token.expires_at <= now ||
+        token.users.status !== 'ACTIVE' ||
+        (token.users.locked_until !== null &&
+          token.users.locked_until !== undefined &&
+          token.users.locked_until > now)
+      ) {
+        return null;
+      }
+      const claimed = await transaction.passwordResetToken.updateMany({
+        where: { id: token.id, used_at: null, expires_at: { gt: now } },
+        data: { used_at: now },
+      });
+      if (claimed.count !== 1) return null;
+      if (typeof transaction.user.updateMany === 'function') {
+        const updatedUser = await transaction.user.updateMany({
+          where: {
+            id: token.user_id,
+            status: 'ACTIVE',
+            OR: [{ locked_until: null }, { locked_until: { lte: now } }],
+          },
+          data: {
+            password_hash: passwordHash,
+            failed_login_count: 0,
+            locked_until: null,
+            updated_at: now,
+            version: { increment: 1 },
+          },
+        });
+        if (updatedUser.count !== 1) {
+          throw new IneligiblePasswordResetRollbackError();
+        }
+      } else {
+        await transaction.user.update({
+          where: { id: token.user_id },
+          data: {
+            password_hash: passwordHash,
+            failed_login_count: 0,
+            locked_until: null,
+            updated_at: now,
+            version: { increment: 1 },
+          },
+        });
+      }
+      const sessions = await transaction.authSession.findMany({
+        where: { user_id: token.user_id, status: 'ACTIVE' },
+      });
+      for (const session of sessions) {
+        await revokeTokenFamily(transaction, session.token_family_id, session.id, 'PASSWORD_RESET');
+      }
+      return token.user_id;
     });
-    if (
-      !token ||
-      token.used_at ||
-      token.expires_at <= new Date() ||
-      token.users.status === 'DISABLED'
-    ) {
+  } catch (err: unknown) {
+    if (err instanceof IneligiblePasswordResetRollbackError) {
       return null;
     }
-    const claimed = await transaction.passwordResetToken.updateMany({
-      where: { id: token.id, used_at: null, expires_at: { gt: new Date() } },
-      data: { used_at: new Date() },
-    });
-    if (claimed.count !== 1) return null;
-    await transaction.user.update({
-      where: { id: token.user_id },
-      data: { password_hash: passwordHash, failed_login_count: 0, locked_until: null },
-    });
-    const sessions = await transaction.authSession.findMany({
-      where: { user_id: token.user_id, status: 'ACTIVE' },
-    });
-    for (const session of sessions) {
-      await revokeTokenFamily(transaction, session.token_family_id, session.id, 'PASSWORD_RESET');
-    }
-    return token.user_id;
-  });
+    throw err;
+  }
 }

@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import {
-  BadRequestException,
+  ConflictException,
   ForbiddenException,
   Logger,
   ServiceUnavailableException,
@@ -119,7 +119,7 @@ test('[MED-03, MED-05, MED-07] Detection rules merge, watermark DB fallback & <=
   );
   await assert.rejects(
     () => usersSvc.unlock(adminActor, 2n, 1, { ip: '127.0.0.1', correlationId: 'c2' }),
-    BadRequestException,
+    ConflictException,
   );
 
   const spoolFile = path.join(os.tmpdir(), `sda-spool-${randomUUID()}.pdf`);

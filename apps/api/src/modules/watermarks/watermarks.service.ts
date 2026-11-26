@@ -30,6 +30,17 @@ export type { WatermarkVerificationResult };
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
+ * Thuật toán: Kiểm tra mẫu watermark bắt buộc chứa biến định danh người nhận (`{username}` hoặc `{fullName}`) khi lưu (`BUG-055`).
+ */
+export function assertWatermarkTemplateHasRecipientIdentity(templateText: string): void {
+  if (!/\{\{?(?:username|fullName)\}?\}/u.test(templateText)) {
+    throw new BadRequestException(
+      'Watermark templateText must include at least {username} or {fullName} to preserve forensic recipient attribution.',
+    );
+  }
+}
+
+/**
  * Thuật toán: Kiểm tra chính sách bắt buộc nhúng mã QR hoặc `{watermarkToken}` đầy đủ trên các mức mật `SECRET` / `TOP_SECRET`.
  */
 export function assertHighClassificationWatermarkIntegrity(params: {
@@ -74,9 +85,10 @@ export class WatermarksService {
   /**
    * Thuật toán: Chiếu danh mục cấu hình watermark đang kích hoạt kèm cấp độ mật (`Active Watermark Catalog Projection`).
    */
-  async listConfigs(): Promise<{ data: unknown[] }> {
+  async listConfigs(): Promise<{ data: unknown[]; total: number; truncated: boolean }> {
+    const where = { is_active: true } as const;
     const configs = await this.database.watermarkConfig.findMany({
-      where: { is_active: true },
+      where,
       take: 200,
       include: {
         classification_levels: {
@@ -86,29 +98,37 @@ export class WatermarksService {
       orderBy: { created_at: 'asc' },
     });
 
+    const data = configs.map((c) => ({
+      id: c.id.toString(),
+      name: c.name,
+      classificationLevelId: c.classification_level_id?.toString() ?? null,
+      classificationLevel: c.classification_levels
+        ? {
+            id: Number(c.classification_levels.id),
+            code: c.classification_levels.code,
+            name: c.classification_levels.name,
+            rank: c.classification_levels.rank,
+          }
+        : null,
+      isDefault: c.is_default,
+      isVisible: c.is_visible,
+      templateText: c.template_text,
+      opacityPercent: c.opacity_percent,
+      rotationDegrees: c.rotation_degrees,
+      fontSize: c.font_size,
+      colorHex: c.color_hex,
+      includeQrCode: c.include_qr_code,
+      createdAt: c.created_at.toISOString(),
+    }));
+    const total =
+      configs.length >= 200 && typeof this.database.watermarkConfig.count === 'function'
+        ? await this.database.watermarkConfig.count({ where })
+        : data.length;
+
     return {
-      data: configs.map((c) => ({
-        id: c.id.toString(),
-        name: c.name,
-        classificationLevelId: c.classification_level_id?.toString() ?? null,
-        classificationLevel: c.classification_levels
-          ? {
-              id: Number(c.classification_levels.id),
-              code: c.classification_levels.code,
-              name: c.classification_levels.name,
-              rank: c.classification_levels.rank,
-            }
-          : null,
-        isDefault: c.is_default,
-        isVisible: c.is_visible,
-        templateText: c.template_text,
-        opacityPercent: c.opacity_percent,
-        rotationDegrees: c.rotation_degrees,
-        fontSize: c.font_size,
-        colorHex: c.color_hex,
-        includeQrCode: c.include_qr_code,
-        createdAt: c.created_at.toISOString(),
-      })),
+      data,
+      total,
+      truncated: total > data.length,
     };
   }
 
@@ -178,6 +198,10 @@ export class WatermarksService {
       });
       classCode = level?.code ?? null;
       classRank = level?.rank ?? null;
+    }
+
+    if (input.templateText !== undefined) {
+      assertWatermarkTemplateHasRecipientIdentity(input.templateText);
     }
 
     assertHighClassificationWatermarkIntegrity({

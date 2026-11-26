@@ -13,15 +13,23 @@ import type { RedlockService } from '../concurrency/redlock.service.js';
 import { getUserClearanceRank } from './document-access-guard.helper.js';
 import { parseIsoRetentionDate } from './document-draft-validation.helper.js';
 import type { ValidatedFileInfo } from './file-validation.service.js';
-import type { IngestDocumentInput } from './ingestion-validation.helper.js';
+import {
+  assertIngestionClassificationValid,
+  type IngestDocumentInput,
+} from './ingestion-validation.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
+export interface PersistedIngestedVersionResult {
+  versionNo: number;
+  documentStatus: 'DRAFT' | 'ACTIVE';
+}
+
 /**
- * Thuật toán: Ghi nhận phiên bản tài liệu đã quét sạch mã độc trong giao dịch nguyên tử khóa kép (`Redlock` + `FOR UPDATE`).
- * Sử dụng nhất quán `tx` cho mọi thao tác đọc/ghi trong `$transaction` để loại bỏ nguy cơ cạn kiệt kết nối tự khóa chết (Self-Deadlock).
+ * Thuật toán: Ghi nhận phiên bản tài liệu đã quét sạch mã độc trong giao dịch nguyên tử khóa kép (`Redlock` + `FOR UPDATE`),
+ * trả về đồng thời `versionNo` và trạng thái thực tế của tài liệu (`DRAFT` hoặc `ACTIVE` khi tải lên v2+, BUG-110).
  */
-export async function persistCleanIngestedVersion(params: {
+export async function persistCleanIngestedVersionWithStatus(params: {
   database: PrismaClient;
   redlock?: RedlockService | undefined;
   authorization?: AuthorizationService | undefined;
@@ -32,7 +40,7 @@ export async function persistCleanIngestedVersion(params: {
   totalBytes: number;
   sha256Hash: string;
   dekReference: string;
-}): Promise<number> {
+}): Promise<PersistedIngestedVersionResult> {
   const {
     database,
     redlock,
@@ -59,7 +67,7 @@ export async function persistCleanIngestedVersion(params: {
     callerDeptId = caller?.department_id ?? undefined;
   }
   const deptId = input.departmentId ?? callerDeptId ?? 1n;
-  const title = input.title ?? validatedInfo.sanitizedFilename;
+  const title = (input.title?.trim() || validatedInfo.sanitizedFilename).slice(0, 255);
   const docCode = input.documentCode ?? `DOC-${randomUUID().substring(0, 8).toUpperCase()}`;
 
   const retentionDate: Date | null =
@@ -68,6 +76,7 @@ export async function persistCleanIngestedVersion(params: {
       : null;
 
   let finalVersionNo = 1;
+  let persistedStatus: 'DRAFT' | 'ACTIVE' = 'DRAFT';
 
   const persistVersionMetadata = async (): Promise<void> => {
     await database.$transaction(async (tx) => {
@@ -114,6 +123,10 @@ export async function persistCleanIngestedVersion(params: {
         });
       }
 
+      // CONFLICT-RESOLVED: Truy vấn qua client giao dịch tx thay vì pool gốc database bên trong $transaction để chống tự khóa chết Pool (Self-Deadlock).
+      const txClient = tx as unknown as PrismaClient;
+      let hasActiveClassification = Boolean(existingDoc?.classification_history?.length);
+
       if (!existingDoc) {
         if (authorization && typeof authorization.hasPermission === 'function') {
           const scope = { targetDepartmentId: deptId };
@@ -129,31 +142,12 @@ export async function persistCleanIngestedVersion(params: {
             });
           }
         }
-        // CONFLICT-RESOLVED: Truy vấn qua client giao dịch tx thay vì pool gốc database bên trong $transaction để chống tự khóa chết Pool (Self-Deadlock).
-        const txClient = tx as unknown as PrismaClient;
-        if (
-          input.classificationLevelId &&
-          typeof txClient?.classificationLevel?.findUnique === 'function'
-        ) {
-          const level = await txClient.classificationLevel.findUnique({
-            where: { id: input.classificationLevelId },
-          });
-          if (!level || !level.is_active) {
-            throw new BadRequestException({
-              errorCode: AppErrorCode.VALIDATION_FAILED,
-              message: 'Target classification level does not exist or is inactive.',
-            });
-          }
-          if (typeof txClient?.userAttributeAssignment?.findFirst === 'function') {
-            const rank = await getUserClearanceRank(txClient, input.principal.userId, new Date());
-            if (rank < level.rank) {
-              throw new ForbiddenException({
-                errorCode: AppErrorCode.BELL_LAPADULA_CLEARANCE_INSUFFICIENT,
-                message: `Insufficient clearance level (${rank}) to upload document at rank ${level.rank}.`,
-              });
-            }
-          }
-        }
+        await assertIngestionClassificationValid({
+          database: txClient,
+          principal: input.principal,
+          classificationLevelId: input.classificationLevelId,
+          businessCategoryId: input.businessCategoryId,
+        });
         await tx.document.create({
           data: {
             id: targetDocId,
@@ -168,18 +162,22 @@ export async function persistCleanIngestedVersion(params: {
           },
         });
         finalVersionNo = 1;
+        persistedStatus = 'DRAFT';
       } else {
-        const txClient = tx as unknown as PrismaClient;
-        if (
-          typeof txClient?.documentClassificationHistory?.findFirst === 'function' &&
-          typeof txClient?.userAttributeAssignment?.findFirst === 'function'
-        ) {
+        persistedStatus = existingDoc.status === 'ACTIVE' ? 'ACTIVE' : 'DRAFT';
+        if (typeof txClient?.documentClassificationHistory?.findFirst === 'function') {
           const currentClass = await txClient.documentClassificationHistory.findFirst({
             where: { document_id: targetDocId, effective_to: null },
             include: { classification_levels: true },
           });
+          if (currentClass) {
+            hasActiveClassification = true;
+          }
           const existingRank = currentClass?.classification_levels?.rank ?? 0;
-          if (existingRank > 0) {
+          if (
+            existingRank > 0 &&
+            typeof txClient?.userAttributeAssignment?.findFirst === 'function'
+          ) {
             const rank = await getUserClearanceRank(txClient, input.principal.userId, new Date());
             if (rank < existingRank) {
               throw new ForbiddenException({
@@ -188,6 +186,14 @@ export async function persistCleanIngestedVersion(params: {
               });
             }
           }
+        }
+        if (!hasActiveClassification) {
+          await assertIngestionClassificationValid({
+            database: txClient,
+            principal: input.principal,
+            classificationLevelId: input.classificationLevelId,
+            businessCategoryId: input.businessCategoryId,
+          });
         }
         const currentMaxVersion = existingDoc.versions.reduce(
           (max, v) => (v.version_no > max ? v.version_no : max),
@@ -207,7 +213,9 @@ export async function persistCleanIngestedVersion(params: {
           sha256_hash: sha256Hash,
           encryption_key_ref: dekReference,
           scan_status: 'CLEAN',
-          change_note: input.changeNote ?? 'Initial version',
+          change_note:
+            input.changeNote?.trim() ||
+            (finalVersionNo === 1 ? 'Initial version' : `Version ${finalVersionNo}`),
           uploaded_by: input.principal.userId,
         },
       });
@@ -226,7 +234,7 @@ export async function persistCleanIngestedVersion(params: {
       if (
         input.classificationLevelId &&
         typeof tx.documentClassificationHistory?.create === 'function' &&
-        (!existingDoc || !existingDoc.classification_history?.length)
+        !hasActiveClassification
       ) {
         await tx.documentClassificationHistory.create({
           data: {
@@ -249,5 +257,15 @@ export async function persistCleanIngestedVersion(params: {
     await persistVersionMetadata();
   }
 
-  return finalVersionNo;
+  return { versionNo: finalVersionNo, documentStatus: persistedStatus };
+}
+
+/**
+ * Thuật toán: Tương thích ngược trả về số phiên bản `versionNo` cho các lời gọi trực tiếp `persistCleanIngestedVersion`.
+ */
+export async function persistCleanIngestedVersion(
+  params: Parameters<typeof persistCleanIngestedVersionWithStatus>[0],
+): Promise<number> {
+  const persisted = await persistCleanIngestedVersionWithStatus(params);
+  return persisted.versionNo;
 }

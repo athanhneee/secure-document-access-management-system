@@ -24,12 +24,15 @@ export function resolveWorkspaceExportDir(): string {
 
 /**
  * Thuật toán: Kiểm tra quyền sở hữu tác vụ xuất báo cáo hoặc vai trò giám sát tương ứng theo miền dữ liệu.
+ * Khi `authorization` có mặt, cho phép các Vai trò Tùy chỉnh (Custom Roles) đi tiếp sang bước đối chiếu quyền RBAC thực tế `resolveExportAuthorizationScope`.
  */
 export function assertExportJobAccess(
   job: { requester_user_id: bigint; export_type: string },
   actor: AuthPrincipal,
+  authorization?: AuthorizationService,
 ): void {
   if (job.requester_user_id === actor.userId) return;
+  if (authorization) return;
   const roles = actor.roles ?? [];
   if (roles.includes('SYSTEM_ADMIN')) return;
   if (job.export_type === 'AUDIT_LOGS' && roles.includes('AUDITOR')) return;
@@ -45,6 +48,83 @@ export function assertExportJobAccess(
   throw new ForbiddenException({
     errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
     message: 'You are not authorized to access or download this export job.',
+  });
+}
+
+/**
+ * Thuật toán: Tái thẩm định quyền RBAC `EXPORT` trực tiếp (hỗ trợ Custom Roles qua `AuthorizationService`), trạng thái hoạt động `ACTIVE` của tài khoản
+ * và phạm vi phòng ban ngay tại thời điểm tải xuống tệp báo cáo nhạy cảm (BUG-111).
+ */
+export async function assertLiveExportDownloadAuthorization(
+  database: {
+    user?: {
+      findUnique: (args: {
+        where: { id: bigint };
+        select: { status?: true; department_id?: true };
+      }) => Promise<{ status?: string; department_id?: bigint | null } | null>;
+    };
+  },
+  authorization: AuthorizationService | undefined,
+  job: { requester_user_id: bigint; export_type: string; filter_params?: unknown },
+  actor: AuthPrincipal,
+): Promise<void> {
+  if (typeof database?.user?.findUnique === 'function') {
+    const liveUser = await database.user.findUnique({
+      where: { id: actor.userId },
+      select: { status: true },
+    });
+    if (liveUser && liveUser.status !== undefined && liveUser.status !== 'ACTIVE') {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
+        message: 'User account is no longer active to download export artifacts.',
+      });
+    }
+  }
+
+  if (!authorization) return;
+
+  const liveAllowedDepartmentIds = await resolveExportAuthorizationScope(
+    authorization,
+    actor,
+    job.export_type as ExportType,
+  );
+  if (liveAllowedDepartmentIds === null) return;
+
+  const filterParams =
+    job.filter_params && typeof job.filter_params === 'object' && !Array.isArray(job.filter_params)
+      ? (job.filter_params as Record<string, unknown>)
+      : null;
+  const rawFilterDept = filterParams?.['departmentId'];
+  if (rawFilterDept !== undefined && rawFilterDept !== null && rawFilterDept !== '') {
+    if (
+      !/^\d+$/.test(String(rawFilterDept)) ||
+      !liveAllowedDepartmentIds.includes(BigInt(String(rawFilterDept)))
+    ) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
+        message: 'Your current department scope no longer covers this export artifact.',
+      });
+    }
+    return;
+  }
+
+  const persistedAllowed = filterParams?.['__allowedDepartmentIds'];
+  if (Array.isArray(persistedAllowed) && persistedAllowed.length > 0) {
+    const allStillCovered = persistedAllowed.every(
+      (id) => /^\d+$/.test(String(id)) && liveAllowedDepartmentIds.includes(BigInt(String(id))),
+    );
+    if (!allStillCovered) {
+      throw new ForbiddenException({
+        errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
+        message: 'Your current department scope no longer covers all departments in this export.',
+      });
+    }
+    return;
+  }
+
+  throw new ForbiddenException({
+    errorCode: AppErrorCode.EXPORT_UNAUTHORIZED,
+    message: 'Your current department scope no longer covers an unrestricted global export.',
   });
 }
 

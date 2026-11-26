@@ -15,11 +15,36 @@ import {
 import { WatermarksService } from '../dist/modules/watermarks/watermarks.service.js';
 import { createZipBuffer } from './helpers/zip-builder.mjs';
 
-async function loadTsModuleExports(sourceCode) {
-  const uiLabelsUrl = new URL('../../web/lib/ui-labels.ts', import.meta.url).href;
-  const resolvedSource = sourceCode.replaceAll("'@/lib/ui-labels'", `'${uiLabelsUrl}'`);
+const transpiledAliasCache = new Map();
+
+async function resolveWebAliasDataUrl(aliasSubpath) {
+  if (transpiledAliasCache.has(aliasSubpath)) {
+    return transpiledAliasCache.get(aliasSubpath);
+  }
+  const cleanSubpath = aliasSubpath.endsWith('.ts') ? aliasSubpath : `${aliasSubpath}.ts`;
+  const raw = await readFile(new URL(`../../web/${cleanSubpath}`, import.meta.url), 'utf8');
+  const dataUrl = await toTranspiledDataUrl(raw);
+  transpiledAliasCache.set(aliasSubpath, dataUrl);
+  return dataUrl;
+}
+
+async function toTranspiledDataUrl(sourceCode) {
+  let resolvedSource = sourceCode;
+  const aliasMatches = [...sourceCode.matchAll(/from\s+['"]@\/([^'"]+)['"]/gu)];
+  for (const match of aliasMatches) {
+    const subpath = match[1];
+    const dataUrl = await resolveWebAliasDataUrl(subpath);
+    resolvedSource = resolvedSource
+      .replaceAll(`'@/${subpath}'`, `'${dataUrl}'`)
+      .replaceAll(`"@/${subpath}"`, `"${dataUrl}"`);
+  }
   const jsCode = stripTypeScriptTypes(resolvedSource);
-  return import(`data:text/javascript;base64,${Buffer.from(jsCode, 'utf8').toString('base64')}`);
+  return `data:text/javascript;base64,${Buffer.from(jsCode, 'utf8').toString('base64')}`;
+}
+
+async function loadTsModuleExports(sourceCode) {
+  const dataUrl = await toTranspiledDataUrl(sourceCode);
+  return import(dataUrl);
 }
 
 test('[CRITICAL-01] Oversized >5.2 MiB XML with XXE payload is blocked Fail-Closed in both ZipBombGuard and OfficeArchiveInspector', async () => {

@@ -45,7 +45,7 @@ const READER_ACTOR = {
   roles: ['DOCUMENT_READER'],
 };
 
-test('N01 [SECURITY] — SSE stream enforces case-insensitive Origin allowlist, rejects evil Origin before hijack, and sends OWASP headers', () => {
+test('N01 [SECURITY] — SSE stream enforces case-insensitive Origin allowlist, rejects evil Origin before hijack, and sends OWASP headers', async () => {
   assert.equal(isAllowedSseOrigin('http://localhost:3000', ['http://localhost:3000']), true);
   assert.equal(isAllowedSseOrigin('HTTP://LOCALHOST:3000', ['http://localhost:3000']), true);
   assert.equal(
@@ -68,9 +68,9 @@ test('N01 [SECURITY] — SSE stream enforces case-insensitive Origin allowlist, 
     raw: {},
   };
 
-  assert.throws(
-    () => {
-      controller.stream(
+  await assert.rejects(
+    async () => {
+      await controller.stream(
         {
           auth: SOC_ACTOR,
           headers: { origin: 'https://evil.attacker.example' },
@@ -99,7 +99,7 @@ test('N01 [SECURITY] — SSE stream enforces case-insensitive Origin allowlist, 
       once: () => {},
     },
   };
-  controller.stream(
+  await controller.stream(
     {
       auth: SOC_ACTOR,
       headers: { origin: 'http://localhost:3000' },

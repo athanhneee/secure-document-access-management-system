@@ -37,6 +37,7 @@ interface CachedAuthPrincipal {
   roles: string[];
   mfa: boolean;
   mfaPending?: boolean | undefined;
+  restrictedNonBusiness?: boolean | undefined;
   userEpoch: number;
   globalEpoch: number;
 }
@@ -54,6 +55,7 @@ export class AuthGuard implements CanActivate, OnModuleDestroy {
   private readonly l1Sessions = new Map<string, L1SessionEntry>();
   private readonly localTouchThrottle = new Map<string, number>();
   private readonly unsubscribeInvalidation: (() => void) | null = null;
+  private generation = 0;
 
   constructor(
     private readonly reflector: Reflector,
@@ -182,6 +184,7 @@ export class AuthGuard implements CanActivate, OnModuleDestroy {
       this.l1Sessions.delete(sessionId);
     }
 
+    const generationBeforeLookup = this.generation;
     const userIdStr = userId.toString();
     let globalEpoch = 0;
     let userEpoch = 0;
@@ -218,7 +221,8 @@ export class AuthGuard implements CanActivate, OnModuleDestroy {
       cached.globalEpoch === globalEpoch &&
       cached.userEpoch === userEpoch &&
       cached.userId === userIdStr &&
-      cached.sessionId === sessionId
+      cached.sessionId === sessionId &&
+      this.generation === generationBeforeLookup
     ) {
       const principal: AuthPrincipal = {
         userId: BigInt(cached.userId),
@@ -227,6 +231,7 @@ export class AuthGuard implements CanActivate, OnModuleDestroy {
         roles: cached.roles,
         mfa: cached.mfa,
         mfaPending: cached.mfaPending,
+        restrictedNonBusiness: cached.restrictedNonBusiness,
       };
       this.setL1Session(sessionId, principal, now + AUTH_SESSION_CACHE_TTL_MS);
       return principal;
@@ -236,7 +241,6 @@ export class AuthGuard implements CanActivate, OnModuleDestroy {
     if (!fresh) {
       return null;
     }
-    this.setL1Session(sessionId, fresh, Date.now() + AUTH_SESSION_CACHE_TTL_MS);
 
     const payload: CachedAuthPrincipal = {
       userId: fresh.userId.toString(),
@@ -245,38 +249,75 @@ export class AuthGuard implements CanActivate, OnModuleDestroy {
       roles: fresh.roles,
       mfa: fresh.mfa,
       mfaPending: fresh.mfaPending,
+      restrictedNonBusiness: fresh.restrictedNonBusiness,
       userEpoch,
       globalEpoch,
     };
-    const isRemote =
-      typeof this.stateStore.hasRemoteRedis === 'function' && this.stateStore.hasRemoteRedis();
-    const putPromise = this.stateStore.putEphemeral<CachedAuthPrincipal>(
-      'auth-session',
-      sessionId,
-      payload,
-      AUTH_SESSION_CACHE_TTL_MS,
-    );
-    if (isRemote) {
-      void putPromise.catch(() => undefined);
+
+    // Thuật toán: Ghi đệm L2 Redis nguyên tử bằng Lua CAS `putEphemeralIfEpochsMatch` kết hợp đối chiếu thế hệ `generationBeforeLookup`
+    // nhằm triệt tiêu hoàn toàn race condition ghi ngược phiên đã thu hồi / tài khoản đã khóa vào L1/L2 (HIGH-01).
+    let written = false;
+    if (this.generation === generationBeforeLookup) {
+      try {
+        if (typeof this.stateStore.putEphemeralIfEpochsMatch === 'function') {
+          written = await this.stateStore.putEphemeralIfEpochsMatch({
+            namespace: 'auth-session',
+            id: sessionId,
+            value: payload,
+            ttlMs: AUTH_SESSION_CACHE_TTL_MS,
+            expectedEpochs: [
+              { namespace: 'auth-global', epoch: globalEpoch },
+              { namespace: `auth-user:${userIdStr}`, epoch: userEpoch },
+            ],
+          });
+        } else {
+          const [curGlobal, curUser] = await Promise.all([
+            this.stateStore.getNamespaceEpoch('auth-global'),
+            this.stateStore.getNamespaceEpoch(`auth-user:${userIdStr}`),
+          ]);
+          if (
+            curGlobal === globalEpoch &&
+            curUser === userEpoch &&
+            this.generation === generationBeforeLookup
+          ) {
+            await this.stateStore.putEphemeral<CachedAuthPrincipal>(
+              'auth-session',
+              sessionId,
+              payload,
+              AUTH_SESSION_CACHE_TTL_MS,
+            );
+            written = true;
+          }
+        }
+      } catch {
+        written = false;
+      }
+    }
+
+    if (written && this.generation === generationBeforeLookup) {
+      this.setL1Session(sessionId, fresh, Date.now() + AUTH_SESSION_CACHE_TTL_MS);
     } else {
-      await putPromise;
+      this.l1Sessions.delete(sessionId);
     }
     return fresh;
   }
 
-  /** Thuật toán: Xóa tức thì mục đệm L1 bị ảnh hưởng khi nhận thông điệp vô hiệu hóa Epoch/Key qua Pub/Sub. */
+  /** Thuật toán: Tăng `generation` và xóa tức thì mục đệm L1 bị ảnh hưởng khi nhận thông điệp vô hiệu hóa Epoch/Key qua Pub/Sub. */
   private handleCacheInvalidation(event: CacheInvalidationEvent): void {
     if (event.kind === 'key') {
       if (event.namespace === 'auth-session') {
+        this.generation += 1;
         this.l1Sessions.delete(event.id);
       }
       return;
     }
     if (event.namespace === 'auth-global') {
+      this.generation += 1;
       this.l1Sessions.clear();
       return;
     }
     if (event.namespace.startsWith('auth-user:')) {
+      this.generation += 1;
       const targetUserId = event.namespace.slice('auth-user:'.length);
       for (const [sid, entry] of this.l1Sessions) {
         if (entry.principal.userId.toString() === targetUserId) {

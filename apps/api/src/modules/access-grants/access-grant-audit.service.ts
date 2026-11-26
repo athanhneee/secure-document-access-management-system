@@ -4,11 +4,12 @@
  * và tự động thử lại có trễ lũy tiến kèm nhiễu ngẫu nhiên khi gặp xung đột tuần tự hóa (`40001` / `P2034`).
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { getDatabaseClient } from '@sda/database';
+import { getDatabaseClient, type Prisma } from '@sda/database';
 import { AppConfigService } from '../../config/config.service.js';
 import {
   appendChainedAuditLog,
   executeAuditWithRetry,
+  isTransientAuditTxConflict,
   resolveActiveAuditKey,
 } from '../audit/audit-chain-helper.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
@@ -55,11 +56,9 @@ export class AccessGrantAuditService {
     event: GrantAuditEvent,
     principal: AuthPrincipal,
     context: RequestContext,
-    transactionClient?: Parameters<Parameters<typeof this.database.$transaction>[0]>[0],
+    transactionClient?: Prisma.TransactionClient,
   ): Promise<void> {
-    const execute = async (
-      tx: Parameters<Parameters<typeof this.database.$transaction>[0]>[0],
-    ): Promise<void> => {
+    const execute = async (tx: Prisma.TransactionClient): Promise<void> => {
       await appendChainedAuditLog(tx, {
         partition: 'ACCESS_GRANT',
         hmacKey: this.hmacKey,
@@ -79,7 +78,14 @@ export class AccessGrantAuditService {
 
     try {
       if (transactionClient) {
-        await executeAuditWithRetry(() => execute(transactionClient));
+        const maybeRoot = transactionClient as Prisma.TransactionClient & {
+          $transaction?: <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) => Promise<T>;
+        };
+        if (typeof maybeRoot.$transaction === 'function') {
+          await executeAuditWithRetry(() => maybeRoot.$transaction((tx) => execute(tx)));
+        } else {
+          await execute(transactionClient);
+        }
       } else {
         await executeAuditWithRetry(() =>
           this.database.$transaction(async (tx) => {
@@ -88,11 +94,15 @@ export class AccessGrantAuditService {
         );
       }
     } catch (err: unknown) {
+      // BUG-049: Không nuốt hoặc bọc lại lỗi xung đột tuần tự hóa (`40001`, `40P01`, `P2034`) để `withSerializableTransaction` bên ngoài rollback và retry từ đầu thay vì gặp `25P02`.
+      if (isTransientAuditTxConflict(err)) {
+        throw err;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Failed to record grant audit log: ${msg}`);
       const nodeEnv = process.env['NODE_ENV'];
       if (nodeEnv === 'production' || nodeEnv === 'staging') {
-        throw new Error(`Audit logging failed: ${msg}`);
+        throw new Error(`Audit logging failed: ${msg}`, { cause: err });
       }
     }
   }

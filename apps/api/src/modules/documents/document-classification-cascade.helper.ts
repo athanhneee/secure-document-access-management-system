@@ -20,10 +20,24 @@ export async function cascadeRevokeOnRankIncrease(params: {
   newRank: number;
   actorUserId: bigint;
   now: Date;
-}): Promise<{ revokedGrantsCount: number; terminatedSessionsCount: number }> {
-  const { tx, cache, documentId, newRank, actorUserId, now } = params;
+  deferCacheInvalidation?: boolean;
+}): Promise<{
+  revokedGrantsCount: number;
+  terminatedSessionsCount: number;
+  affectedUserIdsToInvalidate: bigint[];
+}> {
+  const {
+    tx,
+    cache,
+    documentId,
+    newRank,
+    actorUserId,
+    now,
+    deferCacheInvalidation = false,
+  } = params;
   let revokedGrantsCount = 0;
   let terminatedSessionsCount = 0;
+  const affectedUserIdsToInvalidate = new Set<bigint>();
 
   const activeGrants = await tx.accessGrant.findMany({
     where: { document_id: documentId, status: 'ACTIVE' },
@@ -76,7 +90,10 @@ export async function cascadeRevokeOnRankIncrease(params: {
           },
         });
         terminatedSessionsCount += terminatedSessions.count;
-        cache.invalidateUser(grant.principal_user_id);
+        affectedUserIdsToInvalidate.add(grant.principal_user_id);
+        if (!deferCacheInvalidation) {
+          await cache.invalidateUser(grant.principal_user_id);
+        }
       }
     } else if (grant.principal_type === 'ROLE') {
       const roleSessions = await tx.accessSession.findMany({
@@ -115,13 +132,20 @@ export async function cascadeRevokeOnRankIncrease(params: {
             },
           });
           terminatedSessionsCount++;
-          cache.invalidateUser(sess.user_id);
+          affectedUserIdsToInvalidate.add(sess.user_id);
+          if (!deferCacheInvalidation) {
+            await cache.invalidateUser(sess.user_id);
+          }
         }
       }
     }
   }
 
-  return { revokedGrantsCount, terminatedSessionsCount };
+  return {
+    revokedGrantsCount,
+    terminatedSessionsCount,
+    affectedUserIdsToInvalidate: [...affectedUserIdsToInvalidate],
+  };
 }
 
 /**

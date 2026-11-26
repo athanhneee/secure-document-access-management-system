@@ -19,6 +19,8 @@ export interface WatermarkDocumentData {
   documentCode?: string | null | undefined;
   title: string;
   classificationName?: string | undefined;
+  classificationCode?: string | null | undefined;
+  classificationRank?: number | null | undefined;
   requireWatermark: boolean;
 }
 
@@ -92,9 +94,9 @@ export function parseHexColor(hex: string): { r: number; g: number; b: number } 
 }
 
 /**
- * Thuật toán: Nội suy mẫu định danh pháp chứng kèm chốt chặn bảo toàn danh tính người nhận.
- * Thay thế các biến giữ chỗ (`{fullName}`, `{employeeCode}`, `{documentCode}`, `{utcTimestamp}`, `{shortToken}`)
- * với `{shortToken}` giữ nguyên tiền tố chuẩn `WM-<12hex>` (15 ký tự), và tự động áp mẫu đầy đủ nếu mẫu thiếu định danh người dùng.
+ * Thuật toán: Nội suy mẫu định danh pháp chứng kèm chốt chặn bảo toàn danh tính người nhận & toàn vẹn mã 48-hex (`BUG-055`).
+ *   1. Nếu kết quả thiếu danh tính người nhận (`{username}`/`{fullName}`), ghép tiền tố `${fullName} (${employeeCode}) | ` vào đầu thay vì xóa trắng thay bằng `shortToken`.
+ *   2. Ở cấp độ mật `rank >= 3` (`SECRET` / `TOP_SECRET`) khi tắt QR (`includeQrCode === false`), luôn bảo đảm chuỗi văn bản giữ trọn vẹn mã 48-hex `WM-<48hex>` không bị cắt cụt bởi giới hạn `1000` ký tự của `VARCHAR(1000)`.
  */
 export function formatForensicWatermarkText(
   template: string,
@@ -102,6 +104,7 @@ export function formatForensicWatermarkText(
   document: WatermarkDocumentData,
   token: string,
   now: Date = new Date(),
+  options?: { includeQrCode?: boolean | undefined },
 ): string {
   const fullName = user.fullName?.trim() || user.username;
   const employeeCode = user.employeeCode?.trim() || `UID:${user.id.toString()}`;
@@ -125,10 +128,42 @@ export function formatForensicWatermarkText(
     .replace(/{token}/g, shortToken);
 
   if (!text.includes(user.username) && !text.includes(fullName)) {
-    text = `${fullName} (${employeeCode}) | ${documentCode} | ${utcTimestamp} | ${shortToken}`;
+    text =
+      text.trim().length > 0
+        ? `${fullName} (${employeeCode}) | ${text}`
+        : `${fullName} (${employeeCode}) | ${documentCode} | ${utcTimestamp} | ${shortToken}`;
   }
 
-  // CONFLICT-RESOLVED: Giới hạn độ dài `renderedText` tối đa 1000 ký tự khớp cột `watermark_instances.rendered_text VARCHAR(1000)` (MED-05)
+  const normalizedClassUpper = classification.trim().toUpperCase();
+  const isHighClassification =
+    (typeof document.classificationRank === 'number' && document.classificationRank >= 3) ||
+    document.classificationCode === 'SECRET' ||
+    document.classificationCode === 'TOP_SECRET' ||
+    normalizedClassUpper === 'SECRET' ||
+    normalizedClassUpper === 'TOP_SECRET' ||
+    normalizedClassUpper === 'TỐI MẬT' ||
+    normalizedClassUpper === 'TUYỆT MẬT';
+
+  const mustPreserveFullToken =
+    text.includes(token) || (isHighClassification && options?.includeQrCode === false);
+  if (mustPreserveFullToken && !text.includes(token)) {
+    text = `${text} | ${token}`;
+  }
+
+  // CONFLICT-RESOLVED: Giới hạn độ dài `renderedText` tối đa 1000 ký tự khớp cột `watermark_instances.rendered_text VARCHAR(1000)` mà không bao giờ cắt đứt mã 48-hex `token` ở cuối (`BUG-055`).
+  if (text.length <= 1000) {
+    return text;
+  }
+  if (mustPreserveFullToken) {
+    const suffix = ` | ${token}`;
+    const withoutToken = text
+      .split(token)
+      .join('')
+      .replace(/\s+\|\s*$/u, '')
+      .trim();
+    const maxHeadLength = Math.max(0, 1000 - suffix.length);
+    return `${withoutToken.slice(0, maxHeadLength)}${suffix}`;
+  }
   return text.slice(0, 1000);
 }
 

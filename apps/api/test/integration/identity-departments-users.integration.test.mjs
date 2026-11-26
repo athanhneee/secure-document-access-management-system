@@ -10,6 +10,7 @@ const ctx = { ip: '10.20.30.40', userAgent: 'integration-test', correlationId: r
 
 let departmentsService;
 let usersService;
+let rbacService;
 let authorizationService;
 let adminUser;
 let hqDept;
@@ -68,6 +69,7 @@ before(async () => {
   const { RbacAuditService } = await import('../../dist/modules/rbac/rbac-audit.service.js');
   const { DepartmentsService } =
     await import('../../dist/modules/departments/departments.service.js');
+  const { RbacService } = await import('../../dist/modules/rbac/rbac.service.js');
   const { UsersService } = await import('../../dist/modules/users/users.service.js');
   const { PasswordService } = await import('../../dist/modules/auth/password.service.js');
 
@@ -78,6 +80,7 @@ before(async () => {
   });
   departmentsService = new DepartmentsService(authorizationService, audit, prisma);
   usersService = new UsersService(authorizationService, new PasswordService(), audit, prisma);
+  rbacService = new RbacService(authorizationService, audit);
 });
 
 after(async () => {
@@ -142,6 +145,91 @@ test('DepartmentsService SQL integration — hierarchy creation, cycle rejection
       ),
     ConflictException,
   );
+
+  // BUG-004: Scoped department admin on FIN_DIV cannot promote child to global root (parentId: null)
+  const treasury = await departmentsService.create(
+    actor,
+    { code: 'TREASURY_TEAM', name: 'Phòng Ngân quỹ', parentId: BigInt(finance.id) },
+    ctx,
+  );
+  const budget = await departmentsService.create(
+    actor,
+    { code: 'BUDGET_TEAM', name: 'Phòng Ngân sách', parentId: BigInt(finance.id) },
+    ctx,
+  );
+  const finAdminUser = await dbHarness.insertOne(
+    `INSERT INTO users(username,email,password_hash,full_name,department_id,status)
+     VALUES ('fin.dept.admin','fin.dept.admin@corp.local','argon2-seed','Quản trị Tài chính',$1,'ACTIVE') RETURNING id`,
+    [BigInt(finance.id)],
+  );
+  const scopedDeptRole = await dbHarness.insertOne(
+    "INSERT INTO roles(code,name,is_system_role,is_active,created_by) VALUES ('FIN_DEPT_MGR','Finance Dept Manager',false,true,$1) RETURNING id",
+    [adminUser.id],
+  );
+  const deptManagePerm = await dbHarness.sql.query(
+    "SELECT id FROM permissions WHERE resource_type='DEPARTMENT' AND action='MANAGE'",
+  );
+  await dbHarness.sql.query(
+    'INSERT INTO role_permissions(role_id,permission_id,granted_by) VALUES ($1,$2,$3)',
+    [scopedDeptRole.id, BigInt(deptManagePerm.rows[0].id), adminUser.id],
+  );
+  await dbHarness.sql.query(
+    "INSERT INTO user_roles(user_id,role_id,scope_department_id,valid_from,assigned_by) VALUES ($1,$2,$3,now() - interval '1 hour',$4)",
+    [finAdminUser.id, scopedDeptRole.id, BigInt(finance.id), adminUser.id],
+  );
+  await authorizationService.invalidateAll();
+  const finScopedPrincipal = {
+    userId: finAdminUser.id,
+    sessionId: randomUUID(),
+    username: 'fin.dept.admin',
+    roles: ['FIN_DEPT_MGR'],
+    mfa: true,
+  };
+
+  // Promoting child TREASURY_TEAM to global root (parentId: null) must be blocked with 403 Forbidden
+  await assert.rejects(
+    () =>
+      departmentsService.update(
+        finScopedPrincipal,
+        BigInt(treasury.id),
+        { expectedVersion: 0, parentId: null },
+        ctx,
+      ),
+    ForbiddenException,
+  );
+  const treasuryAfterBlocked = await dbHarness.sql.query(
+    'SELECT parent_id FROM departments WHERE id=$1',
+    [BigInt(treasury.id)],
+  );
+  assert.equal(BigInt(treasuryAfterBlocked.rows[0].parent_id), BigInt(finance.id));
+
+  // Scoped admin can still reparent TREASURY_TEAM under BUDGET_TEAM within FIN_DIV
+  const reparentedInScope = await departmentsService.update(
+    finScopedPrincipal,
+    BigInt(treasury.id),
+    { expectedVersion: 0, parentId: BigInt(budget.id) },
+    ctx,
+  );
+  assert.equal(reparentedInScope.parentId, budget.id);
+
+  // Scoped admin can still rename FIN_DIV while echoing unchanged parentId
+  const renamedFin = await departmentsService.update(
+    finScopedPrincipal,
+    BigInt(finance.id),
+    { expectedVersion: 0, name: 'Khối Tài chính & Đầu tư', parentId: hqDept.id },
+    ctx,
+  );
+  assert.equal(renamedFin.name, 'Khối Tài chính & Đầu tư');
+  assert.equal(renamedFin.parentId, hqDept.id.toString());
+
+  // Global admin can legitimately promote TREASURY_TEAM to global root (parentId: null)
+  const promotedByGlobal = await departmentsService.update(
+    actor,
+    BigInt(treasury.id),
+    { expectedVersion: 1, parentId: null },
+    ctx,
+  );
+  assert.equal(promotedByGlobal.parentId, null);
 });
 
 test('UsersService SQL integration — Argon2id creation, password policy, department transfer role expiry & session revocation on lock/disable', async () => {
@@ -360,4 +448,204 @@ test('UsersService SQL integration — CLEARANCE_LEVEL assignment on create/upda
   );
   assert.equal(revoked.clearanceCode, null);
   assert.equal(revoked.clearanceRank, 0);
+
+  // BUG-007: Self-clearance escalation MUST be blocked with 403 Forbidden via both updateClearance and update
+  await assert.rejects(
+    () =>
+      usersService.updateClearance(
+        actor,
+        adminUser.id,
+        { expectedVersion: 0, clearanceOptionId: optSecret.id },
+        ctx,
+      ),
+    ForbiddenException,
+  );
+  await assert.rejects(
+    () =>
+      usersService.update(
+        actor,
+        adminUser.id,
+        { expectedVersion: 0, clearanceOptionId: optSecret.id },
+        ctx,
+      ),
+    ForbiddenException,
+  );
+  const selfClearanceAfter = await sql.query(
+    `SELECT count(*)::int AS cnt FROM user_attribute_assignments
+     WHERE user_id=$1 AND attribute_definition_id=$2 AND valid_to IS NULL`,
+    [adminUser.id, clearanceDef.id],
+  );
+  assert.equal(selfClearanceAfter.rows[0].cnt, 0);
+});
+
+test('[BUG-006] SQL integration — blocks dept USER:MANAGE manager from mutating global SYSTEM_ADMIN/SOC and enforces >= 1 ACTIVE global SYSTEM_ADMIN under concurrent cross-disable & cross-revoke', async () => {
+  const { sql, insertOne } = dbHarness;
+  const actor1 = adminPrincipal();
+
+  // Grant ROLE_MANAGE to SYSTEM_ADMIN so global admins can assign/revoke roles cleanly
+  const sysRoleRow = await sql.query("SELECT id FROM roles WHERE code='SYSTEM_ADMIN'");
+  const sysRoleId = BigInt(sysRoleRow.rows[0].id);
+  const roleManagePerm = await insertOne(
+    "INSERT INTO permissions(code,name,resource_type,action) VALUES ('ROLE_MANAGE','ROLE_MANAGE','ROLE','MANAGE') RETURNING id",
+  );
+  await sql.query(
+    'INSERT INTO role_permissions(role_id,permission_id,granted_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
+    [sysRoleId, roleManagePerm.id, adminUser.id],
+  );
+
+  // Create a department-scoped USER:MANAGE manager in HQ_IDENT (same department as adminUser!)
+  const hqUserMgrRole = await insertOne(
+    "INSERT INTO roles(code,name,is_active,created_by) VALUES ('HQ_USER_MGR','HQ User Manager',true,$1) RETURNING id",
+    [adminUser.id],
+  );
+  const userManagePermRow = await sql.query(
+    "SELECT id FROM permissions WHERE resource_type='USER' AND action='MANAGE' LIMIT 1",
+  );
+  await sql.query(
+    'INSERT INTO role_permissions(role_id,permission_id,granted_by) VALUES ($1,$2,$3)',
+    [hqUserMgrRole.id, BigInt(userManagePermRow.rows[0].id), adminUser.id],
+  );
+  const hqMgrUser = await insertOne(
+    `INSERT INTO users(username,email,password_hash,full_name,department_id,status)
+     VALUES ('hq.dept.mgr','hq.dept.mgr@corp.local','argon2-seed','Quản lý nhân sự HQ',$1,'ACTIVE') RETURNING id`,
+    [hqDept.id],
+  );
+  await sql.query(
+    "INSERT INTO user_roles(user_id,role_id,scope_department_id,valid_from,assigned_by) VALUES ($1,$2,$3,now() - interval '1 hour',$4)",
+    [hqMgrUser.id, hqUserMgrRole.id, hqDept.id, adminUser.id],
+  );
+
+  // Create a SECURITY_OFFICER user in HQ_IDENT
+  const socRole = await insertOne(
+    "INSERT INTO roles(code,name,is_system_role,is_active,created_by) VALUES ('SECURITY_OFFICER','Security Officer',true,true,$1) RETURNING id",
+    [adminUser.id],
+  );
+  const socUser = await insertOne(
+    `INSERT INTO users(username,email,password_hash,full_name,department_id,status)
+     VALUES ('hq.soc.officer','hq.soc.officer@corp.local','argon2-seed','Cán bộ SOC',$1,'ACTIVE') RETURNING id`,
+    [hqDept.id],
+  );
+  await sql.query(
+    "INSERT INTO user_roles(user_id,role_id,scope_department_id,valid_from,assigned_by) VALUES ($1,$2,NULL,now() - interval '1 hour',$3)",
+    [socUser.id, socRole.id, adminUser.id],
+  );
+
+  await authorizationService.invalidateAll();
+  const hqMgrPrincipal = {
+    userId: hqMgrUser.id,
+    sessionId: randomUUID(),
+    username: 'hq.dept.mgr',
+    roles: ['HQ_USER_MGR'],
+    mfa: true,
+  };
+
+  // 1. HQ_IDENT department manager MUST be blocked (403) from disabling, locking, or editing email of global SYSTEM_ADMIN or SECURITY_OFFICER
+  await assert.rejects(
+    () => usersService.disable(hqMgrPrincipal, adminUser.id, 0, ctx),
+    ForbiddenException,
+  );
+  await assert.rejects(
+    () => usersService.lock(hqMgrPrincipal, adminUser.id, 0, ctx),
+    ForbiddenException,
+  );
+  await assert.rejects(
+    () =>
+      usersService.update(
+        hqMgrPrincipal,
+        adminUser.id,
+        { expectedVersion: 0, email: 'hijacked@evil.local' },
+        ctx,
+      ),
+    ForbiddenException,
+  );
+  await assert.rejects(
+    () => usersService.disable(hqMgrPrincipal, socUser.id, 0, ctx),
+    ForbiddenException,
+  );
+  const admin1AssignRow = await sql.query(
+    'SELECT id FROM user_roles WHERE user_id=$1 AND role_id=$2 AND scope_department_id IS NULL LIMIT 1',
+    [adminUser.id, sysRoleId],
+  );
+  const admin1AssignId = BigInt(admin1AssignRow.rows[0].id);
+  await assert.rejects(
+    () => rbacService.revokeUserRole(hqMgrPrincipal, adminUser.id, admin1AssignId, ctx),
+    ForbiddenException,
+  );
+
+  // 2. Provision a 2nd global SYSTEM_ADMIN and verify concurrent cross-disable leaves >= 1 ACTIVE global SYSTEM_ADMIN
+  const admin2User = await insertOne(
+    `INSERT INTO users(username,email,password_hash,full_name,department_id,status)
+     VALUES ('sysadmin2.ident','sysadmin2.ident@corp.local','argon2-seed','Quản trị viên 2',$1,'ACTIVE') RETURNING id`,
+    [hqDept.id],
+  );
+  const admin2Assign = await insertOne(
+    "INSERT INTO user_roles(user_id,role_id,scope_department_id,valid_from,assigned_by) VALUES ($1,$2,NULL,now() - interval '1 hour',$3) RETURNING id",
+    [admin2User.id, sysRoleId, adminUser.id],
+  );
+  await authorizationService.invalidateAll();
+  const actor2 = {
+    userId: admin2User.id,
+    sessionId: randomUUID(),
+    username: 'sysadmin2.ident',
+    roles: ['SYSTEM_ADMIN'],
+    mfa: true,
+  };
+
+  const crossDisable = await Promise.allSettled([
+    usersService.disable(actor1, admin2User.id, 0, { ...ctx, correlationId: randomUUID() }),
+    usersService.disable(actor2, adminUser.id, 0, { ...ctx, correlationId: randomUUID() }),
+  ]);
+  assert.equal(crossDisable.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(crossDisable.filter((r) => r.status === 'rejected').length, 1);
+  const remainingAfterDisable = await sql.query(
+    `SELECT count(DISTINCT ur.user_id)::int AS cnt
+     FROM user_roles ur
+     JOIN roles r ON r.id = ur.role_id
+     JOIN users u ON u.id = ur.user_id
+     WHERE r.code = 'SYSTEM_ADMIN' AND r.is_active = true
+       AND ur.scope_department_id IS NULL
+       AND ur.valid_from <= now() AND (ur.valid_to IS NULL OR ur.valid_to > now())
+       AND u.status = 'ACTIVE'`,
+  );
+  assert.equal(remainingAfterDisable.rows[0].cnt, 1);
+
+  // Reactivate whichever admin was disabled so both are ACTIVE again
+  const adminStatuses = await sql.query(
+    'SELECT id, status::text, version FROM users WHERE id IN ($1,$2)',
+    [adminUser.id, admin2User.id],
+  );
+  const disabledAdminRow = adminStatuses.rows.find((row) => row.status === 'DISABLED');
+  const activeActor = BigInt(disabledAdminRow.id) === adminUser.id ? actor2 : actor1;
+  await usersService.reactivate(
+    activeActor,
+    BigInt(disabledAdminRow.id),
+    Number(disabledAdminRow.version),
+    { ...ctx, correlationId: randomUUID() },
+  );
+  await authorizationService.invalidateAll();
+
+  // 3. Concurrent cross-revoke of SYSTEM_ADMIN role assignments MUST leave >= 1 ACTIVE global SYSTEM_ADMIN
+  const crossRevoke = await Promise.allSettled([
+    rbacService.revokeUserRole(actor1, admin2User.id, admin2Assign.id, {
+      ...ctx,
+      correlationId: randomUUID(),
+    }),
+    rbacService.revokeUserRole(actor2, adminUser.id, admin1AssignId, {
+      ...ctx,
+      correlationId: randomUUID(),
+    }),
+  ]);
+  assert.equal(crossRevoke.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(crossRevoke.filter((r) => r.status === 'rejected').length, 1);
+  const remainingAfterRevoke = await sql.query(
+    `SELECT count(DISTINCT ur.user_id)::int AS cnt
+     FROM user_roles ur
+     JOIN roles r ON r.id = ur.role_id
+     JOIN users u ON u.id = ur.user_id
+     WHERE r.code = 'SYSTEM_ADMIN' AND r.is_active = true
+       AND ur.scope_department_id IS NULL
+       AND ur.valid_from <= now() AND (ur.valid_to IS NULL OR ur.valid_to > now())
+       AND u.status = 'ACTIVE'`,
+  );
+  assert.equal(remainingAfterRevoke.rows[0].cnt, 1);
 });

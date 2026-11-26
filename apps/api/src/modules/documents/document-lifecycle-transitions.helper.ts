@@ -2,13 +2,15 @@
  * Module: Document Lifecycle State Machine Transitions (`DRAFT` -> `ACTIVE` -> `ARCHIVED`)
  * Thuật toán: Chuyển Trạng Thái Vòng Đời 5 Bất Biến Kèm Cấp Phát Quyền Chủ Sở Hữu & Phong Tỏa Lưu Trữ Nguyên Tử.
  */
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode, type ArchiveDocumentInput } from '@sda/contracts';
+import { resolveRetentionCeilingUtc } from '../access-grants/grant-retention-bounds.helper.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { AuthorizationCache } from '../rbac/authorization-cache.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
+import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import type { DocumentAuditService } from './document-audit.service.js';
 import { assertDocumentMutationPermission } from './document-access-guard.helper.js';
 
@@ -108,9 +110,20 @@ export async function executeActivateDocument(params: {
     });
   }
 
-  // CONFLICT-RESOLVED: Bọc kích hoạt tài liệu và khởi tạo/gia hạn owner grant trong giao dịch nguyên tử, tránh đụng chỉ mục duy nhất uq_access_grant_active_user khi grant cũ hết hạn.
+  // CONFLICT-RESOLVED: Bọc kích hoạt tài liệu và khởi tạo/gia hạn owner grant trong giao dịch nguyên tử, đồng thời kẹp trần `retention_until` và từ chối kích hoạt khi hạn lưu trữ đã qua (MED-05).
   const now = new Date();
-  const validUntil = new Date(now.getTime() + 365 * 86400000);
+  const retentionCeiling = resolveRetentionCeilingUtc(doc.retention_until);
+  if (retentionCeiling && retentionCeiling.getTime() <= now.getTime()) {
+    throw new BadRequestException({
+      errorCode: AppErrorCode.DOCUMENT_ACTIVATION_FAILED,
+      message: 'Cannot activate document whose retention horizon has already expired.',
+    });
+  }
+  const defaultValidUntil = new Date(now.getTime() + 365 * 86400000);
+  const validUntil =
+    retentionCeiling && retentionCeiling.getTime() < defaultValidUntil.getTime()
+      ? retentionCeiling
+      : defaultValidUntil;
   const runInTx = async (
     work: (tx: Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]) => Promise<void>,
   ) => {
@@ -122,10 +135,24 @@ export async function executeActivateDocument(params: {
   };
 
   await runInTx(async (tx) => {
-    await tx.document.update({
-      where: { id: documentId },
-      data: { status: 'ACTIVE', version: { increment: 1 } },
-    });
+    // Thuật toán: Kích hoạt nguyên tử Compare-And-Swap trên `(id, status = 'DRAFT', version = doc.version)` chống kích hoạt kép đồng thời (BUG-123).
+    if (typeof tx.document.updateMany === 'function') {
+      const activated = await tx.document.updateMany({
+        where: { id: documentId, status: 'DRAFT', version: doc.version },
+        data: { status: 'ACTIVE', version: { increment: 1 } },
+      });
+      if (activated.count === 0) {
+        throw new ConflictException({
+          errorCode: AppErrorCode.RESOURCE_CONFLICT,
+          message: 'Document status or version was modified concurrently; activation aborted.',
+        });
+      }
+    } else {
+      await tx.document.update({
+        where: { id: documentId },
+        data: { status: 'ACTIVE', version: { increment: 1 } },
+      });
+    }
 
     if (tx.accessGrant?.findFirst && tx.accessGrant?.create) {
       const existingOwnerGrant = await tx.accessGrant.findFirst({
@@ -198,12 +225,14 @@ export async function executeArchiveDocument(params: {
   authorization: AuthorizationService;
   cache: AuthorizationCache;
   audit: DocumentAuditService;
+  realtime?: RealtimeEventsService | undefined;
   documentId: string;
   input: ArchiveDocumentInput;
   principal: AuthPrincipal;
   context: RequestContext;
 }): Promise<void> {
-  const { database, authorization, cache, audit, documentId, input, principal, context } = params;
+  const { database, authorization, cache, audit, realtime, documentId, input, principal, context } =
+    params;
 
   const doc = await database.document.findUnique({ where: { id: documentId } });
   if (!doc || doc.status === 'DELETED') {
@@ -222,8 +251,25 @@ export async function executeArchiveDocument(params: {
   const now = new Date();
   let suspendedGrantsCount = 0;
   let terminatedSessionsCount = 0;
+  const affectedUserIds = new Set<string>([principal.userId.toString(), doc.owner_id.toString()]);
+  const sessionUserIds = new Set<string>();
+  const terminatedSessionIds: string[] = [];
+  const affectedRoleIds = new Set<bigint>();
 
   await database.$transaction(async (tx) => {
+    if (typeof tx.accessGrant?.findMany === 'function') {
+      const priorActiveGrants = await tx.accessGrant.findMany({
+        where: { document_id: documentId, status: 'ACTIVE' },
+        select: { principal_type: true, principal_user_id: true, principal_role_id: true },
+      });
+      for (const grant of priorActiveGrants) {
+        if (grant.principal_user_id) affectedUserIds.add(grant.principal_user_id.toString());
+        if (grant.principal_type === 'ROLE' && grant.principal_role_id) {
+          affectedRoleIds.add(grant.principal_role_id);
+        }
+      }
+    }
+
     await tx.document.update({
       where: { id: documentId },
       data: { status: 'ARCHIVED', archived_at: now, version: { increment: 1 } },
@@ -245,6 +291,20 @@ export async function executeArchiveDocument(params: {
     const versionIds = versions.map((v) => v.id);
 
     if (versionIds.length > 0) {
+      if (typeof tx.accessSession?.findMany === 'function') {
+        const openSessions = await tx.accessSession.findMany({
+          where: { document_version_id: { in: versionIds }, status: 'ACTIVE' },
+          select: { id: true, user_id: true },
+        });
+        for (const sess of openSessions) {
+          terminatedSessionIds.push(sess.id);
+          if (sess.user_id !== undefined && sess.user_id !== null) {
+            const uid = sess.user_id.toString();
+            sessionUserIds.add(uid);
+            affectedUserIds.add(uid);
+          }
+        }
+      }
       const sessionsResult = await tx.accessSession.updateMany({
         where: { document_version_id: { in: versionIds }, status: 'ACTIVE' },
         data: { status: 'TERMINATED', ended_at: now, terminated_reason: 'Document archived' },
@@ -253,7 +313,7 @@ export async function executeArchiveDocument(params: {
     }
   });
 
-  cache.invalidateAll();
+  await cache.invalidateAll();
 
   await audit.record(
     {
@@ -270,4 +330,64 @@ export async function executeArchiveDocument(params: {
     },
     context,
   );
+
+  // Thuật toán: Sau khi giao dịch lưu trữ commit thành công, phát sự kiện SSE thời gian thực tới chủ sở hữu và người giữ quyền để làm mới ngay danh sách quyền/tài liệu (BUG-099).
+  if (realtime) {
+    if (affectedRoleIds.size > 0 && typeof database.userRole?.findMany === 'function') {
+      const holders = await database.userRole
+        .findMany({
+          where: {
+            role_id: { in: [...affectedRoleIds] },
+            valid_from: { lte: now },
+            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
+          },
+          select: { user_id: true },
+          take: 200,
+        })
+        .catch(() => []);
+      for (const h of holders) affectedUserIds.add(h.user_id.toString());
+    }
+    const targetUserIds = [...affectedUserIds];
+    const hasRoleGrant = affectedRoleIds.size > 0;
+    realtime.publish({
+      type: 'ACCESS_GRANT_UPDATED',
+      targetUserIds,
+      ...(hasRoleGrant ? { targetRoles: ['DOCUMENT_READER'] } : {}),
+      payload: {
+        documentId,
+        status: 'SUSPENDED',
+        action: 'REVOKED',
+        reason: 'DOCUMENT_ARCHIVED',
+        suspendedGrantsCount,
+        terminatedSessionIds,
+      },
+    });
+    realtime.publish({
+      type: 'DOCUMENT_UPDATED',
+      targetUserIds,
+      ...(hasRoleGrant ? { targetRoles: ['DOCUMENT_READER'] } : {}),
+      payload: {
+        id: documentId,
+        documentId,
+        status: 'ARCHIVED',
+        action: 'ARCHIVED',
+      },
+    });
+    if (terminatedSessionsCount > 0) {
+      realtime.publish({
+        type: 'ACCESS_SESSION_UPDATED',
+        targetRoles: ['SECURITY_OFFICER'],
+        targetDepartmentId: doc.department_id?.toString() ?? null,
+        ...(sessionUserIds.size > 0 ? { targetUserIds: [...sessionUserIds] } : {}),
+        payload: {
+          documentId,
+          terminatedSessions: terminatedSessionsCount,
+          terminatedSessionIds,
+          status: 'TERMINATED',
+          action: 'TERMINATED',
+          reason: 'DOCUMENT_ARCHIVED',
+        },
+      });
+    }
+  }
 }

@@ -53,7 +53,13 @@ export async function createApplication(): Promise<NestFastifyApplication> {
     origin: config.corsOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['content-type', 'x-csrf-token', 'x-correlation-id', 'x-access-session-id'],
+    allowedHeaders: [
+      'content-type',
+      'x-csrf-token',
+      'x-correlation-id',
+      'x-access-session-id',
+      'x-device-fingerprint',
+    ],
     exposedHeaders: ['Content-Disposition', 'X-Total-Pages', 'X-Correlation-Id'],
   });
   registerFastifyHooks(fastify as unknown as Parameters<typeof registerFastifyHooks>[0]);

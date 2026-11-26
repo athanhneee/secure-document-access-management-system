@@ -1,9 +1,9 @@
 /**
  * @module OfficeOoxmlExtractorHelper
- * Thuật toán: Trích xuất cấu trúc tài liệu Office OpenXML (`.docx`, `.xlsx`, `.pptx`) phục vụ kết xuất PDF bảo toàn bảng biểu:
- *   1. `.docx`: Phân tích `<w:tbl>` -> `<w:tr>` -> `<w:tc>` thành dòng bảng `| Cột 1 | Cột 2 |` và đoạn văn `<w:p>`.
- *   2. `.xlsx`: Đọc bảng chuỗi dùng chung `xl/sharedStrings.xml` kết hợp lưới ô `<row><c>` của `xl/worksheets/sheet1.xml` (hỗ trợ cả `t="s"`, `t="inlineStr"` và giá trị số `<v>`).
- *   3. `.pptx`: Trích xuất tuần tự các trang chiếu `ppt/slides/slide1.xml`..`slide20.xml`.
+ * Thuật toán: Trích xuất cấu trúc tài liệu Office OpenXML (`.docx`, `.xlsx`, `.pptx`) không rò handle `yauzl` (`BUG-059`):
+ *   1. Lắng nghe cả sự kiện `'close'` kèm cờ `entryAdvanced` để khi `readStream.destroy()` trên mục XML `> 5 MiB` vẫn gọi `zipfile.readEntry()` và `zipfile.close()` tức thì (không treo 10s).
+ *   2. `.xlsx`: Đọc `xl/sharedStrings.xml` kết hợp toàn bộ `xl/worksheets/sheet*.xml`.
+ *   3. `.pptx`: Trích xuất toàn bộ trang chiếu `ppt/slides/slide*.xml` (không cắt 20 slide).
  */
 import yauzl from 'yauzl';
 
@@ -55,18 +55,29 @@ function extractEntriesMap(
           }
           const chunks: Buffer[] = [];
           let total = 0;
+          let entryAdvanced = false;
+          const advanceEntry = (): void => {
+            if (entryAdvanced || settled) return;
+            entryAdvanced = true;
+            zipfile.readEntry();
+          };
+
           readStream.on('data', (c: Buffer) => {
             total += c.length;
-            if (total <= MAX_EXTRACT_BYTES) chunks.push(c);
-            else readStream.destroy();
+            if (total <= MAX_EXTRACT_BYTES) {
+              chunks.push(c);
+            } else {
+              readStream.destroy();
+            }
           });
           readStream.on('end', () => {
             if (total <= MAX_EXTRACT_BYTES) {
               results.set(entry.fileName, Buffer.concat(chunks).toString('utf8'));
             }
-            zipfile.readEntry();
+            advanceEntry();
           });
-          readStream.on('error', () => zipfile.readEntry());
+          readStream.on('close', advanceEntry);
+          readStream.on('error', advanceEntry);
         });
       });
       zipfile.on('end', finish);
@@ -98,22 +109,7 @@ function parseDocxStructuredText(xml: string): string {
   return blocks.join('\n');
 }
 
-function parseXlsxStructuredText(
-  sharedXml: string | undefined,
-  sheetXml: string | undefined,
-): string {
-  const sharedStrings: string[] = [];
-  if (sharedXml) {
-    for (const si of sharedXml.matchAll(/<si\b[\s\S]*?<\/si>/gu)) {
-      sharedStrings.push(decodeXmlEntities(si[0]));
-    }
-  }
-  if (!sheetXml) {
-    return sharedStrings.length > 0
-      ? sharedStrings.join('\n')
-      : 'Workbook contains no printable cells.';
-  }
-
+function parseWorksheetRows(sharedStrings: readonly string[], sheetXml: string): string[] {
   const lines: string[] = [];
   for (const rowMatch of sheetXml.matchAll(/<row\b[\s\S]*?<\/row>/gu)) {
     const cells: string[] = [];
@@ -138,7 +134,37 @@ function parseXlsxStructuredText(
       lines.push(`| ${cells.join(' | ')} |`);
     }
   }
-  return lines.length > 0 ? lines.join('\n') : sharedStrings.join('\n') || 'Empty worksheet.';
+  return lines;
+}
+
+function parseXlsxStructuredText(
+  sharedXml: string | undefined,
+  sheetEntries: ReadonlyArray<readonly [string, string]>,
+): string {
+  const sharedStrings: string[] = [];
+  if (sharedXml) {
+    for (const si of sharedXml.matchAll(/<si\b[\s\S]*?<\/si>/gu)) {
+      sharedStrings.push(decodeXmlEntities(si[0]));
+    }
+  }
+  if (sheetEntries.length === 0) {
+    return sharedStrings.length > 0
+      ? sharedStrings.join('\n')
+      : 'Workbook contains no printable cells.';
+  }
+
+  const sections: string[] = [];
+  sheetEntries.forEach(([, sheetXml], index) => {
+    const rows = parseWorksheetRows(sharedStrings, sheetXml);
+    if (rows.length > 0) {
+      if (sheetEntries.length > 1) {
+        sections.push(`[Sheet ${index + 1}]`);
+      }
+      sections.push(...rows);
+    }
+  });
+
+  return sections.length > 0 ? sections.join('\n') : sharedStrings.join('\n') || 'Empty worksheet.';
 }
 
 /**
@@ -159,12 +185,12 @@ export async function extractOfficeFallbackText(
   if (ext === 'xlsx') {
     const entries = await extractEntriesMap(
       officeBuffer,
-      (f) => f === 'xl/sharedStrings.xml' || f === 'xl/worksheets/sheet1.xml',
+      (f) => f === 'xl/sharedStrings.xml' || /^xl\/worksheets\/sheet\d+\.xml$/u.test(f),
     );
-    return parseXlsxStructuredText(
-      entries.get('xl/sharedStrings.xml'),
-      entries.get('xl/worksheets/sheet1.xml'),
-    );
+    const sortedSheets = [...entries.entries()]
+      .filter(([name]) => /^xl\/worksheets\/sheet\d+\.xml$/u.test(name))
+      .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+    return parseXlsxStructuredText(entries.get('xl/sharedStrings.xml'), sortedSheets);
   }
   if (ext === 'pptx') {
     const entries = await extractEntriesMap(officeBuffer, (f) =>
@@ -174,7 +200,6 @@ export async function extractOfficeFallbackText(
       a[0].localeCompare(b[0], undefined, { numeric: true }),
     );
     const slidesText = sortedSlides
-      .slice(0, 20)
       .map(
         ([, xml], idx) => `[Slide ${idx + 1}] ${decodeXmlEntities(xml.replace(/<\/a:p>/gu, '\n'))}`,
       )

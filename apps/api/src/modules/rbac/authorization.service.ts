@@ -2,12 +2,20 @@
  * @module AuthorizationService
  * Dịch vụ phân giải quyền RBAC có phạm vi phân cấp phòng ban (Hierarchical Scoped RBAC):
  * tính bao đóng bắc cầu cây phòng ban bằng truy vấn đệ quy SQL `WITH RECURSIVE`, kiểm tra thống trị ủy quyền
- * chống leo thang đặc quyền và duyệt ngược tổ tiên có bảo vệ chu trình.
+ * chống leo thang đặc quyền, hỗ trợ tái sử dụng `Prisma.TransactionClient` chống tự khóa chết pool kết nối (`BUG-048`)
+ * và chụp tem Epoch trước truy vấn CSDL chống đầu độc cache phân tán (`BUG-043`).
  */
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { getDatabaseClient } from '@sda/database';
+import { getDatabaseClient, type Prisma } from '@sda/database';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import { AuthorizationCache, type EffectiveGrant } from './authorization-cache.js';
+
+export interface PermissionCheckOptions {
+  targetDepartmentId?: bigint | null;
+  requireGlobal?: boolean;
+  anyScope?: boolean;
+  tx?: Prisma.TransactionClient | undefined;
+}
 
 @Injectable()
 export class AuthorizationService {
@@ -17,14 +25,38 @@ export class AuthorizationService {
 
   /**
    * Thuật toán: Tổng hợp và trải phẳng tập quyền hiệu lực theo cửa sổ thời gian (Temporal Effective-Grant Materialization).
-   * Cơ chế hoạt động: Chỉ lấy các phép gán thỏa `valid_from <= now < valid_to` của người dùng `ACTIVE`, vai trò `is_active`
-   * và phòng ban phạm vi (nếu có) đang `is_active`, sau đó tích Đề-các phẳng qua `role_permissions` và lưu vào cache phân tán cắt trần TTL.
+   *   - Khi truyền `tx` của giao dịch `SERIALIZABLE` đang mở: truy vấn trực tiếp trên `tx` (0 kết nối phụ, bảo toàn cô lập chống TOCTOU) và không ghi dữ liệu chưa commit vào cache chia sẻ (`BUG-048`).
+   *   - Khi chạy ngoài giao dịch: chụp tem `(generation, globalEpoch, userEpoch)` trước khi đọc CSDL và ghi cache qua Lua CAS (`BUG-043`).
    */
-  async effectiveGrants(userId: bigint): Promise<EffectiveGrant[]> {
-    const cached = await this.cache.get(userId);
+  async effectiveGrants(userId: bigint, tx?: Prisma.TransactionClient): Promise<EffectiveGrant[]> {
+    const canQueryOnTx = tx !== undefined && typeof tx.userRole?.findMany === 'function';
+    if (canQueryOnTx) {
+      return this.queryEffectiveGrantsFromClient(tx, userId);
+    }
+
+    const { grants: cached, stamp } =
+      typeof this.cache.getOrCaptureStamp === 'function'
+        ? await this.cache.getOrCaptureStamp(userId)
+        : {
+            grants: await this.cache.get(userId),
+            stamp:
+              typeof this.cache.captureStamp === 'function'
+                ? await this.cache.captureStamp(userId)
+                : undefined,
+          };
     if (cached) return cached;
+
+    const grants = await this.queryEffectiveGrantsFromClient(this.database, userId);
+    await this.cache.set(userId, grants, undefined, undefined, stamp);
+    return grants;
+  }
+
+  private async queryEffectiveGrantsFromClient(
+    client: Pick<Prisma.TransactionClient, 'userRole'>,
+    userId: bigint,
+  ): Promise<EffectiveGrant[]> {
     const now = new Date();
-    const assignments = await this.database.userRole.findMany({
+    const assignments = await client.userRole.findMany({
       where: {
         user_id: userId,
         valid_from: { lte: now },
@@ -43,7 +75,7 @@ export class AuthorizationService {
         },
       },
     });
-    const grants = assignments.flatMap((assignment) =>
+    return assignments.flatMap((assignment) =>
       assignment.roles.role_permissions.map((mapping) => ({
         permissionId: mapping.permissions.id,
         code: mapping.permissions.code,
@@ -55,24 +87,20 @@ export class AuthorizationService {
         validTo: assignment.valid_to,
       })),
     );
-    await this.cache.set(userId, grants);
-    return grants;
   }
 
   /**
-   * Thuật toán: Kiểm tra quyền phân cấp theo tổ tiên phòng ban (Hierarchical Scope Dominance Check).
+   * Thuật toán: Kiểm tra quyền phân cấp theo tổ tiên phòng ban (Hierarchical Scope Dominance Check) có hỗ trợ tái sử dụng `tx`.
    */
   async hasPermission(
     principal: AuthPrincipal,
     resource: string,
     action: string,
-    options: {
-      targetDepartmentId?: bigint | null;
-      requireGlobal?: boolean;
-      anyScope?: boolean;
-    } = {},
+    options: PermissionCheckOptions = {},
+    tx?: Prisma.TransactionClient,
   ): Promise<boolean> {
-    const matching = (await this.effectiveGrants(principal.userId)).filter(
+    const activeTx = tx ?? options.tx;
+    const matching = (await this.effectiveGrants(principal.userId, activeTx)).filter(
       (grant) => grant.resource === resource && grant.action === action,
     );
     if (options.requireGlobal) return matching.some((grant) => grant.scopeDepartmentId === null);
@@ -80,43 +108,41 @@ export class AuthorizationService {
     if (options.targetDepartmentId == null) {
       return matching.some((grant) => grant.scopeDepartmentId === null);
     }
-    const ancestors = await this.departmentAncestors(options.targetDepartmentId);
+    const ancestors = await this.departmentAncestors(options.targetDepartmentId, activeTx);
     return matching.some(
       (grant) => grant.scopeDepartmentId === null || ancestors.has(grant.scopeDepartmentId),
     );
   }
 
   /**
-   * Thuật toán: Cưỡng chế quyền truy cập hoặc ném ngoại lệ HTTP 403 (Fail-Closed Permission Assertion).
+   * Thuật toán: Cưỡng chế quyền truy cập hoặc ném ngoại lệ HTTP 403 (Fail-Closed Permission Assertion) có hỗ trợ tái sử dụng `tx`.
    */
   async assertPermission(
     principal: AuthPrincipal,
     resource: string,
     action: string,
-    options: {
-      targetDepartmentId?: bigint | null;
-      requireGlobal?: boolean;
-      anyScope?: boolean;
-    } = {},
+    options: PermissionCheckOptions = {},
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
-    if (!(await this.hasPermission(principal, resource, action, options))) {
+    if (!(await this.hasPermission(principal, resource, action, options, tx))) {
       throw new ForbiddenException('Permission is not granted for this resource scope.');
     }
   }
 
   /**
-   * Thuật toán: Kiểm tra bất biến thống trị ủy quyền chống khuếch đại đặc quyền (Anti-Escalation Grant Dominance Check).
+   * Thuật toán: Kiểm tra bất biến thống trị ủy quyền chống khuếch đại đặc quyền (Anti-Escalation Grant Dominance Check) có hỗ trợ tái sử dụng `tx`.
    */
   async assertCanDelegate(
     principal: AuthPrincipal,
     permissionIds: bigint[],
     targetDepartmentId: bigint | null,
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
-    const grants = await this.effectiveGrants(principal.userId);
+    const grants = await this.effectiveGrants(principal.userId, tx);
     const ancestors =
       targetDepartmentId === null
         ? new Set<bigint>()
-        : await this.departmentAncestors(targetDepartmentId);
+        : await this.departmentAncestors(targetDepartmentId, tx);
     const allowed = permissionIds.every((permissionId) =>
       grants.some(
         (grant) =>
@@ -139,8 +165,9 @@ export class AuthorizationService {
     principal: AuthPrincipal,
     resource: string,
     action: string,
+    tx?: Prisma.TransactionClient,
   ): Promise<bigint[] | null> {
-    const matching = (await this.effectiveGrants(principal.userId)).filter(
+    const matching = (await this.effectiveGrants(principal.userId, tx)).filter(
       (grant) => grant.resource === resource && grant.action === action,
     );
     if (matching.some((grant) => grant.scopeDepartmentId === null)) return null;
@@ -152,9 +179,13 @@ export class AuthorizationService {
       ),
     ];
     if (roots.length === 0) return [];
-    if (typeof this.database?.$queryRaw === 'function') {
+    const activeDb =
+      tx && (typeof tx.$queryRaw === 'function' || typeof tx.department?.findMany === 'function')
+        ? tx
+        : this.database;
+    if (typeof activeDb?.$queryRaw === 'function') {
       const rootStrings = roots.map((id) => id.toString());
-      const rows = await this.database.$queryRaw<Array<{ id: bigint }>>`
+      const rows = await activeDb.$queryRaw<Array<{ id: bigint }>>`
         WITH RECURSIVE subtree AS (
           SELECT d.id, ARRAY[d.id] AS visited
           FROM departments d
@@ -169,7 +200,7 @@ export class AuthorizationService {
       `;
       return rows.map((row) => BigInt(row.id));
     }
-    const departments = await this.database.department.findMany({
+    const departments = await activeDb.department.findMany({
       select: { id: true, parent_id: true },
     });
     const visible = new Set(roots);
@@ -199,19 +230,30 @@ export class AuthorizationService {
   }
 
   /**
-   * Thuật toán: Kiểm tra quan hệ bao hàm phòng ban con nằm trong cây con của `scopeDepartmentId`.
+   * Thuật toán: Kiểm tra quan hệ bao hàm phòng ban con nằm trong cây con của `scopeDepartmentId` (hỗ trợ tái sử dụng `tx`).
    */
-  async departmentWithinScope(departmentId: bigint, scopeDepartmentId: bigint): Promise<boolean> {
-    return (await this.departmentAncestors(departmentId)).has(scopeDepartmentId);
+  async departmentWithinScope(
+    departmentId: bigint,
+    scopeDepartmentId: bigint,
+    tx?: Prisma.TransactionClient,
+  ): Promise<boolean> {
+    return (await this.departmentAncestors(departmentId, tx)).has(scopeDepartmentId);
   }
 
   /**
-   * Thuật toán: Truy vấn đường đi tổ tiên đơn truy vấn bằng `WITH RECURSIVE` kèm mảng `visited` chống chu trình;
+   * Thuật toán: Truy vấn đường đi tổ tiên đơn truy vấn bằng `WITH RECURSIVE` kèm mảng `visited` chống chu trình (hỗ trợ tái sử dụng `tx` chống tự khóa chết pool `BUG-048`);
    * dự phòng sang duyệt lặp `findUnique` khi mock kiểm thử không hỗ trợ `$queryRaw`.
    */
-  private async departmentAncestors(departmentId: bigint): Promise<Set<bigint>> {
-    if (typeof this.database?.$queryRaw === 'function') {
-      const rows = await this.database.$queryRaw<Array<{ id: bigint }>>`
+  private async departmentAncestors(
+    departmentId: bigint,
+    tx?: Prisma.TransactionClient,
+  ): Promise<Set<bigint>> {
+    const activeDb =
+      tx && (typeof tx.$queryRaw === 'function' || typeof tx.department?.findUnique === 'function')
+        ? tx
+        : this.database;
+    if (typeof activeDb?.$queryRaw === 'function') {
+      const rows = await activeDb.$queryRaw<Array<{ id: bigint }>>`
         WITH RECURSIVE ancestor_tree AS (
           SELECT d.id, d.parent_id, ARRAY[d.id] AS visited
           FROM departments d
@@ -230,11 +272,10 @@ export class AuthorizationService {
     let current: bigint | null = departmentId;
     while (current !== null && !ancestors.has(current)) {
       ancestors.add(current);
-      const department: { parent_id: bigint | null } | null =
-        await this.database.department.findUnique({
-          where: { id: current },
-          select: { parent_id: true },
-        });
+      const department: { parent_id: bigint | null } | null = await activeDb.department.findUnique({
+        where: { id: current },
+        select: { parent_id: true },
+      });
       current = department?.parent_id ?? null;
     }
     return ancestors;

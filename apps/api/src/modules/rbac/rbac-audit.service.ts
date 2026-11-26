@@ -34,7 +34,9 @@ export class RbacAuditService {
   }
 
   /**
-   * Thuật toán: Nối tiếp mắt xích kiểm toán `RBAC` trong giao dịch hiện hành hoặc giao dịch độc lập có thử lại xung đột.
+   * Thuật toán: Nối tiếp mắt xích kiểm toán `RBAC`.
+   *   - Khi nhận `TransactionClient` đang mở (không có `$transaction`), gọi thẳng `append(transaction)` không bọc retry để lỗi `40001` nổi nguyên vẹn ra `withSerializableTransaction` bên ngoài thay vì biến thành `25P02` (`BUG-049`).
+   *   - Khi nhận `PrismaClient` gốc có `$transaction`, bọc `executeAuditWithRetry` mở giao dịch mới mỗi lần thử lại.
    */
   async record(
     transaction: Prisma.TransactionClient,
@@ -60,10 +62,10 @@ export class RbacAuditService {
         context,
       });
 
-    await executeAuditWithRetry(() =>
-      typeof maybeClient.$transaction === 'function'
-        ? maybeClient.$transaction((tx) => append(tx))
-        : append(transaction),
-    );
+    if (typeof maybeClient.$transaction === 'function') {
+      await executeAuditWithRetry(() => maybeClient.$transaction((tx) => append(tx)));
+      return;
+    }
+    await append(transaction);
   }
 }

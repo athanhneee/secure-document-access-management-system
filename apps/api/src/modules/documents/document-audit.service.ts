@@ -102,33 +102,46 @@ export class DocumentAuditService {
   }
 
   /**
-   * Thuật toán: Ghi nối tiếp sự kiện kiểm toán phân vùng `DOCUMENT` có tự động thử lại khi tranh chấp chuỗi băm đồng thời.
+   * Thuật toán: Ghi nối tiếp sự kiện kiểm toán phân vùng `DOCUMENT` (hỗ trợ tái sử dụng giao dịch `tx` đang mở hoặc tự động thử lại giao dịch `Serializable` mới khi tranh chấp chuỗi băm đồng thời).
    */
-  async record(event: DocumentAuditEvent, context: RequestContext): Promise<void> {
-    try {
-      await runSerializableAuditTransaction(this.database, async (transaction) => {
-        const mergedDetails = {
-          ...(event.versionNo !== undefined && event.versionNo !== null
-            ? { versionNo: event.versionNo }
-            : {}),
-          ...(event.details ?? {}),
-        };
-        await appendChainedAuditLog(transaction, {
-          partition: 'DOCUMENT',
-          hmacKey: this.hmacKey,
-          keyVersion: this.keyVersion,
-          action: event.action,
-          outcome: event.outcome,
-          objectType: 'DOCUMENT',
-          objectId: event.documentId ?? null,
-          documentId: event.documentId ?? null,
-          actorUserId: event.actorUserId ?? null,
-          actorUsername: event.actorUsername ?? null,
-          reasonCode: event.reasonCode ?? null,
-          details: mergedDetails,
-          context,
-        });
+  async record(
+    event: DocumentAuditEvent,
+    context: RequestContext,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const writeOnTx = async (
+      transaction:
+        Prisma.TransactionClient | Parameters<Parameters<PrismaClient['$transaction']>[0]>[0],
+    ) => {
+      const mergedDetails = {
+        ...(event.versionNo !== undefined && event.versionNo !== null
+          ? { versionNo: event.versionNo }
+          : {}),
+        ...(event.details ?? {}),
+      };
+      await appendChainedAuditLog(transaction as Parameters<typeof appendChainedAuditLog>[0], {
+        partition: 'DOCUMENT',
+        hmacKey: this.hmacKey,
+        keyVersion: this.keyVersion,
+        action: event.action,
+        outcome: event.outcome,
+        objectType: 'DOCUMENT',
+        objectId: event.documentId ?? null,
+        documentId: event.documentId ?? null,
+        actorUserId: event.actorUserId ?? null,
+        actorUsername: event.actorUsername ?? null,
+        reasonCode: event.reasonCode ?? null,
+        details: mergedDetails,
+        context,
       });
+    };
+
+    try {
+      if (tx && typeof (tx as { $queryRawUnsafe?: unknown }).$queryRawUnsafe === 'function') {
+        await writeOnTx(tx);
+      } else {
+        await runSerializableAuditTransaction(this.database, writeOnTx);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Failed to record document audit log: ${msg}`);

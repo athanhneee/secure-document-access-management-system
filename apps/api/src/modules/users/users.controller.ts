@@ -11,6 +11,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -62,6 +63,26 @@ const UpdateClearanceSchema = z
     clearanceOptionId: PositiveBigIntSchema.nullable(),
   })
   .strict();
+const emptyQueryToUndefined = (val: unknown) =>
+  typeof val === 'string' && val.trim() === '' ? undefined : val;
+const ListUsersQuerySchema = z
+  .object({
+    page: z.preprocess(emptyQueryToUndefined, z.coerce.number().int().min(1).optional()),
+    pageSize: z.preprocess(
+      emptyQueryToUndefined,
+      z.coerce.number().int().min(1).max(200).optional(),
+    ),
+    search: z.preprocess(emptyQueryToUndefined, z.string().trim().max(120).optional()),
+    status: z.preprocess(
+      emptyQueryToUndefined,
+      z.enum(['ACTIVE', 'LOCKED', 'DISABLED', 'PENDING']).optional(),
+    ),
+    departmentId: z.preprocess(
+      emptyQueryToUndefined,
+      z.union([z.literal('UNASSIGNED'), PositiveBigIntSchema]).optional(),
+    ),
+  })
+  .strict();
 
 @Controller('users')
 export class UsersController {
@@ -94,8 +115,9 @@ export class UsersController {
 
   @Get()
   @RequirePermission('USER', 'MANAGE')
-  list(@Req() request: FastifyRequest) {
-    return this.users.list(this.principal(request));
+  list(@Req() request: FastifyRequest, @Query() query?: unknown) {
+    const parsedQuery = query !== undefined ? ListUsersQuerySchema.parse(query) : undefined;
+    return this.users.list(this.principal(request), parsedQuery);
   }
 
   @Get(':id')

@@ -10,9 +10,9 @@ import {
   normalizeValidInetAddress,
   revokeTokenFamily,
 } from './auth-sessions-management.helper.js';
-import type { AuthUser, RequestContext } from './auth.types.js';
+import { MFA_REQUIRED_ROLES, type AuthUser, type RequestContext } from './auth.types.js';
 
-export { revokeTokenFamily };
+export { normalizeValidInetAddress, revokeTokenFamily };
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -38,7 +38,11 @@ export interface RotateRefreshOptions {
 export type RotationResult =
   | { kind: 'rotated'; user: AuthUser; sessionId: string; mfa: boolean }
   | { kind: 'reuse'; userId: bigint; sessionId: string; alertId?: string | undefined }
-  | { kind: 'invalid' | 'disabled' | 'locked' };
+  | {
+      kind: 'invalid' | 'disabled' | 'locked';
+      userId?: bigint | undefined;
+      sessionId?: string | undefined;
+    };
 
 /**
  * Algorithm / Thuật toán: Gộp nguyên tử cập nhật đăng nhập thành công (`last_login_at`), cưỡng chế trần phiên,
@@ -61,13 +65,16 @@ export async function completeAuthLoginSession(
         : Promise.resolve([] as string[]),
     ]);
     const validIp = normalizeValidInetAddress(input.context.ip);
+    const initialUserAgent = input.context.userAgent ?? null;
     await transaction.authSession.create({
       data: {
         id: input.sessionId,
         user_id: input.userId,
         token_family_id: input.familyId,
         ip_address: validIp ?? null,
-        user_agent: input.context.userAgent ?? null,
+        user_agent: initialUserAgent,
+        login_ip_address: validIp ?? null,
+        login_user_agent: initialUserAgent,
         mfa_verified_at: input.mfaVerified ? now : null,
         expires_at: input.sessionExpiresAt,
       },
@@ -110,13 +117,16 @@ export async function createAuthSession(
           )
         : [];
     const validIp = normalizeValidInetAddress(input.context.ip);
+    const initialUserAgent = input.context.userAgent ?? null;
     await transaction.authSession.create({
       data: {
         id: input.sessionId,
         user_id: input.userId,
         token_family_id: input.familyId,
         ip_address: validIp ?? null,
-        user_agent: input.context.userAgent ?? null,
+        user_agent: initialUserAgent,
+        login_ip_address: validIp ?? null,
+        login_user_agent: initialUserAgent,
         mfa_verified_at: input.mfaVerified ? now : null,
         expires_at: input.sessionExpiresAt,
       },
@@ -173,6 +183,10 @@ export async function activateMfaAuthSession(
 
     const newSessionId = randomUUID();
     const newFamilyId = randomUUID();
+    const sessionWithLoginBaseline = session as typeof session & {
+      login_ip_address?: string | null;
+      login_user_agent?: string | null;
+    };
 
     await transaction.authSession.create({
       data: {
@@ -181,6 +195,8 @@ export async function activateMfaAuthSession(
         token_family_id: newFamilyId,
         ip_address: session.ip_address,
         user_agent: session.user_agent,
+        login_ip_address: sessionWithLoginBaseline.login_ip_address ?? session.ip_address ?? null,
+        login_user_agent: sessionWithLoginBaseline.login_user_agent ?? session.user_agent ?? null,
         mfa_verified_at: now,
         last_seen_at: now,
         expires_at: refresh.expiresAt,
@@ -202,13 +218,16 @@ export async function activateMfaAuthSession(
 }
 
 /**
- * Algorithm / Thuật toán: Xoay vòng họ Refresh Token, cưỡng chế hết hạn nhàn rỗi (`idleTtlSeconds`), cập nhật IP/UA mới nhất và phát hiện đánh cắp/phát lại chuẩn RFC 9700.
+ * Algorithm / Thuật toán: Xoay vòng họ Refresh Token, cưỡng chế hết hạn nhàn rỗi (`idleTtlSeconds`), chặn gia hạn phiên thiếu MFA khi tài khoản đã bật/bắt buộc MFA, cập nhật IP/UA hoạt động gần nhất và phân tách chính xác tấn công tái sử dụng (`ROTATED` / `REFRESH_REUSE`) khỏi thu hồi phiên hợp lệ theo chuẩn RFC 9700.
  */
 export async function rotateSessionRefreshToken(
   database: PrismaClient,
   oldHash: string,
   replacement: { id: string; hash: string; expiresAt: Date },
-  findUserById: (userId: bigint) => Promise<AuthUser | null>,
+  findUserById: (
+    userId: bigint,
+    transaction?: Prisma.TransactionClient,
+  ) => Promise<AuthUser | null>,
   options?: RotateRefreshOptions,
 ): Promise<RotationResult> {
   return database.$transaction(async (transaction) => {
@@ -221,7 +240,7 @@ export async function rotateSessionRefreshToken(
     const session = current.auth_sessions;
     if (session.users.status === 'DISABLED') {
       await revokeTokenFamily(transaction, current.token_family_id, session.id, 'ACCOUNT_DISABLED');
-      return { kind: 'disabled' };
+      return { kind: 'disabled', userId: session.user_id, sessionId: session.id };
     }
     // CONFLICT-RESOLVED: Chặn cấp mới Refresh Token khi tài khoản đang LOCKED, chưa kích hoạt hoặc còn trong thời hạn locked_until, đồng thời thu hồi họ token ngay lập tức (MED-01).
     if (
@@ -231,11 +250,10 @@ export async function rotateSessionRefreshToken(
         session.users.locked_until > now)
     ) {
       await revokeTokenFamily(transaction, current.token_family_id, session.id, 'ACCOUNT_LOCKED');
-      return { kind: 'locked' };
+      return { kind: 'locked', userId: session.user_id, sessionId: session.id };
     }
-    if (current.used_at || current.revoked_at) {
-      await revokeTokenFamily(transaction, current.token_family_id, session.id, 'REFRESH_REUSE');
-      // CONFLICT-RESOLVED: Việt hóa cảnh báo tái sử dụng Refresh Token và áp dụng chống trùng lặp theo cooldownMinutes từ detection_rule_configs (N06).
+    const recordRefreshReuseAlert = async (title: string, description: string): Promise<string> => {
+      // CONFLICT-RESOLVED: Việt hóa cảnh báo tái sử dụng Refresh Token và áp dụng chống trùng lặp theo cooldownMinutes & severity từ detection_rule_configs (N06 / MED-10).
       const ruleCfg =
         typeof transaction.detectionRuleConfig?.findUnique === 'function'
           ? await transaction.detectionRuleConfig
@@ -255,25 +273,50 @@ export async function rotateSessionRefreshToken(
               select: { id: true },
             })
           : null;
-      let alertId = existingReuseAlert?.id;
-      if (!alertId) {
-        alertId = randomUUID();
-        await transaction.securityAlert.create({
-          data: {
-            id: alertId,
-            alert_type: 'REFRESH_TOKEN_REUSE',
-            severity: ruleCfg?.severity ?? 'HIGH',
-            title: 'Cảnh báo: Tái sử dụng Refresh Token đã thu hồi',
-            description:
-              'Phát hiện nỗ lực sử dụng lại Refresh Token đã xoay vòng hoặc thu hồi. Toàn bộ họ phiên đăng nhập đã bị thu hồi tức thì.',
-            detected_user_id: session.user_id,
-          },
-        });
+      if (existingReuseAlert?.id) {
+        return existingReuseAlert.id;
       }
+      const alertId = randomUUID();
+      await transaction.securityAlert.create({
+        data: {
+          id: alertId,
+          alert_type: 'REFRESH_TOKEN_REUSE',
+          severity: ruleCfg?.severity ?? 'HIGH',
+          title,
+          description,
+          detected_user_id: session.user_id,
+        },
+      });
+      return alertId;
+    };
+
+    // BUG-044: Chỉ coi là tấn công phát lại khi token đã tiêu thụ xoay vòng (`used_at != null`, `ROTATED`) hoặc họ token đã bị đánh dấu `REFRESH_REUSE`; các lý do thu hồi hợp lệ khác (hết hạn nhàn rỗi, đăng xuất, đổi mật khẩu, vượt trần phiên...) chỉ trả `invalid` không bắn cảnh báo SOC giả.
+    const isTokenReuse =
+      (current.used_at !== null && current.used_at !== undefined) ||
+      current.revocation_reason === 'ROTATED' ||
+      current.revocation_reason === 'REFRESH_REUSE';
+    if (isTokenReuse) {
+      await revokeTokenFamily(transaction, current.token_family_id, session.id, 'REFRESH_REUSE');
+      const alertId = await recordRefreshReuseAlert(
+        'Cảnh báo: Tái sử dụng Refresh Token đã thu hồi',
+        'Phát hiện nỗ lực sử dụng lại Refresh Token đã xoay vòng hoặc thu hồi. Toàn bộ họ phiên đăng nhập đã bị thu hồi tức thì.',
+      );
       return { kind: 'reuse', userId: session.user_id, sessionId: session.id, alertId };
     }
+    if (current.revoked_at !== null && current.revoked_at !== undefined) {
+      return { kind: 'invalid', userId: session.user_id, sessionId: session.id };
+    }
     if (current.expires_at <= now || session.expires_at <= now || session.status !== 'ACTIVE') {
-      return { kind: 'invalid' };
+      if (session.status === 'ACTIVE' && session.expires_at <= now) {
+        await expireAuthSessionFamily(
+          transaction,
+          current.token_family_id,
+          session.id,
+          'SESSION_EXPIRED',
+          now,
+        );
+      }
+      return { kind: 'invalid', userId: session.user_id, sessionId: session.id };
     }
     if (
       typeof options?.idleTtlSeconds === 'number' &&
@@ -288,26 +331,62 @@ export async function rotateSessionRefreshToken(
         'IDLE_SESSION_EXPIRED',
         now,
       );
-      return { kind: 'invalid' };
+      return { kind: 'invalid', userId: session.user_id, sessionId: session.id };
+    }
+    const user = await findUserById(session.user_id, transaction);
+    if (!user || user.status === 'DISABLED') {
+      await revokeTokenFamily(transaction, current.token_family_id, session.id, 'ACCOUNT_DISABLED');
+      return { kind: 'disabled', userId: session.user_id, sessionId: session.id };
+    }
+    if (user.status !== 'ACTIVE' || (user.lockedUntil && user.lockedUntil > now)) {
+      await revokeTokenFamily(transaction, current.token_family_id, session.id, 'ACCOUNT_LOCKED');
+      return { kind: 'locked', userId: session.user_id, sessionId: session.id };
+    }
+    // BUG-046: Chặn gia hạn Refresh Token đối với phiên chưa xác thực MFA (`mfa_verified_at === null`) khi tài khoản đã kích hoạt MFA hoặc giữ vai trò bắt buộc MFA.
+    const hasMfaRole =
+      Boolean(user.hasMandatoryMfaRole) ||
+      (user.roles ?? []).some((role) => MFA_REQUIRED_ROLES.has(role));
+    const userRequiresMfa = Boolean(user.requiresMfa) || Boolean(user.mfaMethod) || hasMfaRole;
+    if (
+      userRequiresMfa &&
+      (session.mfa_verified_at === null || session.mfa_verified_at === undefined)
+    ) {
+      await revokeTokenFamily(
+        transaction,
+        current.token_family_id,
+        session.id,
+        'MFA_REQUIRED_UNVERIFIED_SESSION',
+      );
+      return { kind: 'invalid', userId: session.user_id, sessionId: session.id };
     }
     const claimed = await transaction.refreshToken.updateMany({
       where: { id: current.id, used_at: null, revoked_at: null },
       data: { used_at: now, revoked_at: now, revocation_reason: 'ROTATED' },
     });
     if (claimed.count !== 1) {
+      // MED-10: Đọc lại bản ghi token mới nhất sau khi CAS thất bại để phân biệt tranh chấp xoay vòng thật (`ROTATED`/`used_at`) với thu hồi hợp lệ song song (`LOGOUT`/khóa tài khoản).
+      const latest =
+        typeof transaction.refreshToken?.findUnique === 'function'
+          ? await transaction.refreshToken
+              .findUnique({
+                where: { id: current.id },
+                select: { used_at: true, revoked_at: true, revocation_reason: true },
+              })
+              .catch(() => null)
+          : null;
+      const confirmedReuse =
+        !latest ||
+        latest.used_at !== null ||
+        latest.revocation_reason === 'ROTATED' ||
+        latest.revocation_reason === 'REFRESH_REUSE';
+      if (!confirmedReuse) {
+        return { kind: 'invalid', userId: session.user_id, sessionId: session.id };
+      }
       await revokeTokenFamily(transaction, current.token_family_id, session.id, 'REFRESH_REUSE');
-      const alertId = randomUUID();
-      await transaction.securityAlert.create({
-        data: {
-          id: alertId,
-          alert_type: 'REFRESH_TOKEN_REUSE',
-          severity: 'HIGH',
-          title: 'Cảnh báo: Tranh chấp xoay vòng Refresh Token đồng thời',
-          description:
-            'Refresh Token không vượt qua kiểm tra xoay vòng nguyên tử (phát hiện gửi đồng thời hoặc phát lại). Toàn bộ họ phiên đã bị thu hồi.',
-          detected_user_id: session.user_id,
-        },
-      });
+      const alertId = await recordRefreshReuseAlert(
+        'Cảnh báo: Tranh chấp xoay vòng Refresh Token đồng thời',
+        'Refresh Token không vượt qua kiểm tra xoay vòng nguyên tử (phát hiện gửi đồng thời hoặc phát lại). Toàn bộ họ phiên đã bị thu hồi.',
+      );
       return { kind: 'reuse', userId: session.user_id, sessionId: session.id, alertId };
     }
     await transaction.refreshToken.create({
@@ -330,11 +409,6 @@ export async function rotateSessionRefreshToken(
         ...(trimmedUserAgent ? { user_agent: trimmedUserAgent } : {}),
       },
     });
-    const user = await findUserById(session.user_id);
-    if (!user || user.status !== 'ACTIVE' || (user.lockedUntil && user.lockedUntil > now)) {
-      await revokeTokenFamily(transaction, current.token_family_id, session.id, 'ACCOUNT_LOCKED');
-      return { kind: 'locked' };
-    }
     return { kind: 'rotated', user, sessionId: session.id, mfa: session.mfa_verified_at !== null };
   });
 }

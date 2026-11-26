@@ -6,7 +6,12 @@
  *   2. Chuẩn hóa endpoint Cloudflare R2 (`region = 'auto'`), Supabase S3 và MinIO/AWS S3 (`forcePathStyle = true`),
  *      lưu bản mã `SDEA\x01` tại khóa `exports/<safeJobId>.dat` trong `STORAGE_BUCKET_DERIVATIVES`.
  */
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
 
@@ -206,6 +211,41 @@ export async function downloadEncryptedExportFromS3(jobId: string): Promise<Buff
       s3Err?.$metadata?.httpStatusCode === 404
     ) {
       return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Thuật toán: Xóa đối tượng mã hóa `exports/<safeJobId>.dat` trên S3/R2 trước khi xóa dòng `async_export_jobs` (`BUG-067`).
+ * Coi `404`/`NoSuchKey` là đã dọn sạch (`false`), nhưng ném lại các lỗi kết nối/quyền hạn để tầng thu dọn giữ lại bản ghi CSDL chờ thử lại.
+ */
+export async function deleteEncryptedExportFromS3(
+  jobId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  const cfg = resolveApiExportS3Config(env);
+  const safeJobId = jobId.replace(/[^a-zA-Z0-9_-]/gu, '');
+  if (!cfg || !safeJobId) return false;
+
+  const client = getOrCreateS3Client(cfg);
+  const target = resolveExportObjectTarget(cfg.derivativesBucket, safeJobId);
+  try {
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: target.bucket,
+        Key: target.key,
+      }),
+    );
+    return true;
+  } catch (err: unknown) {
+    const s3Err = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+    if (
+      s3Err?.name === 'NoSuchKey' ||
+      s3Err?.name === 'NotFound' ||
+      s3Err?.$metadata?.httpStatusCode === 404
+    ) {
+      return false;
     }
     throw err;
   }

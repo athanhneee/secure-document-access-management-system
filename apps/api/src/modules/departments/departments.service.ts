@@ -52,13 +52,19 @@ export class DepartmentsService {
       'DEPARTMENT',
       'MANAGE',
     );
+    const where = visible === null ? {} : { id: { in: visible } };
     const departments = await this.database.department.findMany({
-      where: visible === null ? {} : { id: { in: visible } },
+      where,
       orderBy: [{ code: 'asc' }, { id: 'asc' }],
       take: 200,
       select: DEPARTMENT_SELECT,
     });
-    return { data: departments.map((department) => presentDepartment(department)) };
+    const data = departments.map((department) => presentDepartment(department));
+    const total =
+      departments.length >= 200 && typeof this.database.department.count === 'function'
+        ? await this.database.department.count({ where })
+        : data.length;
+    return { data, total, truncated: total > data.length };
   }
 
   /**
@@ -70,13 +76,14 @@ export class DepartmentsService {
       where: { is_active: true },
       orderBy: [{ code: 'asc' }, { id: 'asc' }],
       take: 500,
-      select: { id: true, code: true, name: true },
+      select: { id: true, code: true, name: true, parent_id: true },
     });
     return {
       data: departments.map((d) => ({
         id: d.id.toString(),
         code: d.code,
         name: d.name,
+        parentId: d.parent_id?.toString() ?? null,
       })),
     };
   }
@@ -115,6 +122,13 @@ export class DepartmentsService {
     });
     const department = await withSerializableTransaction(
       async (transaction) => {
+        await this.authorization.assertPermission(
+          principal,
+          'DEPARTMENT',
+          'MANAGE',
+          { targetDepartmentId: input.parentId ?? null },
+          transaction,
+        );
         if (input.parentId !== null && input.parentId !== undefined) {
           const parent = await transaction.department.findFirst({
             where: { id: input.parentId, is_active: true },
@@ -169,13 +183,42 @@ export class DepartmentsService {
     if (!canManageTarget) {
       throw new NotFoundException('Department not found.');
     }
-    if (input.parentId !== null && input.parentId !== undefined && input.parentId !== id) {
-      await this.authorization.assertPermission(principal, 'DEPARTMENT', 'MANAGE', {
-        targetDepartmentId: input.parentId,
+    let expectedCurrentParentId: bigint | null | undefined;
+    let reparentTarget: bigint | null | undefined;
+    if (input.parentId !== undefined && input.parentId !== id) {
+      const existing = await this.database.department.findUnique({
+        where: { id },
+        select: { parent_id: true },
       });
+      if (!existing) {
+        throw new NotFoundException('Department not found.');
+      }
+      const currentParentId = existing.parent_id ?? null;
+      expectedCurrentParentId = currentParentId;
+      if (input.parentId !== currentParentId) {
+        reparentTarget = input.parentId;
+        // BUG-004: Kiểm tra DEPARTMENT:MANAGE trên cả nút cha mới (parentId: null bắt buộc phạm vi toàn cục)
+        // và nút cha hiện tại để chặn quản trị viên theo phạm vi tách phòng ban khỏi cây đang quản lý.
+        await this.authorization.assertPermission(principal, 'DEPARTMENT', 'MANAGE', {
+          targetDepartmentId: reparentTarget,
+        });
+        await this.authorization.assertPermission(principal, 'DEPARTMENT', 'MANAGE', {
+          targetDepartmentId: currentParentId,
+        });
+      }
     }
     const department = await withSerializableTransaction(
       async (transaction) => {
+        const canManageInTx = await this.authorization.hasPermission(
+          principal,
+          'DEPARTMENT',
+          'MANAGE',
+          { targetDepartmentId: id },
+          transaction,
+        );
+        if (!canManageInTx) {
+          throw new NotFoundException('Department not found.');
+        }
         const before = await transaction.department.findUnique({ where: { id } });
         if (!before) {
           throw new NotFoundException('Department not found.');
@@ -183,12 +226,32 @@ export class DepartmentsService {
         if (input.parentId === id) {
           throw new ConflictException('Department cannot be its own parent.');
         }
-        if (input.parentId !== null && input.parentId !== undefined) {
+        const beforeParentId = before.parent_id ?? null;
+        if (expectedCurrentParentId !== undefined && beforeParentId !== expectedCurrentParentId) {
+          throw new ConflictException('Department was changed by another request.');
+        }
+        if (reparentTarget !== undefined) {
+          await this.authorization.assertPermission(
+            principal,
+            'DEPARTMENT',
+            'MANAGE',
+            { targetDepartmentId: reparentTarget },
+            transaction,
+          );
+          await this.authorization.assertPermission(
+            principal,
+            'DEPARTMENT',
+            'MANAGE',
+            { targetDepartmentId: beforeParentId },
+            transaction,
+          );
+        }
+        if (reparentTarget !== undefined && reparentTarget !== null) {
           const parent = await transaction.department.findFirst({
-            where: { id: input.parentId, is_active: true },
+            where: { id: reparentTarget, is_active: true },
           });
           if (!parent) throw new NotFoundException('Active parent department not found.');
-          if (await isDepartmentDescendant(transaction, input.parentId, id)) {
+          if (await isDepartmentDescendant(transaction, reparentTarget, id)) {
             throw new ConflictException('Department hierarchy cycle is not allowed.');
           }
         }
@@ -196,7 +259,7 @@ export class DepartmentsService {
           where: { id, version: input.expectedVersion },
           data: {
             ...(input.name !== undefined ? { name: input.name } : {}),
-            ...(input.parentId !== undefined ? { parent_id: input.parentId } : {}),
+            ...(reparentTarget !== undefined ? { parent_id: reparentTarget } : {}),
             updated_at: new Date(),
             version: { increment: 1 },
           },
@@ -247,9 +310,22 @@ export class DepartmentsService {
     }
     const department = await withSerializableTransaction(
       async (transaction) => {
+        const canManageInTx = await this.authorization.hasPermission(
+          principal,
+          'DEPARTMENT',
+          'MANAGE',
+          { targetDepartmentId: id },
+          transaction,
+        );
+        if (!canManageInTx) {
+          throw new NotFoundException('Department not found.');
+        }
         const before = await transaction.department.findUnique({ where: { id } });
         if (!before) {
           throw new NotFoundException('Department not found.');
+        }
+        if (!before.is_active) {
+          throw new ConflictException('Department is already inactive.');
         }
         const now = new Date();
         await assertDepartmentHasNoActiveDependents(transaction, id, now);
@@ -301,6 +377,16 @@ export class DepartmentsService {
     }
     const department = await withSerializableTransaction(
       async (transaction) => {
+        const canManageInTx = await this.authorization.hasPermission(
+          principal,
+          'DEPARTMENT',
+          'MANAGE',
+          { targetDepartmentId: id },
+          transaction,
+        );
+        if (!canManageInTx) {
+          throw new NotFoundException('Department not found.');
+        }
         const before = await transaction.department.findUnique({ where: { id } });
         if (!before) {
           throw new NotFoundException('Department not found.');

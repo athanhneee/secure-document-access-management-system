@@ -45,7 +45,7 @@ export const MfaVerifySchema = z
       .string()
       .regex(/^\d{6}$/)
       .optional(),
-    recoveryCode: z.string().min(16).max(64).optional(),
+    recoveryCode: z.string().trim().min(16).max(64).optional(),
   })
   .refine((value) => Boolean(value.code || value.recoveryCode));
 
@@ -56,7 +56,7 @@ export const DisableMfaSchema = z
       .string()
       .regex(/^\d{6}$/)
       .optional(),
-    recoveryCode: z.string().min(16).max(64).optional(),
+    recoveryCode: z.string().trim().min(16).max(64).optional(),
   })
   .refine((value) => Boolean(value.code || value.recoveryCode));
 

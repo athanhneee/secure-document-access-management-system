@@ -14,9 +14,70 @@ export interface AccessClaims extends JWTPayload {
   mfa: boolean;
 }
 
-interface PublicKeyConfig {
+export interface PublicKeyConfig {
   kid: string;
   publicKeyPem: string;
+}
+
+function normalizePemText(pem: string): string {
+  return pem.includes('-----BEGIN') ? pem.replace(/\\n/gu, '\n') : pem;
+}
+
+/**
+ * Thuật toán: Phân tích và chuẩn hóa cấu hình khóa công khai Ed25519 từ `AUTH_SIGNING_PUBLIC_KEYS_JSON`,
+ * hỗ trợ tương thích cả định dạng mảng chuẩn `[{"kid":"...","publicKeyPem":"..."}]` lẫn bản đồ đối tượng `{"kid":"..."}`.
+ */
+export function parseSigningPublicKeysJson(rawJson: string): PublicKeyConfig[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    throw new Error('AUTH_SIGNING_PUBLIC_KEYS_JSON must be valid JSON.');
+  }
+
+  if (Array.isArray(parsed)) {
+    return parsed.map((entry) => {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+        throw new Error(
+          'Each entry in AUTH_SIGNING_PUBLIC_KEYS_JSON array must be an object with kid and publicKeyPem.',
+        );
+      }
+      const record = entry as Record<string, unknown>;
+      const kid = typeof record['kid'] === 'string' ? record['kid'].trim() : '';
+      const publicKeyPem =
+        typeof record['publicKeyPem'] === 'string' ? normalizePemText(record['publicKeyPem']) : '';
+      return { kid, publicKeyPem };
+    });
+  }
+
+  if (typeof parsed === 'object' && parsed !== null) {
+    return Object.entries(parsed as Record<string, unknown>).map(([rawKid, rawVal]) => {
+      const kid = rawKid.trim();
+      if (typeof rawVal === 'string') {
+        return { kid, publicKeyPem: normalizePemText(rawVal) };
+      }
+      if (
+        typeof rawVal === 'object' &&
+        rawVal !== null &&
+        !Array.isArray(rawVal) &&
+        typeof (rawVal as Record<string, unknown>)['publicKeyPem'] === 'string'
+      ) {
+        return {
+          kid,
+          publicKeyPem: normalizePemText(
+            (rawVal as Record<string, unknown>)['publicKeyPem'] as string,
+          ),
+        };
+      }
+      throw new Error(
+        'AUTH_SIGNING_PUBLIC_KEYS_JSON object entries must map each kid to a PEM string.',
+      );
+    });
+  }
+
+  throw new Error(
+    'AUTH_SIGNING_PUBLIC_KEYS_JSON must be a JSON array or { [kid]: publicKeyPem } object.',
+  );
 }
 
 @Injectable()
@@ -43,7 +104,8 @@ export class TokenService {
     let publicKeys: PublicKeyConfig[];
     const configuredPublicKeys = config.get('AUTH_SIGNING_PUBLIC_KEYS_JSON');
     if (privatePem && configuredPublicKeys) {
-      publicKeys = JSON.parse(configuredPublicKeys) as PublicKeyConfig[];
+      privatePem = normalizePemText(privatePem);
+      publicKeys = parseSigningPublicKeysJson(configuredPublicKeys);
     } else {
       const pair = generateKeyPairSync('ed25519');
       privatePem = pair.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
@@ -73,9 +135,16 @@ export class TokenService {
   /**
    * Thuật toán: Phát hành và ký số JWT bằng thuật toán chữ ký đường cong Edwards EdDSA (Ed25519).
    * Cơ chế hoạt động: Đóng gói protected header `{ alg: 'EdDSA', kid, typ: 'JWT' }` chống tấn công hạ cấp `alg: none`,
-   * gắn định danh duy nhất `jti` (UUIDv4), trạng thái `mfa` và thời hạn ngắn `accessTtlSeconds`.
+   * gắn định danh duy nhất `jti` (UUIDv4), trạng thái `mfa` và kẹp trần thời hạn phiên chưa xác thực MFA (`!mfa`) tối đa `<= 300s` (BUG-109).
    */
-  async issueAccessToken(userId: bigint, sessionId: string, mfa: boolean): Promise<string> {
+  async issueAccessToken(
+    userId: bigint,
+    sessionId: string,
+    mfa: boolean,
+    options?: { preMfa?: boolean | undefined },
+  ): Promise<string> {
+    const clampPreMfa = options?.preMfa ?? !mfa;
+    const ttlSeconds = clampPreMfa ? Math.min(this.accessTtlSeconds, 300) : this.accessTtlSeconds;
     return new SignJWT({ sid: sessionId, mfa })
       .setProtectedHeader({ alg: 'EdDSA', kid: this.activeKid, typ: 'JWT' })
       .setSubject(userId.toString())
@@ -83,7 +152,7 @@ export class TokenService {
       .setAudience(this.audience)
       .setJti(randomUUID())
       .setIssuedAt()
-      .setExpirationTime(`${this.accessTtlSeconds}s`)
+      .setExpirationTime(`${ttlSeconds}s`)
       .sign(await this.privateKeyPromise);
   }
 

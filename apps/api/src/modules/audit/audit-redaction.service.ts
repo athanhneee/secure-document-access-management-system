@@ -30,8 +30,173 @@ function stripNonPrintableChars(input: string): string {
 }
 
 /**
- * Dedicated Audit Redaction Service.
- *
+ * Thuật toán: Cắt ngắn chuỗi bảo toàn biên cặp đại diện UTF-16 (`High Surrogate 0xD800..0xDBFF` / `Low Surrogate 0xDC00..0xDFFF`)
+ * đảm bảo độ dài sau cắt (tính cả hậu tố) không vượt quá `maxLength` và không sinh ký tự mồ côi làm hỏng JCS RFC 8785 (BUG-111).
+ */
+function stripLoneSurrogates(input: string): string {
+  let out = '';
+  for (let i = 0; i < input.length; i++) {
+    const code = input.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < input.length ? input.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += input[i]! + input[i + 1]!;
+        i += 1;
+      } else {
+        out += '\uFFFD';
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      out += '\uFFFD';
+    } else {
+      out += input[i]!;
+    }
+  }
+  return out;
+}
+
+function truncateUtf16Safe(input: string, maxLength: number, suffix = '...'): string {
+  if (input.length <= maxLength) return input;
+  if (maxLength <= suffix.length) {
+    let end = Math.max(0, maxLength);
+    if (end > 0) {
+      const prevCode = input.charCodeAt(end - 1);
+      if (prevCode >= 0xd800 && prevCode <= 0xdbff) end -= 1;
+    }
+    return input.slice(0, end);
+  }
+  let cutIndex = maxLength - suffix.length;
+  const boundaryCode = input.charCodeAt(cutIndex - 1);
+  if (boundaryCode >= 0xd800 && boundaryCode <= 0xdbff) {
+    cutIndex -= 1;
+  }
+  return `${input.slice(0, cutIndex)}${suffix}`;
+}
+
+/**
+ * Thuật toán: Chuẩn hóa địa chỉ IPv4 / IPv6 về dạng chuẩn tắc RFC 5952 khớp 1-1 với hàm `inet_out` của PostgreSQL 18 (`BUG-060`).
+ *   - IPv4: chuẩn hóa 4 octet thập phân bỏ số 0 đầu (`010.0.0.1` -> `10.0.0.1`).
+ *   - IPv6: giải nén `::` và hậu tố IPv4 nhúng (`::ffff:127.0.0.1`) thành 8 từ 16-bit, rút gọn dải `0` liên tiếp dài nhất đầu tiên có độ dài `>= 2` thành `::` (không rút gọn 1 từ `0` đơn lẻ),
+ *     in chữ thường thập lục phân bỏ số 0 đầu, và bảo toàn biểu diễn thập phân chấm cho địa chỉ IPv4-mapped / IPv4-compatible (`::ffff:127.0.0.1`, `::192.168.1.1`) khớp tuyệt đối `pg_inet_net_ntop_ipv6` (tuyệt đối không dùng `new URL()` biến `::ffff:127.0.0.1` thành `::ffff:7f00:1`).
+ */
+export function canonicalizePostgresInetAddress(rawIp: string): string | null {
+  const version = isIP(rawIp);
+  if (version === 0) return null;
+
+  if (version === 4) {
+    const parts = rawIp.split('.');
+    if (parts.length !== 4) return null;
+    const normalized = parts.map((p) => Number.parseInt(p, 10));
+    if (normalized.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    return normalized.join('.');
+  }
+
+  // IPv6 (version === 6)
+  let working = rawIp.toLowerCase();
+  let embeddedIpv4Words: [number, number] | null = null;
+
+  const lastColon = working.lastIndexOf(':');
+  if (lastColon !== -1 && working.slice(lastColon + 1).includes('.')) {
+    const ipv4Tail = working.slice(lastColon + 1);
+    if (isIP(ipv4Tail) !== 4) return null;
+    const octets = ipv4Tail.split('.').map((o) => Number.parseInt(o, 10));
+    embeddedIpv4Words = [
+      ((octets[0]! << 8) | octets[1]!) >>> 0,
+      ((octets[2]! << 8) | octets[3]!) >>> 0,
+    ];
+    working = `${working.slice(0, lastColon)}:0:0`;
+  }
+
+  const doubleColonParts = working.split('::');
+  if (doubleColonParts.length > 2) return null;
+
+  const parseHextets = (segment: string): number[] => {
+    if (segment.length === 0) return [];
+    return segment.split(':').map((h) => Number.parseInt(h, 16));
+  };
+
+  let words: number[];
+  if (doubleColonParts.length === 2) {
+    const left = parseHextets(doubleColonParts[0]!);
+    const right = parseHextets(doubleColonParts[1]!);
+    const missing = 8 - (left.length + right.length);
+    if (missing < 1) return null;
+    words = [...left, ...new Array<number>(missing).fill(0), ...right];
+  } else {
+    words = parseHextets(working);
+  }
+
+  if (words.length !== 8 || words.some((w) => !Number.isInteger(w) || w < 0 || w > 0xffff)) {
+    return null;
+  }
+
+  if (embeddedIpv4Words) {
+    words[6] = embeddedIpv4Words[0];
+    words[7] = embeddedIpv4Words[1];
+  }
+
+  let bestBase = -1;
+  let bestLen = 0;
+  let curBase = -1;
+  let curLen = 0;
+
+  for (let i = 0; i < 8; i++) {
+    if (words[i] === 0) {
+      if (curBase === -1) {
+        curBase = i;
+        curLen = 1;
+      } else {
+        curLen += 1;
+      }
+    } else {
+      if (curBase !== -1) {
+        if (curLen >= 2 && curLen > bestLen) {
+          bestBase = curBase;
+          bestLen = curLen;
+        }
+        curBase = -1;
+        curLen = 0;
+      }
+    }
+  }
+  if (curBase !== -1 && curLen >= 2 && curLen > bestLen) {
+    bestBase = curBase;
+    bestLen = curLen;
+  }
+
+  const useDottedIpv4Tail =
+    bestBase === 0 &&
+    (bestLen === 6 ||
+      (bestLen === 5 && words[5] === 0xffff) ||
+      (bestLen === 7 && words[7] !== 0x0001 && words[7] !== 0x0000));
+
+  const chunks: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    if (bestBase !== -1 && i >= bestBase && i < bestBase + bestLen) {
+      if (i === bestBase) {
+        chunks.push('');
+      }
+      continue;
+    }
+    if (i === 6 && useDottedIpv4Tail) {
+      const w6 = words[6]!;
+      const w7 = words[7]!;
+      chunks.push(`${(w6 >> 8) & 0xff}.${w6 & 0xff}.${(w7 >> 8) & 0xff}.${w7 & 0xff}`);
+      break;
+    }
+    chunks.push(words[i]!.toString(16));
+  }
+
+  if (bestBase === 0) {
+    chunks.unshift('');
+  }
+  if (bestBase !== -1 && bestBase + bestLen === 8) {
+    chunks.push('');
+  }
+
+  return chunks.join(':');
+}
+
+/**
  * Ensures that sensitive credentials, encryption keys, tokens, session cookies,
  * or plaintext document contents never leak into the audit trail.
  *
@@ -140,24 +305,25 @@ export class AuditRedactionService {
     if (!userAgent) return null;
     const clean = stripControlCharacters(userAgent, ' ').trim();
     if (clean.length === 0) return null;
-    return clean.length > 255 ? `${clean.substring(0, 252)}...` : clean;
+    return truncateUtf16Safe(clean, 255);
   }
 
   /**
-   * Thuật toán: Chuẩn hóa và kiểm định địa chỉ IPv4/IPv6 bằng `node:net.isIP`.
+   * Thuật toán: Chuẩn hóa và kiểm định địa chỉ IPv4/IPv6 theo RFC 5952 khớp 1-1 với `inet_out` của PostgreSQL (`BUG-060`).
    * Loại bỏ ký tự điều khiển, hậu tố zone index IPv6 (`%eth0`) và trả về `null` nếu chuỗi rỗng hoặc không phải địa chỉ IP hợp lệ.
    */
   sanitizeIp(ip?: string | null): string | null {
     if (!ip) return null;
     const clean = stripControlCharacters(ip, '').trim().split('%')[0]?.trim() ?? '';
     if (clean.length === 0 || clean.length > 45) return null;
-    return isIP(clean) === 0 ? null : clean;
+    return canonicalizePostgresInetAddress(clean);
   }
 
   /**
-   * Sanitizes reasonCode or reason strings.
+   * Thuật toán: Che dấu mẫu nhạy cảm trong `reasonCode` / `reason` trước rồi mới kẹp trần tối đa `80` ký tự (`VARCHAR(80)`)
+   * bảo toàn cặp đại diện UTF-16 để không bao giờ tràn cột `audit_logs.reason_code` (BUG-111).
    */
-  sanitizeReason(reason?: string | null, maxLength = 255): string | null {
+  sanitizeReason(reason?: string | null, maxLength = 80): string | null {
     if (!reason) return null;
     let sanitized = reason
       .replace(this.jwtRegex, '[REDACTED_JWT]')
@@ -167,11 +333,8 @@ export class AuditRedactionService {
       .replace(this.watermarkTokenRegex, '[REDACTED_WM_TOKEN]');
 
     sanitized = stripControlCharacters(sanitized, ' ').trim();
-
-    if (sanitized.length > maxLength) {
-      sanitized = `${sanitized.substring(0, maxLength - 3)}...`;
-    }
-    return sanitized;
+    const effectiveMax = Math.max(4, Math.min(maxLength, 80));
+    return truncateUtf16Safe(sanitized, effectiveMax);
   }
 
   /**
@@ -264,11 +427,12 @@ export class AuditRedactionService {
   }
 
   private scrubString(str: string): string {
-    // Avoid DoS from unbounded string sizes in audit details
+    // Avoid DoS from unbounded string sizes in audit details while preserving UTF-16 surrogate pairs (MED-02)
     let text = str;
     if (text.length > 4096) {
-      text = `${text.substring(0, 4090)}...[TRUNCATED]`;
+      text = truncateUtf16Safe(text, 4096, '...[TRUNCATED]');
     }
+    text = stripLoneSurrogates(text);
 
     text = text
       .replace(this.jwtRegex, '[REDACTED_JWT]')

@@ -56,6 +56,30 @@ export async function executeAddIncidentAction(
     });
   }
 
+  // BUG-061 (2): Xác minh người được phân công tồn tại và đang ở trạng thái ACTIVE trước khi gắn hành động khắc phục.
+  if (
+    input.assignedTo !== undefined &&
+    input.assignedTo !== null &&
+    typeof database.user?.findUnique === 'function'
+  ) {
+    const assignee = await database.user.findUnique({
+      where: { id: input.assignedTo },
+      select: { id: true, status: true },
+    });
+    if (!assignee) {
+      throw new NotFoundException({
+        errorCode: AppErrorCode.RESOURCE_NOT_FOUND,
+        message: `Assigned user ${input.assignedTo.toString()} was not found.`,
+      });
+    }
+    if ('status' in assignee && assignee.status !== 'ACTIVE') {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.USER_NOT_ACTIVE,
+        message: `Assigned user ${input.assignedTo.toString()} is not active.`,
+      });
+    }
+  }
+
   const action = await database.incidentAction.create({
     data: {
       incident_report_id: incidentReportId,

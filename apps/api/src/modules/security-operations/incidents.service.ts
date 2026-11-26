@@ -69,16 +69,59 @@ export class IncidentsService {
     this.logger.log('IncidentsService initialized');
   }
 
-  private emitIncidentUpdated(id: string, action: string, status?: string): void {
+  private async resolveIncidentTargetDepartmentId(id: string): Promise<string | null> {
+    try {
+      if (typeof this.database?.incidentReport?.findUnique !== 'function') return null;
+      const report = await this.database.incidentReport.findUnique({
+        where: { id },
+        select: { prepared_by: true, alert_id: true },
+      });
+      if (!report) return null;
+      if (report.alert_id && typeof this.database?.securityAlert?.findUnique === 'function') {
+        const alert = await this.database.securityAlert.findUnique({
+          where: { id: report.alert_id },
+          select: { detected_user_id: true, document_id: true },
+        });
+        if (alert?.detected_user_id && typeof this.database?.user?.findUnique === 'function') {
+          const u = await this.database.user.findUnique({
+            where: { id: alert.detected_user_id },
+            select: { department_id: true },
+          });
+          if (u?.department_id != null) return u.department_id.toString();
+        }
+        if (alert?.document_id && typeof this.database?.document?.findUnique === 'function') {
+          const d = await this.database.document.findUnique({
+            where: { id: alert.document_id },
+            select: { department_id: true },
+          });
+          if (d?.department_id != null) return d.department_id.toString();
+        }
+      }
+      if (typeof this.database?.user?.findUnique === 'function') {
+        const preparedUser = await this.database.user.findUnique({
+          where: { id: report.prepared_by },
+          select: { department_id: true },
+        });
+        if (preparedUser?.department_id != null) return preparedUser.department_id.toString();
+      }
+    } catch {
+      // Ignore department lookup error on partial mocks
+    }
+    return null;
+  }
+
+  private async emitIncidentUpdated(id: string, action: string, status?: string): Promise<void> {
+    const targetDepartmentId = await this.resolveIncidentTargetDepartmentId(id);
     this.realtime?.publish({
       type: 'INCIDENT_REPORT_UPDATED',
       targetRoles: ['SECURITY_OFFICER'],
+      targetDepartmentId,
       payload: { id, action, ...(status ? { status } : {}) },
     });
   }
 
   /**
-   * Thuật toán: Khởi tạo biên bản sự cố an ninh ở trạng thái `DRAFT` có kiểm tra phạm vi phòng ban của cảnh báo gốc.
+   * Thuật toán: Khởi tạo biên bản sự cố an ninh ở trạng thái `DRAFT` có kiểm tra phạm vi xem (`VIEW`) của cảnh báo gốc (`BUG-061`).
    */
   async createIncidentReport(
     input: CreateIncidentReportInput,
@@ -90,12 +133,12 @@ export class IncidentsService {
         this.authorization,
         actor,
         input.alertId,
-        'MANAGE',
+        'VIEW',
       );
     }
     const id = await executeCreateIncidentReport(this.database, this.auditWriter, input, actor);
     const detail = await this.getIncidentReportById(id, actor);
-    this.emitIncidentUpdated(detail.id, 'CREATED', detail.status);
+    await this.emitIncidentUpdated(detail.id, 'CREATED', detail.status);
     return detail;
   }
 
@@ -201,12 +244,12 @@ export class IncidentsService {
       actor,
     );
     const detail = await this.getIncidentReportById(updatedId, actor);
-    this.emitIncidentUpdated(detail.id, 'UPDATED', detail.status);
+    await this.emitIncidentUpdated(detail.id, 'UPDATED', detail.status);
     return detail;
   }
 
   /**
-   * Thuật toán: Đệ trình biên bản sự cố (`DRAFT -> SUBMITTED`) sau khi hoàn tất phân tích sơ bộ.
+   * Thuật toán: Đệ trình biên bản sự cố (`DRAFT -> SUBMITTED`) và gửi thông báo tới cả `submittedToOwner` lẫn `submittedToAdmin` (`BUG-061`).
    */
   async submitIncidentReport(
     id: string,
@@ -222,30 +265,35 @@ export class IncidentsService {
       actor,
     );
     const detail = await this.getIncidentReportById(updatedId, actor);
-    if (
-      this.notifications &&
-      input.submittedToOwner !== undefined &&
-      input.submittedToOwner !== actor.userId
-    ) {
-      try {
-        await this.notifications.sendNotification({
-          recipientId: input.submittedToOwner,
-          notificationType: 'INCIDENT_REPORT_SUBMITTED',
-          title: `Biên bản sự cố an ninh mới: ${detail.incidentCode}`,
-          body: `Bộ phận An ninh thông tin vừa đệ trình biên bản sự cố "${detail.title}" (${detail.incidentCode}) tới bạn để phối hợp xử lý.`,
-          relatedObjectType: 'INCIDENT_REPORT',
-          relatedObjectId: detail.id,
-          deduplicationKey: `INCIDENT_REPORT_SUBMITTED:${input.submittedToOwner.toString()}:${detail.id}`,
-          payload: {
-            incidentId: detail.id,
-            incidentCode: detail.incidentCode,
-          },
-        });
-      } catch {
-        // Non-fatal post-commit notification dispatch
+    if (this.notifications) {
+      const recipients = new Set<bigint>();
+      if (input.submittedToOwner != null && input.submittedToOwner !== actor.userId) {
+        recipients.add(input.submittedToOwner);
+      }
+      if (input.submittedToAdmin != null && input.submittedToAdmin !== actor.userId) {
+        recipients.add(input.submittedToAdmin);
+      }
+      for (const recipientId of recipients) {
+        try {
+          await this.notifications.sendNotification({
+            recipientId,
+            notificationType: 'INCIDENT_REPORT_SUBMITTED',
+            title: `Biên bản sự cố an ninh mới: ${detail.incidentCode}`,
+            body: `Bộ phận An ninh thông tin vừa đệ trình biên bản sự cố "${detail.title}" (${detail.incidentCode}) tới bạn để phối hợp xử lý.`,
+            relatedObjectType: 'INCIDENT_REPORT',
+            relatedObjectId: detail.id,
+            deduplicationKey: `INCIDENT_REPORT_SUBMITTED:${recipientId.toString()}:${detail.id}`,
+            payload: {
+              incidentId: detail.id,
+              incidentCode: detail.incidentCode,
+            },
+          });
+        } catch {
+          // Non-fatal post-commit notification dispatch
+        }
       }
     }
-    this.emitIncidentUpdated(detail.id, 'SUBMITTED', detail.status);
+    await this.emitIncidentUpdated(detail.id, 'SUBMITTED', detail.status);
     return detail;
   }
 
@@ -256,7 +304,7 @@ export class IncidentsService {
     await assertIncidentInDepartmentScope(this.database, this.authorization, actor, id, 'MANAGE');
     const updatedId = await executeReviewIncidentReport(this.database, this.auditWriter, id, actor);
     const detail = await this.getIncidentReportById(updatedId, actor);
-    this.emitIncidentUpdated(detail.id, 'IN_REVIEW', detail.status);
+    await this.emitIncidentUpdated(detail.id, 'IN_REVIEW', detail.status);
     return detail;
   }
 
@@ -277,7 +325,7 @@ export class IncidentsService {
       actor,
     );
     const detail = await this.getIncidentReportById(updatedId, actor);
-    this.emitIncidentUpdated(detail.id, 'CLOSED', detail.status);
+    await this.emitIncidentUpdated(detail.id, 'CLOSED', detail.status);
     return detail;
   }
 
@@ -303,7 +351,7 @@ export class IncidentsService {
       input,
       actor,
     );
-    this.emitIncidentUpdated(incidentReportId, 'ACTION_ADDED');
+    await this.emitIncidentUpdated(incidentReportId, 'ACTION_ADDED');
     return created;
   }
 
@@ -334,7 +382,7 @@ export class IncidentsService {
       expectedIncidentId,
     );
     if (expectedIncidentId) {
-      this.emitIncidentUpdated(expectedIncidentId, 'ACTION_COMPLETED');
+      await this.emitIncidentUpdated(expectedIncidentId, 'ACTION_COMPLETED');
     }
     return completed;
   }

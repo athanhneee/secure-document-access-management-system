@@ -2,8 +2,8 @@
  * Module: NotificationsService — Điều phối thông báo đa kênh (`IN_APP`, `EMAIL`, `BOTH`) kết hợp hộp thư đi giao dịch (Transactional Outbox Pattern) chống gửi trùng lặp.
  */
 import { Injectable, NotFoundException, Logger, Optional } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
-import { getDatabaseClient, type Prisma } from '@sda/database';
+import { createHash } from 'node:crypto';
+import { DatabaseConflictError, getDatabaseClient, type Prisma } from '@sda/database';
 import { AppErrorCode, type QueryNotificationsInput } from '@sda/contracts';
 import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { enqueueNotificationOutbox } from './notification-outbox.helper.js';
@@ -24,6 +24,17 @@ export interface SendNotificationOptions {
   payload?: Record<string, unknown>;
 }
 
+function deriveDeterministicInAppNotificationId(dedupKey: string): string {
+  const hex = createHash('sha256').update(`inapp-dedup:${dedupKey}`, 'utf8').digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function isUniqueNotificationCollision(err: unknown): boolean {
+  if (err instanceof DatabaseConflictError) return true;
+  if (!err || typeof err !== 'object') return false;
+  const code = 'code' in err ? String((err as { code?: unknown }).code) : '';
+  return code === 'P2002' || code === '23505';
+}
 export interface SendNotificationResult {
   notificationId?: string | undefined;
   outboxId?: string | undefined;
@@ -70,42 +81,7 @@ export class NotificationsService {
     let outboxId: string | undefined;
     let isDuplicate = false;
 
-    if (channel === 'IN_APP' || channel === 'BOTH') {
-      notificationId = randomUUID();
-      const createdAtIso = new Date().toISOString();
-      try {
-        await this.database.notification.create({
-          data: {
-            id: notificationId,
-            recipient_id: options.recipientId,
-            notification_type: options.notificationType,
-            title: options.title,
-            body: options.body,
-            related_object_type: options.relatedObjectType ?? null,
-            related_object_id: options.relatedObjectId ?? null,
-            status: 'UNREAD',
-          },
-        });
-        this.realtime?.publish({
-          type: 'NOTIFICATION_CREATED',
-          targetUserIds: [options.recipientId.toString()],
-          payload: {
-            id: notificationId,
-            notificationType: options.notificationType,
-            title: options.title,
-            body: options.body,
-            relatedObjectType: options.relatedObjectType ?? null,
-            relatedObjectId: options.relatedObjectId ?? null,
-            status: 'UNREAD',
-            createdAt: createdAtIso,
-            readAt: null,
-          },
-        });
-      } catch (err) {
-        this.logger.warn(`Failed to create in-app notification:`, err);
-      }
-    }
-
+    // BUG-062: Kiểm tra khử trùng `deduplicationKey` / UUID tất định TRƯỚC khi chèn `notifications` và bắn SSE; chỉ gán `notificationId` sau khi `create` thành công.
     if (channel === 'EMAIL' || channel === 'BOTH') {
       const outbox = await enqueueNotificationOutbox(this.database, this.logger, {
         recipientId: options.recipientId,
@@ -118,6 +94,68 @@ export class NotificationsService {
       });
       outboxId = outbox.outboxId;
       isDuplicate = outbox.isDuplicate;
+      if (isDuplicate) {
+        return { notificationId: undefined, outboxId, isDuplicate: true };
+      }
+    }
+
+    if (channel === 'IN_APP' || channel === 'BOTH') {
+      const candidateId = deriveDeterministicInAppNotificationId(dedupKey);
+      if (typeof this.database.notification?.findUnique === 'function') {
+        const existing = await this.database.notification.findUnique({
+          where: { id: candidateId },
+          select: { id: true },
+        });
+        if (existing) {
+          return { notificationId: undefined, outboxId, isDuplicate: true };
+        }
+      } else if (typeof this.database.notification?.findFirst === 'function') {
+        const existing = await this.database.notification.findFirst({
+          where: { id: candidateId },
+          select: { id: true },
+        });
+        if (existing) {
+          return { notificationId: undefined, outboxId, isDuplicate: true };
+        }
+      }
+
+      const createdAtIso = new Date().toISOString();
+      try {
+        await this.database.notification.create({
+          data: {
+            id: candidateId,
+            recipient_id: options.recipientId,
+            notification_type: options.notificationType,
+            title: options.title,
+            body: options.body,
+            related_object_type: options.relatedObjectType ?? null,
+            related_object_id: options.relatedObjectId ?? null,
+            status: 'UNREAD',
+          },
+        });
+        notificationId = candidateId;
+        this.realtime?.publish({
+          type: 'NOTIFICATION_CREATED',
+          targetUserIds: [options.recipientId.toString()],
+          payload: {
+            id: candidateId,
+            notificationType: options.notificationType,
+            title: options.title,
+            body: options.body,
+            relatedObjectType: options.relatedObjectType ?? null,
+            relatedObjectId: options.relatedObjectId ?? null,
+            status: 'UNREAD',
+            createdAt: createdAtIso,
+            readAt: null,
+          },
+        });
+      } catch (err) {
+        if (isUniqueNotificationCollision(err)) {
+          isDuplicate = true;
+        } else {
+          this.logger.warn(`Failed to create in-app notification:`, err);
+        }
+      }
     }
 
     return { notificationId, outboxId, isDuplicate };

@@ -117,6 +117,7 @@ export interface AttributeDescriptor {
   key: string;
   type: AttributeType;
   required: boolean;
+  multiValue?: boolean | undefined;
 }
 
 export const VALID_SIMPLE_OBLIGATION_TYPES = [

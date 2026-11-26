@@ -8,6 +8,7 @@ import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode, type DecideAccessRequestInput } from '@sda/contracts';
 import type { AccessGrantAuditService } from '../access-grants/access-grant-audit.service.js';
 import type { AccessGrantsService } from '../access-grants/access-grants.service.js';
+import { assertWithinDocumentRetention } from '../access-grants/grant-retention-bounds.helper.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import type { NotificationsService } from '../notifications/notifications.service.js';
 import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
@@ -164,10 +165,19 @@ export async function executeAccessRequestDecision(
     return { id, status: 'REJECTED' };
   }
 
-  // Thuật toán: Tôn trọng khoảng thời gian người xem đề xuất (`requested_from`/`requested_until`) khi chủ sở hữu không ghi đè `validDays` (V-39).
+  // Thuật toán: Ưu tiên mốc `validUntil` tường minh hoặc `validDays` của chủ sở hữu; ngược lại tôn trọng khung đề xuất của người xem và cưỡng chế không vượt `retention_until`.
   let validFrom = now;
   let validUntil: Date;
-  if (
+  if (input.validUntil) {
+    const parsedUntil = new Date(input.validUntil);
+    if (Number.isNaN(parsedUntil.getTime()) || parsedUntil.getTime() <= now.getTime()) {
+      throw new BadRequestException({
+        errorCode: AppErrorCode.GRANT_TIME_RANGE_INVALID,
+        message: 'validUntil must be a valid future ISO timestamp.',
+      });
+    }
+    validUntil = parsedUntil;
+  } else if (
     typeof input.validDays === 'number' &&
     Number.isFinite(input.validDays) &&
     input.validDays > 0
@@ -180,21 +190,40 @@ export async function executeAccessRequestDecision(
         : request.requested_from
           ? new Date(request.requested_from)
           : null;
-    const reqUntil =
-      request.requested_until instanceof Date
-        ? request.requested_until
-        : request.requested_until
-          ? new Date(request.requested_until)
-          : null;
     if (reqFrom && !Number.isNaN(reqFrom.getTime()) && reqFrom > now) {
       validFrom = reqFrom;
     }
-    if (reqUntil && !Number.isNaN(reqUntil.getTime()) && reqUntil > validFrom) {
+
+    if (request.requested_until !== null && request.requested_until !== undefined) {
+      const reqUntil =
+        request.requested_until instanceof Date
+          ? request.requested_until
+          : new Date(request.requested_until);
+      if (
+        Number.isNaN(reqUntil.getTime()) ||
+        reqUntil.getTime() <= now.getTime() ||
+        reqUntil.getTime() <= validFrom.getTime()
+      ) {
+        throw new BadRequestException({
+          errorCode: AppErrorCode.GRANT_TIME_RANGE_INVALID,
+          message:
+            'Requested access window has already expired; provide an explicit future validUntil or validDays override, or reject the request.',
+        });
+      }
       validUntil = reqUntil;
     } else {
       validUntil = new Date(validFrom.getTime() + 7 * 86400000);
     }
   }
+
+  assertWithinDocumentRetention({
+    retentionUntil: request.documents?.retention_until,
+    targetUntil: validUntil,
+    now,
+    context: 'GRANT',
+  });
+
+  const trimmedApprovalNote = input.decisionNote?.trim() || null;
   const effectiveValidDays =
     typeof input.validDays === 'number'
       ? input.validDays
@@ -223,6 +252,7 @@ export async function executeAccessRequestDecision(
     },
     principal,
     context,
+    { decisionNote: trimmedApprovalNote },
   );
 
   await audit.record(
@@ -236,6 +266,7 @@ export async function executeAccessRequestDecision(
         grantId: grant.id,
         validDays: effectiveValidDays,
         permissions: permissions.join(','),
+        decisionNote: trimmedApprovalNote,
       },
     },
     principal,
@@ -250,6 +281,7 @@ export async function executeAccessRequestDecision(
       status: 'APPROVED',
       documentId: request.document_id,
       grantId: grant.id,
+      decisionNote: trimmedApprovalNote,
     },
   });
   return { id, status: 'APPROVED', grantId: grant.id };

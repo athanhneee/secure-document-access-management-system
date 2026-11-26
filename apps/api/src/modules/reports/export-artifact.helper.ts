@@ -8,7 +8,12 @@
 import { ForbiddenException, type Logger } from '@nestjs/common';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { AppErrorCode, type ExportFormat, type ExportType } from '@sda/contracts';
+import {
+  AppErrorCode,
+  formatUnifiedExportJson,
+  type ExportFormat,
+  type ExportType,
+} from '@sda/contracts';
 import { generateCsv } from './csv-formula-sanitizer.js';
 import {
   decryptAndVerifyExportArtifactBuffer,
@@ -27,6 +32,7 @@ export {
   assertCrossUserExportScope,
   assertExportJobAccess,
   assertExportJobReadyForDownload,
+  assertLiveExportDownloadAuthorization,
   resolveWorkspaceExportDir,
 } from './export-access-policy.helper.js';
 
@@ -48,6 +54,7 @@ export interface ExportJobDetail {
 }
 
 export interface ExportDatasetPayload {
+  exportType: ExportType;
   reportTitle: string;
   rawRecords: unknown[];
   columns: ExportColumn[];
@@ -55,19 +62,19 @@ export interface ExportDatasetPayload {
 }
 
 /**
- * Thuật toán: Kết xuất tập dữ liệu báo cáo sang bộ đệm nhị phân theo định dạng yêu cầu (JSON / PDF / XLSX / CSV khử công thức).
+ * Thuật toán: Kết xuất tập dữ liệu báo cáo sang bộ đệm nhị phân theo định dạng yêu cầu (JSON phong bì hợp nhất / PDF / XLSX / CSV khử công thức).
  */
 export async function renderExportBuffer(
   format: ExportFormat,
   dataset: ExportDatasetPayload,
+  generatedAt: Date = new Date(),
 ): Promise<{ contentBuffer: Buffer; mimeType: string }> {
   if (format === 'JSON') {
-    const json = JSON.stringify(
-      dataset.rawRecords,
-      (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
-      2,
-    );
-    return { mimeType: 'application/json', contentBuffer: Buffer.from(json, 'utf-8') };
+    const json = formatUnifiedExportJson(dataset.exportType, dataset.rows, generatedAt);
+    return {
+      mimeType: 'application/json; charset=utf-8',
+      contentBuffer: Buffer.from(json, 'utf-8'),
+    };
   }
   if (format === 'PDF') {
     return {

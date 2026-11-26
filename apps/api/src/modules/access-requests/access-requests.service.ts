@@ -6,6 +6,7 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -15,15 +16,18 @@ import { randomUUID } from 'node:crypto';
 import { getDatabaseClient } from '@sda/database';
 import {
   AppErrorCode,
+  DEFAULT_GRANT_MAX_DURATION_DAYS,
   type CreateAccessRequestInput,
   type DecideAccessRequestInput,
   type ListAccessRequestsInput,
 } from '@sda/contracts';
+import { AppConfigService } from '../../config/config.service.js';
 import { AccessGrantAuditService } from '../access-grants/access-grant-audit.service.js';
 import { AccessGrantsService } from '../access-grants/access-grants.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { RedlockService } from '../concurrency/redlock.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { AuthorizationService } from '../rbac/authorization.service.js';
 import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
 import { executeAccessRequestDecision } from './access-request-decision.helper.js';
 import {
@@ -37,11 +41,23 @@ import {
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
+export interface ExistingActiveGrantSummary {
+  grantId: string;
+  permissions: ('VIEW' | 'DOWNLOAD')[];
+  validFrom: string;
+  validUntil: string;
+}
+
 export interface AccessRequestDetail {
   id: string;
   documentId: string;
   documentTitle: string;
   documentCode?: string | null | undefined;
+  documentClassificationCode?: string | null | undefined;
+  documentRetentionUntil?: string | null | undefined;
+  documentDefaultViewDays?: number | null | undefined;
+  documentAllowDownload?: boolean | undefined;
+  existingActiveGrant?: ExistingActiveGrantSummary | null | undefined;
   requestorId: string;
   requestorName: string;
   requestorUsername: string;
@@ -59,6 +75,7 @@ export interface AccessRequestDetail {
 @Injectable()
 export class AccessRequestsService {
   private readonly database: PrismaClient;
+  private readonly maxDurationDays: number;
 
   constructor(
     private readonly audit: AccessGrantAuditService,
@@ -67,16 +84,20 @@ export class AccessRequestsService {
     @Optional() private readonly redlock?: RedlockService,
     @Optional() private readonly realtime?: RealtimeEventsService,
     @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly config?: AppConfigService,
+    @Optional() private readonly authorization?: AuthorizationService,
   ) {
     try {
       this.database = databaseClient ?? getDatabaseClient();
     } catch {
       this.database = (databaseClient ?? null) as unknown as PrismaClient;
     }
+    this.maxDurationDays =
+      this.config?.get?.('GRANT_MAX_DURATION_DAYS') ?? DEFAULT_GRANT_MAX_DURATION_DAYS;
   }
 
   /**
-   * UC12: Algorithm / Thuật toán: Khởi Tạo Yêu Cầu Truy Cập Kèm Sàng Lọc Độ Mật & Chống Trùng Lặp.
+   * UC12: Algorithm / Thuật toán: Khởi Tạo Yêu Cầu Truy Cập Kèm Sàng Lọc Độ Mật, Trần Thời Hạn & Chống Trùng Lặp.
    */
   async createRequest(
     input: CreateAccessRequestInput,
@@ -89,10 +110,40 @@ export class AccessRequestsService {
       input,
       principal,
       now,
+      this.maxDurationDays,
     );
 
     const requestId = randomUUID();
     const created = await this.database.$transaction(async (tx) => {
+      // MED-08: Khóa tư vấn giao dịch theo cặp `(documentId, requesterId)` và kiểm tra lại `PENDING` trong giao dịch chống gửi trùng khi double-click.
+      if (typeof (tx as { $executeRawUnsafe?: unknown }).$executeRawUnsafe === 'function') {
+        await (
+          tx as unknown as {
+            $executeRawUnsafe: (sql: string, ...args: unknown[]) => Promise<unknown>;
+          }
+        ).$executeRawUnsafe(
+          'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+          input.documentId,
+          `access-req:${principal.userId.toString()}`,
+        );
+      }
+      if (typeof tx.accessRequest?.findFirst === 'function') {
+        const duplicate = await tx.accessRequest.findFirst({
+          where: {
+            document_id: input.documentId,
+            requester_id: principal.userId,
+            status: 'PENDING',
+          },
+          select: { id: true },
+        });
+        if (duplicate) {
+          throw new ConflictException({
+            errorCode: AppErrorCode.ACCESS_REQUEST_DUPLICATE,
+            message: 'You already have a pending access request for this document.',
+          });
+        }
+      }
+
       const req = await tx.accessRequest.create({
         data: {
           id: requestId,
@@ -108,7 +159,14 @@ export class AccessRequestsService {
           access_request_permissions: { create: { permission: input.requestedAction } },
         },
         include: {
-          documents: true,
+          documents: {
+            include: {
+              classification_history: {
+                where: { effective_to: null },
+                include: { classification_levels: true },
+              },
+            },
+          },
           users: { include: { departments: true } },
           access_request_permissions: true,
         },
@@ -164,7 +222,7 @@ export class AccessRequestsService {
   }
 
   /**
-   * UC13 & UC15: Algorithm / Thuật toán: Truy Vấn Phân Trang Song Song Theo Góc Nhìn Vai Trò (`my` / `incoming`).
+   * UC13 & UC15: Algorithm / Thuật toán: Truy Vấn Phân Trang Song Song Theo Góc Nhìn Vai Trò (`my` / `incoming` / `all`) Có Ràng Buộc Quyền RBAC.
    */
   async listRequests(
     principal: AuthPrincipal,
@@ -172,14 +230,88 @@ export class AccessRequestsService {
   ): Promise<{ data: AccessRequestDetail[]; total: number }> {
     const where: Record<string, unknown> = {};
     if (input.status) where['status'] = input.status;
-    where[input.scope === 'incoming' ? 'documents' : 'requester_id'] =
-      input.scope === 'incoming' ? { owner_id: principal.userId } : principal.userId;
+
+    const hasAuthz = Boolean(
+      this.authorization && typeof this.authorization.hasPermission === 'function',
+    );
+
+    if (input.scope === 'incoming') {
+      if (hasAuthz) {
+        const canDecide = await this.authorization!.hasPermission(
+          principal,
+          'ACCESS_REQUEST',
+          'DECIDE',
+          { anyScope: true },
+        );
+        if (!canDecide) {
+          throw new ForbiddenException({
+            errorCode: AppErrorCode.FORBIDDEN,
+            message: 'ACCESS_REQUEST:DECIDE permission is required to view incoming requests.',
+          });
+        }
+      }
+      where['documents'] = { owner_id: principal.userId };
+    } else if (input.scope === 'all') {
+      let canViewOwn = true;
+      let canDecide = true;
+      if (hasAuthz) {
+        [canViewOwn, canDecide] = await Promise.all([
+          this.authorization!.hasPermission(principal, 'ACCESS_REQUEST', 'VIEW_OWN', {
+            anyScope: true,
+          }),
+          this.authorization!.hasPermission(principal, 'ACCESS_REQUEST', 'DECIDE', {
+            anyScope: true,
+          }),
+        ]);
+      } else if (Array.isArray(principal.roles) && principal.roles.length > 0) {
+        const isPureReader = principal.roles.every((r) => r === 'DOCUMENT_READER');
+        canDecide = !isPureReader;
+      }
+
+      const orBranches: Record<string, unknown>[] = [];
+      if (canViewOwn) {
+        orBranches.push({ requester_id: principal.userId });
+      }
+      if (canDecide) {
+        orBranches.push({ documents: { owner_id: principal.userId } });
+      }
+      if (orBranches.length === 0) {
+        throw new ForbiddenException({
+          errorCode: AppErrorCode.FORBIDDEN,
+          message: 'Insufficient permissions to list access requests.',
+        });
+      }
+      where['OR'] = orBranches;
+    } else {
+      if (hasAuthz) {
+        const canViewOwn = await this.authorization!.hasPermission(
+          principal,
+          'ACCESS_REQUEST',
+          'VIEW_OWN',
+          { anyScope: true },
+        );
+        if (!canViewOwn) {
+          throw new ForbiddenException({
+            errorCode: AppErrorCode.FORBIDDEN,
+            message: 'ACCESS_REQUEST:VIEW_OWN permission is required to view own requests.',
+          });
+        }
+      }
+      where['requester_id'] = principal.userId;
+    }
 
     const [rows, total] = await Promise.all([
       this.database.accessRequest.findMany({
         where,
         include: {
-          documents: true,
+          documents: {
+            include: {
+              classification_history: {
+                where: { effective_to: null },
+                include: { classification_levels: true },
+              },
+            },
+          },
           users: { include: { departments: true } },
           access_request_permissions: true,
           access_request_decisions: true,
@@ -191,7 +323,63 @@ export class AccessRequestsService {
       this.database.accessRequest.count({ where }),
     ]);
 
-    return { data: rows.map((req) => mapAccessRequestDetail(req)), total };
+    // Thuật toán: Gom lô truy vấn quyền hiện hành (`O(1)` truy vấn SQL) cho các dòng thuộc tài liệu chủ sở hữu quản lý (`incoming` hoặc nhánh chủ sở hữu trong `all`).
+    const activeGrantByPair = new Map<string, ExistingActiveGrantSummary>();
+    const incomingRows =
+      input.scope === 'incoming'
+        ? rows
+        : input.scope === 'all'
+          ? rows.filter(
+              (r) => (r.documents as { owner_id?: bigint | null })?.owner_id === principal.userId,
+            )
+          : [];
+    if (incomingRows.length > 0 && typeof this.database?.accessGrant?.findMany === 'function') {
+      const now = new Date();
+      const docIds = [...new Set(incomingRows.map((r) => r.document_id))];
+      const requesterIds = [...new Set(incomingRows.map((r) => r.requester_id))];
+      const existingGrants = await this.database.accessGrant.findMany({
+        where: {
+          document_id: { in: docIds },
+          principal_type: 'USER',
+          principal_user_id: { in: requesterIds },
+          status: 'ACTIVE',
+          valid_until: { gt: now },
+        },
+        include: { access_grant_permissions: true },
+        orderBy: { valid_until: 'desc' },
+      });
+      for (const grant of existingGrants) {
+        if (grant.principal_user_id === null) continue;
+        const key = `${grant.document_id}:${grant.principal_user_id.toString()}`;
+        if (activeGrantByPair.has(key)) continue;
+        const perms = [
+          ...new Set(
+            grant.access_grant_permissions
+              .map((p) => p.permission)
+              .filter((p): p is 'VIEW' | 'DOWNLOAD' => p === 'VIEW' || p === 'DOWNLOAD'),
+          ),
+        ];
+        activeGrantByPair.set(key, {
+          grantId: grant.id,
+          permissions: perms.length > 0 ? perms : ['VIEW'],
+          validFrom: grant.valid_from.toISOString(),
+          validUntil: grant.valid_until.toISOString(),
+        });
+      }
+    }
+
+    return {
+      data: rows.map((req) => {
+        const pairKey = `${req.document_id}:${req.requester_id.toString()}`;
+        const isOwnedRow =
+          input.scope === 'incoming' ||
+          (input.scope === 'all' &&
+            (req.documents as { owner_id?: bigint | null })?.owner_id === principal.userId);
+        const existingGrant = isOwnedRow ? (activeGrantByPair.get(pairKey) ?? null) : undefined;
+        return mapAccessRequestDetail(req, undefined, existingGrant);
+      }),
+      total,
+    };
   }
 
   /**

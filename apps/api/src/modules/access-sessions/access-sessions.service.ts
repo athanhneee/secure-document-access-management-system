@@ -17,6 +17,11 @@ import { AuditWriterService } from '../audit/audit-writer.service.js';
 import type { AuthPrincipal, RequestContext } from '../auth/auth.types.js';
 import { AuthorizationService } from '../rbac/authorization.service.js';
 import { RealtimeEventsService } from '../realtime/realtime-events.service.js';
+import {
+  buildAccessSessionPrismaSearchOr,
+  normalizeSessionSearchTerm,
+  queryAccessSessionsWithSearch,
+} from './access-sessions-search.helper.js';
 
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
@@ -84,17 +89,18 @@ export class AccessSessionsService {
     };
   }> {
     const requestedStatus = options?.status ?? 'ACTIVE';
-    const limit = Math.min(Math.max(options?.limit ?? 50, 1), 100);
+    const limit = Math.min(Math.max(options?.limit ?? 50, 1), 200);
     const page = Math.max(options?.page ?? 1, 1);
     const skip = (page - 1) * limit;
 
+    let visibleDepts: bigint[] | null = null;
     const scopeWhere: Prisma.AccessSessionWhereInput = {};
     if (
       this.authorization &&
       actor &&
       typeof this.authorization.visibleDepartmentIds === 'function'
     ) {
-      const visibleDepts = await this.authorization.visibleDepartmentIds(
+      visibleDepts = await this.authorization.visibleDepartmentIds(
         actor,
         'ACCESS_SESSION',
         'TERMINATE',
@@ -106,76 +112,95 @@ export class AccessSessionsService {
       }
     }
 
-    const where: Prisma.AccessSessionWhereInput = { ...scopeWhere };
-    if (requestedStatus !== 'ALL') {
-      where.status = requestedStatus;
-    }
-    if (options?.search && options.search.trim().length > 0) {
-      const term = options.search.trim();
-      where.OR = [
-        { ip_address: { contains: term, mode: 'insensitive' } },
-        { users: { username: { contains: term, mode: 'insensitive' } } },
-        { users: { full_name: { contains: term, mode: 'insensitive' } } },
-        {
-          document_versions: {
-            document: {
-              OR: [
-                { title: { contains: term, mode: 'insensitive' } },
-                { document_code: { contains: term, mode: 'insensitive' } },
-              ],
+    const trimmedSearch = normalizeSessionSearchTerm(options?.search);
+    const hasCount = typeof this.database.accessSession?.count === 'function';
+
+    let data: AccessSessionDto[];
+    let filteredTotal: number | null;
+    let totalAllCount: number | null;
+    let activeTotalCount: number | null;
+
+    if (trimmedSearch.length > 0 && typeof this.database?.$queryRaw === 'function') {
+      const [searchResult, allCount, activeCountResult] = await Promise.all([
+        queryAccessSessionsWithSearch({
+          database: this.database,
+          requestedStatus,
+          term: trimmedSearch,
+          visibleDepts,
+          limit,
+          skip,
+        }),
+        hasCount
+          ? this.database.accessSession.count({ where: scopeWhere })
+          : Promise.resolve<number | null>(null),
+        hasCount
+          ? this.database.accessSession.count({ where: { ...scopeWhere, status: 'ACTIVE' } })
+          : Promise.resolve<number | null>(null),
+      ]);
+      data = searchResult.data;
+      filteredTotal = searchResult.filteredTotal;
+      totalAllCount = allCount;
+      activeTotalCount = activeCountResult;
+    } else {
+      const where: Prisma.AccessSessionWhereInput = { ...scopeWhere };
+      if (requestedStatus !== 'ALL') {
+        where.status = requestedStatus;
+      }
+      if (trimmedSearch.length > 0) {
+        where.OR = buildAccessSessionPrismaSearchOr(trimmedSearch);
+      }
+
+      const [sessions, filteredCount, allCount, activeCountResult] = await Promise.all([
+        this.database.accessSession.findMany({
+          where,
+          take: limit,
+          ...(skip > 0 ? { skip } : {}),
+          orderBy: { started_at: 'desc' },
+          include: {
+            users: { select: { id: true, username: true, full_name: true } },
+            document_versions: {
+              select: {
+                id: true,
+                version_no: true,
+                document: { select: { id: true, document_code: true, title: true } },
+              },
             },
           },
-        },
-      ];
+        }),
+        hasCount
+          ? this.database.accessSession.count({ where })
+          : Promise.resolve<number | null>(null),
+        hasCount
+          ? this.database.accessSession.count({ where: scopeWhere })
+          : Promise.resolve<number | null>(null),
+        hasCount
+          ? this.database.accessSession.count({ where: { ...scopeWhere, status: 'ACTIVE' } })
+          : Promise.resolve<number | null>(null),
+      ]);
+
+      data = sessions.map((s) => ({
+        id: s.id,
+        accessGrantId: s.access_grant_id,
+        documentVersionId: s.document_version_id.toString(),
+        userId: s.user_id.toString(),
+        username: s.users.username,
+        fullName: s.users.full_name,
+        documentId: s.document_versions.document.id,
+        documentCode: s.document_versions.document.document_code,
+        documentTitle: s.document_versions.document.title,
+        versionNo: s.document_versions.version_no,
+        ipAddress: s.ip_address,
+        userAgent: s.user_agent,
+        status: s.status,
+        startedAt: s.started_at.toISOString(),
+        lastActivityAt: s.last_activity_at.toISOString(),
+        endedAt: s.ended_at?.toISOString() ?? null,
+        terminatedReason: s.terminated_reason,
+      }));
+      filteredTotal = filteredCount;
+      totalAllCount = allCount;
+      activeTotalCount = activeCountResult;
     }
-
-    const [sessions, filteredTotal, totalAllCount, activeTotalCount] = await Promise.all([
-      this.database.accessSession.findMany({
-        where,
-        take: limit,
-        ...(skip > 0 ? { skip } : {}),
-        orderBy: { started_at: 'desc' },
-        include: {
-          users: { select: { id: true, username: true, full_name: true } },
-          document_versions: {
-            select: {
-              id: true,
-              version_no: true,
-              document: { select: { id: true, document_code: true, title: true } },
-            },
-          },
-        },
-      }),
-      typeof this.database.accessSession.count === 'function'
-        ? this.database.accessSession.count({ where })
-        : Promise.resolve<number | null>(null),
-      typeof this.database.accessSession.count === 'function'
-        ? this.database.accessSession.count({ where: scopeWhere })
-        : Promise.resolve<number | null>(null),
-      typeof this.database.accessSession.count === 'function'
-        ? this.database.accessSession.count({ where: { ...scopeWhere, status: 'ACTIVE' } })
-        : Promise.resolve<number | null>(null),
-    ]);
-
-    const data: AccessSessionDto[] = sessions.map((s) => ({
-      id: s.id,
-      accessGrantId: s.access_grant_id,
-      documentVersionId: s.document_version_id.toString(),
-      userId: s.user_id.toString(),
-      username: s.users.username,
-      fullName: s.users.full_name,
-      documentId: s.document_versions.document.id,
-      documentCode: s.document_versions.document.document_code,
-      documentTitle: s.document_versions.document.title,
-      versionNo: s.document_versions.version_no,
-      ipAddress: s.ip_address,
-      userAgent: s.user_agent,
-      status: s.status,
-      startedAt: s.started_at.toISOString(),
-      lastActivityAt: s.last_activity_at.toISOString(),
-      endedAt: s.ended_at?.toISOString() ?? null,
-      terminatedReason: s.terminated_reason,
-    }));
 
     const matchedTotal = filteredTotal ?? data.length;
     const total = totalAllCount ?? matchedTotal;
@@ -322,6 +347,11 @@ export class AccessSessionsService {
             ? sessionMeta.user_id.toString()
             : null,
         documentId: sessionMeta.document_versions?.document_id ?? null,
+        departmentId:
+          sessionMeta.document_versions?.document?.department_id !== undefined &&
+          sessionMeta.document_versions?.document?.department_id !== null
+            ? sessionMeta.document_versions.document.department_id.toString()
+            : null,
       };
     };
 
@@ -331,10 +361,11 @@ export class AccessSessionsService {
         : await executeInTx(this.database);
 
     this.logger.warn(`Access session ${id} terminated manually. Reason: ${reason}`);
-    // CONFLICT-RESOLVED: Phát đồng thời sự kiện ACCESS_SESSION_UPDATED tới cả SOC và chủ phiên để trình xem tài liệu đóng tức thì khi bị ngắt phiên (V-05).
+    // CONFLICT-RESOLVED: Phát đồng thời sự kiện ACCESS_SESSION_UPDATED tới cả SOC và chủ phiên để trình xem tài liệu đóng tức thì khi bị ngắt phiên (V-05, BUG-063).
     this.realtime?.publish({
       type: 'ACCESS_SESSION_UPDATED',
       targetRoles: ['SECURITY_OFFICER'],
+      targetDepartmentId: txResult.departmentId,
       ...(txResult.targetUserId ? { targetUserIds: [txResult.targetUserId] } : {}),
       payload: {
         id: txResult.id,
@@ -367,7 +398,12 @@ export class AccessSessionsService {
         id: true,
         user_id: true,
         status: true,
-        document_versions: { select: { document_id: true } },
+        document_versions: {
+          select: {
+            document_id: true,
+            document: { select: { department_id: true } },
+          },
+        },
       },
     });
 
@@ -381,7 +417,7 @@ export class AccessSessionsService {
 
     const now = new Date();
     if (typeof this.database.accessSession.updateMany === 'function') {
-      await this.database.accessSession.updateMany({
+      const updated = await this.database.accessSession.updateMany({
         where: { id, user_id: principal.userId, status: 'ACTIVE' },
         data: {
           status: 'ENDED',
@@ -390,6 +426,13 @@ export class AccessSessionsService {
           terminated_reason: 'Closed by reader',
         },
       });
+      if (updated.count === 0) {
+        const latest = await this.database.accessSession.findUnique({
+          where: { id },
+          select: { status: true },
+        });
+        return { id, status: latest?.status ?? 'TERMINATED' };
+      }
     } else {
       await this.database.accessSession.update({
         where: { id },
@@ -422,9 +465,15 @@ export class AccessSessionsService {
         .catch(() => undefined);
     }
 
+    const ownSessionDeptId = (
+      session.document_versions as {
+        document?: { department_id?: bigint | null } | null;
+      } | null
+    )?.document?.department_id;
     this.realtime?.publish({
       type: 'ACCESS_SESSION_UPDATED',
       targetRoles: ['SECURITY_OFFICER'],
+      targetDepartmentId: ownSessionDeptId != null ? ownSessionDeptId.toString() : null,
       payload: {
         id,
         sessionId: id,

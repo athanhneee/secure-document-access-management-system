@@ -9,6 +9,10 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { getDatabaseClient } from '@sda/database';
 import { AppErrorCode } from '@sda/contracts';
+import {
+  isDocumentDepartmentWithinRoleScope,
+  loadActiveUserRoleScopes,
+} from '../access-grants/grant-role-visibility.helper.js';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import { PRIVILEGED_SEPARATION_ROLES } from '../rbac/permission-matrix.js';
@@ -19,6 +23,9 @@ type PrismaClient = ReturnType<typeof getDatabaseClient>;
  * Thuật toán: Kiểm tra Phân tách nhiệm vụ (SoD) bất biến cho các vai trò đặc quyền (`SYSTEM_ADMIN`, `SECURITY_OFFICER`, `AUDITOR`).
  */
 export function isPureTechnicalOrAuditRole(principal?: AuthPrincipal): boolean {
+  if (principal?.restrictedNonBusiness === true) {
+    return true;
+  }
   const roles = principal?.roles ?? [];
   return roles.some((role) => PRIVILEGED_SEPARATION_ROLES.has(role));
 }
@@ -281,22 +288,29 @@ export async function assertDocumentReadAccess(
       if (directGrant) return;
 
       if (typeof database?.userRole?.findMany === 'function') {
-        const activeRoles = await database.userRole.findMany({
-          where: {
-            user_id: principal.userId,
-            valid_from: { lte: now },
-            OR: [{ valid_to: null }, { valid_to: { gt: now } }],
-            roles: { is_active: true },
-          },
-          select: { role_id: true },
-        });
-        const roleIds = activeRoles.map((r) => r.role_id);
-        if (roleIds.length > 0) {
+        const activeRoleScopes = await loadActiveUserRoleScopes(database, principal.userId, now);
+        const scopedRoleIds: bigint[] = [];
+        const checkedRoles = new Set<bigint>();
+        for (const assignment of activeRoleScopes) {
+          if (checkedRoles.has(assignment.roleId)) continue;
+          if (
+            await isDocumentDepartmentWithinRoleScope(
+              database,
+              _authorization,
+              doc.department_id,
+              assignment.scopeDepartmentId,
+            )
+          ) {
+            checkedRoles.add(assignment.roleId);
+            scopedRoleIds.push(assignment.roleId);
+          }
+        }
+        if (scopedRoleIds.length > 0) {
           const roleGrant = await database.accessGrant.findFirst({
             where: {
               document_id: doc.id,
               principal_type: 'ROLE',
-              principal_role_id: { in: roleIds },
+              principal_role_id: { in: scopedRoleIds },
               status: 'ACTIVE',
               valid_from: { lte: now },
               valid_until: { gt: now },

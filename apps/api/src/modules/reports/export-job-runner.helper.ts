@@ -9,7 +9,15 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { getDatabaseClient } from '@sda/database';
-import type { CreateExportJobInput, ExportFormat, ExportType } from '@sda/contracts';
+import {
+  extractPersistedExportScope as extractSharedPersistedExportScope,
+  normalizeExportFilters as normalizeSharedExportFilters,
+  serializePersistedExportFilters,
+  type CreateExportJobInput,
+  type ExportFormat,
+  type ExportType,
+  type NormalizedExportFilters,
+} from '@sda/contracts';
 import type { AuthPrincipal } from '../auth/auth.types.js';
 import type { AuthorizationService } from '../rbac/authorization.service.js';
 import type { RealtimeEventsService } from '../realtime/realtime-events.service.js';
@@ -22,20 +30,20 @@ import { resolveApiExportS3Config, uploadEncryptedExportToS3 } from './export-s3
 type PrismaClient = ReturnType<typeof getDatabaseClient>;
 
 /**
- * Thuật toán: Đóng gói tham số lọc kèm danh sách chuỗi mã phòng ban được phép (`__allowedDepartmentIds`) để lưu xuống cột JSON `filter_params`.
+ * Thuật toán: Đóng gói tham số lọc đã chuẩn hóa kèm danh sách chuỗi mã phòng ban được phép (`__allowedDepartmentIds`) để lưu xuống cột JSON `filter_params`.
  */
 export function buildPersistedExportFilters(
-  rawFilterParams: unknown,
+  filters: NormalizedExportFilters | Record<string, unknown>,
   allowedDepartmentIds: bigint[] | null,
 ): Record<string, unknown> {
-  const baseFilters =
-    rawFilterParams && typeof rawFilterParams === 'object' && !Array.isArray(rawFilterParams)
-      ? (rawFilterParams as Record<string, unknown>)
-      : {};
-  return {
-    ...baseFilters,
-    __allowedDepartmentIds: allowedDepartmentIds ? allowedDepartmentIds.map(String) : null,
-  };
+  const normalized: NormalizedExportFilters =
+    filters &&
+    typeof filters === 'object' &&
+    'effectiveDepartmentIds' in filters &&
+    'fromDate' in filters
+      ? (filters as NormalizedExportFilters)
+      : normalizeSharedExportFilters(filters, allowedDepartmentIds);
+  return serializePersistedExportFilters(normalized, allowedDepartmentIds);
 }
 
 /**
@@ -45,20 +53,7 @@ export function extractPersistedExportScope(persistedFilterParams: unknown): {
   cleanFilterParams: Record<string, unknown>;
   allowedDepartmentIds: bigint[] | null;
 } {
-  const copy =
-    persistedFilterParams &&
-    typeof persistedFilterParams === 'object' &&
-    !Array.isArray(persistedFilterParams)
-      ? { ...(persistedFilterParams as Record<string, unknown>) }
-      : {};
-  const rawAllowed = copy['__allowedDepartmentIds'];
-  delete copy['__allowedDepartmentIds'];
-  const allowedDepartmentIds = Array.isArray(rawAllowed)
-    ? rawAllowed
-        .filter((item): item is string => typeof item === 'string' && /^\d+$/.test(item))
-        .map((item) => BigInt(item))
-    : null;
-  return { cleanFilterParams: copy, allowedDepartmentIds };
+  return extractSharedPersistedExportScope(persistedFilterParams);
 }
 
 /**
@@ -94,10 +89,22 @@ export async function executeExportJobPipeline(params: {
   );
 
   try {
-    await database.asyncExportJob.update({
-      where: { id: jobId },
-      data: { status: 'PROCESSING' },
-    });
+    // MED-08: Cưỡng chế CAS nguyên tử `PENDING -> PROCESSING` để tránh API và Worker cùng chạy kép hoặc ghi đè trạng thái `COMPLETED`.
+    if (typeof database.asyncExportJob.updateMany === 'function') {
+      const claimed = await database.asyncExportJob.updateMany({
+        where: { id: jobId, status: 'PENDING' },
+        data: { status: 'PROCESSING' },
+      });
+      if (claimed.count === 0) {
+        logger.log(`[Worker][ExportJob: ${jobId}] Already claimed or completed; skipping.`);
+        return;
+      }
+    } else {
+      await database.asyncExportJob.update({
+        where: { id: jobId },
+        data: { status: 'PROCESSING' },
+      });
+    }
     realtime?.publish({
       type: 'EXPORT_JOB_UPDATED',
       targetUserIds: [actor.userId.toString()],

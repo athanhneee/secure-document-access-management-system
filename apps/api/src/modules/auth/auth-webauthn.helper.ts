@@ -2,11 +2,14 @@
  * @module AuthWebAuthnHelper
  * Algorithm: FIDO2 / WebAuthn Hardware Key Enrollment & Sign-Counter Clone Detection Workflow.
  */
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
+import { AppErrorCode } from '@sda/contracts';
 import {
   activateVerifiedMfaSession,
+  activateVerifiedMfaSessionWithId,
   assertMfaEnrollmentAllowed,
+  revokeOtherUnverifiedSessionsOnMfaEnrollment,
   type AuthMfaDeps,
 } from './auth-mfa.helper.js';
 import type { SessionArtifacts } from './auth.service.js';
@@ -54,7 +57,8 @@ export async function executeBeginWebAuthnEnrollment(
 }
 
 /**
- * Algorithm / Thuật toán: Xác minh đăng ký khóa FIDO2/WebAuthn, lưu khóa công khai đã mã hóa và thăng cấp phiên MFA.
+ * Algorithm / Thuật toán: Xác minh đăng ký khóa FIDO2/WebAuthn, chặn đăng ký trùng `credentialId`,
+ * chỉ sinh mã khôi phục khi tài khoản chưa có mã khôi phục hoạt động, lưu khóa công khai mã hóa và thăng cấp phiên MFA (BUG-109).
  */
 export async function executeVerifyWebAuthnEnrollment(
   deps: AuthWebAuthnDeps,
@@ -65,6 +69,11 @@ export async function executeVerifyWebAuthnEnrollment(
   context: RequestContext,
 ): Promise<SessionArtifacts & { recoveryCodes: string[] }> {
   await assertMfaEnrollmentAllowed(deps, principal, context);
+  const existingMethods =
+    typeof deps.repository.getActiveMfaMethods === 'function'
+      ? await deps.repository.getActiveMfaMethods(principal.userId)
+      : [];
+
   const verification = await deps.webauthn.verifyRegistration(
     response,
     challengeToken,
@@ -72,7 +81,24 @@ export async function executeVerifyWebAuthnEnrollment(
     label,
   );
 
-  const recovery = deps.mfa.createRecoveryCodes();
+  const isDuplicateCredential = existingMethods.some((m) => {
+    const cred = deps.webauthn.parseStoredCredential(m.encryptedSecret);
+    return cred !== null && cred.credentialId === verification.credential.credentialId;
+  });
+  if (isDuplicateCredential) {
+    throw new ConflictException({
+      errorCode: AppErrorCode.RESOURCE_CONFLICT,
+      message: 'This security key credential is already registered for this account.',
+    });
+  }
+
+  const hasActiveRecoveryCodes = existingMethods.some(
+    (m) => Array.isArray(m.recoveryCodeHashes) && m.recoveryCodeHashes.length > 0,
+  );
+  const recovery = hasActiveRecoveryCodes
+    ? { plaintext: [] as string[], hashes: [] as string[] }
+    : deps.mfa.createRecoveryCodes();
+
   const methodId = await deps.repository.createMfaEnrollment(
     principal.userId,
     verification.encryptedSecret,
@@ -81,7 +107,8 @@ export async function executeVerifyWebAuthnEnrollment(
   );
   await deps.repository.enableMfa(methodId, principal.userId, recovery.hashes);
 
-  const artifacts = await activateVerifiedMfaSession(deps, principal);
+  const { artifacts, rotatedSessionId } = await activateVerifiedMfaSessionWithId(deps, principal);
+  await revokeOtherUnverifiedSessionsOnMfaEnrollment(deps, principal, rotatedSessionId);
   await deps.audit.record(
     {
       action: 'MFA_WEBAUTHN_ENROLLED',
@@ -154,7 +181,7 @@ export async function executeVerifyWebAuthnAuth(
   context: RequestContext,
 ): Promise<SessionArtifacts> {
   const rateKey = `webauthn:${principal.userId}`;
-  await deps.rateLimit.assertAllowed(context.ip, rateKey);
+  await deps.rateLimit.assertAllowed(context.ip, rateKey, 'mfa');
   const activeMethods = await deps.repository.getActiveMfaMethods(principal.userId);
   let matchedMethod: (typeof activeMethods)[number] | null = null;
   let matchedCred: StoredWebAuthnCredential | null = null;
@@ -169,7 +196,7 @@ export async function executeVerifyWebAuthnAuth(
   }
 
   if (!matchedMethod || !matchedCred) {
-    await deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey, 'mfa');
     await deps.audit.record(
       {
         action: 'MFA_WEBAUTHN_VERIFY',
@@ -191,7 +218,7 @@ export async function executeVerifyWebAuthnAuth(
       principal.userId,
     );
   } catch (error) {
-    await deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey, 'mfa');
     throw error;
   }
 
@@ -207,13 +234,13 @@ export async function executeVerifyWebAuthnAuth(
     if (counterStatus === 'clone_detected') {
       cloneDetected = true;
     } else if (counterStatus === 'not_found') {
-      await deps.rateLimit.recordFailure(context.ip, rateKey);
+      await deps.rateLimit.recordFailure(context.ip, rateKey, 'mfa');
       throw new UnauthorizedException('Security key credential is no longer active.');
     }
   }
 
   if (cloneDetected) {
-    await deps.rateLimit.recordFailure(context.ip, rateKey);
+    await deps.rateLimit.recordFailure(context.ip, rateKey, 'mfa');
     await deps.repository.recordSecurityAlert({
       alertType: 'WEBAUTHN_CLONE_DETECTED',
       severity: 'CRITICAL',
@@ -235,7 +262,7 @@ export async function executeVerifyWebAuthnAuth(
     throw new UnauthorizedException('Security key cloning or replay attack detected.');
   }
 
-  await deps.rateLimit.clearAccount(rateKey);
+  await deps.rateLimit.clearAccount(rateKey, 'mfa');
   if (typeof deps.repository.advanceWebAuthnCounter !== 'function') {
     await deps.repository.updateMfaSecret(matchedMethod.id, result.updatedEncryptedSecret);
   }

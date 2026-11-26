@@ -3,6 +3,9 @@ import { PositiveBigIntSchema } from './validation-primitives.js';
 
 const GrantPermissionSchema = z.enum(['VIEW', 'DOWNLOAD']);
 
+// CONFLICT-RESOLVED: Đồng bộ trần thời hạn yêu cầu & phê duyệt truy cập với GRANT_MAX_DURATION_DAYS mặc định (30 ngày) thay vì 365 ngày gây lỗi 400 khi Owner duyệt.
+export const DEFAULT_GRANT_MAX_DURATION_DAYS = 30;
+
 /**
  * Thuật toán: Kiểm định loại trừ tương hỗ chủ thể (XOR Principal Discriminator) & thứ tự khoảng thời gian hiệu lực (`superRefine`).
  * Bắt buộc khai báo duy nhất `principalUserId` (khi `USER`) hoặc `principalRoleId` (khi `ROLE`), chặn tràn 64-bit `BIGINT` và đảm bảo `validUntil > validFrom`.
@@ -96,7 +99,20 @@ export const CreateAccessRequestSchema = z
     requestedFrom: z.string().datetime({ offset: true }).optional(),
     requestedUntil: z.string().datetime({ offset: true }).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.requestedFrom !== undefined && data.requestedUntil !== undefined) {
+      const from = new Date(data.requestedFrom);
+      const until = new Date(data.requestedUntil);
+      if (until <= from) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['requestedUntil'],
+          message: 'requestedUntil must be later than requestedFrom.',
+        });
+      }
+    }
+  });
 
 export type CreateAccessRequestInput = z.infer<typeof CreateAccessRequestSchema>;
 
@@ -104,7 +120,8 @@ export const DecideAccessRequestSchema = z
   .object({
     decision: z.enum(['APPROVED', 'REJECTED']),
     decisionNote: z.string().trim().max(1000).optional(),
-    validDays: z.coerce.number().int().min(1).max(365).optional(),
+    validDays: z.coerce.number().int().min(1).max(DEFAULT_GRANT_MAX_DURATION_DAYS).optional(),
+    validUntil: z.string().datetime({ offset: true }).optional(),
     permissions: z
       .array(z.enum(['VIEW', 'DOWNLOAD']))
       .min(1)

@@ -77,7 +77,9 @@ async function seed(): Promise<void> {
         });
       }
 
-      // CONFLICT-RESOLVED: Đồng bộ thang bậc phân loại độ mật CSDL (INTERNAL: 1 .. TOP_SECRET: 4) với ClassificationRank trong @sda/contracts.
+      // CONFLICT-RESOLVED: Đồng bộ thang bậc phân loại độ mật CSDL (INTERNAL: 1 .. TOP_SECRET: 4) với ClassificationRank trong @sda/contracts;
+      // dịch tạm rank hai pha bằng số dương (+10000) để thỏa mãn CHECK (rank >= 0) và tránh đụng UNIQUE (rank) khi tái sắp xếp bậc mật.
+      await transaction.$executeRaw`UPDATE classification_levels SET rank = rank + 10000 WHERE code IN ('INTERNAL', 'CONFIDENTIAL', 'SECRET', 'TOP_SECRET') OR (rank >= 1 AND rank <= 4)`;
       const classificationIdByCode = new Map<string, bigint>();
       for (const level of classificationLevels) {
         const savedLevel = await transaction.classificationLevel.upsert({
@@ -85,13 +87,16 @@ async function seed(): Promise<void> {
           update: {
             name: level.name,
             rank: level.rank,
+            default_view_days: level.default_view_days,
             allow_download: level.allow_download,
             require_watermark: true,
+            is_active: true,
           },
           create: { ...level, require_watermark: true },
         });
         classificationIdByCode.set(level.code, savedLevel.id);
       }
+      await transaction.$executeRaw`UPDATE classification_levels SET rank = rank - 9900, is_active = FALSE WHERE rank >= 10000`;
 
       const roleByCode = new Map<string, bigint>();
       for (const [code, name] of systemRoles) {

@@ -33,24 +33,34 @@ services:
       # Trust loopback + Docker internal bridge CIDR by default so Next.js proxy forwards real client IP;
       # narrow TRUST_PROXY to explicit reverse-proxy CIDRs in multi-tenant VPC deployments.
       TRUST_PROXY: ${TRUST_PROXY:-loopback,uniquelocal}
+      ABAC_TRUSTED_NETWORK_CIDRS: ${ABAC_TRUSTED_NETWORK_CIDRS:?Trusted non-loopback network CIDRs required}
       AUTH_SESSION_IDLE_TTL_SECONDS: ${AUTH_SESSION_IDLE_TTL_SECONDS:-28800}
       AUTH_SESSION_TOUCH_INTERVAL_SECONDS: ${AUTH_SESSION_TOUCH_INTERVAL_SECONDS:-60}
       AUTH_MAX_CONCURRENT_SESSIONS: ${AUTH_MAX_CONCURRENT_SESSIONS:-10}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Allowed CORS origins required}
       DATABASE_URL: ${DATABASE_URL:?Database connection required}
+      DATABASE_SSL: ${DATABASE_SSL:-true}
+      DATABASE_SSL_REJECT_UNAUTHORIZED: ${DATABASE_SSL_REJECT_UNAUTHORIZED:-true}
+      DATABASE_CA_CERT: ${DATABASE_CA_CERT:-}
       REDIS_URL: ${REDIS_URL:?Redis connection required}
       APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:?Master key required}
       AUDIT_INTEGRITY_KEY: ${AUDIT_INTEGRITY_KEY:?Audit integrity key required}
       DOCUMENT_AUDIT_HMAC_KEY: ${DOCUMENT_AUDIT_HMAC_KEY:?Document audit HMAC key required}
       AUTH_AUDIT_HMAC_KEY: ${AUTH_AUDIT_HMAC_KEY:?Auth audit HMAC key required}
       AUDIT_KEY_ROTATION_JSON: ${AUDIT_KEY_ROTATION_JSON:-}
+      EXPORT_ENCRYPTION_KEY: ${EXPORT_ENCRYPTION_KEY:-}
+      AUTH_ACTIVE_KID: ${AUTH_ACTIVE_KID:?Ed25519 active signing key ID required}
       AUTH_SIGNING_PRIVATE_KEY_PEM: ${AUTH_SIGNING_PRIVATE_KEY_PEM:?Ed25519 private key required}
       AUTH_SIGNING_PUBLIC_KEYS_JSON: ${AUTH_SIGNING_PUBLIC_KEYS_JSON:?Ed25519 public keys required}
       STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-minio}
       STORAGE_PORT: ${STORAGE_PORT:-9000}
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
       STORAGE_USE_SSL: ${STORAGE_USE_SSL:-true}
       STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?Object storage access key required}
       STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?Object storage secret key required}
+      STORAGE_BUCKET_DOCUMENTS: ${STORAGE_BUCKET_DOCUMENTS:-secure-documents}
+      STORAGE_BUCKET_QUARANTINE: ${STORAGE_BUCKET_QUARANTINE:-secure-quarantine}
+      STORAGE_BUCKET_DERIVATIVES: ${STORAGE_BUCKET_DERIVATIVES:-secure-derivatives}
       CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
       CLAMAV_PORT: ${CLAMAV_PORT:-3310}
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:?WebAuthn RP ID required}
@@ -66,6 +76,7 @@ services:
       EXPORT_EXECUTION_MODE: worker
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-}
       GOTENBERG_URL: http://gotenberg:3000
+      GOTENBERG_ENABLED: ${GOTENBERG_ENABLED:-true}
     cpus: 2.0
     mem_limit: 1g
     mem_reservation: 256m
@@ -104,12 +115,29 @@ services:
       - '9102'
     environment:
       NODE_ENV: production
+      ABAC_TRUSTED_NETWORK_CIDRS: ${ABAC_TRUSTED_NETWORK_CIDRS:?Trusted non-loopback network CIDRs required}
       DATABASE_URL: ${DATABASE_URL:?Database connection required}
+      DATABASE_SSL: ${DATABASE_SSL:-true}
+      DATABASE_SSL_REJECT_UNAUTHORIZED: ${DATABASE_SSL_REJECT_UNAUTHORIZED:-true}
+      DATABASE_CA_CERT: ${DATABASE_CA_CERT:-}
+      REDIS_URL: ${REDIS_URL:?Redis connection required}
+      APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:?Master key required}
       AUDIT_INTEGRITY_KEY: ${AUDIT_INTEGRITY_KEY:?Audit integrity key required}
-      DOCUMENT_AUDIT_HMAC_KEY: ${DOCUMENT_AUDIT_HMAC_KEY:-}
+      DOCUMENT_AUDIT_HMAC_KEY: ${DOCUMENT_AUDIT_HMAC_KEY:?Document audit HMAC key required}
+      AUTH_AUDIT_HMAC_KEY: ${AUTH_AUDIT_HMAC_KEY:?Auth audit HMAC key required}
       AUDIT_KEY_ROTATION_JSON: ${AUDIT_KEY_ROTATION_JSON:-}
+      EXPORT_ENCRYPTION_KEY: ${EXPORT_ENCRYPTION_KEY:-}
       EXPORT_STORAGE_DIR: /var/lib/sda/exports
       EXPORT_EXECUTION_MODE: worker
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-minio}
+      STORAGE_PORT: ${STORAGE_PORT:-9000}
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+      STORAGE_USE_SSL: ${STORAGE_USE_SSL:-true}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?Object storage access key required}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?Object storage secret key required}
+      STORAGE_BUCKET_DOCUMENTS: ${STORAGE_BUCKET_DOCUMENTS:-secure-documents}
+      STORAGE_BUCKET_QUARANTINE: ${STORAGE_BUCKET_QUARANTINE:-secure-quarantine}
+      STORAGE_BUCKET_DERIVATIVES: ${STORAGE_BUCKET_DERIVATIVES:-secure-derivatives}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURE: ${SMTP_SECURE:-true}
@@ -119,6 +147,7 @@ services:
       ICAP_BIND_HOST: '0.0.0.0'
       ICAP_PORT: '1344'
       ICAP_DLP_ACTION: ${ICAP_DLP_ACTION:-BLOCK}
+      ICAP_DLP_CUSTOM_KEYWORDS: ${ICAP_DLP_CUSTOM_KEYWORDS:-}
       WORKER_HEALTH_HOST: '0.0.0.0'
       WORKER_HEALTH_PORT: '9102'
       AUTH_SESSION_IDLE_TTL_SECONDS: ${AUTH_SESSION_IDLE_TTL_SECONDS:-28800}

@@ -56,6 +56,7 @@ const findings = [];
 
 for (const file of files) {
   const normalized = file.replaceAll('\\', '/');
+  if (/(?:^|\/)\.next[^/]*(?:\/|$)/.test(normalized)) continue;
   const absolute = path.resolve(repositoryRoot, file);
   const relative = path.relative(repositoryRoot, absolute);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {

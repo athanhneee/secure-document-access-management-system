@@ -175,7 +175,7 @@ export type UpdateDetectionRuleConfigInput = z.infer<typeof UpdateDetectionRuleC
 
 export const RunDetectionInputSchema = z
   .object({
-    ruleCodes: z.array(z.string()).optional(),
+    ruleCodes: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
     windowMinutes: z.number().int().min(1).max(1440).optional(),
   })
   .strict();

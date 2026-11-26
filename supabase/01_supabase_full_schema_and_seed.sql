@@ -271,6 +271,8 @@ CREATE TABLE IF NOT EXISTS public.auth_sessions (
     status              public.auth_session_status NOT NULL DEFAULT 'ACTIVE',
     ip_address          INET,
     user_agent          TEXT,
+    login_ip_address    INET,
+    login_user_agent    TEXT,
     mfa_verified_at     TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -284,6 +286,17 @@ CREATE TABLE IF NOT EXISTS public.auth_sessions (
     ),
     CHECK (revoked_at IS NULL OR revocation_reason IS NOT NULL)
 );
+
+-- Nâng cấp lũy đẳng khi chạy lại trên DB Supabase đã có sẵn bảng auth_sessions (BUG-042)
+ALTER TABLE public.auth_sessions
+  ADD COLUMN IF NOT EXISTS login_ip_address INET,
+  ADD COLUMN IF NOT EXISTS login_user_agent TEXT;
+
+UPDATE public.auth_sessions
+SET
+  login_ip_address = COALESCE(login_ip_address, ip_address),
+  login_user_agent = COALESCE(login_user_agent, user_agent)
+WHERE login_ip_address IS NULL OR login_user_agent IS NULL;
 
 CREATE TABLE IF NOT EXISTS public.refresh_tokens (
     id                  UUID PRIMARY KEY,
@@ -354,14 +367,15 @@ CREATE TABLE IF NOT EXISTS public.attribute_options (
     numeric_rank            INTEGER,
     is_active               BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order              INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (attribute_definition_id, value_code)
+    UNIQUE (attribute_definition_id, value_code),
+    CONSTRAINT uq_attribute_options_definition_id UNIQUE (attribute_definition_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS public.user_attribute_assignments (
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id                 BIGINT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
     attribute_definition_id BIGINT NOT NULL REFERENCES public.attribute_definitions(id) ON DELETE RESTRICT,
-    option_id               BIGINT REFERENCES public.attribute_options(id) ON DELETE RESTRICT,
+    option_id               BIGINT,
     value_text              TEXT,
     value_number            NUMERIC(18,4),
     value_boolean           BOOLEAN,
@@ -370,6 +384,10 @@ CREATE TABLE IF NOT EXISTS public.user_attribute_assignments (
     valid_to                TIMESTAMPTZ,
     assigned_by             BIGINT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT fk_user_attr_assignment_option_definition
+      FOREIGN KEY (attribute_definition_id, option_id)
+      REFERENCES public.attribute_options(attribute_definition_id, id)
+      MATCH SIMPLE ON DELETE RESTRICT ON UPDATE NO ACTION,
     CHECK (valid_to IS NULL OR valid_to > valid_from),
     CHECK (num_nonnulls(option_id, value_text, value_number, value_boolean, value_date) = 1)
 );
@@ -625,13 +643,13 @@ CREATE TABLE IF NOT EXISTS public.watermark_instances (
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     occurred_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    actor_user_id       BIGINT REFERENCES public.users(id) ON DELETE SET NULL,
+    actor_user_id       BIGINT REFERENCES public.users(id) ON DELETE RESTRICT,
     actor_username      VARCHAR(80),
     action              VARCHAR(100) NOT NULL,
     object_type         VARCHAR(80) NOT NULL,
     object_id           VARCHAR(100),
-    document_id         UUID REFERENCES public.documents(id) ON DELETE SET NULL,
-    access_session_id   UUID REFERENCES public.access_sessions(id) ON DELETE SET NULL,
+    document_id         UUID REFERENCES public.documents(id) ON DELETE RESTRICT,
+    access_session_id   UUID REFERENCES public.access_sessions(id) ON DELETE RESTRICT,
     outcome             VARCHAR(20) NOT NULL CHECK (outcome IN ('SUCCESS', 'DENIED', 'FAILED')),
     reason_code         VARCHAR(80),
     ip_address          INET,
@@ -699,7 +717,8 @@ CREATE TABLE IF NOT EXISTS public.detection_rule_configs (
     cooldown_minutes    INTEGER NOT NULL DEFAULT 30,
     parameters          JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at          TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_by          BIGINT REFERENCES public.users(id) ON DELETE SET NULL ON UPDATE NO ACTION
+    updated_by          BIGINT REFERENCES public.users(id) ON DELETE SET NULL ON UPDATE NO ACTION,
+    CONSTRAINT ck_detection_rule_configs_positive CHECK (threshold > 0 AND window_minutes > 0 AND cooldown_minutes > 0)
 );
 
 CREATE TABLE IF NOT EXISTS public.incident_reports (
@@ -818,6 +837,9 @@ CREATE INDEX IF NOT EXISTS idx_users_department_status
   ON public.users(department_id, status);
 CREATE INDEX IF NOT EXISTS idx_user_roles_active
   ON public.user_roles(user_id, role_id, valid_from, valid_to);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_roles_global_valid_from
+  ON public.user_roles(user_id, role_id, valid_from)
+  WHERE scope_department_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_user_attrs_active
   ON public.user_attribute_assignments(user_id, attribute_definition_id, valid_from, valid_to);
 
@@ -924,6 +946,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_chain_entry_hash
   ON public.audit_logs(chain_partition, entry_hash);
 CREATE INDEX IF NOT EXISTS idx_audit_anchor_partition
   ON public.audit_anchors(chain_partition, anchor_sequence DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_anchor_position
+  ON public.audit_anchors(chain_partition, anchor_sequence);
 
 -- Cảnh báo SOC, Quy tắc Phát hiện, Thông báo, Outbox & Xuất Báo cáo
 CREATE INDEX IF NOT EXISTS idx_alert_status_severity
@@ -1012,6 +1036,11 @@ CREATE TRIGGER trg_watermark_configs_updated
   BEFORE UPDATE ON public.watermark_configs
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+DROP TRIGGER IF EXISTS trg_detection_rule_configs_updated ON public.detection_rule_configs;
+CREATE TRIGGER trg_detection_rule_configs_updated
+  BEFORE UPDATE ON public.detection_rule_configs
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
 -- 6.2. Thuật toán kiểm chứng toàn vẹn tham chiếu vòng phiên bản tài liệu (`validate_current_document_version`, 1 trigger):
 -- Khi `NEW.current_version_id IS NOT NULL`, đối chiếu bảng `document_versions` bảo đảm bản ghi phiên bản tồn tại và thuộc chính xác `NEW.id` trước khi cho phép ghi.
 CREATE OR REPLACE FUNCTION public.validate_current_document_version()
@@ -1021,7 +1050,7 @@ SET search_path = public, extensions
 AS $$
 BEGIN
   IF NEW.current_version_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM public.document_versions v
+    SELECT 1 FROM document_versions v
     WHERE v.id = NEW.current_version_id AND v.document_id = NEW.id
   ) THEN
     RAISE EXCEPTION 'current_version_id does not belong to document';
@@ -1036,8 +1065,8 @@ CREATE TRIGGER trg_validate_current_document_version
   FOR EACH ROW EXECUTE FUNCTION public.validate_current_document_version();
 
 -- 6.3. Thuật toán kiểm soát truy cập đa mức Bell-LaPadula Simple Security Property & Phân tách Nhiệm vụ SoD (`validate_user_clearance_for_grant`, 1 trigger):
--- Cưỡng chế đồng thời cho cả `USER` và `ROLE` grant (phép giao bảo thủ Lattice Meet trên tập người giữ vai trò đang hoạt động + chặn vai trò quản trị/an ninh/kiểm toán SoD).
--- CONFLICT-RESOLVED: Mở rộng trigger Bell-LaPadula/SoD cho `ROLE` grant để đồng bộ 100% với migration 20261105210000 (HIGH-12).
+-- Cưỡng chế đồng thời cho cả `USER` và `ROLE` grant (kiểm tra `users.status = 'ACTIVE'`, `r.is_active = TRUE`, `ad.is_active = TRUE`, `ao.is_active = TRUE`,
+-- danh sách 17 quyền đặc quyền SoD đồng bộ 100% với `permission-matrix.ts`, và phép giao bảo thủ Lattice Meet trên tập người giữ vai trò đang hoạt động).
 CREATE OR REPLACE FUNCTION public.validate_user_clearance_for_grant()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1051,8 +1080,8 @@ DECLARE
 BEGIN
   IF NEW.status = 'ACTIVE' THEN
     SELECT cl.rank INTO document_rank
-    FROM public.document_classification_history dch
-    JOIN public.classification_levels cl ON cl.id = dch.classification_level_id
+    FROM document_classification_history dch
+    JOIN classification_levels cl ON cl.id = dch.classification_level_id
     WHERE dch.document_id = NEW.document_id
       AND dch.effective_to IS NULL;
 
@@ -1061,12 +1090,78 @@ BEGIN
     END IF;
 
     IF NEW.principal_type = 'USER' THEN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM users u
+        WHERE u.id = NEW.principal_user_id
+          AND u.status = 'ACTIVE'
+      ) THEN
+        RAISE EXCEPTION 'Target user is not active and cannot receive document grants';
+      END IF;
+
+      IF EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = NEW.principal_user_id
+          AND ur.valid_from <= now()
+          AND (ur.valid_to IS NULL OR ur.valid_to > now())
+          AND r.is_active = TRUE
+          AND (
+            r.code IN ('SYSTEM_ADMIN', 'SECURITY_OFFICER', 'AUDITOR')
+            OR EXISTS (
+              SELECT 1
+              FROM role_permissions rp
+              JOIN permissions p ON p.id = rp.permission_id
+              WHERE rp.role_id = r.id
+                AND (
+                  (p.resource_type || ':' || p.action) IN (
+                    'USER:MANAGE',
+                    'DEPARTMENT:MANAGE',
+                    'ROLE:MANAGE',
+                    'ATTRIBUTE:MANAGE',
+                    'POLICY:MANAGE',
+                    'POLICY:SIMULATE',
+                    'WATERMARK_CONFIG:MANAGE',
+                    'SYSTEM_HEALTH:VIEW',
+                    'SYSTEM_HEALTH:MANAGE',
+                    'AUDIT_LOG:EXPORT',
+                    'SECURITY_ALERT:VIEW',
+                    'SECURITY_ALERT:MANAGE',
+                    'WATERMARK_INSTANCE:TRACE',
+                    'INCIDENT_REPORT:CREATE',
+                    'INCIDENT_REPORT:MANAGE',
+                    'SYSTEM_REPORT:EXPORT',
+                    'ACCESS_SESSION:TERMINATE'
+                  )
+                  OR p.resource_type IN (
+                    'USER',
+                    'DEPARTMENT',
+                    'ROLE',
+                    'ATTRIBUTE',
+                    'WATERMARK_CONFIG',
+                    'SYSTEM_HEALTH',
+                    'INCIDENT_REPORT',
+                    'ACCESS_SESSION',
+                    'SYSTEM_REPORT',
+                    'WATERMARK_INSTANCE',
+                    'CLASSIFICATION_LEVEL'
+                  )
+                )
+            )
+          )
+      ) THEN
+        RAISE EXCEPTION 'Separation of duties violation: administrative, security, or audit users cannot receive document grants';
+      END IF;
+
       SELECT ao.numeric_rank INTO user_rank
-      FROM public.user_attribute_assignments uaa
-      JOIN public.attribute_definitions ad ON ad.id = uaa.attribute_definition_id
-      JOIN public.attribute_options ao ON ao.id = uaa.option_id
+      FROM user_attribute_assignments uaa
+      JOIN attribute_definitions ad ON ad.id = uaa.attribute_definition_id
+      JOIN attribute_options ao ON ao.id = uaa.option_id
       WHERE uaa.user_id = NEW.principal_user_id
         AND ad.code = 'CLEARANCE_LEVEL'
+        AND ad.is_active = TRUE
+        AND ao.is_active = TRUE
         AND uaa.valid_from <= now()
         AND (uaa.valid_to IS NULL OR uaa.valid_to > now())
       ORDER BY ao.numeric_rank DESC
@@ -1076,34 +1171,60 @@ BEGIN
         RAISE EXCEPTION 'Clearance level is insufficient for this document';
       END IF;
     ELSIF NEW.principal_type = 'ROLE' THEN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM roles r
+        WHERE r.id = NEW.principal_role_id
+          AND r.is_active = TRUE
+      ) THEN
+        RAISE EXCEPTION 'Target role is not active and cannot receive document grants';
+      END IF;
+
       IF EXISTS (
         SELECT 1
-        FROM public.roles r
+        FROM roles r
         WHERE r.id = NEW.principal_role_id
+          AND r.is_active = TRUE
           AND (
             r.code IN ('SYSTEM_ADMIN', 'SECURITY_OFFICER', 'AUDITOR')
             OR EXISTS (
               SELECT 1
-              FROM public.role_permissions rp
-              JOIN public.permissions p ON p.id = rp.permission_id
+              FROM role_permissions rp
+              JOIN permissions p ON p.id = rp.permission_id
               WHERE rp.role_id = r.id
-                AND (p.resource_type || ':' || p.action) IN (
-                  'USER:MANAGE',
-                  'ROLE:MANAGE',
-                  'POLICY_RULE:MANAGE',
-                  'ATTRIBUTE_DEFINITION:MANAGE',
-                  'AUDIT_LOG:READ',
-                  'AUDIT_LOG:VERIFY',
-                  'AUDIT_LOG:EXPORT',
-                  'SECURITY_ALERT:READ',
-                  'SECURITY_ALERT:MANAGE',
-                  'INCIDENT_REPORT:CREATE',
-                  'INCIDENT_REPORT:UPDATE',
-                  'INCIDENT_REPORT:CLOSE',
-                  'WATERMARK_CONFIG:MANAGE',
-                  'WATERMARK_INSTANCE:TRACE',
-                  'CLASSIFICATION_LEVEL:MANAGE',
-                  'SYSTEM_HEALTH:READ'
+                AND (
+                  (p.resource_type || ':' || p.action) IN (
+                    'USER:MANAGE',
+                    'DEPARTMENT:MANAGE',
+                    'ROLE:MANAGE',
+                    'ATTRIBUTE:MANAGE',
+                    'POLICY:MANAGE',
+                    'POLICY:SIMULATE',
+                    'WATERMARK_CONFIG:MANAGE',
+                    'SYSTEM_HEALTH:VIEW',
+                    'SYSTEM_HEALTH:MANAGE',
+                    'AUDIT_LOG:EXPORT',
+                    'SECURITY_ALERT:VIEW',
+                    'SECURITY_ALERT:MANAGE',
+                    'WATERMARK_INSTANCE:TRACE',
+                    'INCIDENT_REPORT:CREATE',
+                    'INCIDENT_REPORT:MANAGE',
+                    'SYSTEM_REPORT:EXPORT',
+                    'ACCESS_SESSION:TERMINATE'
+                  )
+                  OR p.resource_type IN (
+                    'USER',
+                    'DEPARTMENT',
+                    'ROLE',
+                    'ATTRIBUTE',
+                    'WATERMARK_CONFIG',
+                    'SYSTEM_HEALTH',
+                    'INCIDENT_REPORT',
+                    'ACCESS_SESSION',
+                    'SYSTEM_REPORT',
+                    'WATERMARK_INSTANCE',
+                    'CLASSIFICATION_LEVEL'
+                  )
                 )
             )
           )
@@ -1115,19 +1236,22 @@ BEGIN
       INTO holder_count, min_role_rank
       FROM (
         SELECT DISTINCT ur.user_id
-        FROM public.user_roles ur
-        JOIN public.users u ON u.id = ur.user_id
+        FROM user_roles ur
+        JOIN users u ON u.id = ur.user_id
         WHERE ur.role_id = NEW.principal_role_id
+          AND ur.valid_from <= now()
           AND (ur.valid_to IS NULL OR ur.valid_to > now())
           AND u.status <> 'DISABLED'
       ) active_holders
       LEFT JOIN LATERAL (
         SELECT max(ao.numeric_rank) AS max_rank
-        FROM public.user_attribute_assignments uaa
-        JOIN public.attribute_definitions ad ON ad.id = uaa.attribute_definition_id
-        JOIN public.attribute_options ao ON ao.id = uaa.option_id
+        FROM user_attribute_assignments uaa
+        JOIN attribute_definitions ad ON ad.id = uaa.attribute_definition_id
+        JOIN attribute_options ao ON ao.id = uaa.option_id
         WHERE uaa.user_id = active_holders.user_id
           AND ad.code = 'CLEARANCE_LEVEL'
+          AND ad.is_active = TRUE
+          AND ao.is_active = TRUE
           AND uaa.valid_from <= now()
           AND (uaa.valid_to IS NULL OR uaa.valid_to > now())
       ) holder_clearance ON TRUE;
@@ -1159,14 +1283,14 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended(NEW.chain_partition, 0));
 
   IF NEW.chain_sequence = 1 THEN
-    IF EXISTS (SELECT 1 FROM public.audit_logs WHERE chain_partition = NEW.chain_partition) THEN
+    IF EXISTS (SELECT 1 FROM audit_logs WHERE chain_partition = NEW.chain_partition) THEN
       RAISE EXCEPTION 'audit chain already initialized for partition';
     END IF;
     RETURN NEW;
   END IF;
 
   SELECT entry_hash INTO expected_previous_hash
-  FROM public.audit_logs
+  FROM audit_logs
   WHERE chain_partition = NEW.chain_partition
     AND chain_sequence = NEW.chain_sequence - 1;
 
@@ -1223,7 +1347,7 @@ SET search_path = public, extensions
 AS $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM public.auth_sessions s
+    SELECT 1 FROM auth_sessions s
     WHERE s.id = NEW.auth_session_id AND s.token_family_id = NEW.token_family_id
   ) THEN
     RAISE EXCEPTION 'refresh token family does not match auth session';
@@ -1254,9 +1378,9 @@ BEGIN
   -- Thuật toán: Duyệt cây đệ quy (`WITH RECURSIVE`) thu thập bao đóng bắc cầu các phòng ban con cháu của `NEW.id` để phát hiện chu trình
   IF NEW.id IS NOT NULL AND EXISTS (
     WITH RECURSIVE descendants AS (
-      SELECT id FROM public.departments WHERE parent_id = NEW.id
+      SELECT id FROM departments WHERE parent_id = NEW.id
       UNION ALL
-      SELECT d.id FROM public.departments d JOIN descendants x ON d.parent_id = x.id
+      SELECT d.id FROM departments d JOIN descendants x ON d.parent_id = x.id
     )
     SELECT 1 FROM descendants WHERE id = NEW.parent_id
   ) THEN
@@ -1280,13 +1404,13 @@ SET search_path = public, extensions
 AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    PERFORM nextval('public.abac_policy_version_seq');
+    PERFORM nextval('abac_policy_version_seq');
     RETURN OLD;
   END IF;
   IF NEW.version IS DISTINCT FROM OLD.version
     OR (to_jsonb(NEW) - 'updated_at' - 'version')
       IS DISTINCT FROM (to_jsonb(OLD) - 'updated_at' - 'version') THEN
-    NEW.version := nextval('public.abac_policy_version_seq');
+    NEW.version := nextval('abac_policy_version_seq');
   END IF;
   RETURN NEW;
 END;
@@ -1318,23 +1442,23 @@ BEGIN
   END IF;
   IF TG_TABLE_NAME = 'attribute_options' THEN
     IF TG_OP = 'UPDATE' AND OLD.attribute_definition_id <> NEW.attribute_definition_id THEN
-      UPDATE public.attribute_definitions
-      SET version = nextval('public.abac_policy_version_seq')
+      UPDATE attribute_definitions
+      SET version = nextval('abac_policy_version_seq')
       WHERE id = OLD.attribute_definition_id;
     END IF;
     parent_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.attribute_definition_id ELSE NEW.attribute_definition_id END;
-    UPDATE public.attribute_definitions
-    SET version = nextval('public.abac_policy_version_seq')
+    UPDATE attribute_definitions
+    SET version = nextval('abac_policy_version_seq')
     WHERE id = parent_id;
   ELSE
     IF TG_OP = 'UPDATE' AND OLD.policy_rule_id <> NEW.policy_rule_id THEN
-      UPDATE public.policy_rules
-      SET version = nextval('public.abac_policy_version_seq')
+      UPDATE policy_rules
+      SET version = nextval('abac_policy_version_seq')
       WHERE id = OLD.policy_rule_id;
     END IF;
     parent_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.policy_rule_id ELSE NEW.policy_rule_id END;
-    UPDATE public.policy_rules
-    SET version = nextval('public.abac_policy_version_seq')
+    UPDATE policy_rules
+    SET version = nextval('abac_policy_version_seq')
     WHERE id = parent_id;
   END IF;
   IF TG_OP = 'DELETE' THEN
@@ -1362,10 +1486,59 @@ CREATE TRIGGER trg_policy_rule_conditions_version
 
 -- Thuật toán: Khối lặp động PL/pgSQL cưỡng chế mô hình Zero-Trust Row Level Security (RLS Default-Deny) trên toàn bộ 40 bảng trong schema `public`:
 -- kích hoạt RLS, thu hồi toàn bộ quyền truy cập bảng và sequence khỏi vai trò công khai `anon`/`authenticated` (chặn truy cập PostgREST trực tiếp),
--- và chỉ cấp đặc quyền cho `service_role` phục vụ kết nối máy chủ tin cậy.
+-- và chỉ cấp đặc quyền cho `service_role` và thành viên nhóm `sda_backend_rls_member` phục vụ kết nối máy chủ tin cậy.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'sda_backend_rls_member') THEN
+    CREATE ROLE sda_backend_rls_member NOLOGIN;
+  END IF;
+EXCEPTION WHEN insufficient_privilege THEN
+  NULL;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.safe_postgrest_jwt_role()
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+SET search_path = public, extensions
+AS $$
+DECLARE
+  raw_claims TEXT;
+  parsed JSONB;
+BEGIN
+  raw_claims := nullif(btrim(coalesce(current_setting('request.jwt.claims', true), '')), '');
+  IF raw_claims IS NULL THEN
+    RETURN '';
+  END IF;
+
+  BEGIN
+    parsed := raw_claims::jsonb;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN 'anon';
+  END;
+
+  IF jsonb_typeof(parsed) <> 'object' THEN
+    RETURN 'anon';
+  END IF;
+
+  RETURN coalesce(parsed ->> 'role', '');
+END;
+$$;
+
 DO $$
 DECLARE
   tbl TEXT;
+  deny_expr TEXT := 'current_user NOT IN (''anon'', ''authenticated'', ''authenticator'') '
+    || 'AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') '
+    || 'AND public.safe_postgrest_jwt_role() NOT IN (''anon'', ''authenticated'')';
+  allow_expr TEXT := '('
+    || 'current_user IN (''postgres'', ''service_role'', ''supabase_admin'', ''sda'', ''sda_local'', ''sda_app'', ''prisma'') '
+    || 'OR CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_roles gr WHERE gr.rolname = ''sda_backend_rls_member'') '
+    || 'THEN pg_has_role(current_user, ''sda_backend_rls_member'', ''MEMBER'') ELSE FALSE END '
+    || 'OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND (r.rolsuper OR r.rolbypassrls))'
+    || ') '
+    || 'AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') '
+    || 'AND public.safe_postgrest_jwt_role() NOT IN (''anon'', ''authenticated'')';
 BEGIN
   FOREACH tbl IN ARRAY ARRAY[
     '_prisma_migrations',
@@ -1415,18 +1588,18 @@ BEGIN
 
     EXECUTE format('DROP POLICY IF EXISTS p_zero_trust_postgrest_deny ON public.%I', tbl);
     EXECUTE format(
-      'CREATE POLICY p_zero_trust_postgrest_deny ON public.%I AS RESTRICTIVE FOR ALL TO PUBLIC '
-      || 'USING (current_user NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated'')) '
-      || 'WITH CHECK (current_user NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated''))',
-      tbl
+      'CREATE POLICY p_zero_trust_postgrest_deny ON public.%I AS RESTRICTIVE FOR ALL TO PUBLIC USING (%s) WITH CHECK (%s)',
+      tbl,
+      deny_expr,
+      deny_expr
     );
 
     EXECUTE format('DROP POLICY IF EXISTS p_zero_trust_backend_allow ON public.%I', tbl);
     EXECUTE format(
-      'CREATE POLICY p_zero_trust_backend_allow ON public.%I AS PERMISSIVE FOR ALL TO PUBLIC '
-      || 'USING ((current_user IN (''postgres'', ''service_role'', ''supabase_admin'', ''sda'', ''sda_local'', ''sda_app'', ''prisma'') OR current_user = nullif(current_setting(''app.trusted_db_role'', true), '''') OR (current_user NOT IN (''anon'', ''authenticated'', ''authenticator'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') = '''' AND coalesce(current_setting(''request.jwt.claims'', true), '''') = '''') OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND (r.rolsuper OR r.rolbypassrls))) AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''app.current_user_id'', true), '''') IS NOT NULL) '
-      || 'WITH CHECK ((current_user IN (''postgres'', ''service_role'', ''supabase_admin'', ''sda'', ''sda_local'', ''sda_app'', ''prisma'') OR current_user = nullif(current_setting(''app.trusted_db_role'', true), '''') OR (current_user NOT IN (''anon'', ''authenticated'', ''authenticator'') AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') = '''' AND coalesce(current_setting(''request.jwt.claims'', true), '''') = '''') OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND (r.rolsuper OR r.rolbypassrls))) AND coalesce(current_setting(''request.jwt.claim.role'', true), '''') NOT IN (''anon'', ''authenticated'') AND coalesce((nullif(current_setting(''request.jwt.claims'', true), '''')::jsonb ->> ''role''), '''') NOT IN (''anon'', ''authenticated'') AND coalesce(current_setting(''app.current_user_id'', true), '''') IS NOT NULL)',
-      tbl
+      'CREATE POLICY p_zero_trust_backend_allow ON public.%I AS PERMISSIVE FOR ALL TO PUBLIC USING (%s) WITH CHECK (%s)',
+      tbl,
+      allow_expr,
+      allow_expr
     );
 
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
@@ -1469,7 +1642,7 @@ INSERT INTO public._prisma_migrations (id, checksum, finished_at, migration_name
 SELECT v.id, v.checksum, now(), v.migration_name, now(), 1
 FROM (
   VALUES
-    -- CONFLICT-RESOLVED: Synchronized SHA-256 checksums across all 13 Prisma migration files
+    -- CONFLICT-RESOLVED: Synchronized SHA-256 checksums across all 17 Prisma migration files
     ('00000000-0000-4000-8000-000000000001', '888f80f07b278005583e833af6a81983bd14ced9314ca04d0ca37749abe4fa07', '20260917160000_initial_secure_schema'),
     ('00000000-0000-4000-8000-000000000002', '62afc2f3ebe6bbc85c8b92b676091ff4ae62255906b9b6fb71845b143e9a9629', '20260919120000_hardened_authentication'),
     ('00000000-0000-4000-8000-000000000003', '704e601658fb17e709e81f31abfae3e938faf4b869ee29c17b608a7adc7181ec', '20260919180000_scoped_rbac_administration'),
@@ -1482,7 +1655,11 @@ FROM (
     ('00000000-0000-4000-8000-000000000010', '6a366ad5437851cb216414080c6b56789741bf408ce190f6ebd2c89249cdf43c', '20261105133000_rls_policies_and_audit_truncate_guard'),
     ('00000000-0000-4000-8000-000000000011', '52f89c902eb0daf6955ae415e43491e9a663a4a3c0a98aacad78125a2015523d', '20261105160000_prisma_migrations_rls_hardening'),
     ('00000000-0000-4000-8000-000000000012', 'e304141e09963409f64aad5c5196b4011db31ceb9dd8fc2ebc3d03f64e59f34f', '20261105210000_harden_rls_allowlist_and_role_grant_trigger'),
-    ('00000000-0000-4000-8000-000000000013', 'f818321b43e8d8d4b2718642f1e4684f7749c9db92ca24fa5f39cf1b278a54c3', '20261113120000_performance_indexes_and_rls_role_flexibility')
+    ('00000000-0000-4000-8000-000000000013', 'f818321b43e8d8d4b2718642f1e4684f7749c9db92ca24fa5f39cf1b278a54c3', '20261113120000_performance_indexes_and_rls_role_flexibility'),
+    ('00000000-0000-4000-8000-000000000014', '105017f0834bf7c2997443006d2c9daa6828b8a3129b06b4f652f9dfdc552fbe', '20261126010000_harden_rls_group_role_and_safe_jwt_claims'),
+    ('00000000-0000-4000-8000-000000000015', 'fd1e7c9e297aea9e6c5765c924cd03d8f014e84baf17433cdb06fb4563e993bd', '20261126010500_sync_sod_grant_trigger_and_active_guards'),
+    ('00000000-0000-4000-8000-000000000016', '4b3d1487c9806ebce68a8581b9a1e7baef34697ec0afed83b603ed673e0d8784', '20261126020000_medium_schema_constraints_and_trigger_hardening'),
+    ('00000000-0000-4000-8000-000000000017', '25d1995b76793ffa8b43792c143492a2fdff661a929598f03f95867c71d42be1', '20261126030000_add_immutable_login_ip_and_user_agent_to_auth_sessions')
 ) AS v(id, checksum, migration_name)
 WHERE NOT EXISTS (
   SELECT 1 FROM public._prisma_migrations pm WHERE pm.migration_name = v.migration_name
@@ -1537,7 +1714,12 @@ ON CONFLICT (code) DO UPDATE
 SET name = EXCLUDED.name, department_id = EXCLUDED.department_id, description = EXCLUDED.description, is_active = TRUE;
 
 -- 9.4. 4 Cấp độ Phân loại Độ mật Chuẩn (Bell-LaPadula Rank 1..4)
--- // CONFLICT-RESOLVED: Giữ chuẩn rank CSDL INTERNAL: 1 .. TOP_SECRET: 4 (mức 0 dành cho UNCLASSIFIED) và đồng bộ thống nhất với packages/contracts/src/classifications.ts cùng seed.ts.
+-- // CONFLICT-RESOLVED: Giữ chuẩn rank CSDL INTERNAL: 1 .. TOP_SECRET: 4 (mức 0 dành cho UNCLASSIFIED), dịch tạm rank hai pha (+10000 dương) chỉ trong tập chuẩn để bảo toàn cấp độ tùy chỉnh (rank >= 5).
+UPDATE public.classification_levels
+SET rank = rank + 10000
+WHERE code IN ('INTERNAL', 'CONFIDENTIAL', 'SECRET', 'TOP_SECRET')
+   OR (rank >= 1 AND rank <= 4);
+
 INSERT INTO public.classification_levels (code, name, rank, description, default_view_days, allow_download, require_watermark, is_active)
 VALUES
   ('INTERNAL', 'Nội bộ', 1, 'Tài liệu lưu hành nội bộ trong tổ chức', 30, TRUE, TRUE, TRUE),
@@ -1553,6 +1735,10 @@ SET
   allow_download = EXCLUDED.allow_download,
   require_watermark = EXCLUDED.require_watermark,
   is_active = TRUE;
+
+UPDATE public.classification_levels
+SET rank = rank - 9900, is_active = FALSE
+WHERE rank >= 10000;
 
 -- 9.5. 5 Vai trò Hệ thống (Phân tách nhiệm vụ SoD nghiêm ngặt)
 INSERT INTO public.roles (code, name, description, is_system_role, is_active, created_by)
@@ -1617,7 +1803,7 @@ INSERT INTO public.role_permissions (role_id, permission_id, granted_by)
 SELECT r.id, p.id, (SELECT id FROM public.users WHERE username = 'system.seed')
 FROM (
   VALUES
-    -- SYSTEM_ADMIN (9 quyền quản trị cấu hình, tuyệt đối không có DOCUMENT_VIEW/DOWNLOAD)
+    -- SYSTEM_ADMIN (10 quyền quản trị cấu hình & hộp thư cá nhân, tuyệt đối không có DOCUMENT_VIEW/DOWNLOAD)
     ('SYSTEM_ADMIN', 'USER_MANAGE'),
     ('SYSTEM_ADMIN', 'DEPARTMENT_MANAGE'),
     ('SYSTEM_ADMIN', 'ROLE_MANAGE'),
@@ -1627,7 +1813,8 @@ FROM (
     ('SYSTEM_ADMIN', 'WATERMARK_CONFIG_MANAGE'),
     ('SYSTEM_ADMIN', 'SYSTEM_HEALTH_VIEW'),
     ('SYSTEM_ADMIN', 'SYSTEM_HEALTH_MANAGE'),
-    -- SECURITY_OFFICER (8 quyền giám sát SOC & phản ứng sự cố)
+    ('SYSTEM_ADMIN', 'NOTIFICATION_VIEW'),
+    -- SECURITY_OFFICER (9 quyền giám sát SOC, phản ứng sự cố & hộp thư cá nhân)
     ('SECURITY_OFFICER', 'AUDIT_VIEW'),
     ('SECURITY_OFFICER', 'ALERT_VIEW'),
     ('SECURITY_OFFICER', 'ALERT_MANAGE'),
@@ -1636,12 +1823,14 @@ FROM (
     ('SECURITY_OFFICER', 'INCIDENT_MANAGE'),
     ('SECURITY_OFFICER', 'ACCESS_SESSION_TERMINATE'),
     ('SECURITY_OFFICER', 'POLICY_SIMULATE'),
-    -- AUDITOR (5 quyền kiểm toán độc lập chỉ đọc & xuất báo cáo)
+    ('SECURITY_OFFICER', 'NOTIFICATION_VIEW'),
+    -- AUDITOR (6 quyền kiểm toán độc lập chỉ đọc, xuất báo cáo & hộp thư cá nhân)
     ('AUDITOR', 'AUDIT_VIEW'),
     ('AUDITOR', 'AUDIT_EXPORT'),
     ('AUDITOR', 'ALERT_VIEW'),
     ('AUDITOR', 'WATERMARK_TRACE'),
     ('AUDITOR', 'SYSTEM_REPORT_EXPORT'),
+    ('AUDITOR', 'NOTIFICATION_VIEW'),
     -- DOCUMENT_OWNER (15 quyền quản lý vòng đời tài liệu sở hữu & cấp phát quyền)
     ('DOCUMENT_OWNER', 'DOCUMENT_UPLOAD'),
     ('DOCUMENT_OWNER', 'DOCUMENT_CLASSIFY'),

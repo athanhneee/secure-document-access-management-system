@@ -67,12 +67,12 @@ export async function validateDatabaseBaseline() {
     migrationSnapshot = await captureCatalogSnapshot(migrationDb);
     assert.deepEqual(migrationSnapshot.tables, EXPECTED_BUSINESS_TABLES);
     assert.equal(migrationSnapshot.enums.length, 18);
-    assert.equal(migrationSnapshot.triggers.length, 21);
+    assert.equal(migrationSnapshot.triggers.length, 22);
     assert.deepEqual(migrationSnapshot.rlsTables, EXPECTED_BUSINESS_TABLES);
     assert.deepEqual(migrationSnapshot.forceRlsTables, EXPECTED_BUSINESS_TABLES);
     assert.equal(migrationSnapshot.rlsPolicies.length, EXPECTED_BUSINESS_TABLES.length * 2);
     checks.push(
-      `all ${migrations.length} Prisma migrations apply cleanly (${migrationSnapshot.tables.length} FORCE-RLS tables, ${migrationSnapshot.rlsPolicies.length} RLS policies, 18 enums, 21 triggers)`,
+      `all ${migrations.length} Prisma migrations apply cleanly (${migrationSnapshot.tables.length} FORCE-RLS tables, ${migrationSnapshot.rlsPolicies.length} RLS policies, 18 enums, 22 triggers)`,
     );
 
     const rulesCount = await migrationDb.query(

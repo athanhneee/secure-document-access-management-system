@@ -12,6 +12,15 @@ export const ClassificationRank = {
 export type ClassificationCode = keyof typeof ClassificationRank;
 export type ClassificationRank = (typeof ClassificationRank)[keyof typeof ClassificationRank];
 
+// CONFLICT-RESOLVED: Đồng bộ bảng thời hạn xem mặc định theo mức độ mật giữa Supabase SQL (30/14/7/1 ngày), Prisma seed và tầng API/UI.
+export const ClassificationDefaultViewDays: Readonly<Record<ClassificationCode, number>> = {
+  UNCLASSIFIED: 30,
+  INTERNAL: 30,
+  CONFIDENTIAL: 14,
+  SECRET: 7,
+  TOP_SECRET: 1,
+};
+
 /**
  * Algorithm: Deterministic Bell-LaPadula Lattice Rank Lookup.
  * Normalizes an arbitrary classification code (trim + uppercase, mapping legacy `RESTRICTED`
@@ -26,6 +35,28 @@ export function resolveClassificationRank(code: string): ClassificationRank | nu
     return ClassificationRank[normalized as keyof typeof ClassificationRank];
   }
   return null;
+}
+
+/**
+ * Algorithm: Classification Default View Duration Lookup.
+ * Resolves the default viewing window in days (`default_view_days`) for a classification code
+ * in O(1), honoring an explicit positive database override before falling back to policy defaults.
+ */
+export function resolveClassificationDefaultViewDays(
+  code?: string | null,
+  explicitDays?: number | null,
+): number {
+  if (typeof explicitDays === 'number' && Number.isInteger(explicitDays) && explicitDays > 0) {
+    return explicitDays;
+  }
+  const normalized = (code ?? '').trim().toUpperCase();
+  if (normalized === 'PUBLIC') return ClassificationDefaultViewDays.UNCLASSIFIED;
+  if (normalized === 'RESTRICTED') return ClassificationDefaultViewDays.INTERNAL;
+  if (normalized === 'CFD') return ClassificationDefaultViewDays.CONFIDENTIAL;
+  if (Object.hasOwn(ClassificationDefaultViewDays, normalized)) {
+    return ClassificationDefaultViewDays[normalized as ClassificationCode];
+  }
+  return 7;
 }
 
 export const ClassificationLevelSchema = z

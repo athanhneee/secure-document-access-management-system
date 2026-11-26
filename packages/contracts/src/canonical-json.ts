@@ -30,7 +30,7 @@ export function canonicalizeJson(value: unknown): string {
   }
 
   if (value instanceof Date) {
-    return JSON.stringify(value.toISOString());
+    return Number.isFinite(value.getTime()) ? JSON.stringify(value.toISOString()) : 'null';
   }
 
   if (Array.isArray(value)) {

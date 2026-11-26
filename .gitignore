@@ -26,6 +26,8 @@ build/
 **/build/
 .next/
 **/.next/
+.next*/
+**/.next*/
 out/
 **/out/
 .turbo/

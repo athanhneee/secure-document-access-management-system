@@ -5,12 +5,12 @@
 export const fixedSeedTime = new Date('2026-01-01T00:00:00.000Z');
 export const disabledPasswordHash = '!AUTHENTICATION_NOT_CONFIGURED_DEMO_ACCOUNT!';
 
-// CONFLICT-RESOLVED: Giữ thang bậc CSDL chuẩn INTERNAL: 1 .. TOP_SECRET: 4 (với 0 dành riêng cho UNCLASSIFIED) và đồng bộ ngược sang packages/contracts/src/classifications.ts để khớp với tập chính sách ABAC (GTE 4 cho TOP_SECRET).
+// CONFLICT-RESOLVED: Giữ thang bậc CSDL chuẩn INTERNAL: 1 .. TOP_SECRET: 4 và đồng bộ default_view_days (30/14/7/1 ngày) khớp kịch bản Supabase SQL 01_supabase_full_schema_and_seed.sql.
 export const classificationLevels = [
-  { code: 'INTERNAL', name: 'Nội bộ', rank: 1, allow_download: true },
-  { code: 'CONFIDENTIAL', name: 'Mật', rank: 2, allow_download: true },
-  { code: 'SECRET', name: 'Tối mật', rank: 3, allow_download: false },
-  { code: 'TOP_SECRET', name: 'Tuyệt mật', rank: 4, allow_download: false },
+  { code: 'INTERNAL', name: 'Nội bộ', rank: 1, default_view_days: 30, allow_download: true },
+  { code: 'CONFIDENTIAL', name: 'Mật', rank: 2, default_view_days: 14, allow_download: true },
+  { code: 'SECRET', name: 'Tối mật', rank: 3, default_view_days: 7, allow_download: false },
+  { code: 'TOP_SECRET', name: 'Tuyệt mật', rank: 4, default_view_days: 1, allow_download: false },
 ] as const;
 
 export const systemRoles = [
@@ -70,6 +70,7 @@ export const rolePermissionCodes: Record<(typeof systemRoles)[number][0], readon
     'WATERMARK_CONFIG_MANAGE',
     'SYSTEM_HEALTH_VIEW',
     'SYSTEM_HEALTH_MANAGE',
+    'NOTIFICATION_VIEW',
   ],
   SECURITY_OFFICER: [
     'AUDIT_VIEW',
@@ -80,8 +81,16 @@ export const rolePermissionCodes: Record<(typeof systemRoles)[number][0], readon
     'INCIDENT_MANAGE',
     'ACCESS_SESSION_TERMINATE',
     'POLICY_SIMULATE',
+    'NOTIFICATION_VIEW',
   ],
-  AUDITOR: ['AUDIT_VIEW', 'AUDIT_EXPORT', 'ALERT_VIEW', 'WATERMARK_TRACE', 'SYSTEM_REPORT_EXPORT'],
+  AUDITOR: [
+    'AUDIT_VIEW',
+    'AUDIT_EXPORT',
+    'ALERT_VIEW',
+    'WATERMARK_TRACE',
+    'SYSTEM_REPORT_EXPORT',
+    'NOTIFICATION_VIEW',
+  ],
   DOCUMENT_OWNER: [
     'DOCUMENT_UPLOAD',
     'DOCUMENT_CLASSIFY',

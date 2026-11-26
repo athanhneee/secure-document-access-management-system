@@ -74,6 +74,7 @@ DROP TABLE IF EXISTS public._prisma_migrations CASCADE;
 
 -- Thuật toán: Giải phóng tường minh 9 hàm trigger PL/pgSQL cưỡng chế bất biến bảo mật, chuỗi băm kiểm toán và khóa lạc quan ABAC.
 -- 3. Xóa 9 hàm PL/pgSQL trigger
+DROP FUNCTION IF EXISTS public.safe_postgrest_jwt_role() CASCADE;
 DROP FUNCTION IF EXISTS public.bump_abac_parent_version() CASCADE;
 DROP FUNCTION IF EXISTS public.bump_abac_row_version() CASCADE;
 DROP FUNCTION IF EXISTS public.prevent_department_cycle() CASCADE;

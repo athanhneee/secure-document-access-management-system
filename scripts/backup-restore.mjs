@@ -11,6 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  decryptBackupArtifactAes256Gcm,
+  encryptBackupArtifactAes256Gcm,
   tryRunLivePostgresDrill,
   verifyEncryptedBlobRoundtrip,
 } from './backup-restore-live.helper.mjs';
@@ -133,20 +135,30 @@ async function main() {
         )
       ).rows,
     };
-    const backupPayload = JSON.stringify(dump);
+    const backupPayload = Buffer.from(JSON.stringify(dump), 'utf8');
     const backupSha256 = crypto.createHash('sha256').update(backupPayload).digest('hex');
+    const encryptedBackup = encryptBackupArtifactAes256Gcm(
+      backupPayload,
+      undefined,
+      'sda-offline-pglite-drill',
+    );
     recordStep(
-      '2. Logical Dump & SHA-256',
+      '2. Logical Dump, AES-256-GCM & SHA-256',
       'PASS',
-      `SHA-256: ${backupSha256.slice(0, 16)}...`,
+      `SHA-256: ${backupSha256.slice(0, 16)}... (${encryptedBackup.byteLength}B enc)`,
       performance.now() - t,
     );
 
     t = performance.now();
-    if (crypto.createHash('sha256').update(backupPayload).digest('hex') !== backupSha256) {
+    const decryptedPayload = decryptBackupArtifactAes256Gcm(
+      encryptedBackup,
+      undefined,
+      'sda-offline-pglite-drill',
+    );
+    if (crypto.createHash('sha256').update(decryptedPayload).digest('hex') !== backupSha256) {
       throw new Error('Backup checksum verification failed');
     }
-    const parsed = JSON.parse(backupPayload);
+    const parsed = JSON.parse(decryptedPayload.toString('utf8'));
     for (const d of parsed.departments) {
       await restoredDb.query(
         'INSERT INTO departments (id, code, name) OVERRIDING SYSTEM VALUE VALUES ($1, $2, $3)',

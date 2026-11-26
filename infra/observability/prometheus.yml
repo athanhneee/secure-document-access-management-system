@@ -20,7 +20,7 @@ scrape_configs:
     scrape_timeout: 5s
     # bearer_token_file: /etc/prometheus/secrets/metrics_scrape_token
     static_configs:
-      - targets: ['api:4000', 'api:3001', 'host.docker.internal:4000', 'host.docker.internal:3001']
+      - targets: ['api:3001', 'host.docker.internal:3001']
 
   - job_name: sda_worker
     metrics_path: /metrics

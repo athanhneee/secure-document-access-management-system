@@ -15,6 +15,7 @@ export {
   DatabaseError,
   DatabaseNotFoundError,
   DatabaseUnavailableError,
+  UniqueConstraintError,
   isDatabaseOperationError,
   mapDatabaseError,
 } from './errors.js';

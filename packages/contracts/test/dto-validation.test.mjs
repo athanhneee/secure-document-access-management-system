@@ -3,15 +3,25 @@
  * Thuật toán: Kiểm chứng biên số nguyên 64-bit PostgreSQL BIGINT, ngày lịch Gregorian thực và định dạng UUID.
  */
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import {
+  buildAuditKeyRing,
+  canonicalizeJson,
+  CreateAccessRequestSchema,
   CreateDocumentDraftSchema,
+  CreateExportJobSchema,
+  ExportAuditLogsSchema,
   getCurrentUtcIsoDate,
+  IdParamSchema,
   isNotPastIsoCalendarDate,
   isValidIsoCalendarDate,
   MAX_PG_BIGINT,
   PositiveBigIntSchema,
   QueryAuditLogsSchema,
+  RunDetectionInputSchema,
+  SearchDocumentsSchema,
+  SetCurrentVersionSchema,
   UpdateDocumentMetadataSchema,
   VerifyAuditChainSchema,
 } from '../dist/index.js';
@@ -110,4 +120,146 @@ test('PositiveBigIntSchema & DTOs — enforce 64-bit signed PostgreSQL BIGINT ce
     }).success,
     false,
   );
+});
+
+test('[BUG-112] DTO boundary hardening — safe IdParam, paired draft classification, non-empty SetCurrentVersion, request interval, sequence range, UNCLASSIFIED, UUID correlationId & payload bounds', () => {
+  // 1. IdParamSchema safe integer bounds
+  assert.equal(IdParamSchema.safeParse({ id: '42' }).success, true);
+  assert.equal(IdParamSchema.safeParse({ id: String(Number.MAX_SAFE_INTEGER) }).success, true);
+  assert.equal(IdParamSchema.safeParse({ id: '9007199254740992' }).success, false);
+  assert.equal(IdParamSchema.safeParse({ id: '99999999999999999999' }).success, false);
+  assert.equal(IdParamSchema.safeParse({ id: '1e5' }).success, false);
+
+  // 2. CreateDocumentDraftSchema requires paired classificationLevelId + businessCategoryId
+  assert.equal(
+    CreateDocumentDraftSchema.safeParse({
+      title: 'Lone Level Draft',
+      departmentId: '1',
+      classificationLevelId: '2',
+    }).success,
+    false,
+  );
+  assert.equal(
+    CreateDocumentDraftSchema.safeParse({
+      title: 'Lone Category Draft',
+      departmentId: '1',
+      businessCategoryId: '3',
+    }).success,
+    false,
+  );
+  assert.equal(
+    CreateDocumentDraftSchema.safeParse({
+      title: 'Paired Draft',
+      departmentId: '1',
+      classificationLevelId: '2',
+      businessCategoryId: '3',
+    }).success,
+    true,
+  );
+
+  // 3. SetCurrentVersionSchema rejects {}
+  assert.equal(SetCurrentVersionSchema.safeParse({}).success, false);
+  assert.equal(SetCurrentVersionSchema.safeParse({ versionNo: 2 }).success, true);
+  assert.equal(SetCurrentVersionSchema.safeParse({ versionId: '10' }).success, true);
+
+  // 4. CreateAccessRequestSchema enforces requestedUntil > requestedFrom
+  const docId = randomUUID();
+  assert.equal(
+    CreateAccessRequestSchema.safeParse({
+      documentId: docId,
+      reason: 'Can xem tai lieu phuc vu kiem tra dinh ky.',
+      requestedFrom: '2026-11-26T10:00:00Z',
+      requestedUntil: '2026-11-26T09:00:00Z',
+    }).success,
+    false,
+  );
+  assert.equal(
+    CreateAccessRequestSchema.safeParse({
+      documentId: docId,
+      reason: 'Can xem tai lieu phuc vu kiem tra dinh ky.',
+      requestedFrom: '2026-11-26T10:00:00Z',
+      requestedUntil: '2026-11-26T12:00:00Z',
+    }).success,
+    true,
+  );
+
+  // 5. VerifyAuditChainSchema requires chainPartition for sequence bounds & rejects fromSequence > toSequence
+  assert.equal(
+    VerifyAuditChainSchema.safeParse({ fromSequence: '1', toSequence: '10' }).success,
+    false,
+  );
+  assert.equal(
+    VerifyAuditChainSchema.safeParse({
+      chainPartition: 'GLOBAL',
+      fromSequence: '20',
+      toSequence: '10',
+    }).success,
+    false,
+  );
+  assert.equal(
+    VerifyAuditChainSchema.safeParse({
+      chainPartition: 'GLOBAL',
+      fromSequence: '1',
+      toSequence: '10',
+    }).success,
+    true,
+  );
+
+  // 6. SearchDocumentsSchema supports UNCLASSIFIED
+  assert.equal(
+    SearchDocumentsSchema.safeParse({ classificationCode: 'UNCLASSIFIED' }).success,
+    true,
+  );
+
+  // 7. correlationId requires valid UUID
+  const corrId = randomUUID();
+  assert.equal(QueryAuditLogsSchema.safeParse({ correlationId: 'not-a-uuid' }).success, false);
+  assert.equal(QueryAuditLogsSchema.safeParse({ correlationId: corrId }).success, true);
+  assert.equal(QueryAuditLogsSchema.safeParse({ correlationId: '   ' }).success, true);
+  assert.equal(ExportAuditLogsSchema.safeParse({ correlationId: 'bad' }).success, false);
+  assert.equal(ExportAuditLogsSchema.safeParse({ correlationId: corrId }).success, true);
+
+  // 8. RunDetectionInputSchema & CreateExportJobSchema size bounds
+  assert.equal(
+    RunDetectionInputSchema.safeParse({
+      ruleCodes: Array.from({ length: 51 }, (_, i) => `RULE_${i}`),
+    }).success,
+    false,
+  );
+  assert.equal(RunDetectionInputSchema.safeParse({ ruleCodes: [''] }).success, false);
+  assert.equal(RunDetectionInputSchema.safeParse({ ruleCodes: ['MASS_DOWNLOAD'] }).success, true);
+
+  const tooManyFilterKeys = Object.fromEntries(
+    Array.from({ length: 31 }, (_, i) => [`key_${i}`, 'v']),
+  );
+  assert.equal(
+    CreateExportJobSchema.safeParse({
+      exportType: 'AUDIT_LOGS',
+      filterParams: tooManyFilterKeys,
+    }).success,
+    false,
+  );
+  assert.equal(
+    CreateExportJobSchema.safeParse({
+      exportType: 'AUDIT_LOGS',
+      filterParams: { oversized: 'x'.repeat(9000) },
+    }).success,
+    false,
+  );
+});
+
+test('[BUG-125] canonicalizeJson handles invalid Date without RangeError & buildAuditKeyRing throws on unconfigured version >= 2', () => {
+  assert.equal(canonicalizeJson(new Date('not-a-date')), 'null');
+  assert.equal(canonicalizeJson({ b: 1, a: new Date(Number.NaN) }), '{"a":null,"b":1}');
+  assert.equal(
+    canonicalizeJson(new Date('2026-11-26T00:00:00.000Z')),
+    '"2026-11-26T00:00:00.000Z"',
+  );
+
+  const primaryKey = 'v1-primary-audit-hmac-key-at-least-32-bytes!!';
+  const rotatedKey = 'v2-rotated-audit-hmac-key-at-least-32-bytes!!';
+  const ring = buildAuditKeyRing(primaryKey, JSON.stringify({ 2: rotatedKey }));
+  assert.equal(ring.getKey(1), primaryKey);
+  assert.equal(ring.getKey(2), rotatedKey);
+  assert.throws(() => ring.getKey(3), /Missing audit HMAC key configuration for version 3/);
 });

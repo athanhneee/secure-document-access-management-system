@@ -149,6 +149,8 @@ model AuthSession {
   status            auth_session_status @default(ACTIVE)
   ip_address        String?             @db.Inet
   user_agent        String?
+  login_ip_address  String?             @db.Inet
+  login_user_agent  String?
   mfa_verified_at   DateTime?           @db.Timestamptz(6)
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
   last_seen_at      DateTime            @default(now()) @db.Timestamptz(6)

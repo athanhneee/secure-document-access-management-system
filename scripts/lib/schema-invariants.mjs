@@ -112,8 +112,8 @@ export async function verifyDatabaseInvariants(database) {
 
   // 4. Hardened authentication refresh-token family trigger & WebAuthn MFA support
   const user = await database.query(
-    `INSERT INTO users (username, email, password_hash, full_name, department_id)
-     VALUES ('schema-fixture', 'schema-fixture@example.invalid', $1, 'Schema fixture', $2) RETURNING id`,
+    `INSERT INTO users (username, email, password_hash, full_name, department_id, status)
+     VALUES ('schema-fixture', 'schema-fixture@example.invalid', $1, 'Schema fixture', $2, 'ACTIVE') RETURNING id`,
     ['not-an-authentication-hash', departmentId],
   );
   const userId = user.rows[0].id;
@@ -250,8 +250,172 @@ export async function verifyDatabaseInvariants(database) {
     userId,
   ]);
 
+  // 7. BUG-018: USER grant enforces users.status = 'ACTIVE', SoD (system + custom privileged roles), and is_active = TRUE guards
+  const pendingUser = await database.query(
+    `INSERT INTO users (username, email, password_hash, full_name, department_id, status)
+     VALUES ('pending-fixture', 'pending-fixture@example.invalid', $1, 'Pending fixture', $2, 'PENDING') RETURNING id`,
+    ['not-an-authentication-hash', departmentId],
+  );
+  await database.query(
+    'INSERT INTO user_attribute_assignments (user_id, attribute_definition_id, option_id, assigned_by) VALUES ($1, $2, $3, $4)',
+    [pendingUser.rows[0].id, definition.rows[0].id, option.rows[0].id, userId],
+  );
+  await assert.rejects(
+    database.query(
+      `INSERT INTO access_grants (id, document_id, principal_type, principal_user_id, source, valid_from, valid_until, granted_by)
+       VALUES ('30000000-0000-4000-8000-000000000005', $1, 'USER', $2, 'DIRECT', now(), now() + interval '1 hour', $3)`,
+      [firstDocId, pendingUser.rows[0].id, userId],
+    ),
+    /Target user is not active/,
+  );
+
+  const secOfficerRole = await database.query(
+    "INSERT INTO roles (code, name, is_system_role) VALUES ('SECURITY_OFFICER', 'Security Officer', TRUE) RETURNING id",
+  );
+  const secUser = await database.query(
+    `INSERT INTO users (username, email, password_hash, full_name, department_id, status)
+     VALUES ('sec-fixture', 'sec-fixture@example.invalid', $1, 'Sec fixture', $2, 'ACTIVE') RETURNING id`,
+    ['not-an-authentication-hash', departmentId],
+  );
+  await database.query(
+    'INSERT INTO user_attribute_assignments (user_id, attribute_definition_id, option_id, assigned_by) VALUES ($1, $2, $3, $4)',
+    [secUser.rows[0].id, definition.rows[0].id, option.rows[0].id, userId],
+  );
+  await database.query(
+    'INSERT INTO user_roles (user_id, role_id, assigned_by) VALUES ($1, $2, $3)',
+    [secUser.rows[0].id, secOfficerRole.rows[0].id, userId],
+  );
+  await assert.rejects(
+    database.query(
+      `INSERT INTO access_grants (id, document_id, principal_type, principal_user_id, source, valid_from, valid_until, granted_by)
+       VALUES ('30000000-0000-4000-8000-000000000006', $1, 'USER', $2, 'DIRECT', now(), now() + interval '1 hour', $3)`,
+      [firstDocId, secUser.rows[0].id, userId],
+    ),
+    /Separation of duties violation/,
+  );
+
+  // Custom role holding real privileged permission `POLICY:MANAGE` must be blocked for both ROLE and USER grants
+  const policyPerm = await database.query(
+    `INSERT INTO permissions (code, name, resource_type, action)
+     VALUES ('POLICY_MANAGE', 'Manage Policies', 'POLICY', 'MANAGE') RETURNING id`,
+  );
+  const customPrivRole = await database.query(
+    "INSERT INTO roles (code, name, is_system_role) VALUES ('CUSTOM_POLICY_MGR', 'Custom Policy Mgr', FALSE) RETURNING id",
+  );
+  await database.query(
+    'INSERT INTO role_permissions (role_id, permission_id, granted_by) VALUES ($1, $2, $3)',
+    [customPrivRole.rows[0].id, policyPerm.rows[0].id, userId],
+  );
+  await assert.rejects(
+    database.query(roleGrantSql, [
+      '30000000-0000-4000-8000-000000000007',
+      firstDocId,
+      customPrivRole.rows[0].id,
+      userId,
+    ]),
+    /Separation of duties violation/,
+  );
+
+  // Inactive role must be rejected
+  const inactiveRole = await database.query(
+    "INSERT INTO roles (code, name, is_system_role, is_active) VALUES ('INACTIVE_READER', 'Inactive Reader', FALSE, FALSE) RETURNING id",
+  );
+  await assert.rejects(
+    database.query(roleGrantSql, [
+      '30000000-0000-4000-8000-000000000008',
+      firstDocId,
+      inactiveRole.rows[0].id,
+      userId,
+    ]),
+    /Target role is not active/,
+  );
+
+  // DOCUMENT_OWNER with AUDIT_LOG:VIEW must remain allowed to receive USER grants (no false positive)
+  const auditViewPerm = await database.query(
+    `INSERT INTO permissions (code, name, resource_type, action)
+     VALUES ('AUDIT_VIEW', 'View Audit', 'AUDIT_LOG', 'VIEW') RETURNING id`,
+  );
+  const ownerRole = await database.query(
+    "INSERT INTO roles (code, name, is_system_role) VALUES ('DOCUMENT_OWNER', 'Document Owner', TRUE) RETURNING id",
+  );
+  await database.query(
+    'INSERT INTO role_permissions (role_id, permission_id, granted_by) VALUES ($1, $2, $3)',
+    [ownerRole.rows[0].id, auditViewPerm.rows[0].id, userId],
+  );
+  const ownerUser = await database.query(
+    `INSERT INTO users (username, email, password_hash, full_name, department_id, status)
+     VALUES ('owner-fixture', 'owner-fixture@example.invalid', $1, 'Owner fixture', $2, 'ACTIVE') RETURNING id`,
+    ['not-an-authentication-hash', departmentId],
+  );
+  await database.query(
+    'INSERT INTO user_attribute_assignments (user_id, attribute_definition_id, option_id, assigned_by) VALUES ($1, $2, $3, $4)',
+    [ownerUser.rows[0].id, definition.rows[0].id, option.rows[0].id, userId],
+  );
+  await database.query(
+    'INSERT INTO user_roles (user_id, role_id, assigned_by) VALUES ($1, $2, $3)',
+    [ownerUser.rows[0].id, ownerRole.rows[0].id, userId],
+  );
+  await database.query(
+    `INSERT INTO access_grants (id, document_id, principal_type, principal_user_id, source, valid_from, valid_until, granted_by)
+     VALUES ('30000000-0000-4000-8000-000000000009', $1, 'USER', $2, 'DIRECT', now(), now() + interval '1 hour', $3)`,
+    [firstDocId, ownerUser.rows[0].id, userId],
+  );
+
+  // Deactivating clearance option must cause subsequent USER grant to fail
+  await database.query('UPDATE attribute_options SET is_active = FALSE WHERE id = $1', [
+    option.rows[0].id,
+  ]);
+  await assert.rejects(
+    database.query(
+      `INSERT INTO access_grants (id, document_id, principal_type, principal_user_id, source, valid_from, valid_until, granted_by)
+       VALUES ('30000000-0000-4000-8000-000000000010', $1, 'USER', $2, 'DIRECT', now(), now() + interval '1 hour', $3)`,
+      [firstDocId, ownerUser.rows[0].id, userId],
+    ),
+    /Clearance level is insufficient/,
+  );
+  await database.query('UPDATE attribute_options SET is_active = TRUE WHERE id = $1', [
+    option.rows[0].id,
+  ]);
+
+  // 8. BUG-017: Positive RLS role allowlist via sda_backend_rls_member & safe_postgrest_jwt_role()
+  await database.exec(`
+    CREATE ROLE bi_readonly_probe NOLOGIN;
+    CREATE ROLE custom_backend_probe NOLOGIN;
+    GRANT USAGE ON SCHEMA public TO bi_readonly_probe, custom_backend_probe;
+    GRANT SELECT ON public.users TO bi_readonly_probe, custom_backend_probe;
+    GRANT sda_backend_rls_member TO custom_backend_probe;
+  `);
+
+  // Unprivileged role must see 0 rows even after attempting to self-spoof app.trusted_db_role
+  await database.transaction(async (tx) => {
+    await tx.exec(
+      "SET LOCAL ROLE bi_readonly_probe; SET LOCAL app.trusted_db_role = 'bi_readonly_probe';",
+    );
+    const spoofedRows = await tx.query('SELECT count(*)::int AS count FROM public.users');
+    assert.equal(
+      spoofedRows.rows[0].count,
+      0,
+      'Unprivileged role must be denied by FORCE RLS even with spoofed GUC',
+    );
+  });
+
+  // Member of sda_backend_rls_member must see rows when JWT claims are clean, and fail closed on malformed JSON JWT claims without throwing
+  await database.transaction(async (tx) => {
+    await tx.exec('SET LOCAL ROLE custom_backend_probe;');
+    const allowedRows = await tx.query('SELECT count(*)::int AS count FROM public.users');
+    assert.ok(allowedRows.rows[0].count >= 1, 'Member of sda_backend_rls_member must pass RLS');
+
+    await tx.exec("SET LOCAL request.jwt.claims = '{malformed-json';");
+    const malformedJwtRows = await tx.query('SELECT count(*)::int AS count FROM public.users');
+    assert.equal(
+      malformedJwtRows.rows[0].count,
+      0,
+      'Malformed request.jwt.claims must fail closed without throwing JSON cast error',
+    );
+  });
+
   checks.push(
-    'Bell-LaPadula clearance trigger (USER + ROLE Lattice Meet + SoD) and ABAC monotonic version bump triggers hold',
+    'Bell-LaPadula clearance trigger (USER + ROLE Lattice Meet + SoD + active guards) and positive RLS group-role allowlist hold',
   );
 
   return checks;

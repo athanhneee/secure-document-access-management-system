@@ -11,9 +11,21 @@ const RetentionCalendarDateSchema = z
   .refine(isValidIsoCalendarDate, 'Invalid calendar retention date')
   .refine((value) => isNotPastIsoCalendarDate(value), 'Retention date cannot be in the past');
 
+/**
+ * Thuật toán: Kiểm định khóa nguyên dương an toàn trong miền IEEE-754 (`1 <= id <= Number.MAX_SAFE_INTEGER`)
+ * chống làm tròn tĩnh hoặc tràn số khi phân tích tham số đường dẫn.
+ */
 export const IdParamSchema = z
   .object({
-    id: z.coerce.number().int().positive(),
+    id: z.union([
+      z.number().int().positive().safe('Identifier exceeds IEEE-754 MAX_SAFE_INTEGER'),
+      z
+        .string()
+        .trim()
+        .regex(/^[1-9]\d*$/u, 'Identifier must be a positive integer')
+        .transform((val) => Number(val))
+        .pipe(z.number().int().positive().safe('Identifier exceeds IEEE-754 MAX_SAFE_INTEGER')),
+    ]),
   })
   .strict();
 
@@ -23,7 +35,7 @@ export const UuidParamSchema = z
   })
   .strict();
 
-// CONFLICT-RESOLVED: Áp dụng kiểm tra giới hạn BIGINT 64-bit và ngày lịch Gregorian thực cho toàn bộ lược đồ tài liệu.
+// CONFLICT-RESOLVED: Áp dụng kiểm tra giới hạn BIGINT 64-bit, ngày lịch Gregorian thực và ràng buộc đi kèm cặp ID phân loại ban đầu cho toàn bộ lược đồ tài liệu.
 export const CreateDocumentDraftSchema = z
   .object({
     title: z.string().trim().min(1).max(255),
@@ -39,7 +51,19 @@ export const CreateDocumentDraftSchema = z
     businessCategoryId: PositiveBigIntSchema.optional(),
     reason: z.string().max(500).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    const hasLevel = data.classificationLevelId !== undefined;
+    const hasCategory = data.businessCategoryId !== undefined;
+    if (hasLevel !== hasCategory) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [hasLevel ? 'businessCategoryId' : 'classificationLevelId'],
+        message:
+          'classificationLevelId and businessCategoryId must be provided together when classifying a document draft.',
+      });
+    }
+  });
 
 export type CreateDocumentDraftInput = z.infer<typeof CreateDocumentDraftSchema>;
 
@@ -69,7 +93,10 @@ export const SetCurrentVersionSchema = z
     versionNo: z.number().int().positive().optional(),
     versionId: PositiveBigIntSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((data) => data.versionNo !== undefined || data.versionId !== undefined, {
+    message: 'Either versionNo or versionId must be provided.',
+  });
 
 export type SetCurrentVersionInput = z.infer<typeof SetCurrentVersionSchema>;
 
@@ -98,7 +125,7 @@ export const SearchDocumentsSchema = z
     departmentId: PositiveBigIntSchema.optional(),
     classificationLevelId: PositiveBigIntSchema.optional(),
     classificationCode: z
-      .enum(['INTERNAL', 'RESTRICTED', 'CONFIDENTIAL', 'SECRET', 'TOP_SECRET'])
+      .enum(['UNCLASSIFIED', 'INTERNAL', 'RESTRICTED', 'CONFIDENTIAL', 'SECRET', 'TOP_SECRET'])
       .optional(),
     sort: z.enum(['created_at', 'updated_at', 'title']).default('created_at'),
     order: z.enum(['asc', 'desc']).default('desc'),

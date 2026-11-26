@@ -2,6 +2,8 @@ node_modules
 .pnpm-store
 .tools
 .next
+.next*
+**/.next*
 .turbo
 dist
 coverage

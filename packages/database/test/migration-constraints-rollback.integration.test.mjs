@@ -124,6 +124,19 @@ test('Database domain constraints, OCC, append-only audit triggers, and SQL roll
     (error) => error.code === '23505',
   );
 
+  // Verify DISABLED user rejection before activating reader.demo for clearance lattice check
+  await assert.rejects(
+    database.query(
+      `INSERT INTO access_grants(id,document_id,principal_type,principal_user_id,source,valid_from,valid_until,granted_by)
+       VALUES ($1,$2,'USER',$3,'DIRECT',now(),now()+interval '1 day',$4)`,
+      [randomUUID(), firstDocumentId, reader_id, owner_id],
+    ),
+    /Target user is not active/u,
+  );
+  await database.query(`UPDATE users SET status = 'ACTIVE', disabled_at = NULL WHERE id = $1`, [
+    reader_id,
+  ]);
+
   await assert.rejects(
     database.query(
       `INSERT INTO access_grants(id,document_id,principal_type,principal_user_id,source,valid_from,valid_until,granted_by)

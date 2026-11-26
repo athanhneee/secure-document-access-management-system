@@ -104,18 +104,24 @@ describe('Sub-100ms (< 0.1s) UI Feedback, Instant Modal/Tab & Navigation Gates',
     }
   });
 
-  it('opens preview modals synchronously before awaiting session creation and avoids /users/me refetch on pathname change', () => {
+  it('gives instant button loading feedback before session API, opens preview modal only after session authorization (preventing 403 flash), and avoids /users/me refetch on pathname change', () => {
     for (const rel of [
       'app/reader/hooks/use-reader-viewer.ts',
       'app/owner/hooks/use-owner-delivery.ts',
     ]) {
       const content = fs.readFileSync(path.join(webRoot, rel), 'utf8');
       const [, fnBody = ''] = content.split('async function handleOpenPreview');
+      const openingIdx = fnBody.indexOf('setOpeningDocId(');
+      const awaitSessionIdx = fnBody.indexOf('await apiClient');
       const openIdx = fnBody.indexOf('setPreviewOpen(true)');
-      const awaitIdx = fnBody.indexOf('await apiClient');
+      const awaitPdfIdx = fnBody.indexOf('await apiDownload');
       assert.ok(
-        openIdx > -1 && awaitIdx > -1 && openIdx < awaitIdx,
-        `${rel} must open preview modal before awaiting session API`,
+        openingIdx > -1 && awaitSessionIdx > -1 && openingIdx < awaitSessionIdx,
+        `${rel} must set synchronous openingDocId loading state before awaiting session API`,
+      );
+      assert.ok(
+        openIdx > awaitSessionIdx && awaitPdfIdx > openIdx,
+        `${rel} must open preview modal after session authorization succeeds and before awaiting page 1 PDF download`,
       );
     }
 

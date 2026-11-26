@@ -359,7 +359,7 @@ describe('Auditor Security, Accessibility (WCAG 2.1 AA), Mobile 375px & Design S
     // All 5 AUDITOR permissions wired in strictly self-contained read-only mode
     assert.match(workspace, /hasPermission\('AUDIT_LOG:VIEW'\)/);
     assert.match(workspace, /hasPermission\('AUDIT_LOG:EXPORT'\)/);
-    assert.match(workspace, /hasPermission\('SYSTEM_REPORT:EXPORT'\)/);
+    assert.match(workspace, /hasGlobalPermission\('SYSTEM_REPORT:EXPORT'\)/);
     assert.match(workspace, /hasPermission\('SECURITY_ALERT:VIEW'\)/);
     assert.match(workspace, /hasPermission\('WATERMARK_INSTANCE:TRACE'\)/);
     assert.match(workspace, /AuditorAlertDetailModal/);

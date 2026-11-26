@@ -18,7 +18,7 @@ const webRoot = path.join(repoRoot, 'apps/web');
 function collectWebSourceFiles(dir) {
   const results = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === 'node_modules' || entry.name === '.next' || entry.name === 'dist') {
+    if (entry.name === 'node_modules' || entry.name.startsWith('.next') || entry.name === 'dist') {
       continue;
     }
     const fullPath = path.join(dir, entry.name);
@@ -182,6 +182,65 @@ describe('UI Design System & WCAG 2.1 AA Static Regression Gates', () => {
         }
       }
     }
+    assert.deepEqual(violations, []);
+  });
+
+  it('forbids #FF385C/#E31C5F borders, outlines, focus rings, and static pastel coral boxes across all TSX and CSS files', () => {
+    const violations = [];
+    const forbiddenBorderRe =
+      /(?:(?:focus-visible|focus|hover|active|group-hover):)*(?:border|ring|outline)(?:-[trblxy0-9]+)?-\[#(?:ff385c|e31c5f)(?:\/\d+)?\]/i;
+    const forbiddenCssRingRe =
+      /\b(?:outline(?:-color)?|border(?:-[a-z-]+)?)\s*:[^;]*(?:#(?:ff385c|e31c5f)|rgba?\(\s*(?:255\s*,\s*56\s*,\s*92|227\s*,\s*28\s*,\s*95))|\bbox-shadow\s*:[^;]*0\s+0\s+0\s+\d+[^;]*(?:#(?:ff385c|e31c5f)|rgba?\(\s*(?:255\s*,\s*56\s*,\s*92|227\s*,\s*28\s*,\s*95))/i;
+    const forbiddenPastelBoxRe = /(?<![a-z:-])bg-\[#(?:ff385c|e31c5f)\]\/(?:5|10|15|20)\b/i;
+
+    for (const file of sourceFiles) {
+      const rel = path.relative(webRoot, file).replaceAll('\\', '/');
+      const lines = stripCommentsPreservingLines(fs.readFileSync(file, 'utf8')).split(/\r?\n/);
+      lines.forEach((line, idx) => {
+        if (file.endsWith('.css')) {
+          if (forbiddenCssRingRe.test(line)) {
+            violations.push(`${rel}:${idx + 1} (CSS coral/red border or outline)`);
+          }
+          return;
+        }
+        if (forbiddenBorderRe.test(line)) {
+          violations.push(`${rel}:${idx + 1} (brand border/ring/outline #FF385C/#E31C5F)`);
+        }
+        if (forbiddenPastelBoxRe.test(line)) {
+          violations.push(`${rel}:${idx + 1} (static pastel coral surface)`);
+        }
+      });
+    }
+
+    const globalsCss = stripCommentsPreservingLines(
+      fs.readFileSync(path.join(webRoot, 'app/globals.css'), 'utf8'),
+    );
+    assert.match(
+      globalsCss,
+      /@layer\s+base\s*\{[\s\S]*?:focus-visible\s*\{[\s\S]*?outline:\s*2px\s+solid\s+#222222;/i,
+      'globals.css must declare neutral #222222 :focus-visible inside @layer base',
+    );
+
+    for (const rel of [
+      'components/ui/input.tsx',
+      'components/ui/textarea.tsx',
+      'components/ui/select.tsx',
+    ]) {
+      const fullPath = path.join(webRoot, rel);
+      if (!fs.existsSync(fullPath)) continue;
+      const content = stripCommentsPreservingLines(fs.readFileSync(fullPath, 'utf8'));
+      assert.match(
+        content,
+        /border-\[#222222\]/,
+        `${rel} must use #222222 focus border per MASTER.md`,
+      );
+      assert.doesNotMatch(
+        content,
+        /ring-\[#(?:ff385c|e31c5f)/i,
+        `${rel} must not use coral focus ring on form inputs`,
+      );
+    }
+
     assert.deepEqual(violations, []);
   });
 });

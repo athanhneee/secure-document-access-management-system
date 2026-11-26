@@ -1,16 +1,43 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { registerHooks } from 'node:module';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
-import {
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const webRoot = path.resolve(__dirname, '../../apps/web');
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier.startsWith('@/')) {
+      const target = path.join(webRoot, `${specifier.slice(2)}.ts`);
+      if (fs.existsSync(target)) {
+        return { url: pathToFileURL(target).href, shortCircuit: true };
+      }
+    }
+    if (
+      (specifier.startsWith('./') || specifier.startsWith('../')) &&
+      !path.extname(specifier) &&
+      context.parentURL?.startsWith('file:')
+    ) {
+      const candidate = new URL(`${specifier}.ts`, context.parentURL);
+      if (fs.existsSync(fileURLToPath(candidate))) {
+        return nextResolve(candidate.href, context);
+      }
+    }
+    return nextResolve(specifier, context);
+  },
+});
+
+const {
   deriveClassificationCodeFromName,
   filterDiscoverableDocs,
   isActiveReaderGrant,
   mapReaderDocumentDto,
   mapReaderGrantDto,
-} from '../../apps/web/app/reader/helpers.ts';
-import {
+} = await import('../../apps/web/app/reader/helpers.ts');
+const {
   buildGrantLookupMaps,
   evaluateUploadSubjectReadiness,
   expandGrantPermissions,
@@ -22,8 +49,8 @@ import {
   mapGrantDtoToItem,
   resolveUploadWizardDefaults,
   validateRetentionDateInput,
-} from '../../apps/web/app/owner/helpers.ts';
-import {
+} = await import('../../apps/web/app/owner/helpers.ts');
+const {
   filterGrantEligibleUsers,
   filterGrantableDocuments,
   formatGrantPermissionSummary,
@@ -31,11 +58,8 @@ import {
   isUserClearanceRedacted,
   shouldWarnGrantClearance,
   validateDirectGrantTimeRange,
-} from '../../apps/web/app/owner/grant-helpers.ts';
-import { localizeApiErrorMessage } from '../../apps/web/lib/api-error-messages.ts';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const webRoot = path.resolve(__dirname, '../../apps/web');
+} = await import('../../apps/web/app/owner/grant-helpers.ts');
+const { localizeApiErrorMessage } = await import('../../apps/web/lib/api-error-messages.ts');
 
 /**
  * Thuật toán: Kiểm chứng Hợp đồng Ánh xạ DTO Giao diện (`/reader`, `/owner`), Khung Hộp thoại/Tab WAI-ARIA & Bất biến CSP Proxy
@@ -392,8 +416,12 @@ describe('/owner DTO Mappers, Permission Inclusion, Pagination & Wizard Defaults
       path.join(webRoot, 'app/owner/hooks/use-owner-data.ts'),
       'utf8',
     );
-    assert.match(ownerDataTs, /\/documents\?scope=owned&pageSize=50/);
-    assert.match(ownerDataTs, /\/access-grants\?scope=owned&pageSize=50/);
+    // CONFLICT-RESOLVED: Hỗ trợ tham số phân trang động page=${safePage}&pageSize=${OWNER_DOCS_PAGE_SIZE} (50) trên /documents?scope=owned theo BUG-102.
+    assert.match(ownerDataTs, /const OWNER_DOCS_PAGE_SIZE = 50/);
+    assert.match(ownerDataTs, /scope:\s*'owned'/);
+    assert.match(ownerDataTs, /pageSize:\s*String\(OWNER_DOCS_PAGE_SIZE\)/);
+    assert.match(ownerDataTs, /\/documents\?\$\{params\.toString\(\)\}/);
+    assert.match(ownerDataTs, /\/access-grants\?scope=owned/);
 
     const uiFilesToAudit = [
       'components/documents/shared-pdf-preview-modal.tsx',
@@ -531,7 +559,10 @@ describe('/owner DTO Mappers, Permission Inclusion, Pagination & Wizard Defaults
       path.join(webRoot, 'app/owner/modals/create-grant-modal.tsx'),
       'utf8',
     );
-    assert.match(createGrantModalTsx, /disabled=\{!canDownloadSelectedDoc\}/);
+    assert.match(
+      createGrantModalTsx,
+      /disabled=\{(?:isSubmittingDirectGrant \|\| )?!canDownloadSelectedDoc\}/,
+    );
     assert.match(createGrantModalTsx, /<legend[^>]*>Quyền được cấp<\/legend>/);
     assert.match(createGrantModalTsx, /min=\{minValidUntil\}/);
     assert.match(createGrantModalTsx, /max=\{maxValidUntil\}/);

@@ -33,12 +33,31 @@ export async function mockAuthenticatedRoleSession(page: Page, role: RoleName): 
           fullName: `Nhân sự ${role}`,
           email: `${role.toLowerCase()}@corp.internal`,
           departmentId: '1',
+          mfaEnabled: true,
+          mfaVerified: true,
           status: 'ACTIVE',
           version: 1,
           roles: [role],
           permissions: [...ROLE_DEFAULT_PERMISSIONS[role]],
         }),
       });
+      return;
+    }
+
+    if (pathname === '/api/v1/events/stream') {
+      // Giữ kết nối SSE mở trong suốt vòng đời trang hiện tại để tránh EOF sớm kích hoạt EventSource.onerror -> POST /auth/refresh giả.
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          page.off('close', done);
+          page.off('framenavigated', done);
+          resolve();
+        };
+        const timer = setTimeout(done, 30_000);
+        page.once('close', done);
+        page.once('framenavigated', done);
+      });
+      await route.abort('aborted').catch(() => {});
       return;
     }
 
@@ -60,6 +79,28 @@ export async function mockAuthenticatedRoleSession(page: Page, role: RoleName): 
           checkedCount: 12,
           chainPartition: 'GLOBAL',
           issues: [],
+        }),
+      });
+      return;
+    }
+
+    if (pathname === '/api/v1/auth/session-posture') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          mfaVerified: true,
+          mfaEnabled: true,
+          trustedNetwork: true,
+          deviceTrust: true,
+          riskScore: 0,
+          sensitiveRiskScore: 0,
+          riskThreshold: 80,
+          highRiskBlocked: false,
+          sensitiveHighRiskBlocked: false,
+          topSecretRequiresMfa: false,
+          riskFactors: [],
+          evaluatedAt: '2026-11-05T10:05:00.000Z',
         }),
       });
       return;

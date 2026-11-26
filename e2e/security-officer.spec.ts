@@ -410,8 +410,13 @@ test.describe('qa.security (SECURITY_OFFICER) — Full 8-Tab Interactive E2E & M
     await expect(page.getByRole('tab', { name: /Mô phỏng ABAC/i })).toBeVisible();
 
     // Tab 1: Alerts Queue — real IP, Vietnamese rule label, detail modal with restored note & atomic status+note
-    await expect(page.getByText('10.20.30.40')).toBeVisible();
-    await expect(page.getByText('Vi phạm chống thất thoát dữ liệu mạng (DLP)')).toBeVisible();
+    await expect(page.getByText('10.20.30.40').filter({ visible: true }).first()).toBeVisible();
+    await expect(
+      page
+        .getByText('Vi phạm chống thất thoát dữ liệu mạng (DLP)')
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
     await page.getByRole('button', { name: 'Chi tiết' }).first().click();
 
     const alertDialog = page.locator('dialog[open]');
@@ -444,7 +449,7 @@ test.describe('qa.security (SECURITY_OFFICER) — Full 8-Tab Interactive E2E & M
 
     // Tab 3: Incidents — open INC-2026-E048BE, verify incomplete-action guard & transition -> IN_REVIEW
     await page.getByRole('tab', { name: /Hồ sơ sự cố/i }).click();
-    await expect(page.getByText('INC-2026-E048BE')).toBeVisible();
+    await expect(page.getByText('INC-2026-E048BE').filter({ visible: true }).first()).toBeVisible();
     await page.getByRole('button', { name: 'Chi tiết' }).first().click();
     const incDialog = page.locator('dialog[open]');
     await expect(incDialog).toBeVisible();
@@ -456,7 +461,7 @@ test.describe('qa.security (SECURITY_OFFICER) — Full 8-Tab Interactive E2E & M
 
     // Tab 4: Sessions — real activeCount / total (1 / 17)
     await page.getByRole('tab', { name: /Phiên đọc/i }).click();
-    await expect(page.getByText('DOC-2026-001')).toBeVisible();
+    await expect(page.getByText('DOC-2026-001').filter({ visible: true }).first()).toBeVisible();
     await expect(page.getByText(/1 đang hoạt động/i)).toBeVisible();
 
     // Tab 5: Detection Rules — run manual detection without hardcoded windowMinutes: 60
@@ -471,7 +476,7 @@ test.describe('qa.security (SECURITY_OFFICER) — Full 8-Tab Interactive E2E & M
 
     // Tab 7: Audit Integrity & Anchors (UC32)
     await page.getByRole('tab', { name: /Toàn vẹn & Neo Audit/i }).click();
-    await expect(page.getByText('hmac-key-v1')).toBeVisible();
+    await expect(page.getByText('hmac-key-v1').filter({ visible: true }).first()).toBeVisible();
     await page.getByRole('button', { name: 'Tạo điểm neo HMAC' }).click();
     await expect.poll(() => createdAnchorCalled).toBe(true);
 
